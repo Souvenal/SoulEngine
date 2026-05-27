@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
+Documentation:
+  CommentFormat: Doxygen
+
+Diagnostics:
+  Suppress:
+    # module related lint issue
+    # vulkan_hpp uses std. After we can import vulkan, we can remove these
+    - module_odr_violation_template_parameter
+    - ovl_ambiguous_member_call
+    - ovl_deleted_special_init
+    - ovl_no_viable_function_in_init
+    - ovl_no_viable_function_in_call
+    - ovl_no_viable_member_function_in_call
+    - constexpr_var_requires_const_init
+    - invalid_consteval_call
+    - static_assert_requirement_failed
+    - no_member
+    - static_assert_failed
+
+---
+If:
+  PathMatch:
+    - Engine/Source/Runtime/.*/Tests/.*\.cpp
+Diagnostics:
+  Suppress:
+    # module related lint issue
+    - member_function_call_bad_type

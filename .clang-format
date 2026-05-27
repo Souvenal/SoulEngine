@@ -1,0 +1,70 @@
+BasedOnStyle: LLVM
+
+# Base layout: bump LLVM's default 2-space indent to 4
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+
+# Braces: LLVM default K&R (Attach). Control-statement braces stay on the same line.
+BreakBeforeBraces: Attach
+
+# Pointer/reference: left alignment (engine convention)
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+
+# ==========================================
+# C++11/20 braced init list (critical for Vulkan-HPP designated initializers)
+# ==========================================
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false   # TypeName{...} instead of TypeName {...}
+
+# Ctor initializer list: move to the next line when it doesn't fit
+PackConstructorInitializers: NextLine
+
+# Don't bin-pack arguments/parameters (essential for designated initializers)
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: true
+
+# Struct array alignment: disable — interacts badly with nested designated init
+AlignArrayOfStructures: None
+
+# Align consecutive assignments: align equal signs for .field = value blocks
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+  AlignCompound: true
+  PadOperators: true
+
+# Align declarations
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+  AlignCompound: true
+  PadOperators: true
+  
+# Always break template declarations
+AlwaysBreakTemplateDeclarations: Yes
+
+# Short function control: only empty functions allowed on a single line
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Include sorting
+SortIncludes: CaseSensitive
+IncludeCategories:
+  - Regex:           '^<<.*\.h>'
+    Priority:        1
+  - Regex:           '^<<.*'
+    Priority:        2
+  - Regex:           '.*'
+    Priority:        3
+
+# Namespace handling
+NamespaceIndentation: None
+FixNamespaceComments: true
+ShortNamespaceLines: 1

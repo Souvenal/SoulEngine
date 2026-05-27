@@ -1,0 +1,24 @@
+[Window]
+ResolutionX = 1920
+ResolutionY = 1080
+
+[Render]
+RHI = "Vulkan"
+FramesInFlight = 2
+
+[Log]
+ConsoleLevel = "Info"
+FileLevel    = "Debug"
+
+[Application]
+Name = "Test"
+
+[Shader]
+# Emit SPIR-V debug info (OpLine/OpString) for RenderDoc support.
+# When omitted: debug builds default to true, release to false.
+DebugInfo = true
+
+[RHI.Vulkan]
+# Bindless texture descriptor array size.  When omitted the Vulkan backend
+# defaults to 4096.
+MaxTextures = 4096

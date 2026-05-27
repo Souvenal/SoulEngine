@@ -1,0 +1,23 @@
+# xmake
+.xmake
+
+# Compiled Object Files
+build
+Engine/Binaries
+
+# compilation database
+compile_commands.json
+
+# cache
+.cache
+
+# IDEs
+.vs
+.vscode
+
+# macOS
+.DS_Store
+
+# Engine related
+Engine/Configs/SoulEngine.toml
+Engine/Logs/

@@ -1,0 +1,54 @@
+---
+Checks: >
+  readability-identifier-naming,
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  clang-analyzer-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  # Disabled globally because gtest's TEST-registration macros trigger
+  # persistent false positives for internal factory ownership wiring.
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -modernize-use-trailing-return-type
+
+CheckOptions:
+  readability-identifier-naming.GlobalVariablePrefix: "g_"
+
+  readability-identifier-naming.VariableCase: 'CamelCase'
+  readability-identifier-naming.VariableIgnoredRegexp: '^b[A-Z].*|^[a-z]$'
+
+  readability-identifier-naming.ParameterCase: 'CamelCase'
+  readability-identifier-naming.ParameterIgnoredRegexp: '^b[A-Z].*'
+
+  readability-identifier-naming.ClassMemberCase: 'CamelCase'
+  readability-identifier-naming.ClassMemberPrefix: 'm_'
+  readability-identifier-naming.ClassMemberIgnoredRegexp: '^b[A-Z].*'
+
+  readability-identifier-naming.StructMemberCase: 'CamelCase'
+  readability-identifier-naming.StructMemberIgnoredRegexp: '^b[A-Z].*'
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.MethodCase: CamelCase
+  readability-identifier-naming.NamespaceCase: CamelCase
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-identifier-naming.ConstantCase: CamelCase
+  readability-identifier-naming.StaticConstantCase: CamelCase
+  readability-identifier-naming.StaticVariableCase: CamelCase
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+
+  cppcoreguidelines-avoid-non-const-global-variables.AllowInternalLinkage: true
+
+If:
+  PathMatch:
+    - Engine/Source/Runtime/.*/Tests/.*\.cpp
+Diagnostic:
+  Suppress:
+    - cppcoreguidelines-owning-memory
