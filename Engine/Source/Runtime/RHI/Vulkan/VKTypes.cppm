@@ -13,7 +13,6 @@ using namespace SoulEngine::Core;
 
 namespace SoulEngine::RHI::Vulkan {
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // Conversion helpers
 // ═════════════════════════════════════════════════════════════════════════════
@@ -39,25 +38,6 @@ namespace SoulEngine::RHI::Vulkan {
     default:
         return vk::Format::eUndefined;
     }
-}
-
-[[nodiscard]] auto ToVkBufferUsage(BufferUsage Usage) -> vk::BufferUsageFlags {
-    vk::BufferUsageFlags Flags;
-    if (Usage & BufferUsage::VertexBuffer)
-        Flags |= vk::BufferUsageFlagBits::eVertexBuffer;
-    if (Usage & BufferUsage::IndexBuffer)
-        Flags |= vk::BufferUsageFlagBits::eIndexBuffer;
-    if (Usage & BufferUsage::UniformBuffer)
-        Flags |= vk::BufferUsageFlagBits::eUniformBuffer;
-    if (Usage & BufferUsage::StorageBuffer)
-        Flags |= vk::BufferUsageFlagBits::eStorageBuffer;
-    if (Usage & BufferUsage::TransferSrc)
-        Flags |= vk::BufferUsageFlagBits::eTransferSrc;
-    if (Usage & BufferUsage::TransferDst)
-        Flags |= vk::BufferUsageFlagBits::eTransferDst;
-    if (Usage & BufferUsage::Indirect)
-        Flags |= vk::BufferUsageFlagBits::eIndirectBuffer;
-    return Flags;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

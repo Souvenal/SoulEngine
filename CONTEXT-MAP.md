@@ -14,3 +14,4 @@ Each module has its own `CONTEXT.md` with module-specific terms, architecture, a
 | ShaderCache | `Engine/Source/Runtime/ShaderCache/` | [ShaderCache](Engine/Source/Runtime/ShaderCache/CONTEXT.md) |
 | Renderer | `Engine/Source/Runtime/Renderer/` | [Renderer](Engine/Source/Runtime/Renderer/CONTEXT.md) |
 | Scene | `Engine/Source/Runtime/Scene/` | [Scene](Engine/Source/Runtime/Scene/CONTEXT.md) |
+| TaskGraph | `Engine/Source/Runtime/TaskGraph/` | [TaskGraph](Engine/Source/Runtime/TaskGraph/CONTEXT.md) |

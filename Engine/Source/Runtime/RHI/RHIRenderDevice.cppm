@@ -6,7 +6,7 @@ export module RHI:RenderDevice;
 
 import std;
 import :Types;
-import :CommandList;
+import :Command; // CommandList
 
 using namespace SoulEngine::Core;
 
@@ -14,7 +14,7 @@ export namespace SoulEngine::RHI {
 
 class RenderDevice {
   public:
-    RenderDevice()                                        = default;
+    RenderDevice()                                       = default;
     RenderDevice(const RenderDevice&)                    = delete;
     auto operator=(const RenderDevice&) -> RenderDevice& = delete;
     RenderDevice(RenderDevice&&)                         = delete;
@@ -30,28 +30,41 @@ class RenderDevice {
 
     // ── Resource creation ────────────────────────────────────────────────────
 
-    [[nodiscard]] virtual auto CreateVertexBuffer(const void* Data, Uint64 VertexCount, Uint32 Stride)
-        -> std::expected<SPtr<VertexBuffer>, ErrorMessage>                    = 0;
-    [[nodiscard]] virtual auto CreateIndexBuffer(const void* Data, Uint64 IndexCount, bool UseUint16 = false)
-        -> std::expected<SPtr<IndexBuffer>, ErrorMessage>                     = 0;
-    [[nodiscard]] virtual auto CreateTexture(const TextureDesc& Desc) -> std::expected<Texture, ErrorMessage>    = 0;
+    [[nodiscard]] virtual auto CreateVertexBuffer(const VertexBufferDesc& Desc)
+        -> std::expected<SPtr<VertexBuffer>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateIndexBuffer(const IndexBufferDesc& Desc)
+        -> std::expected<SPtr<IndexBuffer>, ErrorMessage> = 0;
+    /// Create a constant (uniform) buffer with per-frame backing storage.
+    /// The returned buffer auto-selects the current frame's slot on Write().
+    /// @param Size  Total size in bytes per-frame slot.
+    [[nodiscard]] virtual auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
+        -> std::expected<SPtr<ConstantBuffer>, ErrorMessage>                                                  = 0;
+    [[nodiscard]] virtual auto CreateTexture(const TextureDesc& Desc) -> std::expected<Texture, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
-        -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage>                                              = 0;
+        -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> = 0;
+
+    /// Write data into the engine-global constant buffer bound to Set 0.
+    /// Safe to call once per frame after BeginFrame().  Size must not exceed
+    /// the global CB capacity (configured via [RHI.Vulkan].GlobalConstantBufferSize).
+    [[nodiscard]] virtual auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
+        -> std::expected<void, ErrorMessage> = 0;
+
     [[nodiscard]] virtual auto CreateSampler(const SamplerDesc& Desc) -> std::expected<Sampler, ErrorMessage> = 0;
 
     [[nodiscard]] virtual auto DestroyTexture(Texture TexHdl) -> std::expected<void, ErrorMessage>  = 0;
     [[nodiscard]] virtual auto DestroySampler(Sampler SampHdl) -> std::expected<void, ErrorMessage> = 0;
 
+    // ── Command execution ────────────────────────────────────
+
+    /// @brief Execute a frame's worth of RHI commands.
+    /// Replaces the old single-threaded BeginFrame/EndFrame pattern.
+    /// The backend handles submission + present internally.
+    [[nodiscard]] virtual auto Execute(const CommandList& CmdList) -> std::expected<void, ErrorMessage> = 0;
+
     // ── Command context access ──────────────────────────────────────────
 
-    /// @brief Return the single built-in command list owned by this context.
-    /// Valid after Init() succeeds.
-    [[nodiscard]] virtual auto GetCommandList() -> CommandList& = 0;
-
-    // ── Frame lifecycle ─────────────────────────────────────────────────────
-
-    [[nodiscard]] virtual auto BeginFrame() -> std::expected<void, ErrorMessage>                                   = 0;
-    [[nodiscard]] virtual auto EndFrame(std::span<CommandList*> CommandLists) -> std::expected<void, ErrorMessage> = 0;
+    /// @brief Return the current frame-in-flight index.
+    [[nodiscard]] virtual auto GetCurrentFrameIndex() const -> Uint32 = 0;
 
     // ── GPU sync ───────────────────────────────────────────────────────────
 

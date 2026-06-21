@@ -18,11 +18,7 @@ auto main(int argc, char* argv[]) -> int {
         return 1;
     }
 
-    while (!GEngineLoop.IsExitRequested()) {
-        GEngineLoop.Tick();
-    }
-
-    GEngineLoop.Shutdown();
+    GEngineLoop.Run();
     LogInfo("Engine shutdown complete");
     return 0;
 }

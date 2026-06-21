@@ -9,65 +9,60 @@ import Platform;
 import Window;
 import Application;
 import RHI;
-
+import Scene;
+import Renderer;
+import TaskGraph;
 export import std;
 
 using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Launch {
 
+/// @brief Per-frame slot state in the triple-buffered Game→Render→RHI pipeline.
+enum class SlotState {
+    Unknown = 0,
+    Empty,
+    GameReady,
+    RenderReady,
+    RHIDone,
+};
+
+/// @brief One element of the triple buffer.
+struct FrameSlot {
+    std::mutex              Mutex;
+    std::condition_variable Cv;
+    SlotState               State = SlotState::Empty;
+    Scene::Scene            SceneData;
+    RHI::CommandList        CmdList;
+};
+
+constexpr Uint32 kSlotCount = 3;
+
 class EngineLoop {
   public:
-    /// @brief Process command-line arguments and load engine configuration.
-    /// @details Currently only loads the engine configuration file; no
-    /// command-line argument handling is implemented yet.
     [[nodiscard]] auto PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, ErrorMessage> {
-        // Directory layout:
-        //   Engine/
-        //     Configs/
-        //       SoulEngine.toml
-        //     Binaries/
-        //       SoulEngine         <- binary (CmdLineArgs[0])
         auto EngineDir = Path(CmdLineArgs.front()).parent_path().parent_path();
 
-        // Validate the directory layout before proceeding.  If the binary
-        // has been moved, the hard-coded parent_path chain yields garbage.
-        // Logging isn't initialized yet, so we write directly to stderr.
         if (EngineDir.filename() != "Engine") {
             std::println(stderr, "FATAL: Invalid engine directory layout.");
             std::println(stderr, "  Expected root directory name: Engine");
             std::println(stderr, "  Resolved root:               {}", EngineDir.string());
             std::println(stderr, "  Binary path:                 {}", CmdLineArgs.front());
-            std::println(stderr, "  Layout must be: Engine/Binaries/Bin/<executable>");
-            // Exit directly: the logging system hasn't been initialized yet,
-            // so returning an error would end up in LogError with no logger.
-            // No resources have been allocated at this point, so exit is safe.
             std::exit(1);
         }
 
-        // Initialize ConfigManager with the engine root — infallible, no I/O.
         ConfigManager::Get().Init(EngineDir);
-
-        // Initialize spdlog sinks and logger rooted at Engine/Logs/.
         LogManager::Get().Init(ConfigManager::Get().LogsDirPath());
 
-        // Load the config file from Engine/Configs/SoulEngine.toml.
         auto LoadResult = ConfigManager::Get().LoadConfig();
         if (!LoadResult)
             return std::unexpected(LoadResult.error().Append("Failed to load config file"));
 
-        // Apply log-level configuration from the [Log] section.
         auto& LogCfg = ConfigManager::Get().GetConfig().Log;
         LogManager::Get().SetSinkLevels(LogCfg.FileLevel, LogCfg.ConsoleLevel);
 
-        // LogInfo intentionally deferred to here: SLogManager::Init() is
-        // called above and must run first so the spdlog logger is ready.
-        // Any log calls before that point silently produce no output
-        // (Log() returns early when the logger is null).
         LogInfo("Soul Engine PreInitializing... ({} args)", CmdLineArgs.size());
-
         Platform::InstallCrashHandler();
-
         return {};
     }
 
@@ -79,14 +74,12 @@ class EngineLoop {
             return std::unexpected(WinResult.error().Append("Failed to create window display"));
         WindowDisplay = std::move(*WinResult);
 
-        // ── RHI context — process-wide singleton ──────────────────────────
         if (auto R = RHI::RenderDevice::Create(WindowDisplay.GetNativeHandle()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Failed to create RHI context"));
         }
         LogInfo("RHI context created successfully");
 
-        // ── Create application from config ───────────────────────────────
         auto& Cfg = ConfigManager::Get().GetConfig();
         if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
             Shutdown();
@@ -94,60 +87,58 @@ class EngineLoop {
         }
         LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
 
-        m_LastTickTime = std::chrono::steady_clock::now();
-        bIsRunning     = true;
         return {};
+    }
+
+    /// @brief Spawn worker threads and run the main-thread game loop.
+    auto Run() -> void {
+        LogInfo("Starting engine run loop...");
+
+        m_LastTickTime = std::chrono::steady_clock::now();
+        m_RenderThread = std::jthread{[this](std::stop_token S) { RenderLoop(S); }};
+        m_RHIThread    = std::jthread{[this](std::stop_token S) { RHILoop(S); }};
+        LogInfo("Worker threads spawned (Render/RHI)");
+
+        GameLoop();
+        Shutdown();
     }
 
     auto Shutdown() -> void {
         LogInfo("Shutting down...");
 
-        // GPU must finish all in-flight work before resources are destroyed.
-        // Application resources (VertexBuffer, etc.) are freed when the app
-        // resets; their DeviceBuffer destructors call vmaDestroyBuffer, which
-        // fails if the GPU still references them.
-        RHI::RenderDevice::Get().WaitIdle();
+        m_TaskGraph.Shutdown();
+        for (auto& Slot : m_Slots)
+            Slot.Cv.notify_all();
+
+        if (m_RenderThread.joinable()) {
+            m_RenderThread.request_stop();
+            m_RenderThread.join();
+        }
+        if (m_RHIThread.joinable()) {
+            m_RHIThread.request_stop();
+            m_RHIThread.join();
+        }
 
         if (m_Application) {
             m_Application->OnDetach();
             m_Application.reset();
         }
+
+        // Release frame slot command lists (SPtrs inside variant commands)
+        // before RenderDevice::Destroy tears down VMA.
+        for (auto& Slot : m_Slots)
+            Slot.CmdList = {};
 
         RHI::RenderDevice::Destroy();
         WindowDisplay.Shutdown();
     }
 
-    auto RequestExit() -> void {
-        bIsRunning = false;
-    }
-
-    [[nodiscard]] auto IsExitRequested() -> bool {
-        return !bIsRunning || WindowDisplay.IsExitRequested();
-    }
-
-    auto Tick() -> void {
-        auto  Now       = std::chrono::steady_clock::now();
-        float DeltaTime = std::chrono::duration<float>(Now - m_LastTickTime).count();
-        m_LastTickTime  = Now;
-
-        WindowDisplay.PollEvents();
-
-        if (m_Application) {
-            m_Application->OnTick(DeltaTime);
-            m_Application->OnRender();
-        }
-
-        FrameMark;
-    }
-
     [[nodiscard]] auto SwitchApplication(StringView Name) -> std::expected<void, ErrorMessage> {
-        // Detach previous application (renderer shut down along with it)
         if (m_Application) {
             m_Application->OnDetach();
             m_Application.reset();
         }
 
-        // Create and attach new application
         auto NewApp = Application::Application::Create(Name);
         if (!NewApp)
             return std::unexpected(NewApp.error().Append("SwitchApplication failed"));
@@ -160,10 +151,142 @@ class EngineLoop {
     }
 
   private:
-    bool                                  bIsRunning = false;
-    WindowDisplay                         WindowDisplay;
-    UPtr<Application::Application>        m_Application;
-    std::chrono::steady_clock::time_point m_LastTickTime;
+    /// @brief Broadcast fatal error to all loops and trigger teardown.
+    auto SignalFatalError() -> void {
+        m_FatalError.store(true, std::memory_order_release);
+        m_TaskGraph.Shutdown();
+        for (auto& Slot : m_Slots)
+            Slot.Cv.notify_all();
+    }
+
+    // ── Loops ────────────────────────────────────────────────────────────────
+
+    auto GameLoop() -> void {
+        while (!m_FatalError.load(std::memory_order_acquire) && !WindowDisplay.IsExitRequested()) {
+            WindowDisplay.PollEvents();
+            FrameMark;
+
+            auto  Now      = std::chrono::steady_clock::now();
+            float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
+            m_LastTickTime = Now;
+
+            auto& Slot = m_Slots[m_GameSlotIndex];
+
+            {
+                std::unique_lock Lock(Slot.Mutex);
+                Slot.Cv.wait(Lock, [this, &Slot] {
+                    return Slot.State == SlotState::Empty || Slot.State == SlotState::RHIDone ||
+                           m_FatalError.load(std::memory_order_relaxed);
+                });
+            }
+            if (m_FatalError.load(std::memory_order_acquire))
+                break;
+
+            m_Application->OnTick(Delta);
+            auto& AppScene = m_Application->GetScene();
+            AppScene.UpdateTime();
+            Slot.SceneData = AppScene;
+
+            {
+                std::lock_guard Lock(Slot.Mutex);
+                Slot.State = SlotState::GameReady;
+            }
+            Slot.Cv.notify_all();
+
+            m_GameSlotIndex = (m_GameSlotIndex + 1) % kSlotCount;
+        }
+    }
+
+    auto RenderLoop(std::stop_token Stop) -> void {
+        while (!Stop.stop_requested()) {
+            auto& Slot = m_Slots[m_RenderSlotIndex];
+
+            {
+                std::unique_lock Lock(Slot.Mutex);
+                Slot.Cv.wait(Lock, [&] { return Slot.State == SlotState::GameReady || Stop.stop_requested(); });
+            }
+            if (Stop.stop_requested())
+                break;
+
+            for (std::size_t i = 0; i < SoulEngine::TaskGraph::kMaxTasksPerPoll; ++i) {
+                auto Task = m_TaskGraph.TryDequeue(SoulEngine::ThreadQueue::Render);
+                if (!Task)
+                    break;
+                (*Task)();
+            }
+
+            auto RenderResult = m_Application->GetRenderer().Render(Slot.SceneData);
+            if (!RenderResult) {
+                LogError("Render fatal error:\n{}", RenderResult.error().ToString());
+                SignalFatalError();
+                break;
+            }
+
+            Slot.CmdList = std::move(*RenderResult);
+
+            {
+                std::lock_guard Lock(Slot.Mutex);
+                Slot.State = SlotState::RenderReady;
+            }
+            Slot.Cv.notify_all();
+
+            m_RenderSlotIndex = (m_RenderSlotIndex + 1) % kSlotCount;
+        }
+    }
+
+    auto RHILoop(std::stop_token Stop) -> void {
+        while (!Stop.stop_requested()) {
+            auto& Slot = m_Slots[m_RHISlotIndex];
+
+            {
+                std::unique_lock Lock(Slot.Mutex);
+                Slot.Cv.wait(Lock, [&] { return Slot.State == SlotState::RenderReady || Stop.stop_requested(); });
+            }
+            if (Stop.stop_requested())
+                break;
+
+            for (std::size_t i = 0; i < SoulEngine::TaskGraph::kMaxTasksPerPoll; ++i) {
+                auto Task = m_TaskGraph.TryDequeue(SoulEngine::ThreadQueue::RHI);
+                if (!Task)
+                    break;
+                (*Task)();
+            }
+
+            if (auto R = RHI::RenderDevice::Get().Execute(Slot.CmdList); !R) {
+                LogError("RHI Execute fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
+
+            {
+                std::lock_guard Lock(Slot.Mutex);
+                Slot.State = SlotState::RHIDone;
+            }
+            Slot.Cv.notify_all();
+
+            m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
+        }
+
+        RHI::RenderDevice::Get().WaitIdle();
+    }
+
+    // ── State ───────────────────────────────────────────────────────────────
+
+    WindowDisplay                                  WindowDisplay;
+    UPtr<Application::Application>                 m_Application;
+    std::chrono::steady_clock::time_point          m_LastTickTime;
+
+    SoulEngine::TaskGraph             m_TaskGraph;
+    std::array<FrameSlot, kSlotCount> m_Slots = {};
+
+    Uint32 m_GameSlotIndex   = 0;
+    Uint32 m_RenderSlotIndex = 0;
+    Uint32 m_RHISlotIndex    = 0;
+
+    std::atomic<bool> m_FatalError = false;
+
+    std::jthread m_RenderThread;
+    std::jthread m_RHIThread;
 };
 
 } // namespace SoulEngine::Launch

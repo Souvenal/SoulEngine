@@ -22,3 +22,9 @@ DebugInfo = true
 # Bindless texture descriptor array size.  When omitted the Vulkan backend
 # defaults to 4096.
 MaxTextures = 4096
+
+# Per-frame global constant (uniform) buffer size in bytes.
+# Written each frame by WriteGlobalConstantBuffer().  Shader-visible via
+# Set 0 Binding 0.  When omitted the backend defaults to 256 bytes —
+# enough for a 4x4 projection matrix + view matrix + time vector4.
+GlobalConstantBufferSize = 256

@@ -9,11 +9,12 @@ self-registering factory pattern.
 
 | Term | Definition |
 |------|------------|
-| **CommandList** | Abstract interface for recording GPU commands (draw, bind, barrier). |
-| **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `Init(GLFWwindow*)` is pure virtual — backends do setup there, not in the constructor. Process-wide singleton: `RenderDevice::Create(Window)` bootstraps, `RenderDevice::Get()` accesses, `RenderDevice::Destroy()` tears down. |
-| **VertexBuffer** | Empty polymorphic base class in `SoulEngine::RHI`. No public methods — purely a type token for the `RenderDevice::CreateVertexBuffer` return type and `CommandList::BindVertexBuffer` parameter. Vendors cast it to their concrete type (e.g. `Vulkan::VertexBuffer`) internally. |
-| **IndexBuffer** | Same role as VertexBuffer, for index data. `BindIndexBuffer` takes `SPtr<IndexBuffer>` instead of raw buffer + stride, ensuring type safety at the API boundary. |
-| **Texture / Pipeline / Sampler** | Opaque handle types (`Uint64 Handle = 0`) in `SoulEngine::RHI`. Backend maintains an internal map from handle to native resource. POD — trivially copyable. |
+| **CommandList** | Data struct containing `std::vector<Pass>` and `GlobalConstantData`. Produced by `Renderer::Render()`, consumed by `RenderDevice::Execute()`. Commands are `std::variant` types (`SetPipelineCmd`, `BindVertexBufferCmd`, etc.) carrying `SPtr<>` to RHI resources. |
+| **Pass** | One rendering scope with `RenderingDesc` and commands inside. Backend auto-wraps in begin/end rendering. Pass has builder methods (`SetPipeline`, `BindVertexBuffer`, `DrawIndexed`). |
+| **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `Init(GLFWwindow*)` is pure virtual — backends do setup there, not in the constructor. Process-wide singleton: `RenderDevice::Create(Window)` bootstraps, `RenderDevice::Get()` accesses, `RenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
+| **VertexBuffer** | Empty polymorphic base class in `SoulEngine::RHI`. No public methods — purely a type token for the `RenderDevice::CreateVertexBuffer` return type. Vendors cast it to their concrete type (e.g. `Vulkan::VertexBuffer`) internally. |
+| **IndexBuffer** | Same role as VertexBuffer, for index data. |
+| **GraphicsPipeline** | Empty polymorphic base class for graphics pipeline resources. Same pattern as VertexBuffer/IndexBuffer — backend casts down. |
 | **BufferUsage** | Bitmask enum for buffer creation hints. Not a type — backend uses it to decide VkBufferUsageFlags at allocation time. |
 | **Format, BufferUsage etc.** | Enums and trivial descriptor structs in `SoulEngine::RHI`. |
 | **ResourceState** | Per-resource GPU state for barrier tracking. Backend maintains implicit last-known state per handle. |
@@ -43,12 +44,14 @@ EngineLoop::Init()
   ├── WindowDisplay::Create()
   ├── RenderDevice::Create(Window)   // bootstrap — factory + Init + store
   └── SwitchApplication()
-        └── App->OnAttach()           // renderer uses RenderDevice::Get()
+        └── App->OnAttach()           // renderer creates resources via RenderDevice::Get()
 
 EngineLoop::Shutdown()
-  ├── RenderDevice::Get().WaitIdle()
-  ├── App->OnDetach()                // renderer destroyed
-  ├── RenderDevice::Destroy()       // teardown singleton
+  ├── SignalFatalError()             // wake all threads
+  ├── join RenderLoop / RHILoop
+  ├── App->OnDetach()                // renderer releases SPtrs
+  ├── clear FrameSlot.CmdList        // release SPtrs in variant commands
+  ├── RenderDevice::Destroy()        // teardown singleton (VMA)
   └── WindowDisplay::Shutdown()
 ```
 
@@ -64,18 +67,24 @@ EngineLoop::Shutdown()
 
 | Constraint | Detail |
 |------------|--------|
-| **Module layout** | Standalone `Vulkan` module in `Vulkan/` — self-registers with `RHI::BackendFactory`. Internal partitions: `Vulkan:Types`, `Vulkan:RenderDevice`, `Vulkan:CommandList`, `Vulkan:Swapchain` |
+| **Module layout** | Standalone `Vulkan` module in `Vulkan/` — self-registers with `RHI::BackendFactory`. Internal partitions: `Vulkan:Types`, `Vulkan:RenderDevice`, `Vulkan:Command`, `Vulkan:Swapchain` |
 | **Rendering** | Dynamic rendering (VK_KHR_dynamic_rendering / Vulkan 1.3) — no RenderPass objects |
 | **vulkan-hpp** | With exceptions disabled (`VULKAN_HPP_NO_EXCEPTIONS`) |
 | **Memory** | VMA (VulkanMemoryAllocator) for GPU memory management |
 
 ## Thread Model
 
-| Term | Definition |
-|------|------------|
-| **Game Thread** | Runs game logic tick (`OnTick`), produces per-frame draw data, writes to frame slot. Also runs window event polling. |
-| **Render Thread** | Dedicated thread consuming game-produced frame data. Owns RHI resources, records CommandBuffers, calls `vkQueueSubmit` and present. Runs one frame behind game thread (1-frame pipeline bubble). |
-| **Frame Slot** | Ring buffer of N `FrameContext` structs indexed by `(frameCount % m_FramesInFlight)`. Game writes current frame's slot; Render reads previous frame's slot. No shared write access to the same slot — zero-lock path. |
+RHI resources are not thread-safe by default. Callers must serialize access:
+
+| Resource | Thread safety |
+|----------|---------------|
+| `RenderDevice::Get()` | Safe from any thread (singleton) |
+| `RenderDevice::Execute()` | Called from `RHILoop` only |
+| `CreateVertexBuffer` / `CreateIndexBuffer` etc. | Called from `GameLoop` (OnAttach) — NOT thread-safe after init |
+| `WriteGlobalConstantBuffer` | Called from `RHILoop` via `Execute()` |
+| `ImmediateContext` | Not thread-safe (caller must serialize) |
+
+The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::Launch::EngineLoop` — see [`Launch/CONTEXT.md`](../Launch/CONTEXT.md).
 
 ## Dependencies
 

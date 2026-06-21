@@ -40,9 +40,9 @@ class IRenderer {
     /// @brief Release all GPU resources and owned objects.
     virtual auto OnDetach() -> void = 0;
 
-    /// @brief Execute the passes for one frame and present the result.
-    /// @param Scene  World state to render (camera, meshes, lights, ...).
-    [[nodiscard]] virtual auto Render(const Scene::Scene& Scene) -> std::expected<void, ErrorMessage> = 0;
+    /// @brief Render the scene and return a CommandList for RHIThread.
+    /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
+    [[nodiscard]] virtual auto Render(const Scene::Scene& Scene) -> std::expected<RHI::CommandList, ErrorMessage> = 0;
 
     /// @brief Read-only access to the pass list.
     [[nodiscard]] auto GetPasses() const noexcept -> std::span<const GraphicsPass> {

@@ -12,15 +12,16 @@ module;
 
 export module Vulkan:RenderDevice;
 
-import RHI;
+import RHI; // RHI::CommandList, RHI::Pass, etc.
 import vulkan;
 import std;
 
 import :Swapchain;
-import :CommandList;
+import :Command;
 import :Types;
 import :Semaphore;
 import :Buffer;
+import :FrameContext;
 import :Capability;
 import :ImmediateContext;
 import :DeletionQueue;
@@ -30,18 +31,6 @@ import :Pipeline;
 using namespace SoulEngine::Core;
 
 namespace SoulEngine::RHI::Vulkan {
-
-/// Per-frame-in-flight state: semaphores, timeline value, and the
-/// command buffer for this frame slot — everything that cycles with
-/// the frame index lives here.
-///
-/// Named FrameContext to reserve FrameData for the future game→render
-/// thread transfer struct that will carry draw commands, view state, etc.
-struct FrameContext {
-    vk::raii::Semaphore     PresentComplete                 = nullptr;
-    Uint64                  SubmissionCompleteTimelineValue = 0;
-    vk::raii::CommandBuffer CommandBuffer                   = nullptr;
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RenderDevice
@@ -119,76 +108,45 @@ class RenderDevice final : public RHI::RenderDevice {
             return std::unexpected(Semaphore.error());
         m_Timeline = std::move(*Semaphore);
 
-        // ── Main command pool + per-frame command buffers ──────────────
-        // Single pool owned by RenderDevice.  One primary command buffer
-        // per frame-in-flight, stored inside FrameContext alongside its
-        // semaphores and timeline value.
-        vk::CommandPoolCreateInfo PoolCI{
-            .flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-            .queueFamilyIndex = m_GraphicsFamily,
-        };
-        auto PoolRes = m_Device.createCommandPool(PoolCI);
-        if (PoolRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("Failed to create main command pool"));
-        m_MainCommandPool = std::move(PoolRes.value);
-
-        vk::CommandBufferAllocateInfo AllocInfo{
-            .commandPool        = *m_MainCommandPool,
-            .level              = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = m_FramesInFlight,
-        };
-        auto BufResult = m_Device.allocateCommandBuffers(AllocInfo);
-        if (BufResult.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("Failed to allocate main command buffers"));
-
-        // ── Present-complete semaphores + FrameContext ──────────────────
+        // ── FrameContext ───────────────────────────────────────────────────
+        // Each frame slot gets its own Pool, PrimaryBuffer, SubPool, and
+        // GlobalConstantBuffer.
         m_FrameContext.clear();
         m_FrameContext.reserve(m_FramesInFlight);
         for (uint32_t i = 0; i < m_FramesInFlight; ++i) {
-            auto SemaRes = m_Device.createSemaphore({});
-            if (SemaRes.result != vk::Result::eSuccess)
-                return std::unexpected(ErrorMessage("Failed to create present-complete semaphore"));
-            m_FrameContext.push_back({
-                .PresentComplete                 = std::move(SemaRes.value),
-                .SubmissionCompleteTimelineValue = 0,
-                .CommandBuffer                   = std::move(BufResult.value[i]),
-            });
+            auto FCRes = FrameContext::Create(m_Device, m_GraphicsFamily, m_Allocator);
+            if (!FCRes)
+                return std::unexpected(FCRes.error().Append("FrameContext creation failed"));
+            m_FrameContext.push_back(std::move(*FCRes));
         }
 
         // ── Pre-register swapchain images in the committed state map ─────────
-        // Note: Initial stage = COLOR_ATTACHMENT_OUTPUT so the first-use barrier's
-        //       srcStageMask matches the semaphore wait stage from EndFrame's submit,
-        //       forming a correct execution dependency chain and avoiding
-        //       WRITE_AFTER_READ hazards with vkAcquireNextImageKHR.
         RegisterSwapchainImages();
 
-        // ── Global descriptor manager (descriptor sets + shared pipeline layout) ──
+        // ── Global descriptor manager ─────────────────────────────────────
         {
-            auto Heap = DescriptorManager::Create(m_Device);
+            auto Heap = DescriptorManager::Create(m_Device, m_FramesInFlight, m_FrameContext);
             if (!Heap)
                 return std::unexpected(Heap.error().Append("DescriptorManager creation failed"));
             m_DescriptorManager = std::make_unique<DescriptorManager>(std::move(*Heap));
         }
 
-        // ── Built-in command list ────────────────────────────────────────
-        m_GraphicsCommandList = std::make_unique<CommandList>(m_Device, *m_DescriptorManager);
-        m_GraphicsCommandList->SetSwapchain(m_Swapchain);
-        m_GraphicsCommandList->SetCommittedImageStates(&m_CommittedImageStates);
         LogInfo("Built-in graphics command list initialised");
 
         return {};
     }
 
-    // ── Frame lifecycle ────────────────────────────────────────────────
+    // ── Frame lifecycle — private ─────────────────────────────────────
 
-    /// Wait until the GPU has caught up to this frame slot, then acquire
-    /// the next swapchain image.
-    [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> {
         // CPU-GPU sync: wait for the timeline semaphore to reach the value
         // from N frames ago (when this slot was last signalled).
         uint64_t WaitValue = m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue;
         if (auto R = m_Timeline.Wait(WaitValue); !R)
             return std::unexpected(R.error().Append("BeginFrame: timeline wait failed"));
+
+        // GPU done with this frame slot — safe to free scratch secondaries.
+        m_FrameContext[m_CurrentFrame].ScratchSecondaries.clear();
 
         // Free any GPU resources whose transfer operations have completed.
         m_DeletionQueue.Tick();
@@ -200,20 +158,12 @@ class RenderDevice final : public RHI::RenderDevice {
             if (!R)
                 return std::unexpected(R.error().Append("Swapchain recreation failed after AcquireNextImage error"));
 
-            // The swapchain now has new VkImage handles — re-register them in
-            // the committed-state map so the first-use barrier in the next
-            // BeginRendering has a correct srcStageMask (eColorAttachmentOutput)
-            // that chains with the AcquireNextImage semaphore wait stage.
             RegisterSwapchainImages();
 
-            // AcquireNextImage signals the semaphore even when returning
-            // eSuboptimalKHR.  A signaled semaphore cannot be re-used for another
-            // acquire — allocate a fresh unsignaled one for the retry.
             auto NewSema = m_Device.createSemaphore({});
             if (NewSema.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Failed to create present-complete semaphore for retry"));
             m_FrameContext[m_CurrentFrame].PresentComplete = std::move(NewSema.value);
-            // Re-acquire after recreation
             AcquireRes = m_Swapchain.AcquireNextImage(m_FrameContext[m_CurrentFrame].PresentComplete);
         }
         if (AcquireRes != vk::Result::eSuccess) {
@@ -221,51 +171,36 @@ class RenderDevice final : public RHI::RenderDevice {
                 Core::Format("AcquireNextImage failed after swapchain recreation: {}", vk::to_string(AcquireRes))));
         }
 
-        // ── Set the active command buffer for this frame ─────────────────
-        m_GraphicsCommandList->SetActiveCommandBuffer(m_FrameContext[m_CurrentFrame].CommandBuffer);
+        // ── Begin primary command buffer (skeleton — only ExecuteCommands) ──
+        auto& Primary = m_FrameContext[m_CurrentFrame].PrimaryBuffer;
+        Primary.reset({});
+        vk::CommandBufferBeginInfo PrimaryBegin{
+            .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+        };
+        if (auto R = Primary.begin(PrimaryBegin); R != vk::Result::eSuccess)
+            return std::unexpected(
+                ErrorMessage(Core::Format("BeginFrame: primary CB begin failed: {}", vk::to_string(R))));
 
         return {};
     }
 
-    /// Submit collected command buffers for the current frame and present.
-    /// Returns false if the swapchain needs recreation.
-    [[nodiscard]] auto EndFrame(std::span<RHI::CommandList*> CommandLists)
-        -> std::expected<void, ErrorMessage> override {
-        // ── Commit per-CommandList local image states to queue-committed state ──
-        for (auto* CmdList : CommandLists) {
-            auto* VKCtx = static_cast<CommandList*>(CmdList);
-            for (const auto& [Key, State] : VKCtx->GetLocalImageStates())
-                m_CommittedImageStates[Key] = State;
-        }
+    [[nodiscard]] auto EndFrame() -> std::expected<void, ErrorMessage> {
+        auto& FC      = m_FrameContext[m_CurrentFrame];
+        auto& Primary = FC.PrimaryBuffer;
 
-        // The built-in command list's buffer is set by BeginFrame.
-        // Collect it for submission.
-        std::vector<vk::CommandBuffer> CommandBuffers;
-        CommandBuffers.reserve(CommandLists.size());
-        for (auto* Context : CommandLists) {
-            auto* CmdList = static_cast<CommandList*>(Context);
-            CommandBuffers.push_back(*m_FrameContext[m_CurrentFrame].CommandBuffer);
-        }
+        // ── End primary ─────────────────────────────────────────────────
+        if (auto R = Primary.end(); R != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage(Core::Format("EndFrame: primary CB end failed: {}", vk::to_string(R))));
 
-        std::vector<vk::CommandBufferSubmitInfo> CmdBufferInfos;
-        CmdBufferInfos.reserve(CommandBuffers.size());
-        for (auto& CmdBuf : CommandBuffers)
-            CmdBufferInfos.emplace_back(vk::CommandBufferSubmitInfo{.commandBuffer = CmdBuf});
+        // ── Submit ──────────────────────────────────────────────────────────
+        vk::CommandBufferSubmitInfo PrimarySubmitInfo{
+            .commandBuffer = *Primary,
+        };
 
-        // ensure that the swapchain image we want to use
-        // is used up for composition
-        //
-        // NOTE: the meaning of the stage mask here is that
-        //       won't check the semaphore unitl the given stage.
-        //       So if we choose color attachament output stage,
-        //       stages like vertex & fragment can executed before checking.
-        //       In other words, we wait on the given stage.
         vk::SemaphoreSubmitInfo PresentCompleteSema{
             .semaphore = *m_FrameContext[m_CurrentFrame].PresentComplete,
             .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
         };
-        // remember when rendering, we need to assign a swapchain image,
-        // so we use the index from swapchain.
         vk::SemaphoreSubmitInfo RenderingCompleteSema{
             .semaphore = m_Swapchain.GetCurrentRenderCompleteSemaphore(),
             .stageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
@@ -281,8 +216,8 @@ class RenderDevice final : public RHI::RenderDevice {
         vk::SubmitInfo2 SubmitInfo2{
             .waitSemaphoreInfoCount   = 1,
             .pWaitSemaphoreInfos      = &PresentCompleteSema,
-            .commandBufferInfoCount   = static_cast<uint32_t>(CmdBufferInfos.size()),
-            .pCommandBufferInfos      = CmdBufferInfos.data(),
+            .commandBufferInfoCount   = 1,
+            .pCommandBufferInfos      = &PrimarySubmitInfo,
             .signalSemaphoreInfoCount = 2,
             .pSignalSemaphoreInfos    = SignalSemas,
         };
@@ -293,7 +228,7 @@ class RenderDevice final : public RHI::RenderDevice {
 
         m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = TimelineSignalSema.value;
 
-        // ── Present waits on the binary render-complete semaphore ──────────
+        // ── Present ────────────────────────────────────────────────────────
         auto PresentRes = m_Swapchain.Present(m_GraphicsQueue);
         if (PresentRes == vk::Result::eErrorOutOfDateKHR || PresentRes == vk::Result::eSuboptimalKHR) {
             auto R = m_Swapchain.Recreate();
@@ -308,19 +243,26 @@ class RenderDevice final : public RHI::RenderDevice {
         return {};
     }
 
-    [[nodiscard]] auto CreateVertexBuffer(const void* Data, Uint64 VertexCount, Uint32 Stride)
-        -> std::expected<SPtr<RHI::VertexBuffer>, ErrorMessage> override {
-        return VertexBuffer::Create(
-            m_Allocator, *m_Device, m_ImmediateContext, m_DeletionQueue,
-            Data, VertexCount * Stride, Stride, VertexCount);
+    [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override {
+        return m_CurrentFrame;
     }
 
-    [[nodiscard]] auto CreateIndexBuffer(const void* Data, Uint64 IndexCount, bool UseUint16)
+    [[nodiscard]] auto CreateVertexBuffer(const VertexBufferDesc& Desc)
+        -> std::expected<SPtr<RHI::VertexBuffer>, ErrorMessage> override {
+        return VertexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_DeletionQueue);
+    }
+
+    [[nodiscard]] auto CreateIndexBuffer(const IndexBufferDesc& Desc)
         -> std::expected<SPtr<RHI::IndexBuffer>, ErrorMessage> override {
-        Uint64 Size = IndexCount * (UseUint16 ? 2ULL : 4ULL);
-        return IndexBuffer::Create(
-            m_Allocator, *m_Device, m_ImmediateContext, m_DeletionQueue,
-            Data, Size, IndexCount, UseUint16);
+        return IndexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_DeletionQueue);
+    }
+
+    [[nodiscard]] auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
+        -> std::expected<SPtr<RHI::ConstantBuffer>, ErrorMessage> override {
+        auto Buf = UniformBuffer::Create(Desc, *m_Device, m_Allocator);
+        if (!Buf)
+            return std::unexpected(Buf.error().Append("Failed to create constant buffer"));
+        return SPtr<RHI::ConstantBuffer>(std::move(*Buf));
     }
 
     [[nodiscard]] auto CreateTexture(const TextureDesc& Desc) -> std::expected<RHI::Texture, ErrorMessage> override {
@@ -339,19 +281,19 @@ class RenderDevice final : public RHI::RenderDevice {
     }
 
     [[nodiscard]] auto DestroyTexture(RHI::Texture TexHdl) -> std::expected<void, ErrorMessage> override {
-        // TODO: Implement when Vulkan::Texture wrapper exists
         (void)TexHdl;
         return std::unexpected(ErrorMessage("Vulkan::Texture wrapper not yet implemented"));
     }
-
 
     [[nodiscard]] auto DestroySampler(RHI::Sampler SampHdl) -> std::expected<void, ErrorMessage> override {
         (void)SampHdl;
         return std::unexpected(ErrorMessage("DestroySampler is not implemented yet"));
     }
 
-    [[nodiscard]] auto GetCommandList() -> RHI::CommandList& override {
-        return *m_GraphicsCommandList;
+    [[nodiscard]] auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
+        -> std::expected<void, ErrorMessage> override {
+        auto& FC = m_FrameContext[m_CurrentFrame];
+        return FC.GlobalConstantBuffer->Write(Data, Size);
     }
 
     auto WaitIdle() -> void override {
@@ -365,6 +307,9 @@ class RenderDevice final : public RHI::RenderDevice {
         if (!DrainResult)
             LogError("{}", DrainResult.error().ToString());
         WaitIdle();
+        // Destroy per-frame resources (including HostBuffers with VMA allocations)
+        // before vmaDestroyAllocator.
+        m_FrameContext.clear();
         if (m_Allocator)
             vmaDestroyAllocator(m_Allocator);
     }
@@ -395,10 +340,6 @@ class RenderDevice final : public RHI::RenderDevice {
             .enabledExtensionCount   = static_cast<uint32_t>(EnabledInstanceExts->size()),
             .ppEnabledExtensionNames = EnabledInstanceExts->data(),
         };
-        // Traditionally on macOS, vulkan tends to use MoltenVK as an ICD
-        // but its implementation of Vulkan Spec is only partial.
-        // Vulkan 1.3.216 demands that we declare a Portability flag, along with
-        // a KHRPortabilityEnumerationExtension, so that the loader doesn't filter out MoltenVK.
         if (m_Capability.IsInstanceExtensionEnabled(vk::KHRPortabilityEnumerationExtensionName))
             InstCI.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
@@ -416,20 +357,13 @@ class RenderDevice final : public RHI::RenderDevice {
         if (DevicesResult.result != vk::Result::eSuccess || DevicesResult.value.empty())
             return std::unexpected(ErrorMessage("No Vulkan-capable physical devices found"));
 
-        // getProperties2 (Vulkan 1.1+) replaces getProperties.
-        // It accepts a pNext chain of extension structs — here
-        // PhysicalDeviceDriverProperties — so we can query the ICD
-        // driver name/id alongside the base device properties in one call.
         vk::StructureChain<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties> PropsChain;
 
         for (size_t i = 0; i < DevicesResult.value.size(); ++i) {
             auto PD = DevicesResult.value[i];
-
             PD.getProperties2(&PropsChain.get<vk::PhysicalDeviceProperties2>());
-
             auto& DevProps = PropsChain.get<vk::PhysicalDeviceProperties2>().properties;
             auto& Driver   = PropsChain.get<vk::PhysicalDeviceDriverProperties>();
-
             LogDebug("Physical device [{}]: {} (driver: {}, ICD: {}, API version {}.{}.{})",
                      i,
                      static_cast<const char*>(DevProps.deviceName),
@@ -444,10 +378,8 @@ class RenderDevice final : public RHI::RenderDevice {
 
         {
             m_PhysicalDevice.getProperties2(&PropsChain.get<vk::PhysicalDeviceProperties2>());
-
             auto& DevProps = PropsChain.get<vk::PhysicalDeviceProperties2>().properties;
             auto& Driver   = PropsChain.get<vk::PhysicalDeviceDriverProperties>();
-
             LogInfo("Selected GPU: {} (driver: {}, ICD: {}, API version {}.{}.{})",
                     static_cast<const char*>(DevProps.deviceName),
                     static_cast<const char*>(Driver.driverName),
@@ -457,10 +389,6 @@ class RenderDevice final : public RHI::RenderDevice {
                     VK_API_VERSION_PATCH(DevProps.apiVersion));
         }
 
-        // ── Resolve queue families for this physical device ─────────────
-        // getQueueFamilyProperties2 (Vulkan 1.1+) wraps the legacy properties
-        // in VkQueueFamilyProperties2 and supports a pNext chain for per-family
-        // extension structs (global priority, checkpoint properties, etc.).
         auto QueueProps = m_PhysicalDevice.getQueueFamilyProperties2();
 
         if (auto Res = ResolveQueueFamilies(QueueProps); !Res.has_value())
@@ -470,7 +398,6 @@ class RenderDevice final : public RHI::RenderDevice {
     }
 
     [[nodiscard]] auto CreateLogicalDevice() -> std::expected<void, ErrorMessage> {
-        // ── Gather unique queue families ────────────────────────────────
         std::vector<uint32_t> UniqueFamilies;
 
         auto AddUnique = [&](uint32_t Family) {
@@ -482,7 +409,6 @@ class RenderDevice final : public RHI::RenderDevice {
         AddUnique(m_ComputeFamily);
         AddUnique(m_TransferFamily);
 
-        // ── Build queue create infos ────────────────────────────────────
         float                                  QueuePriority = 1.0f;
         std::vector<vk::DeviceQueueCreateInfo> QueueCIs;
         for (uint32_t Family : UniqueFamilies) {
@@ -502,17 +428,12 @@ class RenderDevice final : public RHI::RenderDevice {
         for (auto* Ext : DevExts)
             LogDebug("Enabled device extension: {}", Ext);
 
-        // Previous implementations of Vulkan made a distinction between
-        // instance and device-specific validation layers.
-        // But now the `enabledLayerCount` and `ppEnabledLayerNames` fields of
-        // vk::DeviceCreateInfo are ignored by up-to-date implementations.
         vk::DeviceCreateInfo DevCI{
             .pNext                   = &Feats2,
             .queueCreateInfoCount    = static_cast<uint32_t>(QueueCIs.size()),
             .pQueueCreateInfos       = QueueCIs.data(),
             .enabledExtensionCount   = static_cast<uint32_t>(DevExts.size()),
             .ppEnabledExtensionNames = DevExts.data(),
-            // Must be nullptr when pNext includes VkPhysicalDeviceFeatures2.
             .pEnabledFeatures        = nullptr,
         };
 
@@ -523,7 +444,6 @@ class RenderDevice final : public RHI::RenderDevice {
         }
         m_Device = std::move(DevResult.value);
 
-        // ── Retrieve queue handles ──────────────────────────────────────
         m_GraphicsQueue = m_Device.getQueue(m_GraphicsFamily, 0);
         m_ComputeQueue  = m_Device.getQueue(m_ComputeFamily, 0);
         m_TransferQueue = m_Device.getQueue(m_TransferFamily, 0);
@@ -572,27 +492,6 @@ class RenderDevice final : public RHI::RenderDevice {
 
     [[nodiscard]] auto ResolveQueueFamilies(std::span<const vk::QueueFamilyProperties2> QueueProps)
         -> std::expected<void, ErrorMessage> {
-        // ── Dump available queue families ─────────────────────────────────
-        // A queue family maps to a hardware scheduler entry — e.g. the graphics
-        // front-end, the DMA engine, or a compute-only pipeline. Different families
-        // may share the same flags (e.g. M-series GPUs expose several identical
-        // Graphics|Compute|Transfer families), or they may expose dedicated
-        // capability (e.g. a discrete GPU may have a dedicated Transfer-only
-        // family for async DMA).
-        //
-        // `queueCount` is the maximum number of queues that can be created from
-        // this family. Queues within the same family share the same hardware
-        // pipeline but can execute concurrently. For example, queueCount=4 means
-        // you can vkGetDeviceQueue(…, index=0..3) and submit separate command
-        // streams that the GPU scheduler will overlap.
-        //
-        // Queue families are declared by the ICD (installable client driver),
-        // not directly by the hardware. The same physical GPU can expose different
-        // family layouts under different ICDs — e.g. MoltenVK may report 4
-        // identical families on Apple silicon while a native Vulkan driver on the
-        // same device may report a different arrangement. The ICD decides how to
-        // map the underlying hardware scheduling capabilities into Vulkan's queue
-        // family abstraction.
         for (size_t i = 0; i < QueueProps.size(); ++i) {
             LogDebug("Queue family [{}]: count={}, flags={}",
                      i,
@@ -600,10 +499,7 @@ class RenderDevice final : public RHI::RenderDevice {
                      vk::to_string(QueueProps[i].queueFamilyProperties.queueFlags));
         }
 
-        // ── Graphics + Present (require a single queue family that supports both) ─
-        // Surface was created before PickPhysicalDevice, so it is guaranteed
-        // to be valid here. We require one queue family with both graphics and
-        // present capability; separate families are not supported.
+        // Graphics + Present
         {
             for (size_t i = 0; i < QueueProps.size(); ++i) {
                 if ((QueueProps[i].queueFamilyProperties.queueFlags & vk::QueueFlagBits::eGraphics) !=
@@ -620,13 +516,11 @@ class RenderDevice final : public RHI::RenderDevice {
         if (m_GraphicsFamily == vk::QueueFamilyIgnored)
             return std::unexpected(ErrorMessage("No queue family supports both graphics and presentation"));
 
-        // ── Compute (prefer async compute: compute-only or graphics+compute) ─
-        // 1st pass: dedicated compute queue (has Compute but NOT Graphics)
+        // Compute
         auto ComputeIt = std::ranges::find_if(QueueProps, [](const auto& QFP) {
             return (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eCompute) != vk::QueueFlags{} &&
                    (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eGraphics) == vk::QueueFlags{};
         });
-        // 2nd pass: any compute-capable queue
         if (ComputeIt == QueueProps.end()) {
             ComputeIt = std::ranges::find_if(QueueProps, [](const auto& QFP) {
                 return (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eCompute) != vk::QueueFlags{};
@@ -636,21 +530,18 @@ class RenderDevice final : public RHI::RenderDevice {
             return std::unexpected(ErrorMessage("No compute-capable queue family found"));
         m_ComputeFamily = static_cast<uint32_t>(std::distance(QueueProps.begin(), ComputeIt));
 
-        // ── Transfer (prefer dedicated transfer queue) ──────────────────
-        // 1st pass: dedicated transfer (has Transfer but NOT Graphics and NOT Compute)
+        // Transfer
         auto TransferIt = std::ranges::find_if(QueueProps, [](const auto& QFP) {
             return (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eTransfer) != vk::QueueFlags{} &&
                    (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eGraphics) == vk::QueueFlags{} &&
                    (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eCompute) == vk::QueueFlags{};
         });
-        // 2nd pass: transfer without graphics
         if (TransferIt == QueueProps.end()) {
             TransferIt = std::ranges::find_if(QueueProps, [](const auto& QFP) {
                 return (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eTransfer) != vk::QueueFlags{} &&
                        (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eGraphics) == vk::QueueFlags{};
             });
         }
-        // 3rd pass: any transfer-capable queue
         if (TransferIt == QueueProps.end()) {
             TransferIt = std::ranges::find_if(QueueProps, [](const auto& QFP) {
                 return (QFP.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eTransfer) != vk::QueueFlags{};
@@ -668,10 +559,6 @@ class RenderDevice final : public RHI::RenderDevice {
         return {};
     }
 
-    /// Register all swapchain images in the committed-state map so the
-    /// first-use barrier in BeginRendering has a correct srcStageMask that
-    /// chains with the AcquireNextImage semaphore wait stage
-    /// (eColorAttachmentOutput).
     auto RegisterSwapchainImages() -> void {
         for (uint32_t i = 0; i < m_Swapchain.GetImageCount(); ++i) {
             auto Image                    = m_Swapchain.GetImage(i);
@@ -683,6 +570,116 @@ class RenderDevice final : public RHI::RenderDevice {
         }
     }
 
+    // CommandVisitor lives in VKCommand.cppm — imported via :Command partition.
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    // Execute — consume CommandList, record and submit
+    // ═════════════════════════════════════════════════════════════════════════════
+
+    [[nodiscard]] auto Execute(const RHI::CommandList& CmdList) -> std::expected<void, ErrorMessage> override {
+        if (auto R = BeginFrame(); !R)
+            return R;
+        if (!CmdList.GlobalConstantData.empty()) {
+            if (auto R =
+                    WriteGlobalConstantBuffer(CmdList.GlobalConstantData.data(), CmdList.GlobalConstantData.size());
+                !R)
+                return R;
+        }
+
+        std::vector<vk::CommandBuffer> Secondaries;
+        Secondaries.reserve(CmdList.Passes.size());
+
+        for (const auto& Pass : CmdList.Passes) {
+            // Allocate per-pass secondary from the frame's sub-pool
+            vk::CommandBufferAllocateInfo Alloc{
+                .commandPool        = *m_FrameContext[m_CurrentFrame].SubPool,
+                .level              = vk::CommandBufferLevel::eSecondary,
+                .commandBufferCount = 1,
+            };
+            auto AllocResult = m_Device.allocateCommandBuffers(Alloc);
+            if (AllocResult.result != vk::Result::eSuccess)
+                return std::unexpected(ErrorMessage("Execute: failed to allocate secondary CB"));
+            auto& SecBuf =
+                m_FrameContext[m_CurrentFrame].ScratchSecondaries.emplace_back(std::move(AllocResult.value[0]));
+
+            vk::CommandBufferInheritanceInfo Inheritance{
+                .renderPass           = nullptr,
+                .subpass              = 0,
+                .framebuffer          = nullptr,
+                .occlusionQueryEnable = vk::False,
+            };
+            vk::CommandBufferBeginInfo BeginCI{
+                .flags            = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+                .pInheritanceInfo = &Inheritance,
+            };
+            if (auto R = SecBuf.begin(BeginCI); R != vk::Result::eSuccess)
+                return std::unexpected(
+                    ErrorMessage(Core::Format("Execute: secondary CB begin failed: {}", vk::to_string(R))));
+
+            m_DescriptorManager->BindTo(m_CurrentFrame, SecBuf);
+
+            // Begin rendering scope from Pass desc
+            {
+                auto           ImageStateCopy = m_CommittedImageStates;
+                CommandVisitor Visitor{.Buf = SecBuf, .LocalStates = ImageStateCopy, .Swc = &m_Swapchain};
+                Visitor.BeginPass(Pass.Desc);
+                for (const auto& Cmd : Pass.Commands)
+                    std::visit(Visitor, Cmd);
+                Visitor.EndPass();
+                m_CommittedImageStates = std::move(ImageStateCopy);
+            }
+            if (auto R = SecBuf.end(); R != vk::Result::eSuccess)
+                return std::unexpected(
+                    ErrorMessage(Core::Format("Execute: secondary CB end failed: {}", vk::to_string(R))));
+            Secondaries.push_back(static_cast<vk::CommandBuffer>(*SecBuf));
+        }
+
+        // Primary CB was already prepared in BeginFrame — just execute secondaries
+        auto& FC      = m_FrameContext[m_CurrentFrame];
+        auto& Primary = FC.PrimaryBuffer;
+
+        Primary.executeCommands(Secondaries);
+        if (auto R = Primary.end(); R != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage("Execute: primary end failed"));
+
+        vk::CommandBufferSubmitInfo PrimarySubmitInfo{.commandBuffer = *Primary};
+        vk::SemaphoreSubmitInfo     PresentCompleteSema{
+            .semaphore = *m_FrameContext[m_CurrentFrame].PresentComplete,
+            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        };
+        vk::SemaphoreSubmitInfo RenderingCompleteSema{
+            .semaphore = m_Swapchain.GetCurrentRenderCompleteSemaphore(),
+            .stageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
+        };
+        auto TimelineSignalSema = m_Timeline.GetSignalSubmitInfo(vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+        vk::SemaphoreSubmitInfo SignalSemas[]{RenderingCompleteSema, TimelineSignalSema};
+
+        vk::SubmitInfo2 SubmitInfo2{
+            .waitSemaphoreInfoCount   = 1,
+            .pWaitSemaphoreInfos      = &PresentCompleteSema,
+            .commandBufferInfoCount   = 1,
+            .pCommandBufferInfos      = &PrimarySubmitInfo,
+            .signalSemaphoreInfoCount = 2,
+            .pSignalSemaphoreInfos    = SignalSemas,
+        };
+        if (auto R = m_GraphicsQueue.submit2({SubmitInfo2}); R != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage(Core::Format("Queue submit failed: {}", vk::to_string(R))));
+
+        m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = TimelineSignalSema.value;
+
+        auto PresentRes = m_Swapchain.Present(m_GraphicsQueue);
+        if (PresentRes == vk::Result::eErrorOutOfDateKHR || PresentRes == vk::Result::eSuboptimalKHR) {
+            if (auto R = m_Swapchain.Recreate(); !R)
+                return std::unexpected(R.error().Append("Swapchain recreation failed after Present error"));
+            RegisterSwapchainImages();
+        } else if (PresentRes != vk::Result::eSuccess) {
+            return std::unexpected(ErrorMessage(Core::Format("Present failed: {}", vk::to_string(PresentRes))));
+        }
+
+        m_CurrentFrame = (m_CurrentFrame + 1) % m_FramesInFlight;
+        return {};
+    }
+
     // ── RAII resources ─────────────────────────────────────────────────────
 
     vk::raii::Instance       m_Instance       = nullptr;
@@ -690,10 +687,7 @@ class RenderDevice final : public RHI::RenderDevice {
     vk::raii::PhysicalDevice m_PhysicalDevice = nullptr;
     vk::raii::Device         m_Device         = nullptr;
 
-    // ── Capability (extensions + feature chain, persists for device lifetime) ─
     Capability m_Capability;
-
-    // ── Cached raw state ───────────────────────────────────────────────────
 
     uint32_t m_GraphicsFamily = vk::QueueFamilyIgnored;
     uint32_t m_ComputeFamily  = vk::QueueFamilyIgnored;
@@ -703,8 +697,8 @@ class RenderDevice final : public RHI::RenderDevice {
     vk::raii::Queue m_ComputeQueue  = nullptr;
     vk::raii::Queue m_TransferQueue = nullptr;
 
-    ImmediateContext         m_ImmediateContext;
-    DeferredDeletionQueue    m_DeletionQueue;
+    ImmediateContext      m_ImmediateContext;
+    DeferredDeletionQueue m_DeletionQueue;
 
     uint32_t m_FramesInFlight = 2;
     uint32_t m_CurrentFrame   = 0;
@@ -716,30 +710,14 @@ class RenderDevice final : public RHI::RenderDevice {
     VmaAllocator      m_Allocator = nullptr;
     TimelineSemaphore m_Timeline;
 
-    // ── Main command pool (owned here, borrowed by CommandLists) ─────────
-    vk::raii::CommandPool m_MainCommandPool = nullptr;
-
     std::vector<FrameContext> m_FrameContext;
 
     // ── Global descriptor manager ─────────────────────────────────────────
     Core::UPtr<DescriptorManager> m_DescriptorManager = nullptr;
 
-    // ── Built-in graphics command list ───────────────────────────────────
-
-    Core::UPtr<CommandList> m_GraphicsCommandList = nullptr;
-
-    // ── Resource registries ─────────────────────────────────────────────────
-
-
     // ── Barrier state tracking ───────────────────────────────────────────
 
-    /// Queue-committed image state map — reflects GPU state after all
-    /// previously submitted work.  Keyed by vk::Image (Vulkan-Hpp provides
-    /// std::hash and operator== for handle types).
-    /// Snapshot by CommandList::Begin(), written back in EndFrame().
     std::unordered_map<vk::Image, ImageState> m_CommittedImageStates;
-
-    /// TODO: m_CommittedBufferStates for buffer barrier tracking.
 };
 
 } // namespace SoulEngine::RHI::Vulkan

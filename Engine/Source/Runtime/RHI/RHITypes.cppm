@@ -9,6 +9,23 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::RHI {
 
+// ── Buffer descriptor types ────────────────────────────────────────────────
+
+struct VertexBufferDesc {
+    const void* Data        = nullptr;
+    Uint64      VertexCount = 0;
+    Uint32      Stride      = 0;
+};
+
+struct IndexBufferDesc {
+    const void* Data       = nullptr;
+    Uint64      IndexCount = 0;
+};
+
+struct ConstantBufferDesc {
+    Uint64 Size = 0;
+};
+
 // ── Typed GPU buffer polymorphic bases ──────────────────────────────────
 
 /// Empty polymorphic base for vertex buffer resources.
@@ -16,7 +33,7 @@ export namespace SoulEngine::RHI {
 /// Consumers hold SPtr<VertexBuffer> for type-safe API usage.
 class VertexBuffer {
   public:
-    VertexBuffer()                                 = default;
+    VertexBuffer()                                       = default;
     VertexBuffer(const VertexBuffer&)                    = delete;
     auto operator=(const VertexBuffer&) -> VertexBuffer& = delete;
     VertexBuffer(VertexBuffer&&)                         = delete;
@@ -28,7 +45,7 @@ class VertexBuffer {
 /// Same role as VertexBuffer, for index data.
 class IndexBuffer {
   public:
-    IndexBuffer()                                 = default;
+    IndexBuffer()                                      = default;
     IndexBuffer(const IndexBuffer&)                    = delete;
     auto operator=(const IndexBuffer&) -> IndexBuffer& = delete;
     IndexBuffer(IndexBuffer&&)                         = delete;
@@ -36,12 +53,34 @@ class IndexBuffer {
     virtual ~IndexBuffer()                             = default;
 };
 
+/// Abstract base for constant (uniform) buffer resources.
+/// Backend concrete class (e.g. Vulkan::UniformBuffer) holds per-frame
+/// mappable buffer copies and auto-selects the current frame's copy on Write().
+/// Consumers hold SPtr<ConstantBuffer> and call Write() each frame with
+/// updated data — the FramesInFlight count is an internal backend detail.
+class ConstantBuffer {
+  public:
+    ConstantBuffer()                                         = default;
+    ConstantBuffer(const ConstantBuffer&)                    = delete;
+    auto operator=(const ConstantBuffer&) -> ConstantBuffer& = delete;
+    ConstantBuffer(ConstantBuffer&&)                         = delete;
+    auto operator=(ConstantBuffer&&) -> ConstantBuffer&      = delete;
+    virtual ~ConstantBuffer()                                = default;
+
+    /// Upload new data to the current frame's buffer slot.
+    /// Size must not exceed the buffer's capacity.
+    [[nodiscard]] virtual auto Write(const void* Data, Uint64 Size) -> std::expected<void, ErrorMessage> = 0;
+
+    /// Return the buffer size in bytes (same for all frame slots).
+    [[nodiscard]] virtual auto GetSize() const -> Uint64 = 0;
+};
+
 /// Empty polymorphic base for graphics pipeline resources.
 /// Backend concrete class (e.g. Vulkan::GraphicsPipeline) owns the native
 /// pipeline. Consumers hold SPtr<GraphicsPipeline> for type-safe API usage.
 class GraphicsPipeline {
   public:
-    GraphicsPipeline() = default;
+    GraphicsPipeline()                                           = default;
     GraphicsPipeline(const GraphicsPipeline&)                    = delete;
     auto operator=(const GraphicsPipeline&) -> GraphicsPipeline& = delete;
     GraphicsPipeline(GraphicsPipeline&&)                         = delete;
@@ -56,33 +95,6 @@ struct Texture {
 };
 struct Sampler {
     Uint64 Handle = 0;
-};
-
-// ── Buffer usage flags (internal — used by backends for VkBuffer creation) ─
-
-enum class BufferUsage : Uint32 {
-    Unknown       = 0,
-    VertexBuffer  = 1u << 0,
-    IndexBuffer   = 1u << 1,
-    UniformBuffer = 1u << 2,
-    StorageBuffer = 1u << 3,
-    Indirect      = 1u << 4,
-    TransferSrc   = 1u << 5,
-    TransferDst   = 1u << 6,
-};
-
-[[nodiscard]] inline auto operator|(BufferUsage a, BufferUsage b) -> BufferUsage {
-    return static_cast<BufferUsage>(static_cast<Uint32>(a) | static_cast<Uint32>(b));
-}
-
-[[nodiscard]] inline auto operator&(BufferUsage a, BufferUsage b) -> bool {
-    return (static_cast<Uint32>(a) & static_cast<Uint32>(b)) != 0;
-}
-
-struct BufferDesc {
-    Uint64      SizeInBytes = 0;
-    BufferUsage Usage       = BufferUsage::Unknown;
-    bool        Mappable    = false;
 };
 
 // ── Texture ──────────────────────────────────────────────────────────────────

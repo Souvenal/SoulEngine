@@ -13,6 +13,7 @@
 export module Application;
 
 import Core;
+import RHI;
 import Renderer;
 import Scene;
 
@@ -57,6 +58,24 @@ class Application {
 
     /// @brief Per-frame application update (game logic, simulation).
     virtual auto OnTick(float DeltaTime) -> void = 0;
+
+    /// @brief Mutable access to the active scene.
+    /// Used by the FramePipeline's GameThread to copy scene data into
+    /// the next available frame slot before signalling the RenderThread.
+    [[nodiscard]] auto GetScene() -> Scene::Scene& {
+        return m_Scene;
+    }
+
+    /// @brief Read-only access to the active scene.
+    [[nodiscard]] auto GetScene() const -> const Scene::Scene& {
+        return m_Scene;
+    }
+
+    /// @brief Access the renderer.
+    /// Valid after OnAttach() succeeds and before OnDetach() returns.
+    [[nodiscard]] auto GetRenderer() -> Renderer::IRenderer& {
+        return *m_Renderer;
+    }
 
     /// @brief Render the current scene.  Non-virtual — fixed pipeline.
     /// Calls m_Renderer->Render(m_Scene) and logs on failure.

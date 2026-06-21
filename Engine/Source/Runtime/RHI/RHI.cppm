@@ -4,7 +4,7 @@ export import Core;
 export import :Types;
 export import :Reflection;
 export import :RenderDevice;
-export import :CommandList;
+export import :Command; // CommandList, Pass, Command variant
 
 // RHI singleton lifecycle is now on RenderDevice:
 //   RenderDevice::Create(Window)   — bootstrap

@@ -27,7 +27,7 @@ class HostBuffer {
   public:
     HostBuffer() = default;
 
-    [[nodiscard]] static auto Create(Uint64 Size, BufferUsage Usage, vk::Device Dev, VmaAllocator Alloc)
+    [[nodiscard]] static auto Create(Uint64 Size, vk::BufferUsageFlags Usage, vk::Device Dev, VmaAllocator Alloc)
         -> std::expected<HostBuffer, ErrorMessage> {
         HostBuffer Buf;
         Buf.m_Allocator = Alloc;
@@ -36,7 +36,7 @@ class HostBuffer {
 
         vk::BufferCreateInfo BufCI{
             .size        = Size,
-            .usage       = ToVkBufferUsage(Usage),
+            .usage       = Usage,
             .sharingMode = vk::SharingMode::eExclusive,
         };
 
@@ -57,11 +57,16 @@ class HostBuffer {
         return Buf;
     }
 
-    ~HostBuffer() { Destroy(); }
+    ~HostBuffer() {
+        Destroy();
+    }
 
     HostBuffer(HostBuffer&& Other) noexcept
-        : m_Allocator(Other.m_Allocator), m_Device(Other.m_Device),
-          m_Buffer(Other.m_Buffer), m_Allocation(Other.m_Allocation), m_Size(Other.m_Size) {
+        : m_Allocator(Other.m_Allocator),
+          m_Device(Other.m_Device),
+          m_Buffer(Other.m_Buffer),
+          m_Allocation(Other.m_Allocation),
+          m_Size(Other.m_Size) {
         Other.m_Buffer     = nullptr;
         Other.m_Allocation = nullptr;
         Other.m_Size       = 0;
@@ -70,11 +75,11 @@ class HostBuffer {
     auto operator=(HostBuffer&& Other) noexcept -> HostBuffer& {
         if (this != &Other) {
             Destroy();
-            m_Allocator  = Other.m_Allocator;
-            m_Device     = Other.m_Device;
-            m_Buffer     = Other.m_Buffer;
-            m_Allocation = Other.m_Allocation;
-            m_Size       = Other.m_Size;
+            m_Allocator        = Other.m_Allocator;
+            m_Device           = Other.m_Device;
+            m_Buffer           = Other.m_Buffer;
+            m_Allocation       = Other.m_Allocation;
+            m_Size             = Other.m_Size;
             Other.m_Buffer     = nullptr;
             Other.m_Allocation = nullptr;
             Other.m_Size       = 0;
@@ -82,20 +87,24 @@ class HostBuffer {
         return *this;
     }
 
-    HostBuffer(const HostBuffer&)            = delete;
+    HostBuffer(const HostBuffer&)     = delete;
     auto operator=(const HostBuffer&) = delete;
 
-    [[nodiscard]] auto Get() const -> vk::Buffer { return m_Buffer; }
-    [[nodiscard]] auto GetSize() const -> Uint64  { return m_Size; }
+    [[nodiscard]] auto Get() const -> vk::Buffer {
+        return m_Buffer;
+    }
+    [[nodiscard]] auto GetSize() const -> Uint64 {
+        return m_Size;
+    }
 
     /// Upload host data to the buffer at Offset.
     /// One-shot: map -> memcpy -> unmap.
-    [[nodiscard]] auto Upload(const void* Data, Uint64 Size, Uint64 Offset = 0)
-        -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto Upload(const void* Data, Uint64 Size, Uint64 Offset = 0) -> std::expected<void, ErrorMessage> {
         if (Offset + Size > m_Size)
-            return std::unexpected(ErrorMessage(
-                Core::Format("HostBuffer upload exceeds size (offset {} + size {} > capacity {})", Offset, Size, m_Size)));
-        if (Size == 0) return {};
+            return std::unexpected(ErrorMessage(Core::Format(
+                "HostBuffer upload exceeds size (offset {} + size {} > capacity {})", Offset, Size, m_Size)));
+        if (Size == 0)
+            return {};
 
         auto Result = vmaCopyMemoryToAllocation(
             m_Allocator, Data, m_Allocation, static_cast<VkDeviceSize>(Offset), static_cast<VkDeviceSize>(Size));
@@ -144,7 +153,7 @@ class DeviceBuffer {
   public:
     DeviceBuffer() = default;
 
-    [[nodiscard]] static auto Create(Uint64 Size, BufferUsage Usage, vk::Device Dev, VmaAllocator Alloc)
+    [[nodiscard]] static auto Create(Uint64 Size, vk::BufferUsageFlags Usage, vk::Device Dev, VmaAllocator Alloc)
         -> std::expected<DeviceBuffer, ErrorMessage> {
         DeviceBuffer Buf;
         Buf.m_Allocator = Alloc;
@@ -153,7 +162,7 @@ class DeviceBuffer {
 
         vk::BufferCreateInfo BufCI{
             .size        = Size,
-            .usage       = ToVkBufferUsage(Usage),
+            .usage       = Usage,
             .sharingMode = vk::SharingMode::eExclusive,
         };
 
@@ -173,11 +182,16 @@ class DeviceBuffer {
         return Buf;
     }
 
-    ~DeviceBuffer() { Destroy(); }
+    ~DeviceBuffer() {
+        Destroy();
+    }
 
     DeviceBuffer(DeviceBuffer&& Other) noexcept
-        : m_Allocator(Other.m_Allocator), m_Device(Other.m_Device),
-          m_Buffer(Other.m_Buffer), m_Allocation(Other.m_Allocation), m_Size(Other.m_Size) {
+        : m_Allocator(Other.m_Allocator),
+          m_Device(Other.m_Device),
+          m_Buffer(Other.m_Buffer),
+          m_Allocation(Other.m_Allocation),
+          m_Size(Other.m_Size) {
         Other.m_Buffer     = nullptr;
         Other.m_Allocation = nullptr;
         Other.m_Size       = 0;
@@ -186,11 +200,11 @@ class DeviceBuffer {
     auto operator=(DeviceBuffer&& Other) noexcept -> DeviceBuffer& {
         if (this != &Other) {
             Destroy();
-            m_Allocator  = Other.m_Allocator;
-            m_Device     = Other.m_Device;
-            m_Buffer     = Other.m_Buffer;
-            m_Allocation = Other.m_Allocation;
-            m_Size       = Other.m_Size;
+            m_Allocator        = Other.m_Allocator;
+            m_Device           = Other.m_Device;
+            m_Buffer           = Other.m_Buffer;
+            m_Allocation       = Other.m_Allocation;
+            m_Size             = Other.m_Size;
             Other.m_Buffer     = nullptr;
             Other.m_Allocation = nullptr;
             Other.m_Size       = 0;
@@ -198,11 +212,15 @@ class DeviceBuffer {
         return *this;
     }
 
-    DeviceBuffer(const DeviceBuffer&)            = delete;
+    DeviceBuffer(const DeviceBuffer&)   = delete;
     auto operator=(const DeviceBuffer&) = delete;
 
-    [[nodiscard]] auto Get() const -> vk::Buffer { return m_Buffer; }
-    [[nodiscard]] auto GetSize() const -> Uint64  { return m_Size; }
+    [[nodiscard]] auto Get() const -> vk::Buffer {
+        return m_Buffer;
+    }
+    [[nodiscard]] auto GetSize() const -> Uint64 {
+        return m_Size;
+    }
 
     /// Copy full contents from a HostBuffer staging source via ImmediateContext.
     /// Copies min(SrcSize, this->Size) bytes. Signals SignalSema on completion.
@@ -210,10 +228,12 @@ class DeviceBuffer {
         -> std::expected<void, ErrorMessage> {
         Uint64 CopySize = std::min(Src.GetSize(), m_Size);
 
-        auto CopyResult = Ctx.SubmitTransfer([&](const vk::raii::CommandBuffer& CmdBuf) {
-            vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
-            CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
-        }, SignalSema);
+        auto CopyResult = Ctx.SubmitTransfer(
+            [&](const vk::raii::CommandBuffer& CmdBuf) {
+                vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
+                CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
+            },
+            SignalSema);
 
         if (!CopyResult)
             return std::unexpected(CopyResult.error().Append("DeviceBuffer::CopyFrom failed"));
@@ -247,56 +267,59 @@ class VertexBuffer final : public RHI::VertexBuffer {
     /// Static factory: creates staging buffer, uploads data, copies to
     /// device-local buffer via ImmediateContext, and defers staging destruction
     /// to DeferredDeletionQueue.
-    [[nodiscard]] static auto Create(
-        VmaAllocator Alloc,
-        vk::Device Dev,
-        ImmediateContext& ImmCtx,
-        DeferredDeletionQueue& DelQueue,
-        const void* Data,
-        Uint64 Size,
-        Uint32 Stride,
-        Uint64 VertexCount)
+    [[nodiscard]] static auto Create(const RHI::VertexBufferDesc& Desc,
+                                     VmaAllocator                 Alloc,
+                                     vk::Device                   Dev,
+                                     ImmediateContext&            ImmCtx,
+                                     DeferredDeletionQueue&       DelQueue)
         -> std::expected<SPtr<VertexBuffer>, ErrorMessage> {
+        Uint64 Size  = Desc.VertexCount * Desc.Stride;
+        Uint64 VCnt  = Desc.VertexCount;
+        Uint32 Strid = Desc.Stride;
 
         // ── Staging buffer ──────────────────────────────────────────────
         HostBuffer Staging;
-        auto StagingRes = HostBuffer::Create(
-            Size, RHI::BufferUsage::TransferSrc, Dev, Alloc);
+        auto       StagingRes = HostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Dev, Alloc);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VertexBuffer::Create: staging creation failed"));
         Staging = std::move(*StagingRes);
 
-        if (auto R = Staging.Upload(Data, Size); !R)
+        if (auto R = Staging.Upload(Desc.Data, Size); !R)
             return std::unexpected(R.error().Append("VertexBuffer::Create: staging upload failed"));
 
         // ── Device buffer ────────────────────────────────────────────────
         DeviceBuffer DevBuf;
-        auto DevRes = DeviceBuffer::Create(
-            Size, RHI::BufferUsage::VertexBuffer | RHI::BufferUsage::TransferDst,
-            Dev, Alloc);
+        auto         DevRes = DeviceBuffer::Create(
+            Size, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, Dev, Alloc);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("VertexBuffer::Create: device buffer creation failed"));
         DevBuf = std::move(*DevRes);
 
         // ── Copy staging -> device with timeline signal ────────────────
         uint64_t SignalValue = DelQueue.NextValue();
-        auto SignalSema = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
+        auto     SignalSema  = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
         if (auto R = DevBuf.CopyFrom(Staging, ImmCtx, SignalSema); !R)
             return std::unexpected(R.error().Append("VertexBuffer::Create: staging copy failed"));
 
         // ── Defer staging destruction ──────────────────────────────────
         Staging.DeferredDelete(DelQueue, SignalValue);
 
-        return std::make_shared<VertexBuffer>(std::move(DevBuf), Stride, VertexCount);
+        return std::make_shared<VertexBuffer>(std::move(DevBuf), Strid, VCnt);
     }
 
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer { return m_Buffer.Get(); }
-    [[nodiscard]] auto GetStride() const -> Uint32       { return m_Stride; }
-    [[nodiscard]] auto GetVertexCount() const -> Uint64  { return m_VertexCount; }
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        return m_Buffer.Get();
+    }
+    [[nodiscard]] auto GetStride() const -> Uint32 {
+        return m_Stride;
+    }
+    [[nodiscard]] auto GetVertexCount() const -> Uint64 {
+        return m_VertexCount;
+    }
 
-    VertexBuffer(const VertexBuffer&)                = delete;
+    VertexBuffer(const VertexBuffer&)                    = delete;
     auto operator=(const VertexBuffer&) -> VertexBuffer& = delete;
-    VertexBuffer(VertexBuffer&&)                     = delete;
+    VertexBuffer(VertexBuffer&&)                         = delete;
     auto operator=(VertexBuffer&&) -> VertexBuffer&      = delete;
 
   private:
@@ -313,64 +336,108 @@ class IndexBuffer final : public RHI::IndexBuffer {
   public:
     // Public for std::make_shared compatibility per ADR 02.
     // All callers should use Create() instead.
-    IndexBuffer(DeviceBuffer&& Buf, Uint64 IndexCount, bool UseUint16)
-        : m_Buffer(std::move(Buf)), m_IndexCount(IndexCount), m_UseUint16(UseUint16) {}
+    IndexBuffer(DeviceBuffer&& Buf, Uint64 IndexCount) : m_Buffer(std::move(Buf)), m_IndexCount(IndexCount) {}
 
     /// Static factory: same pattern as VertexBuffer::Create.
-    [[nodiscard]] static auto Create(
-        VmaAllocator Alloc,
-        vk::Device Dev,
-        ImmediateContext& ImmCtx,
-        DeferredDeletionQueue& DelQueue,
-        const void* Data,
-        Uint64 Size,
-        Uint64 IndexCount,
-        bool UseUint16)
+    /// Index type is hardcoded to uint32 (eUint32).  uint16 is not supported.
+    [[nodiscard]] static auto Create(const RHI::IndexBufferDesc& Desc,
+                                     VmaAllocator                Alloc,
+                                     vk::Device                  Dev,
+                                     ImmediateContext&           ImmCtx,
+                                     DeferredDeletionQueue&      DelQueue)
         -> std::expected<SPtr<IndexBuffer>, ErrorMessage> {
+        Uint64 IndexCount = Desc.IndexCount;
+        Uint64 Size       = IndexCount * 4ULL;
 
         HostBuffer Staging;
-        auto StagingRes = HostBuffer::Create(
-            Size, RHI::BufferUsage::TransferSrc, Dev, Alloc);
+        auto       StagingRes = HostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Dev, Alloc);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("IndexBuffer::Create: staging creation failed"));
         Staging = std::move(*StagingRes);
 
-        if (auto R = Staging.Upload(Data, Size); !R)
+        if (auto R = Staging.Upload(Desc.Data, Size); !R)
             return std::unexpected(R.error().Append("IndexBuffer::Create: staging upload failed"));
 
         DeviceBuffer DevBuf;
-        auto DevRes = DeviceBuffer::Create(
-            Size, RHI::BufferUsage::IndexBuffer | RHI::BufferUsage::TransferDst,
-            Dev, Alloc);
+        auto         DevRes = DeviceBuffer::Create(
+            Size, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, Dev, Alloc);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("IndexBuffer::Create: device buffer creation failed"));
         DevBuf = std::move(*DevRes);
 
         uint64_t SignalValue = DelQueue.NextValue();
-        auto SignalSema = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
+        auto     SignalSema  = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
         if (auto R = DevBuf.CopyFrom(Staging, ImmCtx, SignalSema); !R)
             return std::unexpected(R.error().Append("IndexBuffer::Create: staging copy failed"));
 
         Staging.DeferredDelete(DelQueue, SignalValue);
 
-        return std::make_shared<IndexBuffer>(std::move(DevBuf), IndexCount, UseUint16);
+        return std::make_shared<IndexBuffer>(std::move(DevBuf), IndexCount);
     }
 
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer { return m_Buffer.Get(); }
-    [[nodiscard]] auto GetIndexCount() const -> Uint64   { return m_IndexCount; }
-    [[nodiscard]] auto GetIndexType() const -> vk::IndexType {
-        return m_UseUint16 ? vk::IndexType::eUint16 : vk::IndexType::eUint32;
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        return m_Buffer.Get();
+    }
+    [[nodiscard]] auto GetIndexCount() const -> Uint64 {
+        return m_IndexCount;
     }
 
-    IndexBuffer(const IndexBuffer&)                = delete;
+    IndexBuffer(const IndexBuffer&)                    = delete;
     auto operator=(const IndexBuffer&) -> IndexBuffer& = delete;
-    IndexBuffer(IndexBuffer&&)                     = delete;
+    IndexBuffer(IndexBuffer&&)                         = delete;
     auto operator=(IndexBuffer&&) -> IndexBuffer&      = delete;
 
   private:
     DeviceBuffer m_Buffer;
     Uint64       m_IndexCount = 0;
-    bool         m_UseUint16  = false;
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Vulkan::UniformBuffer — single mappable uniform buffer
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Mappable uniform buffer backed by a single HostBuffer.
+/// No awareness of FramesInFlight — Write() writes to this one buffer.
+///
+/// Per-frame duplication is the caller's concern (RenderDevice creates N
+/// copies, one per FrameContext slot).
+class UniformBuffer final : public RHI::ConstantBuffer {
+  public:
+    // Public for std::make_shared compatibility per ADR 02.
+    // All callers should use Create() instead.
+    UniformBuffer(HostBuffer&& Buf, Uint64 Size) : m_Buffer(std::move(Buf)), m_Size(Size) {}
+
+    /// Static factory: creates a mappable UniformBuffer.
+    /// Returns error if VMA allocation fails.
+    [[nodiscard]] static auto Create(const RHI::ConstantBufferDesc& Desc, vk::Device Dev, VmaAllocator Alloc)
+        -> std::expected<SPtr<UniformBuffer>, ErrorMessage> {
+        auto HostRes = HostBuffer::Create(Desc.Size, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
+        if (!HostRes)
+            return std::unexpected(HostRes.error().Append("UniformBuffer::Create: HostBuffer creation failed"));
+        return std::make_shared<UniformBuffer>(std::move(*HostRes), Desc.Size);
+    }
+
+    UniformBuffer(const UniformBuffer&)                    = delete;
+    auto operator=(const UniformBuffer&) -> UniformBuffer& = delete;
+    UniformBuffer(UniformBuffer&&)                         = delete;
+    auto operator=(UniformBuffer&&) -> UniformBuffer&      = delete;
+
+    /// Upload new data to the buffer.
+    [[nodiscard]] auto Write(const void* Data, Uint64 Size) -> std::expected<void, ErrorMessage> override {
+        return m_Buffer.Upload(Data, Size, 0);
+    }
+
+    [[nodiscard]] auto GetSize() const -> Uint64 override {
+        return m_Size;
+    }
+
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        return m_Buffer.Get();
+    }
+
+  private:
+    HostBuffer m_Buffer;
+    Uint64     m_Size = 0;
 };
 
 } // namespace SoulEngine::RHI::Vulkan

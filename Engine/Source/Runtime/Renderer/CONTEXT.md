@@ -8,9 +8,9 @@ Render pipeline orchestration layer — drives RHI command execution and pass co
 
 | Term | Definition |
 |------|------------|
-| **IRenderer** | Abstract base class for all renderers. Holds `m_Passes`. Defines `OnAttach()`, `OnDetach()`, `Render(const Scene::Scene&)`. Receives scene data per-frame — does NOT own the scene. |
-| **TestRenderer** | Prototype concrete renderer. Populates `m_Passes` with one `GraphicsPass`. Accesses RHI context via `RHI::RenderDevice::Get()` singleton. |
-| **GraphicsPass** | Stateless pipeline wrapper: shader pair → ShaderCache → RHI pipeline. Created via `GraphicsPass::Create(GraphicsPassDesc)`. Does NOT own the pipeline resource. |
+| **IRenderer** | Abstract base class for all renderers. Holds `m_Passes`. Defines `OnAttach()`, `OnDetach()`, `Render(const Scene::Scene&) -> expected<CommandList, ErrorMessage>`. Returns a command list — does NOT touch BeginFrame/EndFrame. |
+| **TestRenderer** | Prototype concrete renderer. Populates `m_Passes` with one `GraphicsPass`. Emits variant commands via Pass builder methods. |
+| **GraphicsPass** | Stateless pipeline wrapper: shader pair → ShaderCache → RHI pipeline. Created via `GraphicsPass::Create(GraphicsPassDesc)`. |
 | **GraphicsPassDesc** | Description: `VertEntry` + `FragEntry`, each `ShaderEntry{ShaderPath, EntryName}`. |
 
 ## Architecture
@@ -19,7 +19,7 @@ Render pipeline orchestration layer — drives RHI command execution and pass co
 IRenderer
  ├─ m_Passes: std::vector<GraphicsPass>
  │
- ├── TestRenderer     (prototype — single quad pass)
+ ├── TestRenderer     (prototype — single quad pass, returns CommandList)
  ├── ForwardRenderer  (future)
  ├── DeferredRenderer (future)
  └── RayTracingRenderer (future)
@@ -34,6 +34,6 @@ IRenderer
 
 ## Relationships
 
-- **Application** owns `UPtr<IRenderer>`, creates it in `OnAttach()`, calls `Render(m_Scene)` from `OnRender()`.
-- **EngineLoop** creates the RHI singleton via `RHI::RenderDevice::Create()` before any application is attached.
+- **Application** owns `UPtr<IRenderer>`, creates it in `OnAttach()`, calls `Render(m_Scene)` from `OnRender()`. Application no longer calls BeginFrame/EndFrame — those moved to `RenderDevice::Execute()` on RHIThread.
+- **EngineLoop** owns the frame pipeline: GameLoop calls `OnTick()`, RenderLoop calls `Renderer::Render()` -> gets back `CommandList`, RHILoop calls `RenderDevice::Execute(CommandList)`.
 - Pipeline lifecycle (destroy on detach) is the renderer's responsibility, not GraphicsPass's.
