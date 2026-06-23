@@ -27,6 +27,7 @@ import :ImmediateContext;
 import :DeletionQueue;
 import :Descriptor;
 import :Pipeline;
+import :Texture;
 
 using namespace SoulEngine::Core;
 
@@ -123,9 +124,14 @@ class RenderDevice final : public RHI::RenderDevice {
         // ── Pre-register swapchain images in the committed state map ─────────
         RegisterSwapchainImages();
 
+        // ── Immutable samplers ──────────────────────────────────────────────
+        if (auto Res = CreateSamplers(); !Res.has_value())
+            return std::unexpected(Res.error());
+
         // ── Global descriptor manager ─────────────────────────────────────
         {
-            auto Heap = DescriptorManager::Create(m_Device, m_FramesInFlight, m_FrameContext);
+            std::array<vk::Sampler, 2> RawSamplers = {*m_Samplers[0], *m_Samplers[1]};
+            auto Heap = DescriptorManager::Create(m_Device, m_FramesInFlight, m_FrameContext, RawSamplers);
             if (!Heap)
                 return std::unexpected(Heap.error().Append("DescriptorManager creation failed"));
             m_DescriptorManager = std::make_unique<DescriptorManager>(std::move(*Heap));
@@ -265,29 +271,14 @@ class RenderDevice final : public RHI::RenderDevice {
         return SPtr<RHI::ConstantBuffer>(std::move(*Buf));
     }
 
-    [[nodiscard]] auto CreateTexture(const TextureDesc& Desc) -> std::expected<RHI::Texture, ErrorMessage> override {
-        (void)Desc;
-        return std::unexpected(ErrorMessage("CreateTexture is not implemented yet"));
+    [[nodiscard]] auto CreateTexture(const TextureDesc& Desc)
+        -> std::expected<SPtr<RHI::Texture>, ErrorMessage> override {
+        return Texture::Create(Desc, m_Allocator, m_Device, m_ImmediateContext, m_DeletionQueue, *m_DescriptorManager);
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<SPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
         return GraphicsPipeline::Create(m_Device, Desc, *m_DescriptorManager);
-    }
-
-    [[nodiscard]] auto CreateSampler(const SamplerDesc& Desc) -> std::expected<RHI::Sampler, ErrorMessage> override {
-        (void)Desc;
-        return std::unexpected(ErrorMessage("CreateSampler is not implemented yet"));
-    }
-
-    [[nodiscard]] auto DestroyTexture(RHI::Texture TexHdl) -> std::expected<void, ErrorMessage> override {
-        (void)TexHdl;
-        return std::unexpected(ErrorMessage("Vulkan::Texture wrapper not yet implemented"));
-    }
-
-    [[nodiscard]] auto DestroySampler(RHI::Sampler SampHdl) -> std::expected<void, ErrorMessage> override {
-        (void)SampHdl;
-        return std::unexpected(ErrorMessage("DestroySampler is not implemented yet"));
     }
 
     [[nodiscard]] auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
@@ -326,7 +317,7 @@ class RenderDevice final : public RHI::RenderDevice {
 
         std::vector<const char*> Layers;
 
-        auto EnabledInstanceExts = m_Capability.ResolveInstanceExtensions(Context);
+        auto EnabledInstanceExts = Capability::Get().ResolveInstanceExtensions(Context);
         if (!EnabledInstanceExts.has_value())
             return std::unexpected(EnabledInstanceExts.error());
 
@@ -340,7 +331,7 @@ class RenderDevice final : public RHI::RenderDevice {
             .enabledExtensionCount   = static_cast<uint32_t>(EnabledInstanceExts->size()),
             .ppEnabledExtensionNames = EnabledInstanceExts->data(),
         };
-        if (m_Capability.IsInstanceExtensionEnabled(vk::KHRPortabilityEnumerationExtensionName))
+        if (Capability::Get().IsInstanceExtensionEnabled(vk::KHRPortabilityEnumerationExtensionName))
             InstCI.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
         auto InstanceResult = Context.createInstance(InstCI);
@@ -419,17 +410,17 @@ class RenderDevice final : public RHI::RenderDevice {
             });
         }
 
-        auto EnabledDeviceExts = m_Capability.ResolveDeviceExtensionsAndFeatures(m_PhysicalDevice);
+        auto EnabledDeviceExts = Capability::Get().ResolveDeviceExtensionsAndFeatures(m_PhysicalDevice);
         if (!EnabledDeviceExts.has_value())
             return std::unexpected(EnabledDeviceExts.error());
 
-        auto& [DevExts, Feats2] = *EnabledDeviceExts;
+        auto& [DevExts, FeatsChain] = *EnabledDeviceExts;
 
         for (auto* Ext : DevExts)
             LogDebug("Enabled device extension: {}", Ext);
 
         vk::DeviceCreateInfo DevCI{
-            .pNext                   = &Feats2,
+            .pNext                   = &FeatsChain.get<vk::PhysicalDeviceFeatures2>(),
             .queueCreateInfoCount    = static_cast<uint32_t>(QueueCIs.size()),
             .pQueueCreateInfos       = QueueCIs.data(),
             .enabledExtensionCount   = static_cast<uint32_t>(DevExts.size()),
@@ -444,9 +435,68 @@ class RenderDevice final : public RHI::RenderDevice {
         }
         m_Device = std::move(DevResult.value);
 
+        // ── Verify required features ────────────────────────────────────
+        const auto& V13 = Capability::Get().GetFeatures<vk::PhysicalDeviceVulkan13Features>();
+        if (!V13.synchronization2)
+            return std::unexpected(ErrorMessage("synchronization2 feature not supported by device"));
+        if (!V13.dynamicRendering)
+            return std::unexpected(ErrorMessage("dynamicRendering feature not supported by device"));
+
         m_GraphicsQueue = m_Device.getQueue(m_GraphicsFamily, 0);
         m_ComputeQueue  = m_Device.getQueue(m_ComputeFamily, 0);
         m_TransferQueue = m_Device.getQueue(m_TransferFamily, 0);
+
+        Capability::Get().ResolveDeviceProperties(m_PhysicalDevice);
+
+        return {};
+    }
+
+    /// Create two immutable samplers:
+    ///   [0] linear + repeat (no anisotropy)
+    ///   [1] linear + repeat + max anisotropy
+    [[nodiscard]] auto CreateSamplers() -> std::expected<void, ErrorMessage> {
+        if (!Capability::Get().GetFeatures().samplerAnisotropy)
+            return std::unexpected(ErrorMessage("samplerAnisotropy feature not supported by device"));
+
+        const auto& Limits = Capability::Get().GetProperties().limits;
+
+        auto MakeSampler = [&](bool Aniso) -> std::expected<vk::raii::Sampler, ErrorMessage> {
+            vk::SamplerCreateInfo CI{
+                .magFilter               = vk::Filter::eLinear,
+                .minFilter               = vk::Filter::eLinear,
+                .mipmapMode              = vk::SamplerMipmapMode::eLinear,
+                .addressModeU            = vk::SamplerAddressMode::eRepeat,
+                .addressModeV            = vk::SamplerAddressMode::eRepeat,
+                .addressModeW            = vk::SamplerAddressMode::eRepeat,
+                .mipLodBias              = 0.0f,
+                .anisotropyEnable        = Aniso,
+                .maxAnisotropy           = Aniso ? Limits.maxSamplerAnisotropy : 1.0f,
+                // TODO: compareOp can be used for PCF
+                .compareEnable           = vk::False,
+                .compareOp               = vk::CompareOp::eAlways,
+                // TODO: figure out the lod here
+                .minLod                  = 0.0f,
+                .maxLod                  = vk::LodClampNone,
+                .borderColor             = vk::BorderColor::eIntOpaqueBlack,
+                // normalized:   sample within [0, 1]
+                // unnormalized: sample within [0, texWidth)
+                .unnormalizedCoordinates = vk::False,
+            };
+            auto Res = m_Device.createSampler(CI);
+            if (Res.result != vk::Result::eSuccess)
+                return std::unexpected(ErrorMessage("Failed to create immutable sampler"));
+            return std::move(Res.value);
+        };
+
+        auto S0 = MakeSampler(false);
+        if (!S0)
+            return std::unexpected(S0.error());
+        m_Samplers[0] = std::move(*S0);
+
+        auto S1 = MakeSampler(true);
+        if (!S1)
+            return std::unexpected(S1.error());
+        m_Samplers[1] = std::move(*S1);
 
         return {};
     }
@@ -466,7 +516,7 @@ class RenderDevice final : public RHI::RenderDevice {
             .instance         = static_cast<VkInstance>(*m_Instance),
             .vulkanApiVersion = VK_API_VERSION_1_4,
         };
-        if (m_Capability.IsDeviceExtensionEnabled(vk::EXTMemoryBudgetExtensionName))
+        if (Capability::Get().IsDeviceExtensionEnabled(vk::EXTMemoryBudgetExtensionName))
             VmaInfo.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
         VkResult Result = vmaCreateAllocator(&VmaInfo, &m_Allocator);
         if (Result != VK_SUCCESS)
@@ -687,8 +737,6 @@ class RenderDevice final : public RHI::RenderDevice {
     vk::raii::PhysicalDevice m_PhysicalDevice = nullptr;
     vk::raii::Device         m_Device         = nullptr;
 
-    Capability m_Capability;
-
     uint32_t m_GraphicsFamily = vk::QueueFamilyIgnored;
     uint32_t m_ComputeFamily  = vk::QueueFamilyIgnored;
     uint32_t m_TransferFamily = vk::QueueFamilyIgnored;
@@ -711,6 +759,10 @@ class RenderDevice final : public RHI::RenderDevice {
     TimelineSemaphore m_Timeline;
 
     std::vector<FrameContext> m_FrameContext;
+
+    // ── Immutable samplers ──────────────────────────────────────────────────
+    // Index 0 = linear-repeat, Index 1 = linear-repeat-anisotropic.
+    std::array<vk::raii::Sampler, 2> m_Samplers = {nullptr, nullptr};
 
     // ── Global descriptor manager ─────────────────────────────────────────
     Core::UPtr<DescriptorManager> m_DescriptorManager = nullptr;

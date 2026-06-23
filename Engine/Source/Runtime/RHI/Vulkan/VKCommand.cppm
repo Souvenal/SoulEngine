@@ -70,7 +70,7 @@ struct CommandVisitor {
     /// Begin rendering scope from Pass desc.
     auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
         vk::ImageView ImageView;
-        if (Desc.ColorAttachment.Texture.Handle == 0) {
+        if (!Desc.ColorAttachment.TexturePtr) {
             if (!Swc)
                 return;
             ImageView = Swc->GetImageView(Swc->GetCurrentIndex());
@@ -170,6 +170,11 @@ struct CommandVisitor {
 
     auto operator()(const RHI::DrawCmd& Cmd) -> void {
         Buf.draw(Cmd.VertexCount, Cmd.InstanceCount, Cmd.FirstVertex, Cmd.FirstInstance);
+    }
+
+    auto operator()(const RHI::SetTextureCmd& /*Cmd*/) -> void {
+        // No-op: texture is already in the bindless descriptor set at creation time.
+        // The renderer uses push constants to pass the descriptor slot index to the shader.
     }
 };
 

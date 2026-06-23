@@ -1,6 +1,7 @@
 module;
 
-#include <glm/glm.hpp>
+#include <cstddef>
+#include <hlsl++.h>
 
 export module Renderer:TestRenderer;
 
@@ -8,6 +9,7 @@ import Core;
 import RHI;
 import Scene;
 import ShaderCache;
+import Resource;
 
 import :IRenderer;
 
@@ -18,9 +20,12 @@ using namespace SoulEngine::Core;
 export namespace SoulEngine::Renderer {
 
 struct Vertex {
-    glm::vec3 Position;
-    glm::vec3 Color;
+    hlslpp::float3 Position;
+    hlslpp::float3 Color;
 };
+static_assert(sizeof(Vertex) == 32, "TestRenderer vertex layout expects hlslpp::float3 to occupy 16 bytes");
+static_assert(offsetof(Vertex, Position) == 0, "TestRenderer vertex position offset changed");
+static_assert(offsetof(Vertex, Color) == 16, "TestRenderer vertex color offset changed");
 
 const std::vector<Vertex> kQuadVertices = {
     {.Position = {-0.5f, 0.0f, -0.5f}, .Color = {1.0f, 0.0f, 0.0f}},
@@ -31,13 +36,13 @@ const std::vector<Vertex> kQuadVertices = {
 
 const std::vector<Uint32> kQuadIndices = {0, 1, 2, 2, 3, 0};
 
-/// @brief Constant buffer layout consumed by Test/CubeGlobalCB.slang.
+/// @brief Constant buffer layout matching Common.slang FrameData.
 struct alignas(16) GlobalCBData {
-    alignas(16) glm::mat4 View       = glm::mat4(1.0f);
-    alignas(16) glm::mat4 Projection = glm::mat4(1.0f);
-    alignas(16) float     Time       = 0.0f;
+    alignas(16) hlslpp::float4x4 View       = hlslpp::float4x4::identity();
+    alignas(16) hlslpp::float4x4 Projection = hlslpp::float4x4::identity();
+    alignas(16) float Time                  = 0.0f;
 };
-static_assert(sizeof(GlobalCBData) == 144, "GlobalCBData must match Test/CubeGlobalCB.slang std140 layout");
+static_assert(sizeof(GlobalCBData) == 144, "GlobalCBData must match Common.slang FrameData std140 layout");
 
 /// @brief Minimal prototype renderer — emits CommandList for RHIThread.
 class TestRenderer final : public IRenderer {
@@ -50,10 +55,29 @@ class TestRenderer final : public IRenderer {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         auto& Ctx = RHI::RenderDevice::Get();
 
-        auto ShaderDir = ConfigManager::Get().ShadersDirPath() / "Test";
+        // CubeGlobalCB.slang imports Common.slang (GlobalData / g_global).
+        auto ShaderDir = ConfigManager::Get().CurrentApplicationDir() / "Shaders";
         auto Pass      = GraphicsPass::Create(GraphicsPassDesc{
             .VertEntry = {.ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()), .EntryName = "vertMain"},
             .FragEntry = {.ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()), .EntryName = "fragMain"},
+            .VertexInputLayout =
+                RHI::VertexInputLayoutDesc{
+                    .Binding = 0,
+                    .Stride  = sizeof(Vertex),
+                    .Attributes =
+                        {
+                            RHI::VertexInputAttributeDesc{
+                                .Location = 0,
+                                .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                .Offset   = offsetof(Vertex, Position),
+                            },
+                            RHI::VertexInputAttributeDesc{
+                                .Location = 1,
+                                .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                .Offset   = offsetof(Vertex, Color),
+                            },
+                        },
+                },
         });
         if (!Pass)
             return std::unexpected(Pass.error().Append("GraphicsPass creation failed"));
@@ -71,6 +95,13 @@ class TestRenderer final : public IRenderer {
             return std::unexpected(IBO.error().Append("Index buffer creation failed"));
         m_IndexBuffer = std::move(*IBO);
 
+        // Load test texture via ResourceManager
+        auto TexResult = Resource::Manager::Get().LoadTexture(
+            (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "statue.jpg").string());
+        if (!TexResult)
+            return std::unexpected(TexResult.error().Append("Test texture load failed"));
+        m_Texture = std::move(*TexResult);
+
         return {};
     }
 
@@ -78,6 +109,7 @@ class TestRenderer final : public IRenderer {
         m_Passes.clear();
         m_VertexBuffer.reset();
         m_IndexBuffer.reset();
+        m_Texture.reset();
     }
 
     /// Produce a CommandList from the current scene data.
@@ -108,6 +140,8 @@ class TestRenderer final : public IRenderer {
             Pass.SetPipeline(Pipe);
             Pass.BindVertexBuffer(m_VertexBuffer);
             Pass.BindIndexBuffer(m_IndexBuffer);
+            if (m_Texture)
+                Pass.SetTexture(0, m_Texture.get());
             Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
         }
 
@@ -129,6 +163,7 @@ class TestRenderer final : public IRenderer {
 
     SPtr<RHI::VertexBuffer> m_VertexBuffer;
     SPtr<RHI::IndexBuffer>  m_IndexBuffer;
+    SPtr<RHI::Texture>      m_Texture;
 };
 
 } // namespace SoulEngine::Renderer

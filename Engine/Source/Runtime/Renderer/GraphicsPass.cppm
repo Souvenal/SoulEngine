@@ -19,8 +19,9 @@ struct ShaderEntry {
 
 /// @brief Description for creating a GraphicsPass.
 struct GraphicsPassDesc {
-    ShaderEntry VertEntry; ///< Vertex shader entry
-    ShaderEntry FragEntry; ///< Fragment shader entry
+    ShaderEntry                VertEntry;         ///< Vertex shader entry
+    ShaderEntry                FragEntry;         ///< Fragment shader entry
+    RHI::VertexInputLayoutDesc VertexInputLayout; ///< CPU vertex buffer layout for pipeline input state
 };
 
 /// @brief A graphics pipeline assembled from shader source and pipeline state.
@@ -75,8 +76,9 @@ class GraphicsPass {
 
         // ── 3. Assemble pipeline desc (all state fields use defaults) ─────
         RHI::GraphicsPipelineDesc PipeDesc {
-            .VertexProgram   = std::move(*Vert),
-            .FragmentProgram = std::move(*Frag),
+            .VertexProgram      = std::move(*Vert),
+            .FragmentProgram    = std::move(*Frag),
+            .VertexInputLayout  = Desc.VertexInputLayout,
         };
         // Topology, Rasterizer, Blend, DepthStencil, ColorFormat, DepthFormat
         // all keep their default values.

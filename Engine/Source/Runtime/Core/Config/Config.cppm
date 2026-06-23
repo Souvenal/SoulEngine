@@ -89,8 +89,8 @@ struct ShaderConfig {
 /// Pure mirror of the `[RHI.Vulkan]` TOML table.  All fields are optional;
 /// the Vulkan backend provides the actual defaults.
 struct VulkanConfig {
-    std::optional<Uint32> MaxTextures;               ///< Bindless texture descriptor slots
-    std::optional<Uint32> GlobalConstantBufferSize;  ///< Per-frame global UBO size (bytes)
+    std::optional<Uint32> MaxTextures;              ///< Bindless texture descriptor slots
+    std::optional<Uint32> GlobalConstantBufferSize; ///< Per-frame global UBO size (bytes)
 };
 
 /// @brief Top-level engine configuration, aggregating all subsystems.
@@ -132,17 +132,18 @@ class ConfigManager final : public Singleton<ConfigManager> {
   public:
     /// @brief Initialize with the engine root directory.
     /// @details Stores the engine root and pre-computes well-known
-    ///          sub-directory paths (Shaders, Logs).  No I/O — call
-    ///          LoadConfig() separately to parse the TOML config.
+    ///          sub-directory paths (Shaders, Logs, ApplicationsRoot).
+    ///          No I/O — call LoadConfig() separately to parse the TOML config.
     /// @param EngineDirPath Absolute path to the engine root (the
     ///                      directory containing Configs/, Shaders/,
     ///                      Logs/, etc.).
     auto Init(const Path& EngineDirPath) -> void {
-        m_EngineDirPath   = EngineDirPath;
-        m_ShadersDirPath  = EngineDirPath / "Shaders";
-        m_LogsDirPath     = EngineDirPath / "Logs";
-        m_ConfigsDirPath  = EngineDirPath / "Configs";
-        m_BinariesDirPath = EngineDirPath / "Binaries";
+        m_EngineDirPath           = EngineDirPath;
+        m_EngineShadersDirPath    = EngineDirPath / "Shaders";
+        m_LogsDirPath             = EngineDirPath / "Logs";
+        m_ConfigsDirPath          = EngineDirPath / "Configs";
+        m_BinariesDirPath         = EngineDirPath / "Binaries";
+        m_ApplicationsRootDirPath = EngineDirPath.parent_path() / "Applications";
     }
 
     /// @brief Parse the config file at EngineDir/Configs/SoulEngine.toml.
@@ -159,8 +160,8 @@ class ConfigManager final : public Singleton<ConfigManager> {
     }
 
     /// @brief Path to Engine/Shaders/.
-    [[nodiscard]] auto ShadersDirPath() const -> const Path& {
-        return m_ShadersDirPath;
+    [[nodiscard]] auto EngineShadersDirPath() const -> const Path& {
+        return m_EngineShadersDirPath;
     }
 
     /// @brief Path to Engine/Logs/.
@@ -176,6 +177,27 @@ class ConfigManager final : public Singleton<ConfigManager> {
     /// @brief Path to Engine/Binaries/.
     [[nodiscard]] auto BinariesDirPath() const -> const Path& {
         return m_BinariesDirPath;
+    }
+
+    /// @brief Path to the Applications root directory.
+    /// @details Computed as EngineDirPath().parent_path() / "Applications".
+    [[nodiscard]] auto ApplicationsRootDirPath() const -> const Path& {
+        return m_ApplicationsRootDirPath;
+    }
+
+    /// @brief Set the current application directory at runtime.
+    /// @details Called by Application::Create() after a successful
+    ///          factory lookup.  Points to Applications/<AppName>,
+    ///          not its Shaders/ sub-directory.
+    auto SetCurrentApplicationDir(const Path& Dir) -> void {
+        m_CurrentApplicationDir = Dir;
+    }
+
+    /// @brief Path to the current application's root directory.
+    /// @details Set by Application::Create().  Valid after a
+    ///          successful Create() call.
+    [[nodiscard]] auto CurrentApplicationDir() const -> const Path& {
+        return m_CurrentApplicationDir;
     }
 
     /// @brief Parse a TOML file and populate the config struct.
@@ -217,7 +239,7 @@ class ConfigManager final : public Singleton<ConfigManager> {
         Cfg.Shader.DebugInfo = Table["Shader"]["DebugInfo"].value<bool>();
 
         // --- Vulkan RHI config ---
-        Cfg.RhiVulkan.MaxTextures         = Table["RHI"]["Vulkan"]["MaxTextures"].value<Uint32>();
+        Cfg.RhiVulkan.MaxTextures              = Table["RHI"]["Vulkan"]["MaxTextures"].value<Uint32>();
         Cfg.RhiVulkan.GlobalConstantBufferSize = Table["RHI"]["Vulkan"]["GlobalConstantBufferSize"].value<Uint32>();
 
         return {};
@@ -230,11 +252,13 @@ class ConfigManager final : public Singleton<ConfigManager> {
     }
 
   private:
-    EngineConfig Cfg;               ///< Populated by LoadFile; all fields start nullopt.
-    Path         m_EngineDirPath;   ///< Engine root, set by Init().
-    Path         m_ShadersDirPath;  ///< Engine/Shaders/, pre-computed by Init().
-    Path         m_LogsDirPath;     ///< Engine/Logs/, pre-computed by Init().
-    Path         m_ConfigsDirPath;  ///< Engine/Configs/, pre-computed by Init().
-    Path         m_BinariesDirPath; ///< Engine/Binaries/, pre-computed by Init().
+    EngineConfig Cfg;                       ///< Populated by LoadFile; all fields start nullopt.
+    Path         m_EngineDirPath;           ///< Engine root, set by Init().
+    Path         m_EngineShadersDirPath;    ///< Engine/Shaders/, pre-computed by Init().
+    Path         m_LogsDirPath;             ///< Engine/Logs/, pre-computed by Init().
+    Path         m_ConfigsDirPath;          ///< Engine/Configs/, pre-computed by Init().
+    Path         m_BinariesDirPath;         ///< Engine/Binaries/, pre-computed by Init().
+    Path         m_ApplicationsRootDirPath; ///< Applications/, pre-computed by Init().
+    Path         m_CurrentApplicationDir;   ///< Applications/<AppName>, set by Application::Create().
 };
 } // namespace SoulEngine::Core

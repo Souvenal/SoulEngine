@@ -29,11 +29,11 @@ Guidance for AI agents on this repo.
 
 ### Issue tracker
 
-Issues as local markdown under `.scratch/<feature-slug>/`. See `Docs/agents/issue-tracker.md`.
+Issues as GitHub Issues via `gh` CLI. See `Docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Defaults: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `Docs/agents/triage-labels.md`.
+GitHub defaults: `bug`, `documentation`, `enhancement`. See `Docs/agents/triage-labels.md`.
 
 ### Domain docs
 

@@ -1,11 +1,13 @@
 module;
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <hlsl++.h>
 
 export module Scene;
 
+export import Core;
 export import std;
+
+using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Scene {
 
@@ -14,21 +16,26 @@ export namespace SoulEngine::Scene {
 /// Minimal prototype — projection parameters are included so renderers can
 /// derive view and projection matrices without depending on math headers.
 struct Camera {
-    glm::vec3 Position    = glm::vec3(1.25f, 1.25f, 2.0f);
-    glm::vec3 Forward     = glm::normalize(glm::vec3(0.0f) - Position);
-    glm::vec3 Up          = glm::vec3(0.0f, 1.0f, 0.0f);
-    float     FOV         = 60.0f;
-    float     NearPlane   = 0.1f;
-    float     FarPlane    = 100.0f;
-    float     AspectRatio = 16.0f / 9.0f;
+    hlslpp::float3 Position    = hlslpp::float3(1.25f, 1.25f, 2.0f);
+    hlslpp::float3 Forward     = hlslpp::normalize(hlslpp::float3(0.0f, 0.0f, 0.0f) - Position);
+    hlslpp::float3 Up          = hlslpp::float3(0.0f, 1.0f, 0.0f);
+    float          FOV         = 60.0f;
+    float          NearPlane   = 0.1f;
+    float          FarPlane    = 100.0f;
+    float          AspectRatio = 16.0f / 9.0f;
 
-    [[nodiscard]] auto GetViewMatrix() const -> glm::mat4 {
-        return glm::lookAt(Position, Position + Forward, Up);
+    [[nodiscard]] auto GetViewMatrix() const -> hlslpp::float4x4 {
+        return hlslpp::float4x4::look_at(Position, Position + Forward, Up);
     }
 
-    [[nodiscard]] auto GetProjectionMatrix() const -> glm::mat4 {
-        return glm::perspective(
-            glm::radians(FOV), AspectRatio, NearPlane, FarPlane);
+    /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
+    [[nodiscard]] auto GetProjectionMatrix() const -> hlslpp::float4x4 {
+        float FovRad = FOV * (std::numbers::pi_v<float> / 180.0f);
+        return hlslpp::float4x4::perspective(
+            hlslpp::projection(hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, NearPlane, FarPlane),
+                               hlslpp::zclip::zero,
+                               hlslpp::zdirection::forward,
+                               hlslpp::zplane::finite));
     }
 };
 
@@ -58,8 +65,21 @@ class Scene {
         m_Time = GetElapsedTime();
     }
 
+    /// @brief Register a texture asset path. Application calls this during setup.
+    auto AddTexturePath(String Path) -> void {
+        m_TexturePaths.emplace_back(std::move(Path));
+    }
+
+    /// @brief All registered texture paths.
+    [[nodiscard]] auto GetTexturePaths() const -> const std::vector<String>& {
+        return m_TexturePaths;
+    }
+
     Camera m_Camera;
     float  m_Time = GetElapsedTime();
+
+  private:
+    std::vector<String> m_TexturePaths = {};
 };
 
 } // namespace SoulEngine::Scene

@@ -182,9 +182,26 @@ class Backend final : public IBackend {
         slang::SessionDesc SessionDesc{
             .targets                  = &TargetDesc,
             .targetCount              = 1,
+            .defaultMatrixLayoutMode  = SLANG_MATRIX_LAYOUT_ROW_MAJOR,
             .compilerOptionEntries    = m_CompilerOptions.data(),
             .compilerOptionEntryCount = static_cast<uint32_t>(m_CompilerOptions.size()),
         };
+
+        // Convert IncludeDirs to C-strings for Slang search paths.
+        // Strings must be stored separately — Dir.string() returns a
+        // temporary that would dangle if we only kept the c_str().
+        std::vector<String>      SearchPathStrings;
+        std::vector<const char*> SearchPathCStrs;
+        SearchPathStrings.reserve(Desc.IncludeDirs.size());
+        SearchPathCStrs.reserve(Desc.IncludeDirs.size());
+        for (const auto& Dir : Desc.IncludeDirs)
+            SearchPathStrings.push_back(Dir.string());
+        for (const auto& S : SearchPathStrings)
+            SearchPathCStrs.push_back(S.c_str());
+        if (!SearchPathCStrs.empty()) {
+            SessionDesc.searchPaths     = SearchPathCStrs.data();
+            SessionDesc.searchPathCount = static_cast<SlangInt32>(SearchPathCStrs.size());
+        }
 
         Slang::ComPtr<slang::ISession> Session;
         if (auto Rc = m_GlobalSession->createSession(SessionDesc, Session.writeRef()); SLANG_FAILED(Rc)) {

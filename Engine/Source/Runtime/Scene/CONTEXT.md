@@ -10,7 +10,7 @@ Renderer via `Render(const Scene&)`.
 | Term | Definition |
 |------|------------|
 | **Scene** | Concrete data container owned by Application. Holds the camera and (future) mesh, material, light, and transform collections. Scene has no awareness of RHI, Renderer, or rendering concepts. |
-| **Camera** | World-space view description: `Position`, `Forward`, `Up` (`glm::vec3`). Minimal prototype — FOV, near/far planes, and projection will be added as the renderer evolves. |
+| **Camera** | World-space view/projection description: `Position`, `Forward`, `Up`, FOV, near/far planes, and aspect ratio. |
 
 ## Architecture
 
@@ -21,4 +21,4 @@ awareness of RHI, Renderer, or rendering concepts.
 ## Dependencies
 
 - `Core` — types, error handling
-- `glm` — `glm::vec3` for Camera
+- `hlsl++` — vector and matrix math for Camera

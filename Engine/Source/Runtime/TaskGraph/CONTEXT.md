@@ -8,8 +8,10 @@ Module `TaskGraph`. Thread-safe multi-queue task dispatcher for cross-thread wor
 
 | Term | Definition |
 |------|------------|
-| **TaskGraph** | Multi-queue task dispatcher with 3 named queues (`ThreadQueue::Game`, `Render`, `RHI`). Each queue mutex+deque. Consumer threads drain via `TryDequeue(queue)` per-frame, capped at `kMaxTasksPerPoll`. |
-| **ThreadQueue** | Enum identifying target thread: `Game`, `Render`, `RHI`. Used as key for `Enqueue()` and `TryDequeue()`. |
+| **TaskGraph** | Engine task system responsible for both background worker execution and thread-affinity dispatch to named engine threads. |
+| **ThreadQueue** | Enum identifying target engine thread: `Game`, `Render`, `RHI`. Used when work must run on a specific thread rather than on a background worker. |
+| **Background worker** | TaskGraph-owned worker thread for non-thread-affine CPU work such as file IO, image decode, and shader compilation. |
+| **Thread-affinity task** | Task that must run on a specific engine thread because it touches thread-owned state such as scene mutation, renderer state, or RHI objects. |
 
 ## Dependencies
 

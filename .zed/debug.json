@@ -1,0 +1,19 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+  {
+    "label": "Debug SoulEngine",
+    "build": {
+      "command": "xmake",
+      "args": ["f", "-m", "debug"],
+      "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    // TODO: debug in zed isn't available now, for some rpath issues
+    //       try to fix it.
+    "program": "$ZED_WORKTREE_ROOT/Engine/Binaries/SoulEngine",
+    "request": "launch",
+    "adapter": "CodeLLDB"
+  }
+]

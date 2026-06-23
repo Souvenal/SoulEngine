@@ -1,4 +1,3 @@
-
 -- system = false is required because add_tests() creates a test wrapper
 -- that resolves packages through its own independent path, which does
 -- not inherit the parent add_requires configs.  When gtest is found as
@@ -24,5 +23,4 @@ add_requires("spdlog[std_format,noexcept]")
 -- glfw is very small, and suitable for static linking.
 add_requires("glfw")
 
--- TODO: official module build is broken, try fix it
-add_requires('glm[cxx_standard=20]')
+add_requires("hlslpp")

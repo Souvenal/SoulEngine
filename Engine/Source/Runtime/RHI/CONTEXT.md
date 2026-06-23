@@ -20,7 +20,7 @@ self-registering factory pattern.
 | **ResourceState** | Per-resource GPU state for barrier tracking. Backend maintains implicit last-known state per handle. |
 | **Program** | Shader artifact consumed directly by pipeline descriptors; RHI does not wrap it in an extra shader-stage descriptor when no RHI-only fields are needed. Refers to `Shader::Program`. |
 | **PipelineResourceLayout** | Backend-agnostic description of the shader-visible resource interface for a pipeline, derived by merging per-shader reflection and used as the cache/share key for backend-native layout objects instead of exposing a Vulkan-specific pipeline layout type. |
-| **Vertex buffer stream layout** | Future CPU/feed-side description of how one or more vertex buffers map onto the shader's reflected vertex input interface; distinct from shader reflection and not part of `PipelineResourceLayout`. |
+| **Vertex input layout** | CPU/feed-side description of how one vertex buffer maps onto the shader's reflected vertex input interface. This layout is explicit and authoritative for stride/offset/format; shader reflection is used only for validation warnings. |
 | **BackendFactory** | `Core::Factory<RenderDevice>` — singleton-backed registry defined in `RHI:RenderDevice`. Backends self-register via `AutoRegistrar`. |
 
 ## Architecture
@@ -59,8 +59,8 @@ EngineLoop::Shutdown()
 
 - `GraphicsPipelineDesc` accepts `Shader::Program` directly; stage-combination validation is deferred and should be defined at the RHI contract level before backend pipeline creation.
 - `PipelineResourceLayout` is derived inside the RHI/backend layer by merging normalized per-program shader reflection; it is not yet exposed as a public handle and should carry a TODO when implemented.
-- A shader's reflected vertex input interface is a different concept from a future **Vertex buffer stream layout**; the former states what attributes are required, the latter states how application-side vertex buffers feed them.
-- Vertex input binding descriptions (stride, binding slot, input rate) are not part of shader reflection. The Vulkan backend computes them inside `GraphicsShaderStates::Create` using `CalculateStride` from per-attribute ValueType, with binding slot hardcoded to 0 (single interleaved). Extension to multi-binding / instance-rate is deferred.
+- A shader's reflected vertex input interface is a different concept from **Vertex input layout**; the former states what attributes are required, the latter states how application-side vertex buffers feed them.
+- Vertex input binding descriptions (stride, binding slot, input rate) are not derived from shader reflection. `GraphicsPipelineDesc::VertexInputLayout` provides the explicit CPU layout, while the Vulkan backend uses reflection only to warn about missing locations or format mismatches. Extension to multi-binding / instance-rate is deferred.
 - `RHI` does not import any backend module — the factory creates backends via registered creator lambdas.
 
 ## Vulkan Backend Constraints
@@ -80,9 +80,11 @@ RHI resources are not thread-safe by default. Callers must serialize access:
 |----------|---------------|
 | `RenderDevice::Get()` | Safe from any thread (singleton) |
 | `RenderDevice::Execute()` | Called from `RHILoop` only |
-| `CreateVertexBuffer` / `CreateIndexBuffer` etc. | Called from `GameLoop` (OnAttach) — NOT thread-safe after init |
+| `CreateVertexBuffer` / `CreateIndexBuffer` etc. | RHI-thread owned for backend-native object creation; historical `OnAttach` synchronous calls are transitional |
 | `WriteGlobalConstantBuffer` | Called from `RHILoop` via `Execute()` |
 | `ImmediateContext` | Not thread-safe (caller must serialize) |
+
+Backend-native RHI object creation, descriptor writes, GPU upload submission, and GPU completion publication belong to the RHI thread. Game, Render, and background worker threads may prepare CPU-side request data or observe published handles/status, but must not directly mutate backend-native RHI state.
 
 The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::Launch::EngineLoop` — see [`Launch/CONTEXT.md`](../Launch/CONTEXT.md).
 

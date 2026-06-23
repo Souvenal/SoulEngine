@@ -38,8 +38,8 @@ class RenderDevice {
     /// The returned buffer auto-selects the current frame's slot on Write().
     /// @param Size  Total size in bytes per-frame slot.
     [[nodiscard]] virtual auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
-        -> std::expected<SPtr<ConstantBuffer>, ErrorMessage>                                                  = 0;
-    [[nodiscard]] virtual auto CreateTexture(const TextureDesc& Desc) -> std::expected<Texture, ErrorMessage> = 0;
+        -> std::expected<SPtr<ConstantBuffer>, ErrorMessage>                                                        = 0;
+    [[nodiscard]] virtual auto CreateTexture(const TextureDesc& Desc) -> std::expected<SPtr<Texture>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> = 0;
 
@@ -48,11 +48,6 @@ class RenderDevice {
     /// the global CB capacity (configured via [RHI.Vulkan].GlobalConstantBufferSize).
     [[nodiscard]] virtual auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
         -> std::expected<void, ErrorMessage> = 0;
-
-    [[nodiscard]] virtual auto CreateSampler(const SamplerDesc& Desc) -> std::expected<Sampler, ErrorMessage> = 0;
-
-    [[nodiscard]] virtual auto DestroyTexture(Texture TexHdl) -> std::expected<void, ErrorMessage>  = 0;
-    [[nodiscard]] virtual auto DestroySampler(Sampler SampHdl) -> std::expected<void, ErrorMessage> = 0;
 
     // ── Command execution ────────────────────────────────────
 

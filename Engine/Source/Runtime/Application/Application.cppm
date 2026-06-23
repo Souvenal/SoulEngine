@@ -59,6 +59,11 @@ class Application {
     /// @brief Per-frame application update (game logic, simulation).
     virtual auto OnTick(float DeltaTime) -> void = 0;
 
+    /// @brief The factory key this application was registered under.
+    [[nodiscard]] auto GetName() const -> StringView {
+        return m_Name;
+    }
+
     /// @brief Mutable access to the active scene.
     /// Used by the FramePipeline's GameThread to copy scene data into
     /// the next available frame slot before signalling the RenderThread.
@@ -82,6 +87,7 @@ class Application {
     auto OnRender() -> void;
 
   protected:
+    String                    m_Name;
     Scene::Scene              m_Scene;
     UPtr<Renderer::IRenderer> m_Renderer = nullptr;
 };
@@ -108,6 +114,8 @@ using ApplicationFactory = Core::Factory<Application>;
         }
         return std::unexpected(ErrorMessage(Format("Unknown application: '{}'. Available: {}", Name, Supported)));
     }
+    App->m_Name = String(Name);
+    ConfigManager::Get().SetCurrentApplicationDir(ConfigManager::Get().ApplicationsRootDirPath() / Name);
     return App;
 }
 

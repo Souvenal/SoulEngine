@@ -53,10 +53,18 @@ std::unordered_map<Key, Shader::Program, KeyHash> g_Cache;
 
 /// Compile the full module and cache every entry point.
 [[nodiscard]] auto CompileAndCacheAll(const ShaderCacheRequest& Req) -> std::expected<Shader::Program, ErrorMessage> {
+    // Build default include dirs: engine shaders + current app shaders.
+    const auto&       Cfg = ConfigManager::Get();
+    std::vector<Path> IncludeDirs{
+        Cfg.EngineShadersDirPath(),
+        Cfg.CurrentApplicationDir() / "Shaders",
+    };
+
     auto Result = ShaderCompiler::ShaderCompiler::Get().Compile(ShaderCompiler::CompileDesc{
         .Source         = Req.SourcePath,
         .Backend        = Req.Backend,
         .EntryPointName = std::nullopt,
+        .IncludeDirs    = IncludeDirs,
     });
 
     if (!Result) {

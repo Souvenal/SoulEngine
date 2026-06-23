@@ -12,6 +12,7 @@ import RHI;
 import Scene;
 import Renderer;
 import TaskGraph;
+import Resource;
 export import std;
 
 using namespace SoulEngine::Core;
@@ -129,6 +130,9 @@ class EngineLoop {
         for (auto& Slot : m_Slots)
             Slot.CmdList = {};
 
+        // Release GPU textures before VMA allocator dies.
+        Resource::Manager::Get().Clear();
+
         RHI::RenderDevice::Destroy();
         WindowDisplay.Shutdown();
     }
@@ -162,9 +166,9 @@ class EngineLoop {
     // ── Loops ────────────────────────────────────────────────────────────────
 
     auto GameLoop() -> void {
+        tracy::SetThreadName("GameLoop");
         while (!m_FatalError.load(std::memory_order_acquire) && !WindowDisplay.IsExitRequested()) {
             WindowDisplay.PollEvents();
-            FrameMark;
 
             auto  Now      = std::chrono::steady_clock::now();
             float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
@@ -198,6 +202,7 @@ class EngineLoop {
     }
 
     auto RenderLoop(std::stop_token Stop) -> void {
+        tracy::SetThreadName("RenderLoop");
         while (!Stop.stop_requested()) {
             auto& Slot = m_Slots[m_RenderSlotIndex];
 
@@ -235,6 +240,7 @@ class EngineLoop {
     }
 
     auto RHILoop(std::stop_token Stop) -> void {
+        tracy::SetThreadName("RHILoop");
         while (!Stop.stop_requested()) {
             auto& Slot = m_Slots[m_RHISlotIndex];
 
@@ -258,6 +264,11 @@ class EngineLoop {
                 break;
             }
 
+            // Tracy docs: "put the FrameMark macro after you have completed
+            // rendering the frame. Ideally, that would be right after the
+            // swap buffers command." — Execute() does submit + present.
+            FrameMark;
+
             {
                 std::lock_guard Lock(Slot.Mutex);
                 Slot.State = SlotState::RHIDone;
@@ -272,9 +283,9 @@ class EngineLoop {
 
     // ── State ───────────────────────────────────────────────────────────────
 
-    WindowDisplay                                  WindowDisplay;
-    UPtr<Application::Application>                 m_Application;
-    std::chrono::steady_clock::time_point          m_LastTickTime;
+    WindowDisplay                         WindowDisplay;
+    UPtr<Application::Application>        m_Application;
+    std::chrono::steady_clock::time_point m_LastTickTime;
 
     SoulEngine::TaskGraph             m_TaskGraph;
     std::array<FrameSlot, kSlotCount> m_Slots = {};

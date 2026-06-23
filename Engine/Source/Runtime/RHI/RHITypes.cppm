@@ -90,11 +90,20 @@ class GraphicsPipeline {
 
 // ── Opaque handle types ───────────────────────────────────────────────────
 
-struct Texture {
-    Uint64 Handle = 0;
-};
-struct Sampler {
-    Uint64 Handle = 0;
+/// Polymorphic base for texture resources.
+/// Backend concrete class (e.g. Vulkan::Texture) owns the GPU allocation.
+/// Consumers hold SPtr<Texture> for type-safe API usage.
+class Texture {
+  public:
+    Texture()                                  = default;
+    Texture(const Texture&)                    = delete;
+    auto operator=(const Texture&) -> Texture& = delete;
+    Texture(Texture&&)                         = delete;
+    auto operator=(Texture&&) -> Texture&      = delete;
+    virtual ~Texture()                         = default;
+
+    [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
+    [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
 };
 
 // ── Texture ──────────────────────────────────────────────────────────────────
@@ -115,6 +124,18 @@ enum class Format : Uint8 {
     D32_SFLOAT_S8_UINT  = 12,
 };
 
+struct VertexInputAttributeDesc {
+    Uint32 Location = 0;
+    Format Format   = Format::Unknown;
+    Uint32 Offset   = 0;
+};
+
+struct VertexInputLayoutDesc {
+    Uint32                                Binding    = 0;
+    Uint32                                Stride     = 0;
+    std::vector<VertexInputAttributeDesc> Attributes = {};
+};
+
 enum class TextureUsage : Uint32 {
     None           = 0,
     RenderTarget   = 1u << 0,
@@ -130,12 +151,12 @@ enum class TextureUsage : Uint32 {
 }
 
 struct TextureDesc {
-    Uint32       Width     = 1;
-    Uint32       Height    = 1;
-    Uint32       Depth     = 1;
-    Uint32       MipLevels = 1;
-    Format       Format    = Format::R8G8B8A8_UNORM;
-    TextureUsage Usage     = TextureUsage::ShaderResource;
+    const void*  Data     = nullptr;
+    Uint32       Width    = 1;
+    Uint32       Height   = 1;
+    Uint32       Channels = 4;
+    Format       Format   = Format::R8G8B8A8_UNORM;
+    TextureUsage Usage    = TextureUsage::ShaderResource;
 };
 
 // ── Pipeline ─────────────────────────────────────────────────────────────────
@@ -176,6 +197,7 @@ struct DepthStencilState {
 struct GraphicsPipelineDesc {
     Shader::Program                VertexProgram   = {};
     std::optional<Shader::Program> FragmentProgram = std::nullopt;
+    VertexInputLayoutDesc          VertexInputLayout = {};
     PrimitiveTopology              Topology        = PrimitiveTopology::TriangleList;
     RasterizerState                Rasterizer      = {};
     BlendState                     Blend           = {};
@@ -184,13 +206,7 @@ struct GraphicsPipelineDesc {
     Format                         DepthFormat     = Format::Unknown;
 };
 
-// ── Sampler ──────────────────────────────────────────────────────────────────
-
-struct SamplerDesc {
-    bool MinFilterLinear  = true;
-    bool MagFilterLinear  = true;
-    bool AddressModeClamp = true; // else repeat
-};
+// ── Clear values ─────────────────────────────────────────────────────────────
 
 struct ClearColorValue {
     Float32 R = 0.0f;
@@ -205,12 +221,12 @@ struct ClearDepthStencilValue {
 };
 
 struct ColorAttachmentDesc {
-    Texture         Texture    = {};
+    const Texture*  TexturePtr = nullptr;
     ClearColorValue ClearValue = {};
 };
 
 struct DepthAttachmentDesc {
-    Texture                Texture    = {};
+    const Texture*         TexturePtr = nullptr;
     ClearDepthStencilValue ClearValue = {};
 };
 

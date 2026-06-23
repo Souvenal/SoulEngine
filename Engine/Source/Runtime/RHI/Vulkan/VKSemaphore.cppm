@@ -3,6 +3,7 @@ module;
 export module Vulkan:Semaphore;
 
 import Core;
+import :Capability;
 
 import vulkan;
 import std;
@@ -23,10 +24,9 @@ class TimelineSemaphore {
     TimelineSemaphore() = default;
 
     TimelineSemaphore(TimelineSemaphore&& Other) noexcept
-        : m_Device(std::exchange(Other.m_Device, nullptr))
-        , m_Semaphore(std::move(Other.m_Semaphore))
-        , m_NextValue(Other.m_NextValue.load())
-    {}
+        : m_Device(std::exchange(Other.m_Device, nullptr)),
+          m_Semaphore(std::move(Other.m_Semaphore)),
+          m_NextValue(Other.m_NextValue.load()) {}
 
     auto operator=(TimelineSemaphore&& Other) noexcept -> TimelineSemaphore& {
         if (this != &Other) {
@@ -37,12 +37,16 @@ class TimelineSemaphore {
         return *this;
     }
 
-    TimelineSemaphore(const TimelineSemaphore&)            = delete;
+    TimelineSemaphore(const TimelineSemaphore&)                    = delete;
     auto operator=(const TimelineSemaphore&) -> TimelineSemaphore& = delete;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device) -> std::expected<TimelineSemaphore, ErrorMessage> {
         TimelineSemaphore Result;
         Result.m_Device = &Device;
+
+        if (!Capability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
+            return std::unexpected(
+                ErrorMessage("TimelineSemaphore: timelineSemaphore feature not supported by device"));
 
         vk::StructureChain<vk::SemaphoreCreateInfo, vk::SemaphoreTypeCreateInfo> Chain = {
             {}, {.semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = 0}};
@@ -89,7 +93,8 @@ class TimelineSemaphore {
 
     /// Returns a SemaphoreSubmitInfo for the next timeline value.
     /// Calls NextValue internally.
-    [[nodiscard]] auto GetSignalSubmitInfo(vk::PipelineStageFlagBits2 Stage = vk::PipelineStageFlagBits2::eNone) -> vk::SemaphoreSubmitInfo {
+    [[nodiscard]] auto GetSignalSubmitInfo(vk::PipelineStageFlagBits2 Stage = vk::PipelineStageFlagBits2::eNone)
+        -> vk::SemaphoreSubmitInfo {
         return vk::SemaphoreSubmitInfo{
             .semaphore = *m_Semaphore,
             .value     = NextValue(),

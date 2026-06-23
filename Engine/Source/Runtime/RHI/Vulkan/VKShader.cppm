@@ -14,6 +14,7 @@ export module Vulkan:Shader;
 
 import vulkan;
 
+import Core;
 import Shader;
 import RHI;
 import std;
@@ -93,7 +94,7 @@ namespace SoulEngine::RHI::Vulkan {
 [[nodiscard]] auto ToVkVertexFormat(const Shader::ValueType& ValueType) -> std::expected<vk::Format, ErrorMessage> {
     if (ValueType.RowCount != 1) {
         return std::unexpected(
-            ErrorMessage("Matrix vertex inputs are not supported in the initial reflection-driven Vulkan path"));
+            ErrorMessage("Matrix vertex inputs are not supported by vertex input layout validation"));
     }
 
     switch (ValueType.ScalarType) {
@@ -150,17 +151,96 @@ namespace SoulEngine::RHI::Vulkan {
                                   ValueType.ColumnCount)));
 }
 
-/// Calculate byte stride for a single vertex attribute value type.
-/// For vectors, stride = columnCount × scalar width (4 bytes for all supported types).
-[[nodiscard]] auto CalculateStride(const Shader::ValueType& ValueType) -> std::expected<Uint32, ErrorMessage> {
-    switch (ValueType.ScalarType) {
-    case Shader::ScalarType::Float32:
-    case Shader::ScalarType::Int32:
-    case Shader::ScalarType::Uint32:
-        return ValueType.ColumnCount * sizeof(Uint32);
+[[nodiscard]] auto ToVkVertexFormat(Format Format) -> std::expected<vk::Format, ErrorMessage> {
+    switch (Format) {
+    case Format::R32_SFLOAT:
+        return vk::Format::eR32Sfloat;
+    case Format::R32G32_SFLOAT:
+        return vk::Format::eR32G32Sfloat;
+    case Format::R32G32B32_SFLOAT:
+        return vk::Format::eR32G32B32Sfloat;
+    case Format::R32G32B32A32_SFLOAT:
+        return vk::Format::eR32G32B32A32Sfloat;
     default:
-        return std::unexpected(ErrorMessage(Core::Format("Unknown scalar type for stride calculation: {}",
-                                                          static_cast<int>(ValueType.ScalarType))));
+        return std::unexpected(
+            ErrorMessage(Core::Format("Unsupported explicit vertex input format: {}", static_cast<int>(Format))));
+    }
+}
+
+[[nodiscard]] auto FindReflectedVertexInputByLocation(const std::vector<Shader::VertexInputAttribute>& VertexInputs,
+                                                      Uint32                                           Location)
+    -> const Shader::VertexInputAttribute* {
+    for (const auto& Attr : VertexInputs) {
+        if (Attr.Location && *Attr.Location == Location)
+            return &Attr;
+    }
+    return nullptr;
+}
+
+auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
+    if (!Desc.VertexProgram.Reflection)
+        return;
+
+    const auto& ReflectedInputs = Desc.VertexProgram.Reflection->VertexInputs;
+    if (ReflectedInputs.empty())
+        return;
+
+    const auto& ExplicitLayout = Desc.VertexInputLayout;
+    if (ExplicitLayout.Attributes.empty()) {
+        LogWarning("Vertex shader '{}' reflects {} vertex input(s), but pipeline has no explicit vertex input layout",
+                   Desc.VertexProgram.EntryPointName,
+                   ReflectedInputs.size());
+        return;
+    }
+
+    for (const auto& Attr : ReflectedInputs) {
+        if (!Attr.Location) {
+            LogWarning("Vertex shader '{}' input '{}{}' has no reflected location; explicit layout validation skipped",
+                       Desc.VertexProgram.EntryPointName,
+                       Attr.SemanticName,
+                       Attr.SemanticIndex);
+            continue;
+        }
+
+        auto It = std::find_if(ExplicitLayout.Attributes.begin(),
+                               ExplicitLayout.Attributes.end(),
+                               [&](const VertexInputAttributeDesc& DescAttr) -> bool {
+                                   return DescAttr.Location == *Attr.Location;
+                               });
+        if (It == ExplicitLayout.Attributes.end()) {
+            LogWarning("Vertex shader '{}' expects input at location {}, but explicit vertex layout does not provide it",
+                       Desc.VertexProgram.EntryPointName,
+                       *Attr.Location);
+            continue;
+        }
+
+        auto ExpectedFormat = ToVkVertexFormat(Attr.ValueType);
+        auto ActualFormat   = ToVkVertexFormat(It->Format);
+        if (!ExpectedFormat || !ActualFormat) {
+            LogWarning("Vertex shader '{}' location {} format validation skipped: reflected format ok={}, explicit "
+                       "format ok={}",
+                       Desc.VertexProgram.EntryPointName,
+                       *Attr.Location,
+                       ExpectedFormat.has_value(),
+                       ActualFormat.has_value());
+            continue;
+        }
+
+        if (*ExpectedFormat != *ActualFormat) {
+            LogWarning("Vertex shader '{}' location {} expects format {}, but explicit vertex layout provides {}",
+                       Desc.VertexProgram.EntryPointName,
+                       *Attr.Location,
+                       vk::to_string(*ExpectedFormat),
+                       vk::to_string(*ActualFormat));
+        }
+    }
+
+    for (const auto& Attr : ExplicitLayout.Attributes) {
+        if (FindReflectedVertexInputByLocation(ReflectedInputs, Attr.Location) == nullptr) {
+            LogWarning("Explicit vertex layout provides location {}, but vertex shader '{}' does not consume it",
+                       Attr.Location,
+                       Desc.VertexProgram.EntryPointName);
+        }
     }
 }
 
@@ -215,40 +295,30 @@ class GraphicsShaderStates {
         }
 
         // ── Vertex input state ──────────────────────────────────────────────────
-        // Derive vertex input binding and attribute descriptions from the vertex
-        // program's normalized reflection.  Stride is computed from the per-
-        // attribute ValueType; binding slot is hardcoded to 0 (single interleaved
-        // vertex buffer).
-        //
+        // The explicit CPU vertex-buffer layout is authoritative. Shader
+        // reflection is used only to warn about location/format mismatches.
         // TODO: Support multiple vertex buffer bindings and per-instance input rate.
-        if (Desc.VertexProgram.Reflection && !Desc.VertexProgram.Reflection->VertexInputs.empty()) {
-            const auto& VertexInputs = Desc.VertexProgram.Reflection->VertexInputs;
-            Result.m_VertexAttributes.reserve(VertexInputs.size());
+        ValidateVertexInputLayout(Desc);
+        if (!Desc.VertexInputLayout.Attributes.empty()) {
+            Result.m_VertexAttributes.reserve(Desc.VertexInputLayout.Attributes.size());
 
-            Uint32 RunningOffset = 0;
-            for (const auto& Attr : VertexInputs) {
-                auto VkFormat = ToVkVertexFormat(Attr.ValueType);
+            for (const auto& Attr : Desc.VertexInputLayout.Attributes) {
+                auto VkFormat = ToVkVertexFormat(Attr.Format);
                 if (!VkFormat)
-                    return std::unexpected(VkFormat.error().Append(
-                        Core::Format("Failed to lower reflected vertex input '{}'{}", Attr.SemanticName, Attr.SemanticIndex)));
+                    return std::unexpected(VkFormat.error().Append(Core::Format(
+                        "Failed to lower explicit vertex input layout location {}", Attr.Location)));
 
                 Result.m_VertexAttributes.push_back(vk::VertexInputAttributeDescription{
-                    .location = Attr.Location.value_or(static_cast<Uint32>(Result.m_VertexAttributes.size())),
-                    .binding  = 0, // single interleaved buffer for now
+                    .location = Attr.Location,
+                    .binding  = Desc.VertexInputLayout.Binding,
                     .format   = *VkFormat,
-                    .offset   = RunningOffset,
+                    .offset   = Attr.Offset,
                 });
-
-                auto AttrStride = CalculateStride(Attr.ValueType);
-                if (!AttrStride)
-                    return std::unexpected(AttrStride.error());
-
-                RunningOffset += *AttrStride;
             }
 
             Result.m_VertexBinding = vk::VertexInputBindingDescription{
-                .binding   = 0,
-                .stride    = RunningOffset,
+                .binding   = Desc.VertexInputLayout.Binding,
+                .stride    = Desc.VertexInputLayout.Stride,
                 .inputRate = vk::VertexInputRate::eVertex,
             };
         }

@@ -17,6 +17,11 @@ end
 add_rules("mode.release", "mode.releasedbg", "mode.debug")
 add_rules("plugin.compile_commands.autoupdate", {outputdir = "build"})
 
+-- Use right-handed coordinates (OpenGL/Vulkan convention) for hlslpp.
+-- Affects look_at, perspective, rotation functions — all assume z points
+-- backward (away from viewer).  Default is left-handed (DirectX/Metal).
+add_defines("HLSLPP_COORDINATES=1")
+
 set_targetdir("$(projectdir)/Engine/Binaries")
 set_installdir("$(projectdir)/Engine/Binaries")
 

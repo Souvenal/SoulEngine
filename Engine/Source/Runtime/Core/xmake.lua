@@ -1,7 +1,7 @@
 target("Core")
     set_kind("moduleonly")
 
-    add_packages("tracy", "spdlog", "toml++")
+    add_packages("spdlog", "toml++")
 
     add_files("**.cppm")
 

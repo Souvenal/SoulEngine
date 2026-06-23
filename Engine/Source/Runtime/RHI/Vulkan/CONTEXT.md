@@ -15,8 +15,8 @@ Vulkan RHI backend — implements `SoulEngine::RHI::RenderDevice`.
 | Term | Definition |
 |------|------------|
 | **DescriptorManager** | Class in `:Descriptor` partition. Owns descriptor pool + 2 set layouts (Set 0: per-frame UBO; Set 1: bindless SampledImage variable array) + shared pipeline layout. Exposes `BindTo(CommandBuffer&)` for `CommandList::Begin()`, `GetSetLayouts()` for pipeline creation, and `AllocateTexture()`/`WriteTextureSlot()` for texture slot management. No sampler or buffer bindless — future buffer access via BDA. |
-| **CalculateStride** | Helper in `:Shader` partition. Derives vertex attribute byte stride from Shader::ValueType (columnCount × 4). Float32/Int32/Uint32 only. |
-| **VertexBinding slot** | Currently hardcoded to binding 0, single interleaved buffer, per-vertex rate. Multi-binding and per-instance rate deferred. |
+| **Explicit vertex input layout** | `GraphicsPipelineDesc::VertexInputLayout` is lowered to Vulkan binding and attribute descriptions. Shader reflection validates location/format compatibility with warnings only; it does not define CPU stride or offset. |
+| **VertexBinding slot** | Currently one explicit binding, single interleaved buffer, per-vertex rate. Multi-binding and per-instance rate deferred. |
 | **TimelineSemaphore** | Wrapper in `:Semaphore` partition around a single per-device VkSemaphore (VK_SEMAPHORE_TYPE_TIMELINE). Owns the monotonic CPU signal counter. Exposes `NextValue()` to allocate the next signal value, `Wait(Value)` for blocking CPU sync, `GetCurrentValue()` for non-blocking GPU-side query. |
 | **NextValue** | Method on `TimelineSemaphore`. Atomically increments the internal counter and returns the new value. Callers pass this value to queue submit as the timeline semaphore signal value, then retain it for later completion checking. |
 | **Wait(Value)** | Method on `TimelineSemaphore`. Blocks the CPU via `vkWaitSemaphores` until the semaphore reaches at least `Value`. Default timeout is `UINT64_MAX`. |
@@ -44,7 +44,7 @@ No sampler bindless or buffer bindless. Samplers may be added later as a set 2 i
 | :Swapchain | VKSwapchain.cppm | Swapchain lifecycle |
 | :RenderDevice | VKRenderDevice.cppm | Device init, resource creation facades |
 | :CommandList | VKCommandList.cppm | Command recording and barriers |
-| :Shader | VKShader.cppm | Stage conversion, shader module creation, vertex input derivation |
+| :Shader | VKShader.cppm | Stage conversion, shader module creation, explicit vertex input lowering |
 | :Pipeline | VKPipeline.cppm | Graphics pipeline creation |
 | :Capability | VKCapability.cppm | Extension + feature capability declaration, resolution (extension availability + feature pNext chain assembly), and reflection. Owns the device feature chain for the device's lifetime. |
 | :Buffer | VKBuffer.cppm | `HostBuffer` (mappable staging), `DeviceBuffer` (device-local), `VertexBuffer`, `IndexBuffer` — VMA-backed buffer classes with Create factories per ADR 02 |

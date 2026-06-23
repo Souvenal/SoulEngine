@@ -103,12 +103,14 @@ class HostBuffer {
         if (Offset + Size > m_Size)
             return std::unexpected(ErrorMessage(Core::Format(
                 "HostBuffer upload exceeds size (offset {} + size {} > capacity {})", Offset, Size, m_Size)));
-        if (Size == 0)
+        if (Size == 0) {
+            LogWarning("Uploading 0 bytes to a host buffer.");
             return {};
+        }
 
-        auto Result = vmaCopyMemoryToAllocation(
-            m_Allocator, Data, m_Allocation, static_cast<VkDeviceSize>(Offset), static_cast<VkDeviceSize>(Size));
-        if (Result != VK_SUCCESS)
+        if (auto Result = vmaCopyMemoryToAllocation(
+                m_Allocator, Data, m_Allocation, static_cast<VkDeviceSize>(Offset), static_cast<VkDeviceSize>(Size));
+            Result != VK_SUCCESS)
             return std::unexpected(ErrorMessage("vmaCopyMemoryToAllocation failed in HostBuffer::Upload"));
         return {};
     }

@@ -2,7 +2,7 @@ target("RHI")
     set_kind("moduleonly")
 
     add_deps("Core", "Shader")
-    add_packages("tracy", "glfw")
+    add_packages("glfw")
 
     add_files("*.cppm")      -- RHI primary module + partitions
 
