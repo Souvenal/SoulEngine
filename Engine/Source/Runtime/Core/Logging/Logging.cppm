@@ -1,6 +1,8 @@
 module;
 
 #include <spdlog/common.h>
+#include <magic_enum/magic_enum.hpp>
+#include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -13,6 +15,99 @@ export import std;
 
 namespace SoulEngine::Core {
 export enum class LogLevel : Uint8 { Debug = 0, Info = 1, Warning = 2, Error = 3 };
+
+export enum class LogThreadRole : Uint8 {
+    Unknown = 0,
+    Main,
+    Game,
+    Render,
+    RHI,
+    Worker,
+};
+
+namespace {
+thread_local LogThreadRole CurrentLogThreadRole = LogThreadRole::Main;
+}
+
+export auto SetLogThreadRole(LogThreadRole Role) -> void {
+    CurrentLogThreadRole = Role;
+}
+
+export [[nodiscard]] auto GetLogThreadName() -> StringView {
+    return magic_enum::enum_name(CurrentLogThreadRole);
+}
+
+[[nodiscard]] auto GetLogThreadColor() -> StringView {
+    switch (CurrentLogThreadRole) {
+    case LogThreadRole::Main:
+        return "\033[97m";
+    case LogThreadRole::Game:
+        return "\033[32m";
+    case LogThreadRole::Render:
+        return "\033[36m";
+    case LogThreadRole::RHI:
+        return "\033[35m";
+    case LogThreadRole::Worker:
+        return "\033[33m";
+    case LogThreadRole::Unknown:
+        return "\033[90m";
+    }
+    return "\033[90m";
+}
+
+auto AppendLogText(StringView Text, spdlog::memory_buf_t& Dest) -> void {
+    Dest.append(Text.data(), Text.data() + Text.size());
+}
+
+[[nodiscard]] auto CenterLogText(StringView Text, std::size_t Width) -> String {
+    if (Text.size() >= Width)
+        return String{Text};
+
+    auto   Padding = Width - Text.size();
+    auto   Left    = Padding / 2;
+    auto   Right   = Padding - Left;
+    String Result(Left, ' ');
+    Result.append(Text);
+    Result.append(Right, ' ');
+    return Result;
+}
+
+[[nodiscard]] auto FormatLogThreadRole(bool Color) -> String {
+    constexpr std::size_t RoleWidth = 6;
+
+    auto RoleName = CenterLogText(GetLogThreadName(), RoleWidth);
+
+    if (!Color)
+        return Format("[{}]", RoleName);
+
+    return Format("{}[{}]\033[0m", GetLogThreadColor(), RoleName);
+}
+
+class ThreadRoleFormatter final : public spdlog::custom_flag_formatter {
+  public:
+    explicit ThreadRoleFormatter(bool Color) {
+        m_Color = Color;
+    }
+
+    auto format(const spdlog::details::log_msg&, const std::tm&, spdlog::memory_buf_t& Dest) -> void override {
+        auto RoleText = FormatLogThreadRole(m_Color);
+        AppendLogText(RoleText, Dest);
+    }
+
+    [[nodiscard]] auto clone() const -> std::unique_ptr<spdlog::custom_flag_formatter> override {
+        return std::make_unique<ThreadRoleFormatter>(m_Color);
+    }
+
+  private:
+    bool m_Color = false;
+};
+
+[[nodiscard]] auto CreateLogFormatter(String Pattern, bool ColorThreadRole) -> std::unique_ptr<spdlog::formatter> {
+    auto Formatter = std::make_unique<spdlog::pattern_formatter>();
+    Formatter->add_flag<ThreadRoleFormatter>('q', ColorThreadRole);
+    Formatter->set_pattern(std::move(Pattern));
+    return Formatter;
+}
 
 export class LogManager final : public Singleton<LogManager> {
     friend class Singleton<LogManager>;
@@ -43,6 +138,9 @@ export class LogManager final : public Singleton<LogManager> {
 
         auto ConsoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         m_ConsoleSink    = ConsoleSink.get();
+
+        FileSink->set_formatter(CreateLogFormatter("[%m-%d %H:%M:%S.%e] [%=7l] %q %v", false));
+        ConsoleSink->set_formatter(CreateLogFormatter("[%H:%M:%S.%e] [%^%=7l%$] %q %v", true));
 
         // Build the sink list with the shared_ptrs that spdlog's API requires.
         std::vector<SPtr<spdlog::sinks::sink>> Sinks;
@@ -148,6 +246,7 @@ auto LogToFileFormatted(StringView Filename, LogLevel Level, StringView FormatSt
     auto                       FileSink   = std::make_shared<spdlog::sinks::basic_file_sink_mt>(String(Filename), true);
     auto                       TempLogger = std::make_shared<spdlog::logger>(
         "file_" + std::to_string(FileCounter.fetch_add(1, std::memory_order_relaxed)), FileSink);
+    TempLogger->set_formatter(CreateLogFormatter("[%m-%d %H:%M:%S.%e] [%=7l] %q %v", false));
     switch (Level) {
     case LogLevel::Debug:
         TempLogger->debug(Msg);

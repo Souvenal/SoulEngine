@@ -1,6 +1,10 @@
 /// @file   ShaderCompilerCache.cppm
 /// @brief  In-memory shader compilation cache partition.
 
+module;
+
+#include <magic_enum/magic_enum.hpp>
+
 export module ShaderCompiler:Cache;
 
 export import :Types;

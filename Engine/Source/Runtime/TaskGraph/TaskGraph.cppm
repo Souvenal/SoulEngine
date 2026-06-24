@@ -108,6 +108,7 @@ class TaskGraph {
     };
 
     auto WorkerLoop(std::stop_token Stop) -> void {
+        SetLogThreadRole(LogThreadRole::Worker);
         while (!Stop.stop_requested()) {
             std::function<void()> Task;
             {

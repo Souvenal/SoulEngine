@@ -16,6 +16,10 @@
 /// is loaded.  ShaderCompiler never references concrete backend types directly.
 /// Adding a new backend requires zero changes to this file.
 
+module;
+
+#include <magic_enum/magic_enum.hpp>
+
 export module ShaderCompiler;
 
 export import :Types;

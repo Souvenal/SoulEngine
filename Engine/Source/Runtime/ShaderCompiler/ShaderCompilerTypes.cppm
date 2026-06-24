@@ -4,13 +4,16 @@
 /// This partition holds only the types needed to describe a compile request.
 /// Results are returned as Shader::Program values from the Shader module.
 
+module;
+
+#include <magic_enum/magic_enum.hpp>
+
 export module ShaderCompiler:Types;
 
 import Shader;
 import Core;
 
 export import std;
-export import magic_enum;
 
 using namespace SoulEngine::Core;
 

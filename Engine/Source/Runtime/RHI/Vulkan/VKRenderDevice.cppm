@@ -138,8 +138,6 @@ class RenderDevice final : public RHI::RenderDevice {
             m_DescriptorManager = std::make_unique<DescriptorManager>(std::move(*Heap));
         }
 
-        LogInfo("Built-in graphics command list initialised");
-
         return {};
     }
 

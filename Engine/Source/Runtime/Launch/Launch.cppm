@@ -84,7 +84,6 @@ class EngineLoop {
         // 3 reserved threads for Game/Render/RHI
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
         m_TaskGraph.Init(WorkerCount);
-        LogInfo("Background worker threads spawned ({})", WorkerCount);
 
         Resource::Manager::Get().Init(m_TaskGraph);
 
@@ -174,6 +173,7 @@ class EngineLoop {
 
     auto GameLoop() -> void {
         tracy::SetThreadName("GameLoop");
+        SetLogThreadRole(LogThreadRole::Game);
         while (!m_FatalError.load(std::memory_order_acquire) && !WindowDisplay.IsExitRequested()) {
             WindowDisplay.PollEvents();
 
@@ -210,6 +210,7 @@ class EngineLoop {
 
     auto RenderLoop(std::stop_token Stop) -> void {
         tracy::SetThreadName("RenderLoop");
+        SetLogThreadRole(LogThreadRole::Render);
         while (!Stop.stop_requested()) {
             auto& Slot = m_Slots[m_RenderSlotIndex];
 
@@ -248,6 +249,7 @@ class EngineLoop {
 
     auto RHILoop(std::stop_token Stop) -> void {
         tracy::SetThreadName("RHILoop");
+        SetLogThreadRole(LogThreadRole::RHI);
         while (!Stop.stop_requested()) {
             auto& Slot = m_Slots[m_RHISlotIndex];
 
