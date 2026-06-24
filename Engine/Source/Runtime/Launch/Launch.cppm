@@ -265,6 +265,10 @@ class EngineLoop {
                 (*Task)();
             }
 
+            // Resource handles are passive state reads; publish completed sampled-texture uploads here
+            // on the RHI thread before the next command list can observe them.
+            Resource::Manager::Get().TickGpuPending();
+
             if (auto R = RHI::RenderDevice::Get().Execute(Slot.CmdList); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();

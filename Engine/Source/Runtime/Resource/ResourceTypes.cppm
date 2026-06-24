@@ -11,8 +11,10 @@ export namespace SoulEngine::Resource {
 
 /// @brief Runtime state for asynchronous resources.
 enum class ResourceState : Uint8 {
-    Invalid = 0,
-    Loading,
+    Unknown = 0,
+    CpuPreparing,
+    RhiCommitting,
+    GpuPending,
     Ready,
     Failed,
     Stale,
@@ -28,8 +30,8 @@ using ResourceId         = Uint64;
 using ResourceGeneration = Uint64;
 
 /// @brief Logical texture resource published through ResourceHandle.
-struct TextureResource {
-    SPtr<RHI::Texture> Texture = nullptr;
+struct SampledTextureResource {
+    SPtr<RHI::SampledTexture> Texture = nullptr;
 };
 
 /// @brief Logical graphics pipeline resource published through ResourceHandle.
@@ -65,10 +67,22 @@ class ResourceSlot {
         std::lock_guard Lock(m_Mutex);
         m_Id = Id;
         ++m_Generation;
-        m_State = ResourceState::Loading;
+        m_State = ResourceState::CpuPreparing;
         m_Value.reset();
         m_Error.reset();
         return m_Generation;
+    }
+
+    [[nodiscard]] auto MarkCpuPreparing(ResourceGeneration Generation) -> bool {
+        return SetState(Generation, ResourceState::CpuPreparing);
+    }
+
+    [[nodiscard]] auto MarkRhiCommitting(ResourceGeneration Generation) -> bool {
+        return SetState(Generation, ResourceState::RhiCommitting);
+    }
+
+    [[nodiscard]] auto PublishGpuPending(ResourceGeneration Generation) -> bool {
+        return SetState(Generation, ResourceState::GpuPending);
     }
 
     [[nodiscard]] auto PublishReady(ResourceGeneration Generation, T Value) -> bool {
@@ -125,10 +139,19 @@ class ResourceSlot {
     }
 
   private:
+    [[nodiscard]] auto SetState(ResourceGeneration Generation, ResourceState State) -> bool {
+        std::lock_guard Lock(m_Mutex);
+        if (Generation != m_Generation)
+            return false;
+
+        m_State = State;
+        return true;
+    }
+
     mutable std::mutex          m_Mutex;
     ResourceId                  m_Id         = 0;
     ResourceGeneration          m_Generation = 0;
-    ResourceState               m_State      = ResourceState::Invalid;
+    ResourceState               m_State      = ResourceState::Unknown;
     std::optional<T>            m_Value      = std::nullopt;
     std::optional<ErrorMessage> m_Error      = std::nullopt;
 };
@@ -154,16 +177,8 @@ class ResourceHandle {
 
     [[nodiscard]] auto GetState() const -> ResourceState {
         if (!m_Slot)
-            return ResourceState::Invalid;
+            return ResourceState::Unknown;
         return m_Slot->GetState(m_Generation);
-    }
-
-    [[nodiscard]] auto IsReady() const -> bool {
-        return GetState() == ResourceState::Ready;
-    }
-
-    [[nodiscard]] auto IsFailed() const -> bool {
-        return GetState() == ResourceState::Failed;
     }
 
     [[nodiscard]] auto TryGet() const -> std::optional<T> {
@@ -192,7 +207,7 @@ class ResourceHandle {
     ResourceGeneration    m_Generation = 0;
 };
 
-using TextureHandle          = ResourceHandle<TextureResource>;
+using SampledTextureHandle   = ResourceHandle<SampledTextureResource>;
 using GraphicsPipelineHandle = ResourceHandle<GraphicsPipelineResource>;
 
 template <typename T>

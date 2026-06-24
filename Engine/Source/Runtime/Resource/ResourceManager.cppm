@@ -56,6 +56,16 @@ struct PreparedGraphicsPipeline {
     RHI::GraphicsPipelineDesc Desc = {};
 };
 
+struct GpuPendingSampledTexture {
+    SPtr<ResourceSlot<SampledTextureResource>> Slot             = nullptr;
+    ResourceGeneration                         Generation       = 0;
+    String                                     Key              = {};
+    SampledTextureResource                     Resource         = {};
+    Uint32                                     Width            = 0;
+    Uint32                                     Height           = 0;
+    RHI::GpuCompletionToken                    UploadCompletion = {};
+};
+
 /// @brief Central resource manager — singleton.
 ///
 /// Loads assets from disk, uploads to GPU, and caches by path hash.
@@ -78,39 +88,39 @@ class Manager : public Singleton<Manager> {
         LogDebug("Resource manager shutdown requested");
     }
 
-    /// @brief Request asynchronous texture load and GPU upload.
-    [[nodiscard]] auto RequestTexture(StringView TexturePath) -> TextureHandle {
+    /// @brief Request asynchronous sampled texture load and GPU upload.
+    [[nodiscard]] auto RequestSampledTexture(StringView TexturePath) -> SampledTextureHandle {
         const auto Key = NormalizeResourcePath(TexturePath);
         const auto Id  = static_cast<ResourceId>(std::hash<String>{}(Key));
 
         if (IsShutdownRequested()) {
-            LogWarning("Texture request rejected after shutdown '{}'", Key);
+            LogWarning("Sampled texture request rejected after shutdown '{}'", Key);
             return {};
         }
 
-        SPtr<ResourceSlot<TextureResource>> Slot;
-        ResourceGeneration                  Generation = 0;
+        SPtr<ResourceSlot<SampledTextureResource>> Slot;
+        ResourceGeneration                         Generation = 0;
         {
             std::lock_guard Lock(m_TextureMutex);
             if (auto It = m_TextureRequests.find(Key); It != m_TextureRequests.end()) {
                 Slot       = It->second;
                 Generation = Slot->GetGeneration();
-                LogDebug("Texture request coalesced '{}'", Key);
-                return TextureHandle::Create(Slot, Id, Generation);
+                LogDebug("Sampled texture request coalesced '{}'", Key);
+                return SampledTextureHandle::Create(Slot, Id, Generation);
             }
 
-            Slot       = std::make_shared<ResourceSlot<TextureResource>>();
+            Slot       = std::make_shared<ResourceSlot<SampledTextureResource>>();
             Generation = Slot->Reset(Id);
             m_TextureRequests.emplace(Key, Slot);
         }
 
-        LogDebug("Texture requested '{}'", Key);
+        LogDebug("Sampled texture requested '{}'", Key);
 
         auto* Graph = m_TaskGraph;
         if (!Graph) {
             PublishTextureFailed(
                 Slot, Generation, Key, ErrorMessage(Format("Resource manager not initialized for '{}'", Key)));
-            return TextureHandle::Create(Slot, Id, Generation);
+            return SampledTextureHandle::Create(Slot, Id, Generation);
         }
 
         Graph->EnqueueBackground([this, Graph, Slot, Generation, Key] {
@@ -136,7 +146,12 @@ class Manager : public Singleton<Manager> {
                     return;
                 }
 
-                RHI::TextureDesc Desc{
+                if (!Slot->MarkRhiCommitting(Generation)) {
+                    LogDebug("Stale async sampled texture RHI commit discarded '{}'", Key);
+                    return;
+                }
+
+                RHI::SampledTextureDesc Desc{
                     .Data     = Decoded.Pixels.data(),
                     .Width    = Decoded.Width,
                     .Height   = Decoded.Height,
@@ -145,7 +160,7 @@ class Manager : public Singleton<Manager> {
                     .Usage    = RHI::TextureUsage::ShaderResource,
                 };
 
-                auto TexResult = RHI::RenderDevice::Get().CreateTexture(Desc);
+                auto TexResult = RHI::RenderDevice::Get().CreateSampledTexture(Desc);
                 if (!TexResult) {
                     PublishTextureFailed(
                         Slot,
@@ -155,16 +170,17 @@ class Manager : public Singleton<Manager> {
                     return;
                 }
 
-                PublishTextureReady(Slot,
-                                    Generation,
-                                    Key,
-                                    TextureResource{.Texture = std::move(*TexResult)},
-                                    Decoded.Width,
-                                    Decoded.Height);
+                PublishSampledTextureGpuPending(Slot,
+                                                Generation,
+                                                Key,
+                                                SampledTextureResource{.Texture = std::move(TexResult->Texture)},
+                                                Decoded.Width,
+                                                Decoded.Height,
+                                                TexResult->UploadCompletion);
             });
         });
 
-        return TextureHandle::Create(Slot, Id, Generation);
+        return SampledTextureHandle::Create(Slot, Id, Generation);
     }
 
     /// @brief Request asynchronous graphics pipeline compile and GPU creation.
@@ -225,6 +241,11 @@ class Manager : public Singleton<Manager> {
                     return;
                 }
 
+                if (!Slot->MarkRhiCommitting(Generation)) {
+                    LogDebug("Stale async graphics pipeline RHI commit discarded '{}'", Key);
+                    return;
+                }
+
                 auto PipeResult = RHI::RenderDevice::Get().CreateGraphicsPipeline(Prepared.Desc);
                 if (!PipeResult) {
                     PublishPipelineFailed(
@@ -243,12 +264,56 @@ class Manager : public Singleton<Manager> {
         return GraphicsPipelineHandle::Create(Slot, Id, Generation);
     }
 
+    /// @brief Publish GPU-pending sampled textures whose upload tokens have completed.
+    auto TickGpuPending() -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            m_GpuPendingSampledTextures.clear();
+            return;
+        }
+
+        // Rebuild instead of erasing in-place so incomplete uploads retain ownership
+        // while completed or stale entries are dropped deterministically on this thread.
+        std::vector<GpuPendingSampledTexture> Next;
+        Next.reserve(m_GpuPendingSampledTextures.size());
+
+        for (auto& Pending : m_GpuPendingSampledTextures) {
+            auto State = Pending.Slot->GetState(Pending.Generation);
+            if (State == ResourceState::Stale) {
+                LogDebug("Stale async sampled texture GPU pending discarded '{}'", Pending.Key);
+                continue;
+            }
+            if (State != ResourceState::GpuPending) {
+                LogDebug("Async sampled texture GPU pending discarded '{}'", Pending.Key);
+                continue;
+            }
+
+            if (!RHI::RenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
+                Next.push_back(std::move(Pending));
+                continue;
+            }
+
+            if (!Pending.Slot->PublishReady(Pending.Generation, std::move(Pending.Resource))) {
+                LogDebug("Stale async sampled texture ready discarded '{}'", Pending.Key);
+                continue;
+            }
+
+            LogInfo("Async sampled texture ready '{}' ({}x{})", Pending.Key, Pending.Width, Pending.Height);
+        }
+
+        m_GpuPendingSampledTextures = std::move(Next);
+    }
+
     /// @brief Clear all cached resources. Call during shutdown.
     auto Clear() -> void {
         {
             std::lock_guard Lock(m_TextureMutex);
             m_TextureCache.clear();
             m_TextureRequests.clear();
+        }
+        {
+            std::lock_guard Lock(m_PublishMutex);
+            m_GpuPendingSampledTextures.clear();
         }
         {
             std::lock_guard Lock(m_PipelineMutex);
@@ -264,24 +329,35 @@ class Manager : public Singleton<Manager> {
         return m_ShutdownRequested.load(std::memory_order_acquire);
     }
 
-    auto PublishTextureReady(SPtr<ResourceSlot<TextureResource>> Slot,
-                             ResourceGeneration                  Generation,
-                             StringView                          Key,
-                             TextureResource                     Resource,
-                             Uint32                              Width,
-                             Uint32                              Height) -> void {
+    auto PublishSampledTextureGpuPending(SPtr<ResourceSlot<SampledTextureResource>> Slot,
+                                         ResourceGeneration                         Generation,
+                                         StringView                                 Key,
+                                         SampledTextureResource                     Resource,
+                                         Uint32                                     Width,
+                                         Uint32                                     Height,
+                                         RHI::GpuCompletionToken                    UploadCompletion) -> void {
         std::lock_guard Lock(m_PublishMutex);
         if (IsShutdownRequested()) {
-            LogDebug("Async texture ready discarded after shutdown '{}'", Key);
+            LogDebug("Async sampled texture GPU pending discarded after shutdown '{}'", Key);
             return;
         }
 
-        if (!Slot->PublishReady(Generation, std::move(Resource))) {
-            LogDebug("Stale async texture ready discarded '{}'", Key);
+        if (!Slot->PublishGpuPending(Generation)) {
+            LogDebug("Stale async sampled texture GPU pending discarded '{}'", Key);
             return;
         }
 
-        LogInfo("Async texture ready '{}' ({}x{})", Key, Width, Height);
+        m_GpuPendingSampledTextures.push_back(GpuPendingSampledTexture{
+            .Slot             = std::move(Slot),
+            .Generation       = Generation,
+            .Key              = String(Key),
+            .Resource         = std::move(Resource),
+            .Width            = Width,
+            .Height           = Height,
+            .UploadCompletion = UploadCompletion,
+        });
+
+        LogDebug("Async sampled texture GPU pending '{}' ({}x{})", Key, Width, Height);
     }
 
     auto PublishPipelineReady(SPtr<ResourceSlot<GraphicsPipelineResource>> Slot,
@@ -302,10 +378,10 @@ class Manager : public Singleton<Manager> {
         LogInfo("Async graphics pipeline ready '{}'", Key);
     }
 
-    auto PublishTextureFailed(SPtr<ResourceSlot<TextureResource>> Slot,
-                              ResourceGeneration                  Generation,
-                              StringView                          Key,
-                              ErrorMessage                        Error) -> void {
+    auto PublishTextureFailed(SPtr<ResourceSlot<SampledTextureResource>> Slot,
+                              ResourceGeneration                         Generation,
+                              StringView                                 Key,
+                              ErrorMessage                               Error) -> void {
         std::lock_guard Lock(m_PublishMutex);
         if (IsShutdownRequested()) {
             LogDebug("Async texture failure discarded after shutdown '{}'", Key);
@@ -396,13 +472,14 @@ class Manager : public Singleton<Manager> {
     }
 
     std::mutex                                                               m_TextureMutex;
-    std::unordered_map<Uint64, SPtr<RHI::Texture>>                           m_TextureCache;
-    std::unordered_map<String, SPtr<ResourceSlot<TextureResource>>>          m_TextureRequests;
+    std::unordered_map<Uint64, SPtr<RHI::SampledTexture>>                    m_TextureCache;
+    std::unordered_map<String, SPtr<ResourceSlot<SampledTextureResource>>>   m_TextureRequests;
     std::mutex                                                               m_PipelineMutex;
     std::unordered_map<String, SPtr<ResourceSlot<GraphicsPipelineResource>>> m_PipelineRequests;
     TaskGraph*                                                               m_TaskGraph         = nullptr;
     std::atomic<bool>                                                        m_ShutdownRequested = false;
     std::mutex                                                               m_PublishMutex;
+    std::vector<GpuPendingSampledTexture>                                    m_GpuPendingSampledTextures;
 };
 
 } // namespace SoulEngine::Resource

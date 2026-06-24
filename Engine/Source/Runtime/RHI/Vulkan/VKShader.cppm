@@ -151,15 +151,15 @@ namespace SoulEngine::RHI::Vulkan {
                                   ValueType.ColumnCount)));
 }
 
-[[nodiscard]] auto ToVkVertexFormat(Format Format) -> std::expected<vk::Format, ErrorMessage> {
+[[nodiscard]] auto ToVkVertexFormat(RHI::Format Format) -> std::expected<vk::Format, ErrorMessage> {
     switch (Format) {
-    case Format::R32_SFLOAT:
+    case RHI::Format::R32_SFLOAT:
         return vk::Format::eR32Sfloat;
-    case Format::R32G32_SFLOAT:
+    case RHI::Format::R32G32_SFLOAT:
         return vk::Format::eR32G32Sfloat;
-    case Format::R32G32B32_SFLOAT:
+    case RHI::Format::R32G32B32_SFLOAT:
         return vk::Format::eR32G32B32Sfloat;
-    case Format::R32G32B32A32_SFLOAT:
+    case RHI::Format::R32G32B32A32_SFLOAT:
         return vk::Format::eR32G32B32A32Sfloat;
     default:
         return std::unexpected(

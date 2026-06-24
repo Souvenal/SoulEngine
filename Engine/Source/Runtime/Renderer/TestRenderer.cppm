@@ -100,7 +100,7 @@ class TestRenderer final : public IRenderer {
             return std::unexpected(IBO.error().Append("Index buffer creation failed"));
         m_IndexBuffer = std::move(*IBO);
 
-        m_Texture = Resource::Manager::Get().RequestTexture(
+        m_Texture = Resource::Manager::Get().RequestSampledTexture(
             (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "statue.jpg").string());
         if (!m_Texture.IsValid())
             return std::unexpected(ErrorMessage("Test texture request failed"));
@@ -151,7 +151,7 @@ class TestRenderer final : public IRenderer {
         Pass.SetPipeline(Pipeline->Pipeline);
         Pass.BindVertexBuffer(m_VertexBuffer);
         Pass.BindIndexBuffer(m_IndexBuffer);
-        Pass.SetTexture(0, Texture->Texture.get());
+        Pass.SetSampledTexture(0, Texture->Texture.get());
         Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
 
         CmdList.Passes.push_back(std::move(Pass));
@@ -173,7 +173,7 @@ class TestRenderer final : public IRenderer {
     SPtr<RHI::VertexBuffer>          m_VertexBuffer;
     SPtr<RHI::IndexBuffer>           m_IndexBuffer;
     Resource::GraphicsPipelineHandle m_Pipeline = {};
-    Resource::TextureHandle          m_Texture  = {};
+    Resource::SampledTextureHandle   m_Texture  = {};
 };
 
 } // namespace SoulEngine::Renderer

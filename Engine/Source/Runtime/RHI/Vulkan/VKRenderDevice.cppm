@@ -24,7 +24,7 @@ import :Buffer;
 import :FrameContext;
 import :Capability;
 import :ImmediateContext;
-import :DeletionQueue;
+import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
 import :Texture;
@@ -84,15 +84,16 @@ class RenderDevice final : public RHI::RenderDevice {
         if (auto Res = CreateVMA(Context); !Res.has_value())
             return std::unexpected(Res.error());
 
-        // ── Deferred Deletion Queue ────────────────────────────────────────
+        // ── Transfer Completion Queue ──────────────────────────────────────
         // Must be created before ImmediateContext — ImmediateContext borrows it
-        auto DelQueue = DeferredDeletionQueue::Create(m_Device);
-        if (!DelQueue)
-            return std::unexpected(DelQueue.error().Append("DeferredDeletionQueue creation failed"));
-        m_DeletionQueue = std::move(*DelQueue);
+        auto CompletionQueue = TransferCompletionQueue::Create(m_Device);
+        if (!CompletionQueue)
+            return std::unexpected(CompletionQueue.error().Append("TransferCompletionQueue creation failed"));
+        m_TransferCompletionQueue = std::move(*CompletionQueue);
 
         // ── Immediate Context ──────────────────────────────────────────────
-        auto ImmCtx = ImmediateContext::Create(m_Device, m_TransferQueue, m_TransferFamily, m_DeletionQueue);
+        auto ImmCtx =
+            ImmediateContext::Create(m_Device, m_TransferQueue, m_TransferFamily, m_TransferCompletionQueue);
         if (!ImmCtx)
             return std::unexpected(ImmCtx.error().Append("ImmediateContext creation failed"));
         m_ImmediateContext = std::move(*ImmCtx);
@@ -155,7 +156,7 @@ class RenderDevice final : public RHI::RenderDevice {
         m_FrameContext[m_CurrentFrame].ScratchSecondaries.clear();
 
         // Free any GPU resources whose transfer operations have completed.
-        m_DeletionQueue.Tick();
+        m_TransferCompletionQueue.Tick();
 
         auto& PresentCompleteSema = m_FrameContext[m_CurrentFrame].PresentComplete;
         auto  AcquireRes          = m_Swapchain.AcquireNextImage(PresentCompleteSema);
@@ -255,12 +256,12 @@ class RenderDevice final : public RHI::RenderDevice {
 
     [[nodiscard]] auto CreateVertexBuffer(const VertexBufferDesc& Desc)
         -> std::expected<SPtr<RHI::VertexBuffer>, ErrorMessage> override {
-        return VertexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_DeletionQueue);
+        return VertexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue);
     }
 
     [[nodiscard]] auto CreateIndexBuffer(const IndexBufferDesc& Desc)
         -> std::expected<SPtr<RHI::IndexBuffer>, ErrorMessage> override {
-        return IndexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_DeletionQueue);
+        return IndexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue);
     }
 
     [[nodiscard]] auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
@@ -271,9 +272,10 @@ class RenderDevice final : public RHI::RenderDevice {
         return SPtr<RHI::ConstantBuffer>(std::move(*Buf));
     }
 
-    [[nodiscard]] auto CreateTexture(const TextureDesc& Desc)
-        -> std::expected<SPtr<RHI::Texture>, ErrorMessage> override {
-        return Texture::Create(Desc, m_Allocator, m_Device, m_ImmediateContext, m_DeletionQueue, *m_DescriptorManager);
+    [[nodiscard]] auto CreateSampledTexture(const SampledTextureDesc& Desc)
+        -> std::expected<RHI::SampledTextureCreateResult, ErrorMessage> override {
+        return SampledTexture::Create(
+            Desc, m_Allocator, m_Device, m_ImmediateContext, m_TransferCompletionQueue, *m_DescriptorManager);
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
@@ -287,6 +289,10 @@ class RenderDevice final : public RHI::RenderDevice {
         return FC.GlobalConstantBuffer->Write(Data, Size);
     }
 
+    [[nodiscard]] auto IsGpuComplete(GpuCompletionToken Token) -> bool override {
+        return m_TransferCompletionQueue.IsComplete(Token);
+    }
+
     auto WaitIdle() -> void override {
         if (*m_Device)
             (void)m_Device.waitIdle();
@@ -294,7 +300,7 @@ class RenderDevice final : public RHI::RenderDevice {
 
     auto Shutdown() -> void override {
         WaitIdle();
-        auto DrainResult = m_DeletionQueue.Drain();
+        auto DrainResult = m_TransferCompletionQueue.Drain();
         if (!DrainResult)
             LogError("{}", DrainResult.error().ToString());
         WaitIdle();
@@ -745,8 +751,8 @@ class RenderDevice final : public RHI::RenderDevice {
     vk::raii::Queue m_ComputeQueue  = nullptr;
     vk::raii::Queue m_TransferQueue = nullptr;
 
-    ImmediateContext      m_ImmediateContext;
-    DeferredDeletionQueue m_DeletionQueue;
+    ImmediateContext         m_ImmediateContext;
+    TransferCompletionQueue  m_TransferCompletionQueue;
 
     uint32_t m_FramesInFlight = 2;
     uint32_t m_CurrentFrame   = 0;

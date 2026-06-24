@@ -17,23 +17,23 @@ namespace SoulEngine::RHI::Vulkan {
 // Conversion helpers
 // ═════════════════════════════════════════════════════════════════════════════
 
-[[nodiscard]] auto ToVkFormat(Format Fmt) -> vk::Format {
+[[nodiscard]] auto ToVkFormat(RHI::Format Fmt) -> vk::Format {
     switch (Fmt) {
-    case Format::R8G8B8A8_UNORM:
+    case RHI::Format::R8G8B8A8_UNORM:
         return vk::Format::eR8G8B8A8Unorm;
-    case Format::B8G8R8A8_UNORM:
+    case RHI::Format::B8G8R8A8_UNORM:
         return vk::Format::eB8G8R8A8Unorm;
-    case Format::D32_SFLOAT:
+    case RHI::Format::D32_SFLOAT:
         return vk::Format::eD32Sfloat;
-    case Format::D32_SFLOAT_S8_UINT:
+    case RHI::Format::D32_SFLOAT_S8_UINT:
         return vk::Format::eD32SfloatS8Uint;
-    case Format::R32G32B32A32_SFLOAT:
+    case RHI::Format::R32G32B32A32_SFLOAT:
         return vk::Format::eR32G32B32A32Sfloat;
-    case Format::R32G32B32_SFLOAT:
+    case RHI::Format::R32G32B32_SFLOAT:
         return vk::Format::eR32G32B32Sfloat;
-    case Format::R32G32_SFLOAT:
+    case RHI::Format::R32G32_SFLOAT:
         return vk::Format::eR32G32Sfloat;
-    case Format::R32_SFLOAT:
+    case RHI::Format::R32_SFLOAT:
         return vk::Format::eR32Sfloat;
     default:
         return vk::Format::eUndefined;

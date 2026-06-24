@@ -181,7 +181,7 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
             .pAttachments    = &BlendAttachment,
         };
 
-        vk::Format ColorVkFormat = ToVkFormat(Desc.ColorFormat);
+        vk::Format ColorVkFormat = SoulEngine::RHI::Vulkan::ToVkFormat(Desc.ColorFormat);
 
         // Dynamic rendering allows us to specify color, depth, stencil attachments directly
         // after the pipeline is created

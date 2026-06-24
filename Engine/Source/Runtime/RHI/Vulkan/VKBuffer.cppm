@@ -11,7 +11,7 @@ import std;
 
 import :Types;
 import :ImmediateContext;
-import :DeletionQueue;
+import :TransferCompletionQueue;
 
 using namespace SoulEngine::Core;
 
@@ -115,14 +115,14 @@ class HostBuffer {
         return {};
     }
 
-    /// Defer destruction to DeferredDeletionQueue at the given timeline Value.
+    /// Defer destruction to TransferCompletionQueue at the given timeline token.
     /// After this call the HostBuffer is hollowed out (m_Allocation = nullptr)
     /// so its destructor is a no-op. The lambda captures VMA handles by value.
-    auto DeferredDelete(DeferredDeletionQueue& Queue, Uint64 Value) -> void {
+    auto DeferredDelete(TransferCompletionQueue& Queue, GpuCompletionToken Token) -> void {
         auto Alloc       = m_Allocator;
         auto Buf         = static_cast<VkBuffer>(m_Buffer);
         auto AllocHandle = m_Allocation;
-        Queue.Enqueue(Value, [Alloc, Buf, AllocHandle]() {
+        Queue.EnqueueCallback(Token, [Alloc, Buf, AllocHandle]() {
             if (AllocHandle)
                 vmaDestroyBuffer(Alloc, Buf, AllocHandle);
         });
@@ -225,21 +225,20 @@ class DeviceBuffer {
     }
 
     /// Copy full contents from a HostBuffer staging source via ImmediateContext.
-    /// Copies min(SrcSize, this->Size) bytes. Signals SignalSema on completion.
-    [[nodiscard]] auto CopyFrom(HostBuffer& Src, ImmediateContext& Ctx, const vk::SemaphoreSubmitInfo& SignalSema)
-        -> std::expected<void, ErrorMessage> {
+    /// Copies min(SrcSize, this->Size) bytes and returns the transfer completion token.
+    [[nodiscard]] auto CopyFrom(HostBuffer& Src, ImmediateContext& Ctx)
+        -> std::expected<GpuCompletionToken, ErrorMessage> {
         Uint64 CopySize = std::min(Src.GetSize(), m_Size);
 
         auto CopyResult = Ctx.SubmitTransfer(
             [&](const vk::raii::CommandBuffer& CmdBuf) {
                 vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
                 CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
-            },
-            SignalSema);
+            });
 
         if (!CopyResult)
             return std::unexpected(CopyResult.error().Append("DeviceBuffer::CopyFrom failed"));
-        return {};
+        return *CopyResult;
     }
 
   private:
@@ -268,12 +267,12 @@ class VertexBuffer final : public RHI::VertexBuffer {
 
     /// Static factory: creates staging buffer, uploads data, copies to
     /// device-local buffer via ImmediateContext, and defers staging destruction
-    /// to DeferredDeletionQueue.
+    /// to TransferCompletionQueue.
     [[nodiscard]] static auto Create(const RHI::VertexBufferDesc& Desc,
                                      VmaAllocator                 Alloc,
                                      vk::Device                   Dev,
                                      ImmediateContext&            ImmCtx,
-                                     DeferredDeletionQueue&       DelQueue)
+                                     TransferCompletionQueue&     CompletionQueue)
         -> std::expected<SPtr<VertexBuffer>, ErrorMessage> {
         Uint64 Size  = Desc.VertexCount * Desc.Stride;
         Uint64 VCnt  = Desc.VertexCount;
@@ -298,13 +297,12 @@ class VertexBuffer final : public RHI::VertexBuffer {
         DevBuf = std::move(*DevRes);
 
         // ── Copy staging -> device with timeline signal ────────────────
-        uint64_t SignalValue = DelQueue.NextValue();
-        auto     SignalSema  = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
-        if (auto R = DevBuf.CopyFrom(Staging, ImmCtx, SignalSema); !R)
-            return std::unexpected(R.error().Append("VertexBuffer::Create: staging copy failed"));
+        auto CopyToken = DevBuf.CopyFrom(Staging, ImmCtx);
+        if (!CopyToken)
+            return std::unexpected(CopyToken.error().Append("VertexBuffer::Create: staging copy failed"));
 
         // ── Defer staging destruction ──────────────────────────────────
-        Staging.DeferredDelete(DelQueue, SignalValue);
+        Staging.DeferredDelete(CompletionQueue, *CopyToken);
 
         return std::make_shared<VertexBuffer>(std::move(DevBuf), Strid, VCnt);
     }
@@ -346,7 +344,7 @@ class IndexBuffer final : public RHI::IndexBuffer {
                                      VmaAllocator                Alloc,
                                      vk::Device                  Dev,
                                      ImmediateContext&           ImmCtx,
-                                     DeferredDeletionQueue&      DelQueue)
+                                     TransferCompletionQueue&    CompletionQueue)
         -> std::expected<SPtr<IndexBuffer>, ErrorMessage> {
         Uint64 IndexCount = Desc.IndexCount;
         Uint64 Size       = IndexCount * 4ULL;
@@ -367,12 +365,11 @@ class IndexBuffer final : public RHI::IndexBuffer {
             return std::unexpected(DevRes.error().Append("IndexBuffer::Create: device buffer creation failed"));
         DevBuf = std::move(*DevRes);
 
-        uint64_t SignalValue = DelQueue.NextValue();
-        auto     SignalSema  = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
-        if (auto R = DevBuf.CopyFrom(Staging, ImmCtx, SignalSema); !R)
-            return std::unexpected(R.error().Append("IndexBuffer::Create: staging copy failed"));
+        auto CopyToken = DevBuf.CopyFrom(Staging, ImmCtx);
+        if (!CopyToken)
+            return std::unexpected(CopyToken.error().Append("IndexBuffer::Create: staging copy failed"));
 
-        Staging.DeferredDelete(DelQueue, SignalValue);
+        Staging.DeferredDelete(CompletionQueue, *CopyToken);
 
         return std::make_shared<IndexBuffer>(std::move(DevBuf), IndexCount);
     }

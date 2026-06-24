@@ -90,17 +90,17 @@ class GraphicsPipeline {
 
 // ── Opaque handle types ───────────────────────────────────────────────────
 
-/// Polymorphic base for texture resources.
-/// Backend concrete class (e.g. Vulkan::Texture) owns the GPU allocation.
-/// Consumers hold SPtr<Texture> for type-safe API usage.
-class Texture {
+/// Polymorphic base for shader-readable sampled texture resources.
+/// Backend concrete class (e.g. Vulkan::SampledTexture) owns the GPU allocation.
+/// Consumers hold SPtr<SampledTexture> for type-safe API usage.
+class SampledTexture {
   public:
-    Texture()                                  = default;
-    Texture(const Texture&)                    = delete;
-    auto operator=(const Texture&) -> Texture& = delete;
-    Texture(Texture&&)                         = delete;
-    auto operator=(Texture&&) -> Texture&      = delete;
-    virtual ~Texture()                         = default;
+    SampledTexture()                                         = default;
+    SampledTexture(const SampledTexture&)                    = delete;
+    auto operator=(const SampledTexture&) -> SampledTexture& = delete;
+    SampledTexture(SampledTexture&&)                         = delete;
+    auto operator=(SampledTexture&&) -> SampledTexture&      = delete;
+    virtual ~SampledTexture()                                = default;
 
     [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
     [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
@@ -150,13 +150,22 @@ enum class TextureUsage : Uint32 {
     return static_cast<TextureUsage>(static_cast<Uint32>(a) | static_cast<Uint32>(b));
 }
 
-struct TextureDesc {
+struct SampledTextureDesc {
     const void*  Data     = nullptr;
     Uint32       Width    = 1;
     Uint32       Height   = 1;
     Uint32       Channels = 4;
     Format       Format   = Format::R8G8B8A8_UNORM;
     TextureUsage Usage    = TextureUsage::ShaderResource;
+};
+
+struct GpuCompletionToken {
+    Uint64 Id = 0;
+};
+
+struct SampledTextureCreateResult {
+    SPtr<SampledTexture> Texture          = nullptr;
+    GpuCompletionToken   UploadCompletion = {};
 };
 
 // ── Pipeline ─────────────────────────────────────────────────────────────────
@@ -221,12 +230,12 @@ struct ClearDepthStencilValue {
 };
 
 struct ColorAttachmentDesc {
-    const Texture*  TexturePtr = nullptr;
+    const SampledTexture* TexturePtr = nullptr;
     ClearColorValue ClearValue = {};
 };
 
 struct DepthAttachmentDesc {
-    const Texture*         TexturePtr = nullptr;
+    const SampledTexture*       TexturePtr = nullptr;
     ClearDepthStencilValue ClearValue = {};
 };
 

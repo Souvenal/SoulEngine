@@ -73,8 +73,10 @@ struct CommandVisitor {
         if (!Desc.ColorAttachment.TexturePtr) {
             if (!Swc)
                 return;
-            ImageView = Swc->GetImageView(Swc->GetCurrentIndex());
-            TransitionImage(Swc->GetImage(Swc->GetCurrentIndex()),
+            const auto CurrentIndex = Swc->GetCurrentIndex();
+            const auto CurrentImage = Swc->GetImage(CurrentIndex);
+            ImageView               = Swc->GetImageView(CurrentIndex);
+            TransitionImage(CurrentImage,
                             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                             vk::AccessFlagBits2::eColorAttachmentWrite,
                             vk::ImageLayout::eColorAttachmentOptimal,
@@ -172,7 +174,7 @@ struct CommandVisitor {
         Buf.draw(Cmd.VertexCount, Cmd.InstanceCount, Cmd.FirstVertex, Cmd.FirstInstance);
     }
 
-    auto operator()(const RHI::SetTextureCmd& /*Cmd*/) -> void {
+    auto operator()(const RHI::SetSampledTextureCmd& /*Cmd*/) -> void {
         // No-op: texture is already in the bindless descriptor set at creation time.
         // The renderer uses push constants to pass the descriptor slot index to the shader.
     }

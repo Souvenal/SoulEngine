@@ -5,7 +5,7 @@ export module Vulkan:ImmediateContext;
 import vulkan;
 import std;
 import RHI;
-import :DeletionQueue;
+import :TransferCompletionQueue;
 
 using namespace SoulEngine::Core;
 
@@ -30,7 +30,7 @@ class ImmediateContext {
     [[nodiscard]] static auto Create(vk::raii::Device& Device,
                                       vk::raii::Queue& TransferQueue,
                                       Uint32 TransferQueueFamily,
-                                      DeferredDeletionQueue& DelQueue)
+                                      TransferCompletionQueue& CompletionQueue)
         -> std::expected<ImmediateContext, ErrorMessage> {
         vk::CommandPoolCreateInfo PoolCI{
             // Transient: hint driver that cmdbufs recorded and re-recorded often
@@ -41,18 +41,16 @@ class ImmediateContext {
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create immediate command pool"));
 
-        return ImmediateContext(Device, TransferQueue, std::move(PoolRes.value), DelQueue);
+        return ImmediateContext(Device, TransferQueue, std::move(PoolRes.value), CompletionQueue);
     }
 
     /// Allocate one-shot cmdbuf, record via RecordFn, submit to transfer
-    /// queue with SignalSema, return immediately (no waitIdle).
+    /// queue, return immediately (no waitIdle).
     ///
-    /// The command buffer is freed via DeferredDeletionQueue once the
-    /// timeline reaches SignalSema.value. Caller must keep all referenced
+    /// The command buffer is freed via TransferCompletionQueue once the
+    /// timeline reaches the returned token. Caller must keep all referenced
     /// resources alive until that point.
-    [[nodiscard]] auto SubmitTransfer(const CmdFn& RecordFn,
-                                       const vk::SemaphoreSubmitInfo& SignalSema)
-        -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto SubmitTransfer(const CmdFn& RecordFn) -> std::expected<GpuCompletionToken, ErrorMessage> {
         auto CmdRes = m_Device->allocateCommandBuffers(vk::CommandBufferAllocateInfo{
             .commandPool        = *m_Pool,
             .level              = vk::CommandBufferLevel::ePrimary,
@@ -73,6 +71,8 @@ class ImmediateContext {
             return std::unexpected(ErrorMessage("Failed to end immediate command buffer"));
 
         vk::CommandBufferSubmitInfo CmdBufInfo{.commandBuffer = CmdBuf};
+        auto [Token, SignalSema] =
+            m_CompletionQueue->AllocateSignalSubmitInfo(vk::PipelineStageFlagBits2::eTransfer);
         vk::SemaphoreSubmitInfo     SignalSemas[] = {SignalSema};
         if (auto R = m_TransferQueue->submit2(
                 vk::SubmitInfo2{
@@ -86,11 +86,11 @@ class ImmediateContext {
 
         // Move cmdbuf into a shared_ptr so the lambda is copyable for std::function
         auto CmdBufPtr = std::make_shared<vk::raii::CommandBuffer>(std::move(CmdBuf));
-        m_DeletionQueue->Enqueue(SignalSema.value, [CmdBufPtr]() {
+        m_CompletionQueue->EnqueueCallback(Token, [CmdBufPtr]() {
             // raii dtor frees cmdbuf safely here — GPU is done
         });
 
-        return {};
+        return Token;
     }
 
     ImmediateContext(ImmediateContext&&)            = default;
@@ -103,16 +103,16 @@ class ImmediateContext {
     ImmediateContext(vk::raii::Device& Device,
                       vk::raii::Queue& TransferQueue,
                       vk::raii::CommandPool&& Pool,
-                      DeferredDeletionQueue& DelQueue)
+                      TransferCompletionQueue& CompletionQueue)
         : m_Device(&Device)
         , m_TransferQueue(&TransferQueue)
         , m_Pool(std::move(Pool))
-        , m_DeletionQueue(&DelQueue) {}
+        , m_CompletionQueue(&CompletionQueue) {}
 
-    vk::raii::Device*         m_Device        = nullptr;
-    vk::raii::Queue*          m_TransferQueue = nullptr;
-    vk::raii::CommandPool     m_Pool          = nullptr;
-    DeferredDeletionQueue*    m_DeletionQueue = nullptr;
+    vk::raii::Device*          m_Device           = nullptr;
+    vk::raii::Queue*           m_TransferQueue    = nullptr;
+    vk::raii::CommandPool      m_Pool             = nullptr;
+    TransferCompletionQueue*   m_CompletionQueue  = nullptr;
 };
 
 } // namespace SoulEngine::RHI::Vulkan

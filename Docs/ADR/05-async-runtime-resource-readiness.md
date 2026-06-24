@@ -6,11 +6,12 @@ Accepted (2026-06-24)
 
 ## Context
 
-Runtime resources such as textures and graphics pipelines can require expensive
-CPU work and backend-native RHI work before they are usable by a frame. Texture
-preparation may include file IO, image decode, GPU upload, layout transition,
-and descriptor publication. Graphics pipeline preparation may include shader
-compilation, reflection, and backend pipeline creation.
+Runtime resources such as sampled texture assets and graphics pipelines can
+require expensive CPU work and backend-native RHI work before they are usable by
+a frame. Sampled texture preparation may include file IO, image decode, GPU
+upload, layout transition, and descriptor publication. Graphics pipeline
+preparation may include shader compilation, reflection, and backend pipeline
+creation.
 
 The three-thread frame pipeline keeps Game, Render, and RHI work separated:
 Render builds pure RHI command data, while RHI owns backend-native GPU work. A
@@ -52,10 +53,17 @@ skip the dependent work. Consumers may opt into fallback resources when a
 coherent substitute exists. Blocking waits are reserved for startup, tooling,
 tests, or other non-frame-path operations.
 
-Async Resource v1 covers texture resources and graphics pipeline resources.
-Buffer resources may follow the same model later. Constant buffers, per-frame
-uniform buffers, swapchain images, and transient render targets are outside this
-decision.
+Async Resource v1 covers sampled texture resources and graphics pipeline
+resources. Buffer resources may follow the same model later. Constant buffers,
+per-frame uniform buffers, swapchain images, and transient render targets are
+outside this decision.
+
+`SampledTexture`, render targets, and swapchain images are separate concepts.
+`SampledTexture` creation is upload-backed and returns a transfer upload
+completion token. Render targets use attachment-specific creation APIs.
+Swapchain images remain backend-private presentation targets; final presentation
+is handled by RHI/RenderGraph flow rather than by exposing swapchain images as
+Resource-managed sampled texture resources.
 
 Priority scheduling and explicit cancellation are deferred. The initial model
 does not require killing running CPU, RHI, or GPU work.
@@ -63,9 +71,10 @@ does not require killing running CPU, RHI, or GPU work.
 ## Consequences
 
 This preserves the non-blocking frame path and keeps backend-native RHI mutation
-owned by the RHI thread. It also gives render code a precise way to distinguish
-loading, ready, failed, fallback, and stale completion cases instead of encoding
-all of them as `nullptr` or a boolean.
+owned by the RHI thread. It also gives render code a precise exported
+`ResourceState` so consumers can distinguish CPU preparation, RHI commitment,
+GPU-pending completion, ready, failed, and stale cases instead of encoding all
+of them as `nullptr` or a boolean.
 
 The trade-off is a more complex resource layer. Synchronous resource creation
 APIs become transitional paths or non-frame-path utilities, and renderer code

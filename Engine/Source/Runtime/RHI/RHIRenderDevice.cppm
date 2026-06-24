@@ -39,7 +39,8 @@ class RenderDevice {
     /// @param Size  Total size in bytes per-frame slot.
     [[nodiscard]] virtual auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
         -> std::expected<SPtr<ConstantBuffer>, ErrorMessage>                                                        = 0;
-    [[nodiscard]] virtual auto CreateTexture(const TextureDesc& Desc) -> std::expected<SPtr<Texture>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateSampledTexture(const SampledTextureDesc& Desc)
+        -> std::expected<SampledTextureCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> = 0;
 
@@ -62,6 +63,9 @@ class RenderDevice {
     [[nodiscard]] virtual auto GetCurrentFrameIndex() const -> Uint32 = 0;
 
     // ── GPU sync ───────────────────────────────────────────────────────────
+
+    /// @brief Non-blocking query for backend GPU completion tokens.
+    [[nodiscard]] virtual auto IsGpuComplete(GpuCompletionToken Token) -> bool = 0;
 
     /// @brief Block the CPU until all GPU work completes.
     /// Safe to call at any point after Init(); required before destroying

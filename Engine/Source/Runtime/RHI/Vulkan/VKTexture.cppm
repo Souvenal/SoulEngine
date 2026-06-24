@@ -12,7 +12,7 @@ import std;
 import :Types;
 import :Buffer;
 import :ImmediateContext;
-import :DeletionQueue;
+import :TransferCompletionQueue;
 import :Descriptor;
 
 using namespace SoulEngine::Core;
@@ -20,23 +20,23 @@ using namespace SoulEngine::Core;
 namespace SoulEngine::RHI::Vulkan {
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Vulkan::Texture — GPU texture resource
+// Vulkan::SampledTexture — GPU sampled texture resource
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Concrete Vulkan texture. Owns VkImage + VkImageView + VMA allocation.
+/// Concrete Vulkan sampled texture. Owns VkImage + VkImageView + VMA allocation.
 /// Created via static factory Create(). Move-only, non-copyable.
-class Texture final : public RHI::Texture {
+class SampledTexture final : public RHI::SampledTexture {
   public:
-    Texture() = default;
+    SampledTexture() = default;
 
-    Texture(vk::Image             Image,
-            vk::raii::ImageView&& ImageView,
-            VmaAllocation         Allocation,
-            VmaAllocator          Allocator,
-            vk::raii::Device*     Device,
-            Uint32                Width,
-            Uint32                Height,
-            Uint32                DescriptorSlot)
+    SampledTexture(vk::Image             Image,
+                   vk::raii::ImageView&& ImageView,
+                   VmaAllocation         Allocation,
+                   VmaAllocator          Allocator,
+                   vk::raii::Device*     Device,
+                   Uint32                Width,
+                   Uint32                Height,
+                   Uint32                DescriptorSlot)
         : m_Image(Image),
           m_ImageView(std::move(ImageView)),
           m_Allocation(Allocation),
@@ -46,11 +46,11 @@ class Texture final : public RHI::Texture {
           m_Height(Height),
           m_DescriptorSlot(DescriptorSlot) {}
 
-    ~Texture() {
+    ~SampledTexture() {
         Destroy();
     }
 
-    Texture(Texture&& Other) noexcept
+    SampledTexture(SampledTexture&& Other) noexcept
         : m_Image(std::exchange(Other.m_Image, nullptr)),
           m_ImageView(std::move(Other.m_ImageView)),
           m_Allocation(std::exchange(Other.m_Allocation, nullptr)),
@@ -60,7 +60,7 @@ class Texture final : public RHI::Texture {
           m_Height(std::exchange(Other.m_Height, 0u)),
           m_DescriptorSlot(std::exchange(Other.m_DescriptorSlot, 0u)) {}
 
-    auto operator=(Texture&& Other) noexcept -> Texture& {
+    auto operator=(SampledTexture&& Other) noexcept -> SampledTexture& {
         if (this != &Other) {
             std::swap(m_Image, Other.m_Image);
             std::swap(m_ImageView, Other.m_ImageView);
@@ -74,31 +74,32 @@ class Texture final : public RHI::Texture {
         return *this;
     }
 
-    Texture(const Texture&)                    = delete;
-    auto operator=(const Texture&) -> Texture& = delete;
+    SampledTexture(const SampledTexture&)                    = delete;
+    auto operator=(const SampledTexture&) -> SampledTexture& = delete;
 
     /// Static factory: upload pixel data to GPU texture via staging buffer.
     /// Allocates a bindless descriptor slot and writes the ImageView.
-    [[nodiscard]] static auto Create(const RHI::TextureDesc& Desc,
-                                     VmaAllocator            Alloc,
-                                     vk::raii::Device&       Dev,
-                                     ImmediateContext&       ImmCtx,
-                                     DeferredDeletionQueue&  DelQueue,
-                                     DescriptorManager& DescMgr) -> std::expected<SPtr<RHI::Texture>, ErrorMessage> {
+    [[nodiscard]] static auto Create(const RHI::SampledTextureDesc& Desc,
+                                     VmaAllocator                   Alloc,
+                                     vk::raii::Device&              Dev,
+                                     ImmediateContext&              ImmCtx,
+                                     TransferCompletionQueue&       CompletionQueue,
+                                     DescriptorManager&             DescMgr)
+        -> std::expected<RHI::SampledTextureCreateResult, ErrorMessage> {
         if (!Desc.Data || Desc.Width == 0 || Desc.Height == 0)
-            return std::unexpected(ErrorMessage("Texture::Create: invalid desc (null data or zero dimensions)"));
+            return std::unexpected(ErrorMessage("SampledTexture::Create: invalid desc (null data or zero dimensions)"));
 
         Uint64     PixelSize = static_cast<Uint64>(Desc.Width) * Desc.Height * Desc.Channels;
-        vk::Format VkFmt     = ToVkFormat(Desc.Format);
+        vk::Format VkFmt     = SoulEngine::RHI::Vulkan::ToVkFormat(static_cast<RHI::Format>(Desc.Format));
 
         // ── Staging buffer ─────────────────────────────────────────────
         auto StagingRes = HostBuffer::Create(PixelSize, vk::BufferUsageFlagBits::eTransferSrc, *Dev, Alloc);
         if (!StagingRes)
-            return std::unexpected(StagingRes.error().Append("Texture::Create: staging creation failed"));
+            return std::unexpected(StagingRes.error().Append("SampledTexture::Create: staging creation failed"));
         auto Staging = std::move(*StagingRes);
 
         if (auto R = Staging.Upload(Desc.Data, PixelSize); !R)
-            return std::unexpected(R.error().Append("Texture::Create: staging upload failed"));
+            return std::unexpected(R.error().Append("SampledTexture::Create: staging upload failed"));
 
         // ── Create VkImage ─────────────────────────────────────────────
         vk::ImageCreateInfo ImageCI{
@@ -122,14 +123,11 @@ class Texture final : public RHI::Texture {
         VmaAllocation     RawAlloc = nullptr;
         VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
         if (vmaCreateImage(Alloc, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("Texture::Create: vmaCreateImage failed"));
+            return std::unexpected(ErrorMessage("SampledTexture::Create: vmaCreateImage failed"));
 
         auto VkImage = static_cast<vk::Image>(RawImage);
 
         // ── Transition: Undefined -> TransferDstOptimal ─────────────────
-        uint64_t SignalValue = DelQueue.NextValue();
-        auto     SignalSema  = DelQueue.MakeSignalSubmitInfo(SignalValue, vk::PipelineStageFlagBits2::eTransfer);
-
         auto CopyResult = ImmCtx.SubmitTransfer(
             [&](const vk::raii::CommandBuffer& CmdBuf) {
                 // Barrier: Undefined -> TransferDst
@@ -189,11 +187,10 @@ class Texture final : public RHI::Texture {
                     .imageMemoryBarrierCount = 1,
                     .pImageMemoryBarriers    = &Barrier2,
                 });
-            },
-            SignalSema);
+            });
 
         if (!CopyResult)
-            return std::unexpected(CopyResult.error().Append("Texture::Create: transfer submission failed"));
+            return std::unexpected(CopyResult.error().Append("SampledTexture::Create: transfer submission failed"));
 
         // ── Create ImageView ───────────────────────────────────────────
         vk::ImageViewCreateInfo ViewCI{
@@ -212,7 +209,7 @@ class Texture final : public RHI::Texture {
         };
         auto ViewRes = Dev.createImageView(ViewCI);
         if (ViewRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("Texture::Create: vkCreateImageView failed"));
+            return std::unexpected(ErrorMessage("SampledTexture::Create: vkCreateImageView failed"));
         auto VkImageView = std::move(ViewRes.value);
 
         // ── Bindless descriptor ────────────────────────────────────────
@@ -220,13 +217,16 @@ class Texture final : public RHI::Texture {
         DescMgr.WriteTextureSlot(Slot, *VkImageView, vk::ImageLayout::eShaderReadOnlyOptimal);
 
         // ── Defer staging destruction ──────────────────────────────────
-        Staging.DeferredDelete(DelQueue, SignalValue);
+        Staging.DeferredDelete(CompletionQueue, *CopyResult);
 
-        return std::make_shared<Texture>(
-            VkImage, std::move(VkImageView), RawAlloc, Alloc, &Dev, Desc.Width, Desc.Height, Slot);
+        return RHI::SampledTextureCreateResult{
+            .Texture = std::make_shared<SampledTexture>(
+                VkImage, std::move(VkImageView), RawAlloc, Alloc, &Dev, Desc.Width, Desc.Height, Slot),
+            .UploadCompletion = *CopyResult,
+        };
     }
 
-    // ── RHI::Texture interface ─────────────────────────────────────────
+    // ── RHI::SampledTexture interface ──────────────────────────────────
 
     [[nodiscard]] auto GetWidth() const -> Uint32 override {
         return m_Width;
