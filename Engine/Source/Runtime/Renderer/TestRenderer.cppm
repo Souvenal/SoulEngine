@@ -55,38 +55,36 @@ class TestRenderer final : public IRenderer {
         auto& Ctx = RHI::RenderDevice::Get();
 
         auto ShaderDir = ConfigManager::Get().CurrentApplicationDir() / "Shaders";
-        m_Pipeline     = Resource::Manager::Get()
-                             .RequestGraphicsPipeline(
-                                 Resource::GraphicsPipelineRequest{
-                                     .VertEntry =
-                                         Resource::ShaderEntry{
-                                             .ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
-                                             .EntryName  = "vertMain",
-                                         },
-                                     .FragEntry =
-                                         Resource::ShaderEntry{
-                                             .ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
-                                             .EntryName  = "fragMain",
-                                         },
-                                     .VertexInputLayout =
-                                         RHI::VertexInputLayoutDesc{
-                                             .Binding = 0,
-                                             .Stride  = sizeof(Vertex),
-                                             .Attributes =
-                                                 {
-                                                     RHI::VertexInputAttributeDesc{
-                                                         .Location = 0,
-                                                         .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                                         .Offset   = offsetof(Vertex, Position),
-                                                     },
-                                                     RHI::VertexInputAttributeDesc{
-                                                         .Location = 1,
-                                                         .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                                         .Offset   = offsetof(Vertex, Color),
-                                                     },
-                                                 },
-                                         },
-                                 });
+        m_Pipeline     = Resource::Manager::Get().RequestGraphicsPipeline(Resource::GraphicsPipelineRequest{
+            .VertEntry =
+                {
+                    .SourcePath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
+                    .EntryPoint = "vertMain",
+                },
+            .FragEntry =
+                {
+                    .SourcePath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
+                    .EntryPoint = "fragMain",
+                },
+            .VertexInputLayout =
+                RHI::VertexInputLayoutDesc{
+                    .Binding = 0,
+                    .Stride  = sizeof(Vertex),
+                    .Attributes =
+                        {
+                            RHI::VertexInputAttributeDesc{
+                                .Location = 0,
+                                .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                .Offset   = offsetof(Vertex, Position),
+                            },
+                            RHI::VertexInputAttributeDesc{
+                                .Location = 1,
+                                .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                .Offset   = offsetof(Vertex, Color),
+                            },
+                        },
+                },
+        });
         if (!m_Pipeline.IsValid())
             return std::unexpected(ErrorMessage("Graphics pipeline request failed"));
 

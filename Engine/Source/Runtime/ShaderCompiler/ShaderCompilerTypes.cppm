@@ -29,6 +29,13 @@ enum class Backend : Uint8 {
     Slang
 };
 
+/// @brief Request for a single shader entry point in a source file.
+struct ShaderEntry {
+    Path    SourcePath = {};
+    String  EntryPoint = {};
+    Backend Backend    = Backend::Slang;
+};
+
 /// @brief Descriptor for a single shader compile request.
 ///
 /// Source is specified via std::variant — either a filesystem Path

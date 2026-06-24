@@ -19,6 +19,7 @@
 export module ShaderCompiler;
 
 export import :Types;
+import :Cache;
 
 import std;
 import Core;
@@ -70,6 +71,16 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
         ValidateBackendConsistency(Desc);
 
         return CompileWithBackend(Desc.Backend, Desc);
+    }
+
+    /// @brief Return a compiled shader program through the in-memory cache.
+    [[nodiscard]] auto GetOrCompile(const ShaderEntry& Entry) -> std::expected<Shader::Program, ErrorMessage> {
+        return Cache::Get().GetOrCompile(Entry, [this](const CompileDesc& Desc) { return Compile(Desc); });
+    }
+
+    /// @brief Clear cached shader programs.
+    auto ClearCache() -> void {
+        Cache::Get().Clear();
     }
 
   private:

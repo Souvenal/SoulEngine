@@ -13,6 +13,7 @@ using namespace SoulEngine::Shader;
 using SoulEngine::ShaderCompiler::Backend;
 using SoulEngine::ShaderCompiler::CompileDesc;
 using SoulEngine::ShaderCompiler::ShaderCompiler;
+using SoulEngine::ShaderCompiler::ShaderEntry;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -196,6 +197,30 @@ TEST_F(ShaderCompilerTest, CompileModuleAllEntryPoints) {
 
     EXPECT_TRUE(SawVertex);
     EXPECT_TRUE(SawFragment);
+}
+
+TEST_F(ShaderCompilerTest, GetOrCompileCachesModuleEntryPoints) {
+    ShaderCompiler::Get().ClearCache();
+
+    auto Vertex = ShaderCompiler::Get().GetOrCompile(ShaderEntry{
+        .SourcePath = m_TestShaderPath,
+        .EntryPoint = "VertexMain",
+        .Backend    = Backend::Slang,
+    });
+
+    ASSERT_TRUE(Vertex.has_value()) << Vertex.error().ToString();
+    EXPECT_EQ(Vertex->EntryPointName, "VertexMain");
+    EXPECT_EQ(Vertex->Stage, Stage::Vertex);
+
+    auto Fragment = ShaderCompiler::Get().GetOrCompile(ShaderEntry{
+        .SourcePath = m_TestShaderPath,
+        .EntryPoint = "FragmentMain",
+        .Backend    = Backend::Slang,
+    });
+
+    ASSERT_TRUE(Fragment.has_value()) << Fragment.error().ToString();
+    EXPECT_EQ(Fragment->EntryPointName, "FragmentMain");
+    EXPECT_EQ(Fragment->Stage, Stage::Fragment);
 }
 
 /// Compile purely from inline source (no file-system reads at all).

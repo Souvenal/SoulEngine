@@ -14,7 +14,9 @@ Two compilation modes, controlled by `CompileDesc::EntryPointName`:
 
 | Term | Definition |
 |------|------------|
-| **ShaderCompiler** | Public singleton facade. Entry point for all compilation. Routes to the correct backend by source file extension. |
+| **ShaderCompiler** | Public singleton facade. Entry point for cached and uncached shader compilation. Routes uncached compile requests to the correct backend. |
+| **ShaderEntry** | Request for a single shader entry point in a source file. Used by the cache path. |
+| **Cache** | In-memory `ShaderCompiler:Cache` partition used by `ShaderCompiler::GetOrCompile()`. |
 | **CompileDesc** | Compile request descriptor — source path, optional inline source string, optional entry point name (`std::nullopt` = compile entire module), preprocessor defines, include directories. |
 | **Program** | Shared Shader artifact produced by ShaderCompiler; one program represents one reflected entry point and its compiled bytecode. Refers to `Shader::Program`. |
 | **IBackend** | Abstract interface for per-language compiler backends. Module-private. |
@@ -32,4 +34,5 @@ Two compilation modes, controlled by `CompileDesc::EntryPointName`:
 - `CompileDesc::EntryPointName` is a compile-request selector; successful compile results take canonical entry-point name and stage from Slang reflection.
 - A successful `Compile` produces at least one **Program**; Slang compilation failure and missing/invalid reflected entry points are distinct failure cases.
 - Module-level compile preserves Slang reflection entry-point order in its returned `Program` values, but callers must select programs by reflected stage/name rather than relying on vector position.
-- [`ShaderCache`](../ShaderCache/CONTEXT.md) is the primary consumer of `ShaderCompiler` in production code paths. `Compile()` is kept public for test and bypass-cache scenarios.
+- `ShaderCompiler::GetOrCompile()` is the production path. It uses the `ShaderCompiler:Cache` partition to compile whole modules, cache each reflected entry point, and return the requested `Shader::Program`.
+- `ShaderCompiler::Compile()` remains public for tests, forced recompiles, and bypass-cache scenarios.

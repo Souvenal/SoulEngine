@@ -40,7 +40,7 @@ Compiled shader artifact for one pipeline stage (code blob, entry-point name, st
 ## Relationships
 
 - A **Shader module** type (`Stage`, `Program`, `Reflection`) is defined in `Shader`, referenced by both `ShaderCompiler` and `RHI`.
-- **ShaderCompiler** produces **Program** values through per-language backends; `Shader` itself has no compiler dependency.
+- **ShaderCompiler** produces **Program** values through cached and uncached compile paths; `Shader` itself has no compiler dependency.
 - **RHI** consumes **Program** values directly when constructing pipelines and merges their **Reflection** into a pipeline-level **PipelineResourceLayout**.
 - Backends (Slang → `ToShaderStage`, Vulkan → `ToVkShaderStage`) map between `Stage` and their native stage enums.
 

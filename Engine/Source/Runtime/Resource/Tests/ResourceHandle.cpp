@@ -123,8 +123,8 @@ TEST(ResourcePipelineRequestTest, CoalescesPipelineKeys) {
     Manager::Get().Init(Graph);
 
     GraphicsPipelineRequest Req{
-        .VertEntry = {.ShaderPath = Path("Shaders/Test.slang"), .EntryName = "vertMain"},
-        .FragEntry = {.ShaderPath = Path("Shaders/Test.slang"), .EntryName = "fragMain"},
+        .VertEntry = {.SourcePath = Path("Shaders/Test.slang"), .EntryPoint = "vertMain"},
+        .FragEntry = {.SourcePath = Path("Shaders/Test.slang"), .EntryPoint = "fragMain"},
         .VertexInputLayout =
             RHI::VertexInputLayoutDesc{
                 .Binding = 0,
@@ -158,8 +158,8 @@ TEST(ResourcePipelineRequestTest, ShaderCompileFailurePublishesFailedResource) {
     Manager::Get().Init(Graph);
 
     auto Handle = Manager::Get().RequestGraphicsPipeline(GraphicsPipelineRequest{
-        .VertEntry = {.ShaderPath = Path("DefinitelyMissingShader.slang"), .EntryName = "vertMain"},
-        .FragEntry = {.ShaderPath = Path("DefinitelyMissingShader.slang"), .EntryName = "fragMain"},
+        .VertEntry = {.SourcePath = Path("DefinitelyMissingShader.slang"), .EntryPoint = "vertMain"},
+        .FragEntry = {.SourcePath = Path("DefinitelyMissingShader.slang"), .EntryPoint = "fragMain"},
     });
 
     const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
