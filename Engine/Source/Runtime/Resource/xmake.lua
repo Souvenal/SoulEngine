@@ -10,5 +10,9 @@ target("Resource")
     set_kind("moduleonly")
 
     add_packages("stb")
-    add_deps("Core", "RHI", "STBImage")
+    add_deps("Core", "RHI", "ShaderCache", "TaskGraph", "STBImage")
     add_files("*.cppm")
+
+test_module("Resource", {
+    additional_deps = {"TaskGraph"}
+})

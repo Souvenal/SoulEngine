@@ -8,7 +8,6 @@ export module Renderer:TestRenderer;
 import Core;
 import RHI;
 import Scene;
-import ShaderCache;
 import Resource;
 
 import :IRenderer;
@@ -55,33 +54,41 @@ class TestRenderer final : public IRenderer {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         auto& Ctx = RHI::RenderDevice::Get();
 
-        // CubeGlobalCB.slang imports Common.slang (GlobalData / g_global).
         auto ShaderDir = ConfigManager::Get().CurrentApplicationDir() / "Shaders";
-        auto Pass      = GraphicsPass::Create(GraphicsPassDesc{
-            .VertEntry = {.ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()), .EntryName = "vertMain"},
-            .FragEntry = {.ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()), .EntryName = "fragMain"},
-            .VertexInputLayout =
-                RHI::VertexInputLayoutDesc{
-                    .Binding = 0,
-                    .Stride  = sizeof(Vertex),
-                    .Attributes =
-                        {
-                            RHI::VertexInputAttributeDesc{
-                                .Location = 0,
-                                .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                .Offset   = offsetof(Vertex, Position),
-                            },
-                            RHI::VertexInputAttributeDesc{
-                                .Location = 1,
-                                .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                .Offset   = offsetof(Vertex, Color),
-                            },
-                        },
-                },
-        });
-        if (!Pass)
-            return std::unexpected(Pass.error().Append("GraphicsPass creation failed"));
-        m_Passes.push_back(std::move(*Pass));
+        m_Pipeline     = Resource::Manager::Get()
+                             .RequestGraphicsPipeline(
+                                 Resource::GraphicsPipelineRequest{
+                                     .VertEntry =
+                                         Resource::ShaderEntry{
+                                             .ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
+                                             .EntryName  = "vertMain",
+                                         },
+                                     .FragEntry =
+                                         Resource::ShaderEntry{
+                                             .ShaderPath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
+                                             .EntryName  = "fragMain",
+                                         },
+                                     .VertexInputLayout =
+                                         RHI::VertexInputLayoutDesc{
+                                             .Binding = 0,
+                                             .Stride  = sizeof(Vertex),
+                                             .Attributes =
+                                                 {
+                                                     RHI::VertexInputAttributeDesc{
+                                                         .Location = 0,
+                                                         .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                                         .Offset   = offsetof(Vertex, Position),
+                                                     },
+                                                     RHI::VertexInputAttributeDesc{
+                                                         .Location = 1,
+                                                         .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                                         .Offset   = offsetof(Vertex, Color),
+                                                     },
+                                                 },
+                                         },
+                                 });
+        if (!m_Pipeline.IsValid())
+            return std::unexpected(ErrorMessage("Graphics pipeline request failed"));
 
         auto VBO = Ctx.CreateVertexBuffer(RHI::VertexBufferDesc{
             .Data = kQuadVertices.data(), .VertexCount = kQuadVertices.size(), .Stride = sizeof(Vertex)});
@@ -95,21 +102,19 @@ class TestRenderer final : public IRenderer {
             return std::unexpected(IBO.error().Append("Index buffer creation failed"));
         m_IndexBuffer = std::move(*IBO);
 
-        // Load test texture via ResourceManager
-        auto TexResult = Resource::Manager::Get().LoadTexture(
+        m_Texture = Resource::Manager::Get().RequestTexture(
             (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "statue.jpg").string());
-        if (!TexResult)
-            return std::unexpected(TexResult.error().Append("Test texture load failed"));
-        m_Texture = std::move(*TexResult);
+        if (!m_Texture.IsValid())
+            return std::unexpected(ErrorMessage("Test texture request failed"));
 
         return {};
     }
 
     auto OnDetach() -> void override {
-        m_Passes.clear();
+        m_Pipeline = {};
         m_VertexBuffer.reset();
         m_IndexBuffer.reset();
-        m_Texture.reset();
+        m_Texture = {};
     }
 
     /// Produce a CommandList from the current scene data.
@@ -130,20 +135,26 @@ class TestRenderer final : public IRenderer {
                     .ClearValue = RHI::ClearColorValue{.R = 0.05f, .G = 0.05f, .B = 0.08f, .A = 1.0f},
                 },
         };
+
+        auto Texture = m_Texture.TryGet();
+        if (!Texture || !Texture->Texture) {
+            CmdList.Passes.push_back(std::move(Pass));
+            return CmdList;
+        }
+
+        auto Pipeline = m_Pipeline.TryGet();
+        if (!Pipeline || !Pipeline->Pipeline) {
+            CmdList.Passes.push_back(std::move(Pass));
+            return CmdList;
+        }
+
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
-
-        for (const auto& GP : m_Passes) {
-            auto Pipe = GP.GetPipeline();
-            if (!Pipe)
-                continue;
-            Pass.SetPipeline(Pipe);
-            Pass.BindVertexBuffer(m_VertexBuffer);
-            Pass.BindIndexBuffer(m_IndexBuffer);
-            if (m_Texture)
-                Pass.SetTexture(0, m_Texture.get());
-            Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
-        }
+        Pass.SetPipeline(Pipeline->Pipeline);
+        Pass.BindVertexBuffer(m_VertexBuffer);
+        Pass.BindIndexBuffer(m_IndexBuffer);
+        Pass.SetTexture(0, Texture->Texture.get());
+        Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
 
         CmdList.Passes.push_back(std::move(Pass));
 
@@ -161,9 +172,10 @@ class TestRenderer final : public IRenderer {
         };
     }
 
-    SPtr<RHI::VertexBuffer> m_VertexBuffer;
-    SPtr<RHI::IndexBuffer>  m_IndexBuffer;
-    SPtr<RHI::Texture>      m_Texture;
+    SPtr<RHI::VertexBuffer>          m_VertexBuffer;
+    SPtr<RHI::IndexBuffer>           m_IndexBuffer;
+    Resource::GraphicsPipelineHandle m_Pipeline = {};
+    Resource::TextureHandle          m_Texture  = {};
 };
 
 } // namespace SoulEngine::Renderer

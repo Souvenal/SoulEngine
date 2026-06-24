@@ -113,6 +113,7 @@ class EngineLoop {
     auto Shutdown() -> void {
         LogInfo("Shutting down...");
 
+        Resource::Manager::Get().BeginShutdown();
         m_TaskGraph.Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();

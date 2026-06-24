@@ -47,8 +47,8 @@ struct KeyHash {
 /// cache for the lifetime of the process.
 // NOLINT(cert-err58-cpp) — intentional global, init order is fine for an empty map
 std::unordered_map<Key, Shader::Program, KeyHash> g_Cache;
+std::mutex                                        g_CacheMutex;
 
-// TODO: thread safety — add mutex when job system exists
 // TODO: cache eviction — LRU or never-expire policy
 
 /// Compile the full module and cache every entry point.
@@ -120,6 +120,8 @@ export class ShaderCache : public Singleton<ShaderCache> {
     /// shader module, caches every entry point, and returns the one
     /// matching Req.EntryPoint.
     [[nodiscard]] auto GetOrCompile(const ShaderCacheRequest& Req) -> std::expected<Shader::Program, ErrorMessage> {
+        std::lock_guard CacheLock(g_CacheMutex);
+
         if (Req.EntryPoint.empty()) {
             return std::unexpected(ErrorMessage("ShaderCache: EntryPoint must not be empty"));
         }
