@@ -81,6 +81,13 @@ class EngineLoop {
         }
         LogInfo("RHI context created successfully");
 
+        // 3 reserved threads for Game/Render/RHI
+        auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
+        m_TaskGraph.Init(WorkerCount);
+        LogInfo("Background worker threads spawned ({})", WorkerCount);
+
+        Resource::Manager::Get().Init(m_TaskGraph);
+
         auto& Cfg = ConfigManager::Get().GetConfig();
         if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
             Shutdown();
@@ -98,7 +105,6 @@ class EngineLoop {
         m_LastTickTime = std::chrono::steady_clock::now();
         m_RenderThread = std::jthread{[this](std::stop_token S) { RenderLoop(S); }};
         m_RHIThread    = std::jthread{[this](std::stop_token S) { RHILoop(S); }};
-        LogInfo("Worker threads spawned (Render/RHI)");
 
         GameLoop();
         Shutdown();

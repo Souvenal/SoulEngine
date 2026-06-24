@@ -2,7 +2,8 @@
 
 **Namespace:** `SoulEngine` (exposes `TaskGraph` class, `ThreadQueue` enum)
 
-Module `TaskGraph`. Thread-safe multi-queue task dispatcher for cross-thread work.
+Module `TaskGraph`. Thread-safe multi-queue task dispatcher for cross-thread work. `TaskGraph::Init()`
+spawns the requested number of background workers and logs the spawned count internally.
 
 ## Terms
 
