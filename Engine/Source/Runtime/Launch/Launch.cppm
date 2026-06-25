@@ -112,19 +112,24 @@ class EngineLoop {
     auto Shutdown() -> void {
         LogInfo("Shutting down...");
 
+        // Request stop BEFORE notifying CVs — otherwise threads wake,
+        // check stop_requested() == false, go back to sleep, and never
+        // wake again because request_stop() does not notify condition
+        // variables.
+        if (m_RenderThread.joinable())
+            m_RenderThread.request_stop();
+        if (m_RHIThread.joinable())
+            m_RHIThread.request_stop();
+
         Resource::Manager::Get().BeginShutdown();
         m_TaskGraph.Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
-        if (m_RenderThread.joinable()) {
-            m_RenderThread.request_stop();
+        if (m_RenderThread.joinable())
             m_RenderThread.join();
-        }
-        if (m_RHIThread.joinable()) {
-            m_RHIThread.request_stop();
+        if (m_RHIThread.joinable())
             m_RHIThread.join();
-        }
 
         if (m_Application) {
             m_Application->OnDetach();
