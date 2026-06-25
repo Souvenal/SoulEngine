@@ -69,10 +69,14 @@ struct DrawCmd {
     Uint32 FirstInstance = 0;
 };
 
-/// @brief Bind a texture for shader sampling.
-struct SetSampledTextureCmd {
-    Uint32                     Slot       = 0;
-    const RHI::SampledTexture* TexturePtr = nullptr;
+/// @brief Material data for a draw call — holds bindless texture references.
+struct DrawMaterialData {
+    SPtr<SampledTexture> TestTexture = nullptr;
+};
+
+/// @brief Set draw material data (replaces SetSampledTexture).
+struct SetDrawMaterialDataCmd {
+    DrawMaterialData Material;
 };
 
 /// @brief All command types dispatched via std::visit.
@@ -85,7 +89,7 @@ using Command = std::variant<SetPipelineCmd,
                              SetFullScissorRectCmd,
                              DrawIndexedCmd,
                              DrawCmd,
-                             SetSampledTextureCmd>;
+                             SetDrawMaterialDataCmd>;
 
 /// @brief One rendering pass with attachments and commands inside.
 /// Backend automatically wraps each pass with begin/end rendering.
@@ -127,8 +131,8 @@ struct Pass {
     auto Draw(Uint32 VertexCount, Uint32 InstanceCount = 1, Uint32 FirstVertex = 0, Uint32 FirstInstance = 0) -> void {
         Commands.emplace_back(DrawCmd{VertexCount, InstanceCount, FirstVertex, FirstInstance});
     }
-    auto SetSampledTexture(Uint32 Slot, const RHI::SampledTexture* Tex) -> void {
-        Commands.emplace_back(SetSampledTextureCmd{Slot, Tex});
+    auto SetDrawMaterialData(const DrawMaterialData& Data) -> void {
+        Commands.emplace_back(SetDrawMaterialDataCmd{Data});
     }
 };
 

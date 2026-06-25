@@ -26,12 +26,42 @@ struct ConstantBufferDesc {
     Uint64 Size = 0;
 };
 
+// ── GpuResource — base for GPU resources with usage tracking ────────────
+
+struct GpuCompletionToken {
+    Uint64 Id = 0;
+};
+
+/// Base class for GPU resources that tracks the last command-list usage token.
+/// Resources inheriting this can participate in deferred deletion via
+/// DeletionQueue: when the GPU completes all work up to the last usage token,
+/// the resource is safe to destroy.
+class GpuResource {
+  public:
+    GpuResource()                                      = default;
+    GpuResource(const GpuResource&)                    = delete;
+    auto operator=(const GpuResource&) -> GpuResource& = delete;
+    GpuResource(GpuResource&&)                         = delete;
+    auto operator=(GpuResource&&) -> GpuResource&      = delete;
+    virtual ~GpuResource()                             = default;
+
+    [[nodiscard]] auto GetLastUsageToken() const noexcept -> GpuCompletionToken {
+        return m_LastUsage;
+    }
+    auto UpdateLastUsageToken(GpuCompletionToken Token) noexcept -> void {
+        m_LastUsage = Token;
+    }
+
+  private:
+    GpuCompletionToken m_LastUsage = {};
+};
+
 // ── Typed GPU buffer polymorphic bases ──────────────────────────────────
 
 /// Empty polymorphic base for vertex buffer resources.
 /// Backend concrete class (e.g. Vulkan::VertexBuffer) owns the GPU allocation.
 /// Consumers hold SPtr<VertexBuffer> for type-safe API usage.
-class VertexBuffer {
+class VertexBuffer : public GpuResource {
   public:
     VertexBuffer()                                       = default;
     VertexBuffer(const VertexBuffer&)                    = delete;
@@ -43,7 +73,7 @@ class VertexBuffer {
 
 /// Empty polymorphic base for index buffer resources.
 /// Same role as VertexBuffer, for index data.
-class IndexBuffer {
+class IndexBuffer : public GpuResource {
   public:
     IndexBuffer()                                      = default;
     IndexBuffer(const IndexBuffer&)                    = delete;
@@ -78,7 +108,7 @@ class ConstantBuffer {
 /// Empty polymorphic base for graphics pipeline resources.
 /// Backend concrete class (e.g. Vulkan::GraphicsPipeline) owns the native
 /// pipeline. Consumers hold SPtr<GraphicsPipeline> for type-safe API usage.
-class GraphicsPipeline {
+class GraphicsPipeline : public GpuResource {
   public:
     GraphicsPipeline()                                           = default;
     GraphicsPipeline(const GraphicsPipeline&)                    = delete;
@@ -93,7 +123,7 @@ class GraphicsPipeline {
 /// Polymorphic base for shader-readable sampled texture resources.
 /// Backend concrete class (e.g. Vulkan::SampledTexture) owns the GPU allocation.
 /// Consumers hold SPtr<SampledTexture> for type-safe API usage.
-class SampledTexture {
+class SampledTexture : public GpuResource {
   public:
     SampledTexture()                                         = default;
     SampledTexture(const SampledTexture&)                    = delete;
@@ -159,13 +189,19 @@ struct SampledTextureDesc {
     TextureUsage Usage    = TextureUsage::ShaderResource;
 };
 
-struct GpuCompletionToken {
-    Uint64 Id = 0;
-};
-
 struct SampledTextureCreateResult {
     SPtr<SampledTexture> Texture          = nullptr;
     GpuCompletionToken   UploadCompletion = {};
+};
+
+struct VertexBufferCreateResult {
+    SPtr<VertexBuffer> Buffer           = nullptr;
+    GpuCompletionToken UploadCompletion = {};
+};
+
+struct IndexBufferCreateResult {
+    SPtr<IndexBuffer>  Buffer           = nullptr;
+    GpuCompletionToken UploadCompletion = {};
 };
 
 // ── Pipeline ─────────────────────────────────────────────────────────────────
@@ -204,15 +240,15 @@ struct DepthStencilState {
 };
 
 struct GraphicsPipelineDesc {
-    Shader::Program                VertexProgram   = {};
-    std::optional<Shader::Program> FragmentProgram = std::nullopt;
+    Shader::Program                VertexProgram     = {};
+    std::optional<Shader::Program> FragmentProgram   = std::nullopt;
     VertexInputLayoutDesc          VertexInputLayout = {};
-    PrimitiveTopology              Topology        = PrimitiveTopology::TriangleList;
-    RasterizerState                Rasterizer      = {};
-    BlendState                     Blend           = {};
-    DepthStencilState              DepthStencil    = {};
-    Format                         ColorFormat     = Format::B8G8R8A8_UNORM;
-    Format                         DepthFormat     = Format::Unknown;
+    PrimitiveTopology              Topology          = PrimitiveTopology::TriangleList;
+    RasterizerState                Rasterizer        = {};
+    BlendState                     Blend             = {};
+    DepthStencilState              DepthStencil      = {};
+    Format                         ColorFormat       = Format::B8G8R8A8_UNORM;
+    Format                         DepthFormat       = Format::Unknown;
 };
 
 // ── Clear values ─────────────────────────────────────────────────────────────
@@ -231,11 +267,11 @@ struct ClearDepthStencilValue {
 
 struct ColorAttachmentDesc {
     const SampledTexture* TexturePtr = nullptr;
-    ClearColorValue ClearValue = {};
+    ClearColorValue       ClearValue = {};
 };
 
 struct DepthAttachmentDesc {
-    const SampledTexture*       TexturePtr = nullptr;
+    const SampledTexture*  TexturePtr = nullptr;
     ClearDepthStencilValue ClearValue = {};
 };
 

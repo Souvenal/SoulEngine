@@ -66,6 +66,22 @@ struct GpuPendingSampledTexture {
     RHI::GpuCompletionToken                    UploadCompletion = {};
 };
 
+struct GpuPendingVertexBuffer {
+    SPtr<ResourceSlot<VertexBufferResource>> Slot             = nullptr;
+    ResourceGeneration                       Generation       = 0;
+    String                                   Key              = {};
+    VertexBufferResource                     Resource         = {};
+    RHI::GpuCompletionToken                  UploadCompletion = {};
+};
+
+struct GpuPendingIndexBuffer {
+    SPtr<ResourceSlot<IndexBufferResource>> Slot             = nullptr;
+    ResourceGeneration                      Generation       = 0;
+    String                                  Key              = {};
+    IndexBufferResource                     Resource         = {};
+    RHI::GpuCompletionToken                 UploadCompletion = {};
+};
+
 /// @brief Central resource manager — singleton.
 ///
 /// Loads assets from disk, uploads to GPU, and caches by path hash.
@@ -264,44 +280,240 @@ class Manager : public Singleton<Manager> {
         return GraphicsPipelineHandle::Create(Slot, Id, Generation);
     }
 
-    /// @brief Publish GPU-pending sampled textures whose upload tokens have completed.
+    /// @brief Request async vertex buffer creation with GPU upload completion tracking.
+    [[nodiscard]] auto RequestVertexBuffer(String Key, const RHI::VertexBufferDesc& Desc) -> VertexBufferHandle {
+        const auto Id = static_cast<ResourceId>(std::hash<String>{}(Key));
+
+        if (IsShutdownRequested()) {
+            LogWarning("Vertex buffer request rejected after shutdown '{}'", Key);
+            return {};
+        }
+
+        SPtr<ResourceSlot<VertexBufferResource>> Slot;
+        ResourceGeneration                       Generation = 0;
+        {
+            std::lock_guard Lock(m_BufferMutex);
+            if (auto It = m_VertexBufferRequests.find(Key); It != m_VertexBufferRequests.end()) {
+                Slot       = It->second;
+                Generation = Slot->GetGeneration();
+                LogDebug("Vertex buffer request coalesced '{}'", Key);
+                return VertexBufferHandle::Create(Slot, Id, Generation);
+            }
+
+            Slot       = std::make_shared<ResourceSlot<VertexBufferResource>>();
+            Generation = Slot->Reset(Id);
+            m_VertexBufferRequests.emplace(Key, Slot);
+        }
+
+        LogDebug("Vertex buffer requested '{}'", Key);
+
+        auto* Graph = m_TaskGraph;
+        if (!Graph) {
+            PublishVertexBufferFailed(
+                Slot, Generation, Key, ErrorMessage(Format("Resource manager not initialized for '{}'", Key)));
+            return VertexBufferHandle::Create(Slot, Id, Generation);
+        }
+
+        // Copy caller's data for async RHI task
+        Uint64             Size = Desc.VertexCount * Desc.Stride;
+        std::vector<Uint8> DataCopy(static_cast<const Uint8*>(Desc.Data), static_cast<const Uint8*>(Desc.Data) + Size);
+
+        Graph->Enqueue(ThreadQueue::RHI,
+                       [this, Slot, Generation, Key = String(Key), Desc, DataCopy = std::move(DataCopy)] {
+                           if (IsShutdownRequested()) {
+                               LogDebug("Async vertex buffer RHI commit discarded after shutdown '{}'", Key);
+                               return;
+                           }
+
+                           if (!Slot->MarkRhiCommitting(Generation)) {
+                               LogDebug("Stale async vertex buffer RHI commit discarded '{}'", Key);
+                               return;
+                           }
+
+                           RHI::VertexBufferDesc BufDesc = Desc;
+                           BufDesc.Data                  = DataCopy.data();
+
+                           auto Result = RHI::RenderDevice::Get().CreateVertexBuffer(BufDesc);
+                           if (!Result) {
+                               PublishVertexBufferFailed(
+                                   Slot,
+                                   Generation,
+                                   Key,
+                                   Result.error().Append(Format("Failed to create vertex buffer '{}'", Key)));
+                               return;
+                           }
+
+                           PublishVertexBufferGpuPending(Slot,
+                                                         Generation,
+                                                         Key,
+                                                         VertexBufferResource{.Buffer = std::move(Result->Buffer)},
+                                                         Result->UploadCompletion);
+                       });
+
+        return VertexBufferHandle::Create(Slot, Id, Generation);
+    }
+
+    /// @brief Request async index buffer creation with GPU upload completion tracking.
+    [[nodiscard]] auto RequestIndexBuffer(String Key, const RHI::IndexBufferDesc& Desc) -> IndexBufferHandle {
+        const auto Id = static_cast<ResourceId>(std::hash<String>{}(Key));
+
+        if (IsShutdownRequested()) {
+            LogWarning("Index buffer request rejected after shutdown '{}'", Key);
+            return {};
+        }
+
+        SPtr<ResourceSlot<IndexBufferResource>> Slot;
+        ResourceGeneration                      Generation = 0;
+        {
+            std::lock_guard Lock(m_BufferMutex);
+            if (auto It = m_IndexBufferRequests.find(Key); It != m_IndexBufferRequests.end()) {
+                Slot       = It->second;
+                Generation = Slot->GetGeneration();
+                LogDebug("Index buffer request coalesced '{}'", Key);
+                return IndexBufferHandle::Create(Slot, Id, Generation);
+            }
+
+            Slot       = std::make_shared<ResourceSlot<IndexBufferResource>>();
+            Generation = Slot->Reset(Id);
+            m_IndexBufferRequests.emplace(Key, Slot);
+        }
+
+        LogDebug("Index buffer requested '{}'", Key);
+
+        auto* Graph = m_TaskGraph;
+        if (!Graph) {
+            PublishIndexBufferFailed(
+                Slot, Generation, Key, ErrorMessage(Format("Resource manager not initialized for '{}'", Key)));
+            return IndexBufferHandle::Create(Slot, Id, Generation);
+        }
+
+        // Copy caller's data for async RHI task
+        Uint64             Size = Desc.IndexCount * 4ULL;
+        std::vector<Uint8> DataCopy(static_cast<const Uint8*>(Desc.Data), static_cast<const Uint8*>(Desc.Data) + Size);
+
+        Graph->Enqueue(
+            ThreadQueue::RHI, [this, Slot, Generation, Key = String(Key), Desc, DataCopy = std::move(DataCopy)] {
+                if (IsShutdownRequested()) {
+                    LogDebug("Async index buffer RHI commit discarded after shutdown '{}'", Key);
+                    return;
+                }
+
+                if (!Slot->MarkRhiCommitting(Generation)) {
+                    LogDebug("Stale async index buffer RHI commit discarded '{}'", Key);
+                    return;
+                }
+
+                RHI::IndexBufferDesc BufDesc = Desc;
+                BufDesc.Data                 = DataCopy.data();
+
+                auto Result = RHI::RenderDevice::Get().CreateIndexBuffer(BufDesc);
+                if (!Result) {
+                    PublishIndexBufferFailed(Slot,
+                                             Generation,
+                                             Key,
+                                             Result.error().Append(Format("Failed to create index buffer '{}'", Key)));
+                    return;
+                }
+
+                PublishIndexBufferGpuPending(Slot,
+                                             Generation,
+                                             Key,
+                                             IndexBufferResource{.Buffer = std::move(Result->Buffer)},
+                                             Result->UploadCompletion);
+            });
+
+        return IndexBufferHandle::Create(Slot, Id, Generation);
+    }
+
+    /// @brief Publish GPU-pending resources whose upload tokens have completed.
     auto TickGpuPending() -> void {
         std::lock_guard Lock(m_PublishMutex);
         if (IsShutdownRequested()) {
             m_GpuPendingSampledTextures.clear();
+            m_GpuPendingVertexBuffers.clear();
+            m_GpuPendingIndexBuffers.clear();
             return;
         }
 
         // Rebuild instead of erasing in-place so incomplete uploads retain ownership
         // while completed or stale entries are dropped deterministically on this thread.
-        std::vector<GpuPendingSampledTexture> Next;
-        Next.reserve(m_GpuPendingSampledTextures.size());
-
-        for (auto& Pending : m_GpuPendingSampledTextures) {
-            auto State = Pending.Slot->GetState(Pending.Generation);
-            if (State == ResourceState::Stale) {
-                LogDebug("Stale async sampled texture GPU pending discarded '{}'", Pending.Key);
-                continue;
+        {
+            std::vector<GpuPendingSampledTexture> Next;
+            Next.reserve(m_GpuPendingSampledTextures.size());
+            for (auto& Pending : m_GpuPendingSampledTextures) {
+                auto State = Pending.Slot->GetState(Pending.Generation);
+                if (State == ResourceState::Stale) {
+                    LogDebug("Stale async sampled texture GPU pending discarded '{}'", Pending.Key);
+                    continue;
+                }
+                if (State != ResourceState::GpuPending) {
+                    LogDebug("Async sampled texture GPU pending discarded '{}'", Pending.Key);
+                    continue;
+                }
+                if (!RHI::RenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
+                    Next.push_back(std::move(Pending));
+                    continue;
+                }
+                if (!Pending.Slot->PublishReady(Pending.Generation, std::move(Pending.Resource))) {
+                    LogDebug("Stale async sampled texture ready discarded '{}'", Pending.Key);
+                    continue;
+                }
+                LogInfo("Async sampled texture ready '{}' ({}x{})", Pending.Key, Pending.Width, Pending.Height);
             }
-            if (State != ResourceState::GpuPending) {
-                LogDebug("Async sampled texture GPU pending discarded '{}'", Pending.Key);
-                continue;
-            }
-
-            if (!RHI::RenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
-                Next.push_back(std::move(Pending));
-                continue;
-            }
-
-            if (!Pending.Slot->PublishReady(Pending.Generation, std::move(Pending.Resource))) {
-                LogDebug("Stale async sampled texture ready discarded '{}'", Pending.Key);
-                continue;
-            }
-
-            LogInfo("Async sampled texture ready '{}' ({}x{})", Pending.Key, Pending.Width, Pending.Height);
+            m_GpuPendingSampledTextures = std::move(Next);
         }
 
-        m_GpuPendingSampledTextures = std::move(Next);
+        {
+            std::vector<GpuPendingVertexBuffer> Next;
+            Next.reserve(m_GpuPendingVertexBuffers.size());
+            for (auto& Pending : m_GpuPendingVertexBuffers) {
+                auto State = Pending.Slot->GetState(Pending.Generation);
+                if (State == ResourceState::Stale) {
+                    LogDebug("Stale async vertex buffer GPU pending discarded '{}'", Pending.Key);
+                    continue;
+                }
+                if (State != ResourceState::GpuPending) {
+                    LogDebug("Async vertex buffer GPU pending discarded '{}'", Pending.Key);
+                    continue;
+                }
+                if (!RHI::RenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
+                    Next.push_back(std::move(Pending));
+                    continue;
+                }
+                if (!Pending.Slot->PublishReady(Pending.Generation, std::move(Pending.Resource))) {
+                    LogDebug("Stale async vertex buffer ready discarded '{}'", Pending.Key);
+                    continue;
+                }
+                LogInfo("Async vertex buffer ready '{}'", Pending.Key);
+            }
+            m_GpuPendingVertexBuffers = std::move(Next);
+        }
+
+        {
+            std::vector<GpuPendingIndexBuffer> Next;
+            Next.reserve(m_GpuPendingIndexBuffers.size());
+            for (auto& Pending : m_GpuPendingIndexBuffers) {
+                auto State = Pending.Slot->GetState(Pending.Generation);
+                if (State == ResourceState::Stale) {
+                    LogDebug("Stale async index buffer GPU pending discarded '{}'", Pending.Key);
+                    continue;
+                }
+                if (State != ResourceState::GpuPending) {
+                    LogDebug("Async index buffer GPU pending discarded '{}'", Pending.Key);
+                    continue;
+                }
+                if (!RHI::RenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
+                    Next.push_back(std::move(Pending));
+                    continue;
+                }
+                if (!Pending.Slot->PublishReady(Pending.Generation, std::move(Pending.Resource))) {
+                    LogDebug("Stale async index buffer ready discarded '{}'", Pending.Key);
+                    continue;
+                }
+                LogInfo("Async index buffer ready '{}'", Pending.Key);
+            }
+            m_GpuPendingIndexBuffers = std::move(Next);
+        }
     }
 
     /// @brief Clear all cached resources. Call during shutdown.
@@ -312,8 +524,15 @@ class Manager : public Singleton<Manager> {
             m_TextureRequests.clear();
         }
         {
+            std::lock_guard Lock(m_BufferMutex);
+            m_VertexBufferRequests.clear();
+            m_IndexBufferRequests.clear();
+        }
+        {
             std::lock_guard Lock(m_PublishMutex);
             m_GpuPendingSampledTextures.clear();
+            m_GpuPendingVertexBuffers.clear();
+            m_GpuPendingIndexBuffers.clear();
         }
         {
             std::lock_guard Lock(m_PipelineMutex);
@@ -416,6 +635,88 @@ class Manager : public Singleton<Manager> {
         LogWarning("Async graphics pipeline failed '{}': {}", Key, Message);
     }
 
+    auto PublishVertexBufferGpuPending(SPtr<ResourceSlot<VertexBufferResource>> Slot,
+                                       ResourceGeneration                       Generation,
+                                       StringView                               Key,
+                                       VertexBufferResource                     Resource,
+                                       RHI::GpuCompletionToken                  UploadCompletion) -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            LogDebug("Async vertex buffer GPU pending discarded after shutdown '{}'", Key);
+            return;
+        }
+        if (!Slot->PublishGpuPending(Generation)) {
+            LogDebug("Stale async vertex buffer GPU pending discarded '{}'", Key);
+            return;
+        }
+        m_GpuPendingVertexBuffers.push_back(GpuPendingVertexBuffer{
+            .Slot             = std::move(Slot),
+            .Generation       = Generation,
+            .Key              = String(Key),
+            .Resource         = std::move(Resource),
+            .UploadCompletion = UploadCompletion,
+        });
+        LogDebug("Async vertex buffer GPU pending '{}'", Key);
+    }
+
+    auto PublishIndexBufferGpuPending(SPtr<ResourceSlot<IndexBufferResource>> Slot,
+                                      ResourceGeneration                      Generation,
+                                      StringView                              Key,
+                                      IndexBufferResource                     Resource,
+                                      RHI::GpuCompletionToken                 UploadCompletion) -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            LogDebug("Async index buffer GPU pending discarded after shutdown '{}'", Key);
+            return;
+        }
+        if (!Slot->PublishGpuPending(Generation)) {
+            LogDebug("Stale async index buffer GPU pending discarded '{}'", Key);
+            return;
+        }
+        m_GpuPendingIndexBuffers.push_back(GpuPendingIndexBuffer{
+            .Slot             = std::move(Slot),
+            .Generation       = Generation,
+            .Key              = String(Key),
+            .Resource         = std::move(Resource),
+            .UploadCompletion = UploadCompletion,
+        });
+        LogDebug("Async index buffer GPU pending '{}'", Key);
+    }
+
+    auto PublishVertexBufferFailed(SPtr<ResourceSlot<VertexBufferResource>> Slot,
+                                   ResourceGeneration                       Generation,
+                                   StringView                               Key,
+                                   ErrorMessage                             Error) -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            LogDebug("Async vertex buffer failure discarded after shutdown '{}'", Key);
+            return;
+        }
+        auto Message = Error.ToString();
+        if (!Slot->PublishFailed(Generation, std::move(Error))) {
+            LogDebug("Stale async vertex buffer failure discarded '{}': {}", Key, Message);
+            return;
+        }
+        LogWarning("Async vertex buffer failed '{}': {}", Key, Message);
+    }
+
+    auto PublishIndexBufferFailed(SPtr<ResourceSlot<IndexBufferResource>> Slot,
+                                  ResourceGeneration                      Generation,
+                                  StringView                              Key,
+                                  ErrorMessage                            Error) -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            LogDebug("Async index buffer failure discarded after shutdown '{}'", Key);
+            return;
+        }
+        auto Message = Error.ToString();
+        if (!Slot->PublishFailed(Generation, std::move(Error))) {
+            LogDebug("Stale async index buffer failure discarded '{}': {}", Key, Message);
+            return;
+        }
+        LogWarning("Async index buffer failed '{}': {}", Key, Message);
+    }
+
     [[nodiscard]] static auto DecodeTexture(StringView TexturePath) -> std::expected<DecodedTexture, ErrorMessage> {
         int W  = 0;
         int H  = 0;
@@ -476,10 +777,15 @@ class Manager : public Singleton<Manager> {
     std::unordered_map<String, SPtr<ResourceSlot<SampledTextureResource>>>   m_TextureRequests;
     std::mutex                                                               m_PipelineMutex;
     std::unordered_map<String, SPtr<ResourceSlot<GraphicsPipelineResource>>> m_PipelineRequests;
+    std::mutex                                                               m_BufferMutex;
+    std::unordered_map<String, SPtr<ResourceSlot<VertexBufferResource>>>     m_VertexBufferRequests;
+    std::unordered_map<String, SPtr<ResourceSlot<IndexBufferResource>>>      m_IndexBufferRequests;
     TaskGraph*                                                               m_TaskGraph         = nullptr;
     std::atomic<bool>                                                        m_ShutdownRequested = false;
     std::mutex                                                               m_PublishMutex;
     std::vector<GpuPendingSampledTexture>                                    m_GpuPendingSampledTextures;
+    std::vector<GpuPendingVertexBuffer>                                      m_GpuPendingVertexBuffers;
+    std::vector<GpuPendingIndexBuffer>                                       m_GpuPendingIndexBuffers;
 };
 
 } // namespace SoulEngine::Resource

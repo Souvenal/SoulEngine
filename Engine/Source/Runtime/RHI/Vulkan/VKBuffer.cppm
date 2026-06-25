@@ -12,6 +12,7 @@ import std;
 import :Types;
 import :ImmediateContext;
 import :TransferCompletionQueue;
+import :DeletionQueue;
 
 using namespace SoulEngine::Core;
 
@@ -230,11 +231,10 @@ class DeviceBuffer {
         -> std::expected<GpuCompletionToken, ErrorMessage> {
         Uint64 CopySize = std::min(Src.GetSize(), m_Size);
 
-        auto CopyResult = Ctx.SubmitTransfer(
-            [&](const vk::raii::CommandBuffer& CmdBuf) {
-                vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
-                CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
-            });
+        auto CopyResult = Ctx.SubmitTransfer([&](const vk::raii::CommandBuffer& CmdBuf) {
+            vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
+            CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
+        });
 
         if (!CopyResult)
             return std::unexpected(CopyResult.error().Append("DeviceBuffer::CopyFrom failed"));
@@ -260,10 +260,14 @@ class DeviceBuffer {
 
 class VertexBuffer final : public RHI::VertexBuffer {
   public:
-    // Public for std::make_shared compatibility per ADR 02.
-    // All callers should use Create() instead.
-    VertexBuffer(DeviceBuffer&& Buf, Uint32 Stride, Uint64 VertexCount)
-        : m_Buffer(std::move(Buf)), m_Stride(Stride), m_VertexCount(VertexCount) {}
+    VertexBuffer(SPtr<DeviceBuffer> Buf, DeletionQueue& Queue, Uint32 Stride, Uint64 VertexCount)
+        : m_Buffer(std::move(Buf)), m_DeletionQueue(&Queue), m_Stride(Stride), m_VertexCount(VertexCount) {}
+
+    ~VertexBuffer() override {
+        if (m_DeletionQueue) {
+            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Buf = m_Buffer]() {});
+        }
+    }
 
     /// Static factory: creates staging buffer, uploads data, copies to
     /// device-local buffer via ImmediateContext, and defers staging destruction
@@ -272,8 +276,9 @@ class VertexBuffer final : public RHI::VertexBuffer {
                                      VmaAllocator                 Alloc,
                                      vk::Device                   Dev,
                                      ImmediateContext&            ImmCtx,
-                                     TransferCompletionQueue&     CompletionQueue)
-        -> std::expected<SPtr<VertexBuffer>, ErrorMessage> {
+                                     TransferCompletionQueue&     CompletionQueue,
+                                     DeletionQueue&               DelQueue)
+        -> std::expected<RHI::VertexBufferCreateResult, ErrorMessage> {
         Uint64 Size  = Desc.VertexCount * Desc.Stride;
         Uint64 VCnt  = Desc.VertexCount;
         Uint32 Strid = Desc.Stride;
@@ -304,11 +309,19 @@ class VertexBuffer final : public RHI::VertexBuffer {
         // ── Defer staging destruction ──────────────────────────────────
         Staging.DeferredDelete(CompletionQueue, *CopyToken);
 
-        return std::make_shared<VertexBuffer>(std::move(DevBuf), Strid, VCnt);
+        // ── Move DeviceBuffer into shared ownership ───────────────────
+        // DevBuf is a local; move it onto the heap so VertexBuffer and
+        // DeletionQueue can share its lifetime.  The moved-from local's
+        // destructor is a no-op.
+        return RHI::VertexBufferCreateResult{
+            .Buffer = std::make_shared<VertexBuffer>(
+                std::make_shared<DeviceBuffer>(std::move(DevBuf)), DelQueue, Strid, VCnt),
+            .UploadCompletion = *CopyToken,
+        };
     }
 
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer.Get();
+        return m_Buffer->Get();
     }
     [[nodiscard]] auto GetStride() const -> Uint32 {
         return m_Stride;
@@ -323,9 +336,10 @@ class VertexBuffer final : public RHI::VertexBuffer {
     auto operator=(VertexBuffer&&) -> VertexBuffer&      = delete;
 
   private:
-    DeviceBuffer m_Buffer;
-    Uint32       m_Stride      = 0;
-    Uint64       m_VertexCount = 0;
+    SPtr<DeviceBuffer> m_Buffer        = nullptr;
+    DeletionQueue*     m_DeletionQueue = nullptr;
+    Uint32             m_Stride        = 0;
+    Uint64             m_VertexCount   = 0;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -334,9 +348,14 @@ class VertexBuffer final : public RHI::VertexBuffer {
 
 class IndexBuffer final : public RHI::IndexBuffer {
   public:
-    // Public for std::make_shared compatibility per ADR 02.
-    // All callers should use Create() instead.
-    IndexBuffer(DeviceBuffer&& Buf, Uint64 IndexCount) : m_Buffer(std::move(Buf)), m_IndexCount(IndexCount) {}
+    IndexBuffer(SPtr<DeviceBuffer> Buf, DeletionQueue& Queue, Uint64 IndexCount)
+        : m_Buffer(std::move(Buf)), m_DeletionQueue(&Queue), m_IndexCount(IndexCount) {}
+
+    ~IndexBuffer() override {
+        if (m_DeletionQueue) {
+            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Buf = m_Buffer]() {});
+        }
+    }
 
     /// Static factory: same pattern as VertexBuffer::Create.
     /// Index type is hardcoded to uint32 (eUint32).  uint16 is not supported.
@@ -344,8 +363,9 @@ class IndexBuffer final : public RHI::IndexBuffer {
                                      VmaAllocator                Alloc,
                                      vk::Device                  Dev,
                                      ImmediateContext&           ImmCtx,
-                                     TransferCompletionQueue&    CompletionQueue)
-        -> std::expected<SPtr<IndexBuffer>, ErrorMessage> {
+                                     TransferCompletionQueue&    CompletionQueue,
+                                     DeletionQueue&              DelQueue)
+        -> std::expected<RHI::IndexBufferCreateResult, ErrorMessage> {
         Uint64 IndexCount = Desc.IndexCount;
         Uint64 Size       = IndexCount * 4ULL;
 
@@ -371,11 +391,16 @@ class IndexBuffer final : public RHI::IndexBuffer {
 
         Staging.DeferredDelete(CompletionQueue, *CopyToken);
 
-        return std::make_shared<IndexBuffer>(std::move(DevBuf), IndexCount);
+        // ── Move DeviceBuffer into shared ownership ───────────────────
+        return RHI::IndexBufferCreateResult{
+            .Buffer =
+                std::make_shared<IndexBuffer>(std::make_shared<DeviceBuffer>(std::move(DevBuf)), DelQueue, IndexCount),
+            .UploadCompletion = *CopyToken,
+        };
     }
 
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer.Get();
+        return m_Buffer->Get();
     }
     [[nodiscard]] auto GetIndexCount() const -> Uint64 {
         return m_IndexCount;
@@ -387,8 +412,9 @@ class IndexBuffer final : public RHI::IndexBuffer {
     auto operator=(IndexBuffer&&) -> IndexBuffer&      = delete;
 
   private:
-    DeviceBuffer m_Buffer;
-    Uint64       m_IndexCount = 0;
+    SPtr<DeviceBuffer> m_Buffer        = nullptr;
+    DeletionQueue*     m_DeletionQueue = nullptr;
+    Uint64             m_IndexCount    = 0;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════

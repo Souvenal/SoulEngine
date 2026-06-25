@@ -28,6 +28,7 @@ import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
 import :Texture;
+import :DeletionQueue;
 
 using namespace SoulEngine::Core;
 
@@ -92,8 +93,7 @@ class RenderDevice final : public RHI::RenderDevice {
         m_TransferCompletionQueue = std::move(*CompletionQueue);
 
         // ── Immediate Context ──────────────────────────────────────────────
-        auto ImmCtx =
-            ImmediateContext::Create(m_Device, m_TransferQueue, m_TransferFamily, m_TransferCompletionQueue);
+        auto ImmCtx = ImmediateContext::Create(m_Device, m_TransferQueue, m_TransferFamily, m_TransferCompletionQueue);
         if (!ImmCtx)
             return std::unexpected(ImmCtx.error().Append("ImmediateContext creation failed"));
         m_ImmediateContext = std::move(*ImmCtx);
@@ -109,6 +109,9 @@ class RenderDevice final : public RHI::RenderDevice {
         if (!Semaphore)
             return std::unexpected(Semaphore.error());
         m_Timeline = std::move(*Semaphore);
+
+        // ── Deletion Queue ───────────────────────────────────────────────
+        m_DeletionQueue = DeletionQueue{m_Timeline};
 
         // ── FrameContext ───────────────────────────────────────────────────
         // Each frame slot gets its own Pool, PrimaryBuffer, SubPool, and
@@ -155,6 +158,9 @@ class RenderDevice final : public RHI::RenderDevice {
 
         // Free any GPU resources whose transfer operations have completed.
         m_TransferCompletionQueue.Tick();
+
+        // Retire GPU resources whose frame-timeline token has passed.
+        m_DeletionQueue.Tick();
 
         auto& PresentCompleteSema = m_FrameContext[m_CurrentFrame].PresentComplete;
         auto  AcquireRes          = m_Swapchain.AcquireNextImage(PresentCompleteSema);
@@ -253,13 +259,15 @@ class RenderDevice final : public RHI::RenderDevice {
     }
 
     [[nodiscard]] auto CreateVertexBuffer(const VertexBufferDesc& Desc)
-        -> std::expected<SPtr<RHI::VertexBuffer>, ErrorMessage> override {
-        return VertexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue);
+        -> std::expected<RHI::VertexBufferCreateResult, ErrorMessage> override {
+        return VertexBuffer::Create(
+            Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue, m_DeletionQueue);
     }
 
     [[nodiscard]] auto CreateIndexBuffer(const IndexBufferDesc& Desc)
-        -> std::expected<SPtr<RHI::IndexBuffer>, ErrorMessage> override {
-        return IndexBuffer::Create(Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue);
+        -> std::expected<RHI::IndexBufferCreateResult, ErrorMessage> override {
+        return IndexBuffer::Create(
+            Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue, m_DeletionQueue);
     }
 
     [[nodiscard]] auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
@@ -272,13 +280,18 @@ class RenderDevice final : public RHI::RenderDevice {
 
     [[nodiscard]] auto CreateSampledTexture(const SampledTextureDesc& Desc)
         -> std::expected<RHI::SampledTextureCreateResult, ErrorMessage> override {
-        return SampledTexture::Create(
-            Desc, m_Allocator, m_Device, m_ImmediateContext, m_TransferCompletionQueue, *m_DescriptorManager);
+        return SampledTexture::Create(Desc,
+                                      m_Allocator,
+                                      m_Device,
+                                      m_ImmediateContext,
+                                      m_TransferCompletionQueue,
+                                      *m_DescriptorManager,
+                                      m_DeletionQueue);
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<SPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
-        return GraphicsPipeline::Create(m_Device, Desc, *m_DescriptorManager);
+        return GraphicsPipeline::Create(m_Device, Desc, *m_DescriptorManager, m_DeletionQueue);
     }
 
     [[nodiscard]] auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
@@ -298,9 +311,12 @@ class RenderDevice final : public RHI::RenderDevice {
 
     auto Shutdown() -> void override {
         WaitIdle();
-        auto DrainResult = m_TransferCompletionQueue.Drain();
-        if (!DrainResult)
-            LogError("{}", DrainResult.error().ToString());
+        auto TransferDrain = m_TransferCompletionQueue.Drain();
+        if (!TransferDrain)
+            LogError("{}", TransferDrain.error().ToString());
+        auto DeletionDrain = m_DeletionQueue.Drain();
+        if (!DeletionDrain)
+            LogError("{}", DeletionDrain.error().ToString());
         WaitIdle();
         // Destroy per-frame resources (including HostBuffers with VMA allocations)
         // before vmaDestroyAllocator.
@@ -640,10 +656,18 @@ class RenderDevice final : public RHI::RenderDevice {
                 return R;
         }
 
+        // Frame token for usage tracking — this frame's signal value on the timeline
+        const Uint64                  FrameTokenValue = m_Timeline.NextValue();
+        const RHI::GpuCompletionToken FrameToken{.Id = FrameTokenValue};
+
         std::vector<vk::CommandBuffer> Secondaries;
         Secondaries.reserve(CmdList.Passes.size());
 
         for (const auto& Pass : CmdList.Passes) {
+            // ── Update usage tokens on all resources referenced by this pass ──
+            for (const auto& Cmd : Pass.Commands)
+                std::visit(RHI::UsageVisitor{.CurrentToken = FrameToken}, Cmd);
+
             // Allocate per-pass secondary from the frame's sub-pool
             vk::CommandBufferAllocateInfo Alloc{
                 .commandPool        = *m_FrameContext[m_CurrentFrame].SubPool,
@@ -675,7 +699,12 @@ class RenderDevice final : public RHI::RenderDevice {
             // Begin rendering scope from Pass desc
             {
                 auto           ImageStateCopy = m_CommittedImageStates;
-                CommandVisitor Visitor{.Buf = SecBuf, .LocalStates = ImageStateCopy, .Swc = &m_Swapchain};
+                CommandVisitor Visitor{
+                    .Buf            = SecBuf,
+                    .LocalStates    = ImageStateCopy,
+                    .Swc            = &m_Swapchain,
+                    .PipelineLayout = m_DescriptorManager->GetPipelineLayout(),
+                };
                 Visitor.BeginPass(Pass.Desc);
                 for (const auto& Cmd : Pass.Commands)
                     std::visit(Visitor, Cmd);
@@ -705,7 +734,11 @@ class RenderDevice final : public RHI::RenderDevice {
             .semaphore = m_Swapchain.GetCurrentRenderCompleteSemaphore(),
             .stageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
         };
-        auto TimelineSignalSema = m_Timeline.GetSignalSubmitInfo(vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+        vk::SemaphoreSubmitInfo TimelineSignalSema{
+            .semaphore = m_Timeline.Get(),
+            .value     = FrameTokenValue,
+            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        };
         vk::SemaphoreSubmitInfo SignalSemas[]{RenderingCompleteSema, TimelineSignalSema};
 
         vk::SubmitInfo2 SubmitInfo2{
@@ -719,7 +752,7 @@ class RenderDevice final : public RHI::RenderDevice {
         if (auto R = m_GraphicsQueue.submit2({SubmitInfo2}); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Core::Format("Queue submit failed: {}", vk::to_string(R))));
 
-        m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = TimelineSignalSema.value;
+        m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = FrameTokenValue;
 
         auto PresentRes = m_Swapchain.Present(m_GraphicsQueue);
         if (PresentRes == vk::Result::eErrorOutOfDateKHR || PresentRes == vk::Result::eSuboptimalKHR) {
@@ -749,8 +782,8 @@ class RenderDevice final : public RHI::RenderDevice {
     vk::raii::Queue m_ComputeQueue  = nullptr;
     vk::raii::Queue m_TransferQueue = nullptr;
 
-    ImmediateContext         m_ImmediateContext;
-    TransferCompletionQueue  m_TransferCompletionQueue;
+    ImmediateContext        m_ImmediateContext;
+    TransferCompletionQueue m_TransferCompletionQueue;
 
     uint32_t m_FramesInFlight = 2;
     uint32_t m_CurrentFrame   = 0;
@@ -761,6 +794,8 @@ class RenderDevice final : public RHI::RenderDevice {
     Swapchain         m_Swapchain;
     VmaAllocator      m_Allocator = nullptr;
     TimelineSemaphore m_Timeline;
+
+    DeletionQueue m_DeletionQueue; // re-initialized after m_Timeline created
 
     std::vector<FrameContext> m_FrameContext;
 

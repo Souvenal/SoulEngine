@@ -31,14 +31,14 @@ class RenderDevice {
     // ── Resource creation ────────────────────────────────────────────────────
 
     [[nodiscard]] virtual auto CreateVertexBuffer(const VertexBufferDesc& Desc)
-        -> std::expected<SPtr<VertexBuffer>, ErrorMessage> = 0;
+        -> std::expected<VertexBufferCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateIndexBuffer(const IndexBufferDesc& Desc)
-        -> std::expected<SPtr<IndexBuffer>, ErrorMessage> = 0;
+        -> std::expected<IndexBufferCreateResult, ErrorMessage> = 0;
     /// Create a constant (uniform) buffer with per-frame backing storage.
     /// The returned buffer auto-selects the current frame's slot on Write().
     /// @param Size  Total size in bytes per-frame slot.
     [[nodiscard]] virtual auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
-        -> std::expected<SPtr<ConstantBuffer>, ErrorMessage>                                                        = 0;
+        -> std::expected<SPtr<ConstantBuffer>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateSampledTexture(const SampledTextureDesc& Desc)
         -> std::expected<SampledTextureCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)

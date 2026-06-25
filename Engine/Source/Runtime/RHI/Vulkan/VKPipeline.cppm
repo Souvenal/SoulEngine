@@ -10,6 +10,7 @@ import std;
 import :Types;
 import :Shader;
 import :Descriptor;
+import :DeletionQueue;
 
 using namespace SoulEngine::Core;
 
@@ -28,7 +29,13 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
     // All callers should use Create() instead.
     GraphicsPipeline() = default;
 
-    GraphicsPipeline(const GraphicsPipeline&) = delete;
+    ~GraphicsPipeline() override {
+        if (m_DeletionQueue) {
+            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Pipeline = m_Pipeline]() {});
+        }
+    }
+
+    GraphicsPipeline(const GraphicsPipeline&)                    = delete;
     auto operator=(const GraphicsPipeline&) -> GraphicsPipeline& = delete;
 
     /// Create a Vulkan graphics pipeline from an RHI descriptor.
@@ -36,16 +43,16 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
     /// Uses the global bindless pipeline layout shared by all pipelines in
     /// this backend. Shader modules are transient — destroyed when this
     /// function returns.
-    [[nodiscard]] static auto Create(vk::raii::Device& Device,
-                                      const GraphicsPipelineDesc& Desc,
-                                      const DescriptorManager& Manager)
-        -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> {
+    [[nodiscard]] static auto Create(vk::raii::Device&           Device,
+                                     const GraphicsPipelineDesc& Desc,
+                                     const DescriptorManager&    Manager,
+                                     DeletionQueue& Queue) -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> {
 
         // ── Shader stages ──────────────────────────────────────────────
         auto ShaderStates = GraphicsShaderStates::Create(Device, Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error());
-        Uint32 StageCount = static_cast<Uint32>(ShaderStates->StageInfos.size());
+        Uint32 StageCount    = static_cast<Uint32>(ShaderStates->StageInfos.size());
         auto   VertexInputCI = ShaderStates->GetPipelineVertexInputStateCI();
 
         // Most pipeline state is baked at creation time and cannot change,
@@ -208,18 +215,20 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
             return std::unexpected(
                 ErrorMessage(Core::Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
-        auto Ret = std::make_shared<GraphicsPipeline>();
-        Ret->m_Pipeline = std::move(Pipeline);
+        auto Ret             = std::make_shared<GraphicsPipeline>();
+        Ret->m_Pipeline      = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
+        Ret->m_DeletionQueue = &Queue;
         return Ret;
     }
 
     /// Return the native VkPipeline handle.
     [[nodiscard]] auto Get() const -> vk::Pipeline {
-        return *m_Pipeline;
+        return *(*m_Pipeline);
     }
 
   private:
-    vk::raii::Pipeline m_Pipeline = nullptr;
+    SPtr<vk::raii::Pipeline> m_Pipeline      = nullptr;
+    DeletionQueue*           m_DeletionQueue = nullptr;
 };
 
 } // namespace SoulEngine::RHI::Vulkan

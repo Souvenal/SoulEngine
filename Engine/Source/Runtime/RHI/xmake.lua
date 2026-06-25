@@ -18,3 +18,8 @@ target("RHIVulkan")
     add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw")
     add_deps("RHI", "VMA")
     add_files("Vulkan/*.cppm")
+
+test_module("RHI", {
+    additional_deps     = {"RHIVulkan"},
+    additional_packages = {"glfw", "vulkan-headers"},
+})

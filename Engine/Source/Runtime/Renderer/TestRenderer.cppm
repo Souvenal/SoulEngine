@@ -21,16 +21,18 @@ export namespace SoulEngine::Renderer {
 struct Vertex {
     hlslpp::float3 Position;
     hlslpp::float3 Color;
+    hlslpp::float2 UV;
 };
-static_assert(sizeof(Vertex) == 32, "TestRenderer vertex layout expects hlslpp::float3 to occupy 16 bytes");
+static_assert(sizeof(Vertex) == 48, "TestRenderer vertex layout: 2x float3(16) + float2(8) + 8 padding = 48");
 static_assert(offsetof(Vertex, Position) == 0, "TestRenderer vertex position offset changed");
 static_assert(offsetof(Vertex, Color) == 16, "TestRenderer vertex color offset changed");
+static_assert(offsetof(Vertex, UV) == 32, "TestRenderer vertex uv offset changed");
 
 const std::vector<Vertex> kQuadVertices = {
-    {.Position = {-0.5f, 0.0f, -0.5f}, .Color = {1.0f, 0.0f, 0.0f}},
-    {.Position = {+0.5f, 0.0f, -0.5f}, .Color = {0.0f, 1.0f, 0.0f}},
-    {.Position = {+0.5f, 0.0f, +0.5f}, .Color = {0.0f, 0.0f, 1.0f}},
-    {.Position = {-0.5f, 0.0f, +0.5f}, .Color = {1.0f, 1.0f, 1.0f}},
+    {.Position = {-0.5f, 0.0f, -0.5f}, .Color = {1.0f, 0.0f, 0.0f}, .UV = {0.0f, 1.0f}},
+    {.Position = {+0.5f, 0.0f, -0.5f}, .Color = {0.0f, 1.0f, 0.0f}, .UV = {1.0f, 1.0f}},
+    {.Position = {+0.5f, 0.0f, +0.5f}, .Color = {0.0f, 0.0f, 1.0f}, .UV = {1.0f, 0.0f}},
+    {.Position = {-0.5f, 0.0f, +0.5f}, .Color = {1.0f, 1.0f, 1.0f}, .UV = {0.0f, 0.0f}},
 };
 
 const std::vector<Uint32> kQuadIndices = {0, 1, 2, 2, 3, 0};
@@ -55,50 +57,57 @@ class TestRenderer final : public IRenderer {
         auto& Ctx = RHI::RenderDevice::Get();
 
         auto ShaderDir = ConfigManager::Get().CurrentApplicationDir() / "Shaders";
-        m_Pipeline     = Resource::Manager::Get().RequestGraphicsPipeline(Resource::GraphicsPipelineRequest{
-            .VertEntry =
-                {
-                    .SourcePath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
-                    .EntryPoint = "vertMain",
-                },
-            .FragEntry =
-                {
-                    .SourcePath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
-                    .EntryPoint = "fragMain",
-                },
-            .VertexInputLayout =
-                RHI::VertexInputLayoutDesc{
-                    .Binding = 0,
-                    .Stride  = sizeof(Vertex),
-                    .Attributes =
-                        {
-                            RHI::VertexInputAttributeDesc{
-                                .Location = 0,
-                                .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                .Offset   = offsetof(Vertex, Position),
-                            },
-                            RHI::VertexInputAttributeDesc{
-                                .Location = 1,
-                                .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                .Offset   = offsetof(Vertex, Color),
-                            },
-                        },
-                },
-        });
+        m_Pipeline     = Resource::Manager::Get()
+                             .RequestGraphicsPipeline(
+                                 Resource::GraphicsPipelineRequest{
+                                     .VertEntry =
+                                         {
+                                             .SourcePath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
+                                             .EntryPoint = "vertMain",
+                                         },
+                                     .FragEntry =
+                                         {
+                                             .SourcePath = Path((ShaderDir / "CubeGlobalCB.slang").string()),
+                                             .EntryPoint = "fragMain",
+                                         },
+                                     .VertexInputLayout =
+                                         RHI::VertexInputLayoutDesc{
+                                             .Binding = 0,
+                                             .Stride  = sizeof(Vertex),
+                                             .Attributes =
+                                                 {
+                                                     RHI::VertexInputAttributeDesc{
+                                                         .Location = 0,
+                                                         .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                                         .Offset   = offsetof(Vertex, Position),
+                                                     },
+                                                     RHI::VertexInputAttributeDesc{
+                                                         .Location = 1,
+                                                         .Format   = RHI::Format::R32G32B32_SFLOAT,
+                                                         .Offset   = offsetof(Vertex, Color),
+                                                     },
+                                                     RHI::VertexInputAttributeDesc{
+                                                         .Location = 2,
+                                                         .Format   = RHI::Format::R32G32_SFLOAT,
+                                                         .Offset   = offsetof(Vertex, UV),
+                                                     },
+                                                 },
+                                         },
+                                 });
         if (!m_Pipeline.IsValid())
             return std::unexpected(ErrorMessage("Graphics pipeline request failed"));
 
-        auto VBO = Ctx.CreateVertexBuffer(RHI::VertexBufferDesc{
-            .Data = kQuadVertices.data(), .VertexCount = kQuadVertices.size(), .Stride = sizeof(Vertex)});
-        if (!VBO)
-            return std::unexpected(VBO.error().Append("Vertex buffer creation failed"));
-        m_VertexBuffer = std::move(*VBO);
+        m_VertexBuffer = Resource::Manager::Get().RequestVertexBuffer(
+            "quad_verts",
+            RHI::VertexBufferDesc{
+                .Data = kQuadVertices.data(), .VertexCount = kQuadVertices.size(), .Stride = sizeof(Vertex)});
+        if (!m_VertexBuffer.IsValid())
+            return std::unexpected(ErrorMessage("Vertex buffer request failed"));
 
-        auto IBO =
-            Ctx.CreateIndexBuffer(RHI::IndexBufferDesc{.Data = kQuadIndices.data(), .IndexCount = kQuadIndices.size()});
-        if (!IBO)
-            return std::unexpected(IBO.error().Append("Index buffer creation failed"));
-        m_IndexBuffer = std::move(*IBO);
+        m_IndexBuffer = Resource::Manager::Get().RequestIndexBuffer(
+            "quad_indices", RHI::IndexBufferDesc{.Data = kQuadIndices.data(), .IndexCount = kQuadIndices.size()});
+        if (!m_IndexBuffer.IsValid())
+            return std::unexpected(ErrorMessage("Index buffer request failed"));
 
         m_Texture = Resource::Manager::Get().RequestSampledTexture(
             (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "statue.jpg").string());
@@ -109,10 +118,10 @@ class TestRenderer final : public IRenderer {
     }
 
     auto OnDetach() -> void override {
-        m_Pipeline = {};
-        m_VertexBuffer.reset();
-        m_IndexBuffer.reset();
-        m_Texture = {};
+        m_Pipeline     = {};
+        m_VertexBuffer = {};
+        m_IndexBuffer  = {};
+        m_Texture      = {};
     }
 
     /// Produce a CommandList from the current scene data.
@@ -146,12 +155,19 @@ class TestRenderer final : public IRenderer {
             return CmdList;
         }
 
+        auto VB = m_VertexBuffer.TryGet();
+        auto IB = m_IndexBuffer.TryGet();
+        if (!VB || !VB->Buffer || !IB || !IB->Buffer) {
+            CmdList.Passes.push_back(std::move(Pass));
+            return CmdList;
+        }
+
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
         Pass.SetPipeline(Pipeline->Pipeline);
-        Pass.BindVertexBuffer(m_VertexBuffer);
-        Pass.BindIndexBuffer(m_IndexBuffer);
-        Pass.SetSampledTexture(0, Texture->Texture.get());
+        Pass.BindVertexBuffer(VB->Buffer);
+        Pass.BindIndexBuffer(IB->Buffer);
+        Pass.SetDrawMaterialData(RHI::DrawMaterialData{.TestTexture = Texture->Texture});
         Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
 
         CmdList.Passes.push_back(std::move(Pass));
@@ -170,8 +186,8 @@ class TestRenderer final : public IRenderer {
         };
     }
 
-    SPtr<RHI::VertexBuffer>          m_VertexBuffer;
-    SPtr<RHI::IndexBuffer>           m_IndexBuffer;
+    Resource::VertexBufferHandle     m_VertexBuffer;
+    Resource::IndexBufferHandle      m_IndexBuffer;
     Resource::GraphicsPipelineHandle m_Pipeline = {};
     Resource::SampledTextureHandle   m_Texture  = {};
 };

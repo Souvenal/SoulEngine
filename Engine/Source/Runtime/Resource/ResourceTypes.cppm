@@ -207,8 +207,18 @@ class ResourceHandle {
     ResourceGeneration    m_Generation = 0;
 };
 
+struct VertexBufferResource {
+    SPtr<RHI::VertexBuffer> Buffer = nullptr;
+};
+
+struct IndexBufferResource {
+    SPtr<RHI::IndexBuffer> Buffer = nullptr;
+};
+
 using SampledTextureHandle   = ResourceHandle<SampledTextureResource>;
 using GraphicsPipelineHandle = ResourceHandle<GraphicsPipelineResource>;
+using VertexBufferHandle     = ResourceHandle<VertexBufferResource>;
+using IndexBufferHandle      = ResourceHandle<IndexBufferResource>;
 
 template <typename T>
 struct ResourceAllocation {

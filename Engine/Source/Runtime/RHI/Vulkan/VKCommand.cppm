@@ -9,6 +9,8 @@ import :Types;
 import :Swapchain;
 import :Buffer;
 import :Pipeline;
+import :Texture;
+import :Descriptor;
 
 using namespace SoulEngine::Core;
 
@@ -20,6 +22,7 @@ struct CommandVisitor {
     std::unordered_map<vk::Image, ImageState>& LocalStates;
     Swapchain*                                 Swc;
     vk::Extent2D                               CurrentRenderExtent = {1, 1};
+    vk::PipelineLayout                         PipelineLayout      = nullptr;
 
     auto TransitionImage(vk::Image               Image,
                          vk::PipelineStageFlags2 DstStage,
@@ -174,9 +177,13 @@ struct CommandVisitor {
         Buf.draw(Cmd.VertexCount, Cmd.InstanceCount, Cmd.FirstVertex, Cmd.FirstInstance);
     }
 
-    auto operator()(const RHI::SetSampledTextureCmd& /*Cmd*/) -> void {
-        // No-op: texture is already in the bindless descriptor set at creation time.
-        // The renderer uses push constants to pass the descriptor slot index to the shader.
+    auto operator()(const RHI::SetDrawMaterialDataCmd& Cmd) -> void {
+        if (!Cmd.Material.TestTexture || !PipelineLayout)
+            return;
+
+        const auto&  VulkanTex = static_cast<const Vulkan::SampledTexture&>(*Cmd.Material.TestTexture);
+        const Uint32 Slot      = VulkanTex.GetDescriptorSlot();
+        Buf.pushConstants(PipelineLayout, vk::ShaderStageFlagBits::eAllGraphics, 0, sizeof(Uint32), &Slot);
     }
 };
 
