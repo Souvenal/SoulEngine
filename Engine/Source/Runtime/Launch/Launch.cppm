@@ -33,7 +33,7 @@ struct FrameSlot {
     std::mutex              Mutex;
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
-    Scene::Scene            SceneData;
+    Scene::SceneSnapshot    SceneData;
     RHI::CommandList        CmdList;
 };
 
@@ -136,10 +136,12 @@ class EngineLoop {
             m_Application.reset();
         }
 
-        // Release frame slot command lists (SPtrs inside variant commands)
+        // Release frame slot snapshots and command lists (SPtrs inside handles/variant commands)
         // before RenderDevice::Destroy tears down VMA.
-        for (auto& Slot : m_Slots)
+        for (auto& Slot : m_Slots) {
+            Slot.SceneData = {};
             Slot.CmdList = {};
+        }
 
         // Release GPU textures before VMA allocator dies.
         Resource::Manager::Get().Clear();
@@ -179,8 +181,11 @@ class EngineLoop {
     auto GameLoop() -> void {
         tracy::SetThreadName("GameLoop");
         SetLogThreadRole(LogThreadRole::Game);
-        while (!m_FatalError.load(std::memory_order_acquire) && !WindowDisplay.IsExitRequested()) {
-            WindowDisplay.PollEvents();
+        while (!m_FatalError.load(std::memory_order_acquire)) {
+            if (WindowDisplay.PollEvents())
+                break;
+
+            auto Resize = WindowDisplay.ConsumeFramebufferResize();
 
             auto  Now      = std::chrono::steady_clock::now();
             float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
@@ -198,10 +203,17 @@ class EngineLoop {
             if (m_FatalError.load(std::memory_order_acquire))
                 break;
 
+            if (Resize) {
+                auto& Scene = m_Application->GetScene();
+                const auto Width  = static_cast<Uint32>(std::max(0, Resize->Width));
+                const auto Height = static_cast<Uint32>(std::max(0, Resize->Height));
+                Scene.m_Camera.AllocateRenderTargets(Width, Height);
+            }
+
             m_Application->OnTick(Delta);
             auto& AppScene = m_Application->GetScene();
             AppScene.UpdateTime();
-            Slot.SceneData = AppScene;
+            Slot.SceneData = AppScene.BuildSnapshot();
 
             {
                 std::lock_guard Lock(Slot.Mutex);

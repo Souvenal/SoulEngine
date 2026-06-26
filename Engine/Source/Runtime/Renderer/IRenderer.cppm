@@ -4,6 +4,7 @@ export module Renderer:IRenderer;
 
 import Core;
 import RHI;
+import Resource;
 import Scene;
 
 export import std;
@@ -38,9 +39,9 @@ class IRenderer {
     /// @brief Release all GPU resources and owned objects.
     virtual auto OnDetach() -> void = 0;
 
-    /// @brief Render the scene and return a CommandList for RHIThread.
+    /// @brief Render the scene snapshot and return a CommandList for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
-    [[nodiscard]] virtual auto Render(const Scene::Scene& Scene) -> std::expected<RHI::CommandList, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RHI::CommandList, ErrorMessage> = 0;
 };
 
 } // namespace SoulEngine::Renderer

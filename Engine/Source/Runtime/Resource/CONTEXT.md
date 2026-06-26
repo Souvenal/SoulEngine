@@ -62,5 +62,9 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - A **Resource dependency** affects the consumer scope that owns it: pass dependencies decide pass execution, draw/material dependencies decide draw execution or fallback.
 - **Skip policy** is the default non-blocking behavior; **Fallback policy** is used when a suitable substitute exists; **Block policy** is opt-in for startup, tooling, tests, or other non-frame-path operations.
 - **Async Resource v1** includes **Sampled texture resource**, **Vertex buffer resource**, **Index buffer resource**, and **Pipeline resource**.
-- Render targets and swapchain images are not **Sampled texture resources**. They are RHI/RenderGraph presentation and attachment concepts, not ResourceManager-managed sampled texture assets.
-- Constant buffers, per-frame uniform buffers, swapchain images, and transient render targets are outside **Async Resource v1**.
+- Render targets are Resource-managed attachment resources when requested
+  through typed render-target handles. They are not sampled texture resources
+  and do not belong to Async Resource v1.
+- Swapchain images remain backend-private presentation targets.
+- Constant buffers and per-frame uniform buffers are outside **Async Resource
+  v1**.

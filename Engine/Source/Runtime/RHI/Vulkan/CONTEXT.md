@@ -54,3 +54,4 @@ No sampler bindless or buffer bindless. GPU buffer data access is planned via BD
 | :ImmediateContext | VKImmediateContext.cppm | One-shot async GPU command executor for staging uploads, initial barriers, etc. Transient command buffers, no waitIdle. |
 | :TransferCompletionQueue | VKTransferCompletionQueue.cppm | `TransferCompletionQueue` — transfer timeline, upload completion token allocation/query, and deferred callback execution |
 | :Descriptor | VKDescriptor.cppm | `DescriptorManager` — pool, 3-set layout, pipeline layout, BindTo, texture slot management |
+| :Texture | VKTexture.cppm | `DeviceTexture`, `SampledTexture`, and `RenderTarget` image resources |

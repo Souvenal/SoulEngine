@@ -11,7 +11,6 @@ import :Buffer;
 import :Pipeline;
 import :Texture;
 import :Descriptor;
-import :RenderTarget;
 
 using namespace SoulEngine::Core;
 

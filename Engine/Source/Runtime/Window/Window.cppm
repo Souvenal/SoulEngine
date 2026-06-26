@@ -18,10 +18,9 @@ auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
 
 namespace SoulEngine {
 
-struct WindowDesc {
-    String Title;
-    int    Width  = 0;
-    int    Height = 0;
+export struct FramebufferExtent {
+    int Width  = 0;
+    int Height = 0;
 };
 
 export class WindowDisplay final {
@@ -35,9 +34,10 @@ export class WindowDisplay final {
     auto operator=(const WindowDisplay&) -> WindowDisplay& = delete;
     WindowDisplay(WindowDisplay&& Other) noexcept
         : m_Window(std::exchange(Other.m_Window, nullptr)),
-          m_bExitRequested(std::exchange(Other.m_bExitRequested, false)),
           m_bInitialized(std::exchange(Other.m_bInitialized, false)),
-          m_Desc(std::move(Other.m_Desc)) {
+          m_bFramebufferResized(std::exchange(Other.m_bFramebufferResized, false)),
+          m_Title(std::move(Other.m_Title)),
+          m_Extent(std::exchange(Other.m_Extent, {})) {
         if (m_Window) {
             glfwSetWindowUserPointer(m_Window, this);
         }
@@ -45,12 +45,13 @@ export class WindowDisplay final {
     auto operator=(WindowDisplay&& Other) noexcept -> WindowDisplay& {
         if (this != &Other) {
             std::swap(m_Window, Other.m_Window);
-            std::swap(m_bExitRequested, Other.m_bExitRequested);
             std::swap(m_bInitialized, Other.m_bInitialized);
-            std::swap(m_Desc, Other.m_Desc);
+            std::swap(m_bFramebufferResized, Other.m_bFramebufferResized);
+            std::swap(m_Title, Other.m_Title);
+            std::swap(m_Extent, Other.m_Extent);
             if (m_Window) {
                 glfwSetWindowUserPointer(m_Window, this);
-                glfwSetWindowSizeCallback(m_Window, &WindowDisplay::OnResize);
+                glfwSetFramebufferSizeCallback(m_Window, &WindowDisplay::OnFramebufferResize);
             }
         }
         return *this;
@@ -71,15 +72,12 @@ export class WindowDisplay final {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-        auto& Cfg     = ConfigManager::Get().GetConfig();
-        Result.m_Desc = WindowDesc{
-            .Title  = Cfg.Application.Name.value_or("SoulEngine"),
-            .Width  = Cfg.Window.ResolutionX.value_or(1280),
-            .Height = Cfg.Window.ResolutionY.value_or(720),
-        };
+        auto&      Cfg          = ConfigManager::Get().GetConfig();
+        const auto WindowWidth  = Cfg.Window.ResolutionX.value_or(1280);
+        const auto WindowHeight = Cfg.Window.ResolutionY.value_or(720);
+        Result.m_Title          = Cfg.Application.Name.value_or("SoulEngine");
 
-        Result.m_Window =
-            glfwCreateWindow(Result.m_Desc.Width, Result.m_Desc.Height, Result.m_Desc.Title.c_str(), nullptr, nullptr);
+        Result.m_Window = glfwCreateWindow(WindowWidth, WindowHeight, Result.m_Title.c_str(), nullptr, nullptr);
 
         if (!Result.m_Window) {
             const char* Desc = nullptr;
@@ -89,11 +87,20 @@ export class WindowDisplay final {
         }
 
         glfwSetWindowUserPointer(Result.m_Window, &Result);
-        glfwSetWindowSizeCallback(Result.m_Window, &WindowDisplay::OnResize);
+        glfwSetFramebufferSizeCallback(Result.m_Window, &WindowDisplay::OnFramebufferResize);
 
-        Result.m_bInitialized = true;
+        glfwGetFramebufferSize(Result.m_Window, &Result.m_Extent.Width, &Result.m_Extent.Height);
 
-        LogInfo("Window created: {}x{} \"{}\"", Result.m_Desc.Width, Result.m_Desc.Height, Result.m_Desc.Title);
+        Result.m_bFramebufferResized = true;
+        Result.m_bInitialized        = true;
+
+        LogInfo(
+            "Window created: window={}x{}, framebuffer={}x{} \"{}\"",
+            WindowWidth,
+            WindowHeight,
+            Result.m_Extent.Width,
+            Result.m_Extent.Height,
+            Result.m_Title);
         return Result;
     }
 
@@ -108,7 +115,8 @@ export class WindowDisplay final {
 
         glfwTerminate();
 
-        m_Desc         = {};
+        m_Title        = {};
+        m_Extent       = {};
         m_bInitialized = false;
     }
 
@@ -120,38 +128,35 @@ export class WindowDisplay final {
         return m_Window;
     }
 
-    [[nodiscard]] auto GetWidth() const -> int {
-        return m_Desc.Width;
-    }
-    [[nodiscard]] auto GetHeight() const -> int {
-        return m_Desc.Height;
+    [[nodiscard]] auto ConsumeFramebufferResize() -> std::optional<FramebufferExtent> {
+        if (!m_bFramebufferResized)
+            return std::nullopt;
+
+        m_bFramebufferResized = false;
+        return m_Extent;
     }
 
-    auto PollEvents() -> void {
+    [[nodiscard]] auto PollEvents() -> bool {
         glfwPollEvents();
 
-        if (glfwWindowShouldClose(m_Window)) {
-            m_bExitRequested = true;
-        }
-    }
-
-    [[nodiscard]] auto IsExitRequested() const -> bool {
-        return m_bExitRequested;
+        return glfwWindowShouldClose(m_Window);
     }
 
   private:
-    static auto OnResize(GLFWwindow* Win, int NewW, int NewH) -> void {
+    static auto OnFramebufferResize(GLFWwindow* Win, int NewW, int NewH) -> void {
         auto* Self = static_cast<WindowDisplay*>(glfwGetWindowUserPointer(Win));
         if (Self) {
-            Self->m_Desc.Width  = NewW;
-            Self->m_Desc.Height = NewH;
+            Self->m_Extent.Width  = NewW;
+            Self->m_Extent.Height = NewH;
+            Self->m_bFramebufferResized = true;
         }
     }
 
-    GLFWwindow* m_Window         = nullptr;
-    bool        m_bExitRequested = false;
-    bool        m_bInitialized   = false;
-    WindowDesc  m_Desc; ///< Current window state (kept in sync on resize)
+    GLFWwindow*       m_Window              = nullptr;
+    bool              m_bInitialized        = false;
+    bool              m_bFramebufferResized = false;
+    String            m_Title;
+    FramebufferExtent m_Extent; ///< Current framebuffer extent (kept in sync on resize)
 };
 
 } // namespace SoulEngine

@@ -12,10 +12,10 @@ Engine startup and main loop. The entry point binary loads this module and calls
 | **PreInit** | Processes command-line arguments (`CmdLineArgs`), loads config file (`ConfigManager::LoadFile`), applies log-level config. Currently only uses `CmdLineArgs[0]` (binary path) for config file resolution; argument parsing is extensible for future CLI flags. |
 | **Init** | Bootstraps subsystems in order: `WindowDisplay::Create` -> `RHI::RenderDevice::Create(Window)` -> `SwitchApplication`. Any failure tears down prior work and returns `std::unexpected`. Does NOT spawn threads. |
 | **Run** | Spawns Render and RHI `std::jthread`s, then calls `GameLoop()` on the calling (main) thread. Blocks until exit. After `GameLoop` returns, calls `Shutdown()`. |
-| **GameLoop** | Main-thread loop: `PollEvents` -> compute delta -> wait for slot -> `OnTick(dt)` -> write scene -> `GameReady`. Also checks `WindowDisplay.IsExitRequested()` (close button) and `m_FatalError` (render crash). |
-| **RenderLoop** | Worker `std::jthread`. Waits for `GameReady` on its slot, drains render task queue, calls `Renderer::Render(scene)`, sets `RenderReady`. On `Render` failure: broadcasts `FatalError` and exits. |
+| **GameLoop** | Main-thread loop: `PollEvents` -> compute delta -> wait for slot -> `OnTick(dt)` -> build `SceneSnapshot` -> `GameReady`. Breaks when `PollEvents()` reports a close request or `m_FatalError` is set by another loop. |
+| **RenderLoop** | Worker `std::jthread`. Waits for `GameReady` on its slot, drains render task queue, calls `Renderer::Render(SceneSnapshot)`, sets `RenderReady`. On `Render` failure: broadcasts `FatalError` and exits. |
 | **RHILoop** | Worker `std::jthread`. Waits for `RenderReady` on its slot, drains RHI task queue, sets `RHIDone`. On exit: calls `RenderDevice::WaitIdle()` before returning. |
-| **FrameSlot** | Triple-buffered slot (3 fixed). Contains `mutex`, `condition_variable`, `SlotState`, and a `Scene::Scene` copy for Game→Render handoff. |
+| **FrameSlot** | Triple-buffered slot (3 fixed). Contains `mutex`, `condition_variable`, `SlotState`, and a `SceneSnapshot` copy for Game→Render handoff. |
 | **SlotState** | State machine: `Empty -> GameReady -> RenderReady -> RHIDone -> Empty`. |
 | **FatalError** | `std::atomic<bool>` set by any loop on unrecoverable error. Wakes all waiting threads via `notify_all`. Causes `GameLoop` to break and `Run` to fall through to `Shutdown`. |
 | **SwitchApplication** | Replaces the current application. Calls `OnDetach()` on the old app, then `Application::Create(Name)` + `OnAttach()` for the new one. |
@@ -26,7 +26,7 @@ Engine startup and main loop. The entry point binary loads this module and calls
 - `Window` — window display creation (`WindowDisplay`)
 - `Application` — factory + lifecycle (`Application::Create`, `OnAttach`, `OnDetach`, `OnTick`)
 - `RHI` — RHI singleton lifecycle (`RenderDevice::Create`, `Get`, `Destroy`)
-- `Scene` — `Scene::Scene` type for frame slot data
+- `Scene` — `Scene::Scene` mutable world state + `SceneSnapshot` frame slot data
 - `Renderer` — `IRenderer::Render()` called from `RenderLoop`
 - `TaskGraph` — cross-thread task dispatch (`SoulEngine::TaskGraph`)
 

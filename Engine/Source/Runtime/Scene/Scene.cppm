@@ -5,6 +5,7 @@ module;
 export module Scene;
 
 export import Core;
+export import Resource;
 export import std;
 
 using namespace SoulEngine::Core;
@@ -15,6 +16,10 @@ export namespace SoulEngine::Scene {
 ///
 /// Minimal prototype — projection parameters are included so renderers can
 /// derive view and projection matrices without depending on math headers.
+// TODO: Split Camera into specialized camera types when their ownership and
+// projection policies become concrete. Expected variants include gameplay
+// cameras, editor viewport cameras, and shadow cameras. Keep this base type
+// minimal for now: view parameters plus view-scoped resource handles only.
 struct Camera {
     hlslpp::float3 Position    = hlslpp::float3(1.25f, 1.25f, 2.0f);
     hlslpp::float3 Forward     = hlslpp::normalize(hlslpp::float3(0.0f, 0.0f, 0.0f) - Position);
@@ -23,6 +28,25 @@ struct Camera {
     float          NearPlane   = 0.1f;
     float          FarPlane    = 100.0f;
     float          AspectRatio = 16.0f / 9.0f;
+    Resource::RenderTargetHandle DepthRT = {};
+
+    auto AllocateRenderTargets(Uint32 Width, Uint32 Height) -> void {
+        if (Width == 0 || Height == 0) {
+            DepthRT = {};
+            return;
+        }
+
+        const auto DepthKey = Format("camera_depth_{}x{}", Width, Height);
+        DepthRT = Resource::Manager::Get().RequestRenderTarget(
+            DepthKey,
+            RHI::RenderTargetDesc{
+                .Width  = Width,
+                .Height = Height,
+                .Format = RHI::Format::D32_SFLOAT,
+                .Usage  = RHI::TextureUsage::DepthStencil,
+            });
+        AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
+    }
 
     [[nodiscard]] auto GetViewMatrix() const -> hlslpp::float4x4 {
         return hlslpp::float4x4::look_at(Position, Position + Forward, Up);
@@ -39,11 +63,15 @@ struct Camera {
     }
 };
 
+struct SceneSnapshot {
+    Camera Camera;
+    float  Time = 0.0f;
+};
+
 /// @brief World state container read by renderers each frame.
 ///
 /// Holds the camera and (future) mesh, material, light, and transform
-/// collections.  Scene has no awareness of RHI, Renderer, or rendering
-/// concepts — it is a pure data container.
+/// collections.
 class Scene {
   private:
     std::chrono::steady_clock::time_point m_StartTime = std::chrono::steady_clock::now();
@@ -73,6 +101,13 @@ class Scene {
     /// @brief All registered texture paths.
     [[nodiscard]] auto GetTexturePaths() const -> const std::vector<String>& {
         return m_TexturePaths;
+    }
+
+    [[nodiscard]] auto BuildSnapshot() const -> SceneSnapshot {
+        return SceneSnapshot{
+            .Camera = m_Camera,
+            .Time   = m_Time,
+        };
     }
 
     Camera m_Camera;

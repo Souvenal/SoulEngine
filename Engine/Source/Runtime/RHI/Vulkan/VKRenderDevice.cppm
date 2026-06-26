@@ -28,7 +28,6 @@ import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
 import :Texture;
-import :RenderTarget;
 import :DeletionQueue;
 
 using namespace SoulEngine::Core;
@@ -653,6 +652,9 @@ class RenderDevice final : public RHI::RenderDevice {
     // ═════════════════════════════════════════════════════════════════════════════
 
     [[nodiscard]] auto Execute(const RHI::CommandList& CmdList) -> std::expected<void, ErrorMessage> override {
+        if (CmdList.Passes.empty())
+            return std::unexpected(ErrorMessage("Execute: command list must contain at least one pass"));
+
         if (auto R = BeginFrame(); !R)
             return R;
         if (!CmdList.GlobalConstantData.empty()) {

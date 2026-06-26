@@ -115,16 +115,6 @@ class TestRenderer final : public IRenderer {
         if (!m_Texture.IsValid())
             return std::unexpected(ErrorMessage("Test texture request failed"));
 
-        m_DepthRT = Resource::Manager::Get().RequestRenderTarget("main_depth",
-                                                                 RHI::RenderTargetDesc{
-                                                                     .Width  = 800,
-                                                                     .Height = 600,
-                                                                     .Format = RHI::Format::D32_SFLOAT,
-                                                                     .Usage  = RHI::TextureUsage::DepthStencil,
-                                                                 });
-        if (!m_DepthRT.IsValid())
-            return std::unexpected(ErrorMessage("Depth render target request failed"));
-
         return {};
     }
 
@@ -133,12 +123,11 @@ class TestRenderer final : public IRenderer {
         m_VertexBuffer = {};
         m_IndexBuffer  = {};
         m_Texture      = {};
-        m_DepthRT      = {};
     }
 
-    /// Produce a CommandList from the current scene data.
+    /// Produce a CommandList from the current scene snapshot.
     /// Called by RenderLoop. Does NOT call BeginFrame/EndFrame.
-    [[nodiscard]] auto Render(const Scene::Scene& Scene) -> std::expected<RHI::CommandList, ErrorMessage> override {
+    [[nodiscard]] auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RHI::CommandList, ErrorMessage> override {
         auto CbData = BuildGlobalCB(Scene);
 
         // Copy into command list
@@ -155,14 +144,16 @@ class TestRenderer final : public IRenderer {
                 },
         };
 
-        // Bind depth render target if ready.
-        auto DepthRT = m_DepthRT.TryGet();
-        if (DepthRT && DepthRT->Texture) {
-            Pass.Desc.DepthAttachment = RHI::DepthAttachmentDesc{
-                .TexturePtr = DepthRT->Texture.get(),
-                .ClearValue = RHI::ClearDepthStencilValue{.Depth = 1.0f, .Stencil = 0},
-            };
+        auto DepthRT = Scene.Camera.DepthRT.TryGet();
+        if (!DepthRT || !DepthRT->Texture) {
+            CmdList.Passes.push_back(std::move(Pass));
+            return CmdList;
         }
+
+        Pass.Desc.DepthAttachment = RHI::DepthAttachmentDesc{
+            .TexturePtr = DepthRT->Texture.get(),
+            .ClearValue = RHI::ClearDepthStencilValue{.Depth = 1.0f, .Stencil = 0},
+        };
 
         auto Texture = m_Texture.TryGet();
         if (!Texture || !Texture->Texture) {
@@ -197,13 +188,13 @@ class TestRenderer final : public IRenderer {
     }
 
   private:
-    [[nodiscard]] auto BuildGlobalCB(const Scene::Scene& Scene) const -> GlobalCBData {
-        const auto& Camera = Scene.m_Camera;
+    [[nodiscard]] auto BuildGlobalCB(const Scene::SceneSnapshot& Scene) const -> GlobalCBData {
+        const auto& Camera = Scene.Camera;
 
         return GlobalCBData{
             .View       = Camera.GetViewMatrix(),
             .Projection = Camera.GetProjectionMatrix(),
-            .Time       = Scene.m_Time,
+            .Time       = Scene.Time,
         };
     }
 
@@ -211,7 +202,6 @@ class TestRenderer final : public IRenderer {
     Resource::IndexBufferHandle      m_IndexBuffer;
     Resource::GraphicsPipelineHandle m_Pipeline = {};
     Resource::SampledTextureHandle   m_Texture  = {};
-    Resource::RenderTargetHandle     m_DepthRT  = {};
 };
 
 } // namespace SoulEngine::Renderer

@@ -15,6 +15,7 @@ export module Application;
 import Core;
 import RHI;
 import Renderer;
+import Resource;
 import Scene;
 
 export import std;
@@ -65,8 +66,8 @@ class Application {
     }
 
     /// @brief Mutable access to the active scene.
-    /// Used by the FramePipeline's GameThread to copy scene data into
-    /// the next available frame slot before signalling the RenderThread.
+    /// Used by the GameLoop to update mutable scene data before building
+    /// the next frame's SceneSnapshot.
     [[nodiscard]] auto GetScene() -> Scene::Scene& {
         return m_Scene;
     }
@@ -83,7 +84,7 @@ class Application {
     }
 
     /// @brief Render the current scene.  Non-virtual — fixed pipeline.
-    /// Calls m_Renderer->Render(m_Scene) and logs on failure.
+    /// Calls m_Renderer->Render(m_Scene.BuildSnapshot()) and logs on failure.
     auto OnRender() -> void;
 
   protected:
@@ -127,7 +128,7 @@ inline auto Application::OnRender() -> void {
     if (!m_Renderer)
         return;
 
-    if (auto R = m_Renderer->Render(m_Scene); !R)
+    if (auto R = m_Renderer->Render(m_Scene.BuildSnapshot()); !R)
         LogError("Render failed:\n{}", R.error().ToString());
 }
 
