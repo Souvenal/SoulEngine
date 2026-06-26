@@ -93,6 +93,7 @@ class TestRenderer final : public IRenderer {
                                                      },
                                                  },
                                          },
+                                     .DepthFormat = RHI::Format::D32_SFLOAT,
                                  });
         if (!m_Pipeline.IsValid())
             return std::unexpected(ErrorMessage("Graphics pipeline request failed"));
@@ -114,6 +115,16 @@ class TestRenderer final : public IRenderer {
         if (!m_Texture.IsValid())
             return std::unexpected(ErrorMessage("Test texture request failed"));
 
+        m_DepthRT = Resource::Manager::Get().RequestRenderTarget("main_depth",
+                                                                 RHI::RenderTargetDesc{
+                                                                     .Width  = 800,
+                                                                     .Height = 600,
+                                                                     .Format = RHI::Format::D32_SFLOAT,
+                                                                     .Usage  = RHI::TextureUsage::DepthStencil,
+                                                                 });
+        if (!m_DepthRT.IsValid())
+            return std::unexpected(ErrorMessage("Depth render target request failed"));
+
         return {};
     }
 
@@ -122,6 +133,7 @@ class TestRenderer final : public IRenderer {
         m_VertexBuffer = {};
         m_IndexBuffer  = {};
         m_Texture      = {};
+        m_DepthRT      = {};
     }
 
     /// Produce a CommandList from the current scene data.
@@ -142,6 +154,15 @@ class TestRenderer final : public IRenderer {
                     .ClearValue = RHI::ClearColorValue{.R = 0.05f, .G = 0.05f, .B = 0.08f, .A = 1.0f},
                 },
         };
+
+        // Bind depth render target if ready.
+        auto DepthRT = m_DepthRT.TryGet();
+        if (DepthRT && DepthRT->Texture) {
+            Pass.Desc.DepthAttachment = RHI::DepthAttachmentDesc{
+                .TexturePtr = DepthRT->Texture.get(),
+                .ClearValue = RHI::ClearDepthStencilValue{.Depth = 1.0f, .Stencil = 0},
+            };
+        }
 
         auto Texture = m_Texture.TryGet();
         if (!Texture || !Texture->Texture) {
@@ -190,6 +211,7 @@ class TestRenderer final : public IRenderer {
     Resource::IndexBufferHandle      m_IndexBuffer;
     Resource::GraphicsPipelineHandle m_Pipeline = {};
     Resource::SampledTextureHandle   m_Texture  = {};
+    Resource::RenderTargetHandle     m_DepthRT  = {};
 };
 
 } // namespace SoulEngine::Renderer

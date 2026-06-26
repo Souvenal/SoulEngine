@@ -40,6 +40,15 @@ struct UsageVisitor {
     auto operator()(const SetFullScissorRectCmd&) -> void {}
     auto operator()(const DrawIndexedCmd&) -> void {}
     auto operator()(const DrawCmd&) -> void {}
+
+    /// @brief Stamp usage tokens on render targets referenced by the pass
+    ///        descriptor. Called once per pass, before visiting commands.
+    auto StampPassAttachments(const RenderingDesc& Desc) -> void {
+        if (Desc.ColorAttachment.TexturePtr)
+            Desc.ColorAttachment.TexturePtr->UpdateLastUsageToken(CurrentToken);
+        if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr)
+            Desc.DepthAttachment->TexturePtr->UpdateLastUsageToken(CurrentToken);
+    }
 };
 
 } // namespace SoulEngine::RHI

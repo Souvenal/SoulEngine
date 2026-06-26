@@ -28,6 +28,7 @@ import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
 import :Texture;
+import :RenderTarget;
 import :DeletionQueue;
 
 using namespace SoulEngine::Core;
@@ -287,6 +288,11 @@ class RenderDevice final : public RHI::RenderDevice {
                                       m_TransferCompletionQueue,
                                       *m_DescriptorManager,
                                       m_DeletionQueue);
+    }
+
+    [[nodiscard]] auto CreateRenderTarget(const RenderTargetDesc& Desc)
+        -> std::expected<RHI::RenderTargetCreateResult, ErrorMessage> override {
+        return RenderTarget::Create(Desc, m_Allocator, m_Device, m_DeletionQueue);
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
@@ -665,8 +671,10 @@ class RenderDevice final : public RHI::RenderDevice {
 
         for (const auto& Pass : CmdList.Passes) {
             // ── Update usage tokens on all resources referenced by this pass ──
+            RHI::UsageVisitor UsageTracker{.CurrentToken = FrameToken};
+            UsageTracker.StampPassAttachments(Pass.Desc);
             for (const auto& Cmd : Pass.Commands)
-                std::visit(RHI::UsageVisitor{.CurrentToken = FrameToken}, Cmd);
+                std::visit(UsageTracker, Cmd);
 
             // Allocate per-pass secondary from the frame's sub-pool
             vk::CommandBufferAllocateInfo Alloc{

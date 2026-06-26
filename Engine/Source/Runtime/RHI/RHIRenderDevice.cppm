@@ -41,6 +41,8 @@ class RenderDevice {
         -> std::expected<SPtr<ConstantBuffer>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateSampledTexture(const SampledTextureDesc& Desc)
         -> std::expected<SampledTextureCreateResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateRenderTarget(const RenderTargetDesc& Desc)
+        -> std::expected<RenderTargetCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> = 0;
 

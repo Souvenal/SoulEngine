@@ -180,6 +180,24 @@ enum class TextureUsage : Uint32 {
     return static_cast<TextureUsage>(static_cast<Uint32>(a) | static_cast<Uint32>(b));
 }
 
+/// Polymorphic base for render-target images (color or depth/stencil).
+/// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
+/// Backend concrete class owns GPU allocation. Consumers hold SPtr<RenderTarget>.
+class RenderTarget : public GpuResource {
+  public:
+    RenderTarget()                                       = default;
+    RenderTarget(const RenderTarget&)                    = delete;
+    auto operator=(const RenderTarget&) -> RenderTarget& = delete;
+    RenderTarget(RenderTarget&&)                         = delete;
+    auto operator=(RenderTarget&&) -> RenderTarget&      = delete;
+    virtual ~RenderTarget()                              = default;
+
+    [[nodiscard]] virtual auto GetWidth() const -> Uint32       = 0;
+    [[nodiscard]] virtual auto GetHeight() const -> Uint32      = 0;
+    [[nodiscard]] virtual auto GetFormat() const -> Format      = 0;
+    [[nodiscard]] virtual auto GetUsage() const -> TextureUsage = 0;
+};
+
 struct SampledTextureDesc {
     const void*  Data     = nullptr;
     Uint32       Width    = 1;
@@ -192,6 +210,17 @@ struct SampledTextureDesc {
 struct SampledTextureCreateResult {
     SPtr<SampledTexture> Texture          = nullptr;
     GpuCompletionToken   UploadCompletion = {};
+};
+
+struct RenderTargetDesc {
+    Uint32       Width  = 1;
+    Uint32       Height = 1;
+    Format       Format = Format::B8G8R8A8_UNORM;
+    TextureUsage Usage  = TextureUsage::RenderTarget;
+};
+
+struct RenderTargetCreateResult {
+    SPtr<RenderTarget> Texture = nullptr;
 };
 
 struct VertexBufferCreateResult {
@@ -266,12 +295,12 @@ struct ClearDepthStencilValue {
 };
 
 struct ColorAttachmentDesc {
-    const SampledTexture* TexturePtr = nullptr;
-    ClearColorValue       ClearValue = {};
+    RenderTarget*   TexturePtr = nullptr;
+    ClearColorValue ClearValue = {};
 };
 
 struct DepthAttachmentDesc {
-    const SampledTexture*  TexturePtr = nullptr;
+    RenderTarget*          TexturePtr = nullptr;
     ClearDepthStencilValue ClearValue = {};
 };
 

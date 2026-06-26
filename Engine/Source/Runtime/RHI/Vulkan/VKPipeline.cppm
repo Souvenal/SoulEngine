@@ -144,12 +144,18 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
             .rasterizationSamples = vk::SampleCountFlagBits::e1,
         };
 
-        // TODO: configure depth and stencil testing
-        // vk::PipelineDepthStencilStateCreateInfo DepthStencilCI{
-        //     .depthTestEnable = Desc.DepthStencil.DepthTestEnable,
-        //     .depthWriteEnable = Desc.DepthStencil.DepthWriteEnable,
-        //     .depthCompareOp = vk::CompareOp::eLessOrEqual,
-        // };
+        bool                                    HasDepth = Desc.DepthFormat != RHI::Format::Unknown;
+        vk::PipelineDepthStencilStateCreateInfo DepthStencilCI{
+            .depthTestEnable       = Desc.DepthStencil.DepthTestEnable ? vk::True : vk::False,
+            .depthWriteEnable      = Desc.DepthStencil.DepthWriteEnable ? vk::True : vk::False,
+            .depthCompareOp        = vk::CompareOp::eLessOrEqual,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable     = vk::False,
+            .front                 = {},
+            .back                  = {},
+            .minDepthBounds        = 0.0f,
+            .maxDepthBounds        = 1.0f,
+        };
 
         // After fragment shader returns a color, it needs to be combined with
         // that in the framebuffer. There are 2 ways:
@@ -189,10 +195,16 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
         };
 
         vk::Format ColorVkFormat = SoulEngine::RHI::Vulkan::ToVkFormat(Desc.ColorFormat);
+        vk::Format DepthVkFormat =
+            HasDepth ? SoulEngine::RHI::Vulkan::ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
 
         // Dynamic rendering allows us to specify color, depth, stencil attachments directly
         // after the pipeline is created
-        // TODO: change according to the actual shaders
+        vk::PipelineRenderingCreateInfo RenderingCI{
+            .colorAttachmentCount    = 1,
+            .pColorAttachmentFormats = &ColorVkFormat,
+            .depthAttachmentFormat   = DepthVkFormat,
+        };
         vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> PipelineChain = {
             {.stageCount          = StageCount,
              .pStages             = ShaderStates->StageInfos.data(),
@@ -201,13 +213,13 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
              .pViewportState      = &ViewportStateCI,
              .pRasterizationState = &RasterizerCI,
              .pMultisampleState   = &MultisampleCI,
-             // .pDepthStencilState = &DepthStencilCI,
+             .pDepthStencilState  = HasDepth ? &DepthStencilCI : nullptr,
              .pColorBlendState    = &BlendCI,
              .pDynamicState       = &DynamicStateCI,
              .layout              = Manager.GetPipelineLayout(),
              // using dynamic rendering rather than traditional render pass
              .renderPass          = nullptr},
-            {.colorAttachmentCount = 1, .pColorAttachmentFormats = &ColorVkFormat}};
+            RenderingCI};
 
         auto [PipelineResult, Pipeline] =
             Device.createGraphicsPipeline(nullptr, PipelineChain.get<vk::GraphicsPipelineCreateInfo>());

@@ -11,6 +11,7 @@ import :Buffer;
 import :Pipeline;
 import :Texture;
 import :Descriptor;
+import :RenderTarget;
 
 using namespace SoulEngine::Core;
 
@@ -21,8 +22,9 @@ struct CommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
     std::unordered_map<vk::Image, ImageState>& LocalStates;
     Swapchain*                                 Swc;
-    vk::Extent2D                               CurrentRenderExtent = {1, 1};
-    vk::PipelineLayout                         PipelineLayout      = nullptr;
+    vk::Extent2D                               CurrentRenderExtent        = {1, 1};
+    vk::PipelineLayout                         PipelineLayout             = nullptr;
+    bool                                       m_CurrentPassUsesSwapchain = true;
 
     auto TransitionImage(vk::Image               Image,
                          vk::PipelineStageFlags2 DstStage,
@@ -72,24 +74,48 @@ struct CommandVisitor {
 
     /// Begin rendering scope from Pass desc.
     auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
-        vk::ImageView ImageView;
+        // ── Resolve color attachment ──────────────────────────────────
+        vk::RenderingAttachmentInfo ColorAttachment{};
+        vk::ImageView               ColorImageView;
+        vk::Image                   ColorImage;
+        Uint32                      RenderWidth  = 1;
+        Uint32                      RenderHeight = 1;
+
+        m_CurrentPassUsesSwapchain = false;
+
         if (!Desc.ColorAttachment.TexturePtr) {
+            // Swapchain color
             if (!Swc)
                 return;
             const auto CurrentIndex = Swc->GetCurrentIndex();
             const auto CurrentImage = Swc->GetImage(CurrentIndex);
-            ImageView               = Swc->GetImageView(CurrentIndex);
+            ColorImageView          = Swc->GetImageView(CurrentIndex);
+            ColorImage              = CurrentImage;
+            RenderWidth             = Swc->GetExtent().width;
+            RenderHeight            = Swc->GetExtent().height;
             TransitionImage(CurrentImage,
                             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                             vk::AccessFlagBits2::eColorAttachmentWrite,
                             vk::ImageLayout::eColorAttachmentOptimal,
                             true);
+            m_CurrentPassUsesSwapchain = true;
         } else {
-            return;
+            // Off-screen render target
+            auto& VkRT     = static_cast<const Vulkan::RenderTarget&>(*Desc.ColorAttachment.TexturePtr);
+            ColorImage     = VkRT.GetVkImage();
+            ColorImageView = VkRT.GetVkImageView();
+            RenderWidth    = VkRT.GetWidth();
+            RenderHeight   = VkRT.GetHeight();
+            TransitionImage(ColorImage,
+                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                            vk::AccessFlagBits2::eColorAttachmentWrite,
+                            vk::ImageLayout::eColorAttachmentOptimal,
+                            true,
+                            ToVkImageAspect(VkRT.GetFormat()));
         }
-        CurrentRenderExtent = Swc->GetExtent();
-        vk::RenderingAttachmentInfo ColorAttachment{
-            .imageView   = ImageView,
+
+        ColorAttachment = vk::RenderingAttachmentInfo{
+            .imageView   = ColorImageView,
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .loadOp      = vk::AttachmentLoadOp::eClear,
             .storeOp     = vk::AttachmentStoreOp::eStore,
@@ -100,11 +126,50 @@ struct CommandVisitor {
                                               Desc.ColorAttachment.ClearValue.A,
                                           })},
         };
+
+        CurrentRenderExtent = vk::Extent2D{RenderWidth, RenderHeight};
+
+        // ── Resolve depth attachment (optional) ───────────────────────
+        std::optional<vk::RenderingAttachmentInfo> DepthAttachment = std::nullopt;
+        if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr) {
+            auto& VkDepthRT   = static_cast<const Vulkan::RenderTarget&>(*Desc.DepthAttachment->TexturePtr);
+            auto  DepthImage  = VkDepthRT.GetVkImage();
+            auto  DepthView   = VkDepthRT.GetVkImageView();
+            auto  DepthAspect = ToVkImageAspect(VkDepthRT.GetFormat());
+            TransitionImage(DepthImage,
+                            vk::PipelineStageFlagBits2::eEarlyFragmentTests,
+                            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                            vk::ImageLayout::eDepthAttachmentOptimal,
+                            true,
+                            DepthAspect);
+            DepthAttachment = vk::RenderingAttachmentInfo{
+                .imageView   = DepthView,
+                .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+                .loadOp      = vk::AttachmentLoadOp::eClear,
+                .storeOp     = vk::AttachmentStoreOp::eStore,
+                .clearValue  = vk::ClearValue{.depthStencil =
+                                                  vk::ClearDepthStencilValue{Desc.DepthAttachment->ClearValue.Depth,
+                                                                             Desc.DepthAttachment->ClearValue.Stencil}},
+            };
+        }
+
+        // Clamp render area to smallest attachment dimension.  Vulkan
+        // requires every attachment imageView extent ≥ renderArea, so if
+        // the depth RT is smaller than the color RT (or vice versa) we
+        // must shrink renderArea to fit the minimum.
+        if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr) {
+            auto& VkDepthRT            = static_cast<const Vulkan::RenderTarget&>(*Desc.DepthAttachment->TexturePtr);
+            CurrentRenderExtent.width  = (std::min)(CurrentRenderExtent.width, VkDepthRT.GetWidth());
+            CurrentRenderExtent.height = (std::min)(CurrentRenderExtent.height, VkDepthRT.GetHeight());
+        }
+
+        // ── Begin dynamic rendering ───────────────────────────────────
         vk::RenderingInfo RenderingInfo{
             .renderArea           = vk::Rect2D{{0, 0}, CurrentRenderExtent},
             .layerCount           = 1,
             .colorAttachmentCount = 1,
             .pColorAttachments    = &ColorAttachment,
+            .pDepthAttachment     = DepthAttachment.has_value() ? &*DepthAttachment : nullptr,
         };
         Buf.beginRendering(RenderingInfo);
     }
@@ -112,7 +177,7 @@ struct CommandVisitor {
     /// End rendering scope and transition swapchain to PresentSrc.
     auto EndPass() -> void {
         Buf.endRendering();
-        if (Swc)
+        if (m_CurrentPassUsesSwapchain && Swc)
             TransitionImage(Swc->GetImage(Swc->GetCurrentIndex()),
                             vk::PipelineStageFlagBits2::eBottomOfPipe,
                             vk::AccessFlagBits2::eNone,

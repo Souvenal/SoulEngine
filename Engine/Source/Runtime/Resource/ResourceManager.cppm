@@ -425,6 +425,70 @@ class Manager : public Singleton<Manager> {
         return IndexBufferHandle::Create(Slot, Id, Generation);
     }
 
+    /// @brief Request asynchronous render target creation.
+    ///
+    /// No staging or background decode needed — enqueues RHI creation directly.
+    /// Publishes Ready state immediately after GPU object creation (synchronous).
+    [[nodiscard]] auto RequestRenderTarget(String Key, const RHI::RenderTargetDesc& Desc) -> RenderTargetHandle {
+        const auto Id = static_cast<ResourceId>(std::hash<String>{}(Key));
+
+        if (IsShutdownRequested()) {
+            LogWarning("Render target request rejected after shutdown '{}'", Key);
+            return {};
+        }
+
+        SPtr<ResourceSlot<RenderTargetResource>> Slot;
+        ResourceGeneration                       Generation = 0;
+        {
+            std::lock_guard Lock(m_RenderTargetMutex);
+            if (auto It = m_RenderTargetRequests.find(Key); It != m_RenderTargetRequests.end()) {
+                Slot       = It->second;
+                Generation = Slot->GetGeneration();
+                LogDebug("Render target request coalesced '{}'", Key);
+                return RenderTargetHandle::Create(Slot, Id, Generation);
+            }
+
+            Slot       = std::make_shared<ResourceSlot<RenderTargetResource>>();
+            Generation = Slot->Reset(Id);
+            m_RenderTargetRequests.emplace(Key, Slot);
+        }
+
+        LogDebug("Render target requested '{}' ({}x{})", Key, Desc.Width, Desc.Height);
+
+        auto* Graph = m_TaskGraph;
+        if (!Graph) {
+            PublishRenderTargetFailed(
+                Slot, Generation, Key, ErrorMessage(Format("Resource manager not initialized for '{}'", Key)));
+            return RenderTargetHandle::Create(Slot, Id, Generation);
+        }
+
+        // No background decode — render targets are created empty.
+        // Enqueue RHI creation directly.
+        Graph->Enqueue(ThreadQueue::RHI, [this, Slot, Generation, Key = String(Key), Desc] {
+            if (IsShutdownRequested()) {
+                LogDebug("Async render target RHI commit discarded after shutdown '{}'", Key);
+                return;
+            }
+
+            if (!Slot->MarkRhiCommitting(Generation)) {
+                LogDebug("Stale async render target RHI commit discarded '{}'", Key);
+                return;
+            }
+
+            auto Result = RHI::RenderDevice::Get().CreateRenderTarget(Desc);
+            if (!Result) {
+                PublishRenderTargetFailed(
+                    Slot, Generation, Key, Result.error().Append(Format("Failed to create render target '{}'", Key)));
+                return;
+            }
+
+            PublishRenderTargetReady(
+                Slot, Generation, Key, RenderTargetResource{.Texture = std::move(Result->Texture)});
+        });
+
+        return RenderTargetHandle::Create(Slot, Id, Generation);
+    }
+
     /// @brief Publish GPU-pending resources whose upload tokens have completed.
     auto TickGpuPending() -> void {
         std::lock_guard Lock(m_PublishMutex);
@@ -537,6 +601,10 @@ class Manager : public Singleton<Manager> {
         {
             std::lock_guard Lock(m_PipelineMutex);
             m_PipelineRequests.clear();
+        }
+        {
+            std::lock_guard Lock(m_RenderTargetMutex);
+            m_RenderTargetRequests.clear();
         }
     }
 
@@ -700,6 +768,39 @@ class Manager : public Singleton<Manager> {
         LogWarning("Async vertex buffer failed '{}': {}", Key, Message);
     }
 
+    auto PublishRenderTargetReady(SPtr<ResourceSlot<RenderTargetResource>> Slot,
+                                  ResourceGeneration                       Generation,
+                                  StringView                               Key,
+                                  RenderTargetResource                     Resource) -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            LogDebug("Async render target ready discarded after shutdown '{}'", Key);
+            return;
+        }
+        if (!Slot->PublishReady(Generation, std::move(Resource))) {
+            LogDebug("Stale async render target ready discarded '{}'", Key);
+            return;
+        }
+        LogInfo("Async render target ready '{}'", Key);
+    }
+
+    auto PublishRenderTargetFailed(SPtr<ResourceSlot<RenderTargetResource>> Slot,
+                                   ResourceGeneration                       Generation,
+                                   StringView                               Key,
+                                   ErrorMessage                             Error) -> void {
+        std::lock_guard Lock(m_PublishMutex);
+        if (IsShutdownRequested()) {
+            LogDebug("Async render target failure discarded after shutdown '{}'", Key);
+            return;
+        }
+        auto Message = Error.ToString();
+        if (!Slot->PublishFailed(Generation, std::move(Error))) {
+            LogDebug("Stale async render target failure discarded '{}': {}", Key, Message);
+            return;
+        }
+        LogWarning("Async render target failed '{}': {}", Key, Message);
+    }
+
     auto PublishIndexBufferFailed(SPtr<ResourceSlot<IndexBufferResource>> Slot,
                                   ResourceGeneration                      Generation,
                                   StringView                              Key,
@@ -777,6 +878,8 @@ class Manager : public Singleton<Manager> {
     std::unordered_map<String, SPtr<ResourceSlot<SampledTextureResource>>>   m_TextureRequests;
     std::mutex                                                               m_PipelineMutex;
     std::unordered_map<String, SPtr<ResourceSlot<GraphicsPipelineResource>>> m_PipelineRequests;
+    std::mutex                                                               m_RenderTargetMutex;
+    std::unordered_map<String, SPtr<ResourceSlot<RenderTargetResource>>>     m_RenderTargetRequests;
     std::mutex                                                               m_BufferMutex;
     std::unordered_map<String, SPtr<ResourceSlot<VertexBufferResource>>>     m_VertexBufferRequests;
     std::unordered_map<String, SPtr<ResourceSlot<IndexBufferResource>>>      m_IndexBufferRequests;

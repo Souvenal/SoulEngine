@@ -34,6 +34,11 @@ struct SampledTextureResource {
     SPtr<RHI::SampledTexture> Texture = nullptr;
 };
 
+/// @brief Logical render target resource published through ResourceHandle.
+struct RenderTargetResource {
+    SPtr<RHI::RenderTarget> Texture = nullptr;
+};
+
 /// @brief Logical graphics pipeline resource published through ResourceHandle.
 struct GraphicsPipelineResource {
     SPtr<RHI::GraphicsPipeline> Pipeline = nullptr;
@@ -216,6 +221,7 @@ struct IndexBufferResource {
 };
 
 using SampledTextureHandle   = ResourceHandle<SampledTextureResource>;
+using RenderTargetHandle     = ResourceHandle<RenderTargetResource>;
 using GraphicsPipelineHandle = ResourceHandle<GraphicsPipelineResource>;
 using VertexBufferHandle     = ResourceHandle<VertexBufferResource>;
 using IndexBufferHandle      = ResourceHandle<IndexBufferResource>;

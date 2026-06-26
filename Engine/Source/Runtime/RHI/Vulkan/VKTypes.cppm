@@ -25,6 +25,8 @@ namespace SoulEngine::RHI::Vulkan {
         return vk::Format::eB8G8R8A8Unorm;
     case RHI::Format::D32_SFLOAT:
         return vk::Format::eD32Sfloat;
+    case RHI::Format::D24_UNORM_S8_UINT:
+        return vk::Format::eD24UnormS8Uint;
     case RHI::Format::D32_SFLOAT_S8_UINT:
         return vk::Format::eD32SfloatS8Uint;
     case RHI::Format::R32G32B32A32_SFLOAT:
@@ -37,6 +39,18 @@ namespace SoulEngine::RHI::Vulkan {
         return vk::Format::eR32Sfloat;
     default:
         return vk::Format::eUndefined;
+    }
+}
+
+[[nodiscard]] auto ToVkImageAspect(RHI::Format Fmt) -> vk::ImageAspectFlags {
+    switch (Fmt) {
+    case RHI::Format::D32_SFLOAT:
+        return vk::ImageAspectFlagBits::eDepth;
+    case RHI::Format::D32_SFLOAT_S8_UINT:
+    case RHI::Format::D24_UNORM_S8_UINT:
+        return vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+    default:
+        return vk::ImageAspectFlagBits::eColor;
     }
 }
 
