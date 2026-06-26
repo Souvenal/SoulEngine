@@ -9,16 +9,16 @@ self-registering factory pattern.
 
 | Term | Definition |
 |------|------------|
-| **CommandList** | Data struct containing `std::vector<Pass>` and `GlobalConstantData`. Produced by `Renderer::Render()`, consumed by `RenderDevice::Execute()`. Commands are `std::variant` types (`SetPipelineCmd`, `BindVertexBufferCmd`, etc.) carrying `SPtr<>` to RHI resources. |
+| **CommandList** | Data struct containing `std::vector<Pass>`, `GlobalConstantData`, and an optional `PresentSource` render target. Produced by `Renderer::Render()`, consumed by `RenderDevice::Execute()`. Commands are `std::variant` types (`SetPipelineCmd`, `BindVertexBufferCmd`, etc.) carrying non-owning observer pointers to RHI resources. |
 | **Pass** | One rendering scope with `RenderingDesc` and commands inside. Backend auto-wraps in begin/end rendering. Pass has builder methods (`SetPipeline`, `BindVertexBuffer`, `DrawIndexed`). |
 | **Draw material data** | Per-draw shader parameter payload emitted as an RHI command before a draw call. |
 | **Resource usage tracking** | RHI-command-level enumeration of GPU resources referenced by a command list submission. |
 | **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `Init(GLFWwindow*)` is pure virtual — backends do setup there, not in the constructor. Process-wide singleton: `RenderDevice::Create(Window)` bootstraps, `RenderDevice::Get()` accesses, `RenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
-| **VertexBuffer** | Runtime polymorphic base in `SoulEngine::RHI`. Immutable after creation. Current `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (buffer + upload completion token) so the Resource layer can track when staging → device copies complete. |
+| **VertexBuffer** | Runtime polymorphic base in `SoulEngine::RHI`. Immutable after creation. `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (`UPtr` buffer + upload completion token) so the Resource layer can own the payload and track when staging → device copies complete. |
 | **IndexBuffer** | Same role as VertexBuffer, for index data. `CreateIndexBuffer` returns `IndexBufferCreateResult`. |
-| **SampledTexture** | Shader-readable texture created from CPU pixel data through the dedicated transfer upload path. Its creation returns a `SampledTexture` payload plus a transfer upload completion token. Public RHI sampled-texture APIs use this name instead of the generic `Texture` name. |
-| **Render target** | GPU-owned attachment image used as a color/depth rendering destination. It is created through render-target-specific APIs, not through sampled texture asset loading. |
-| **Swapchain image** | Backend-private presentation image acquired from the window surface. It is not exposed as a Resource-managed texture; final presentation copies, blits, resolves, or renders engine-owned output into it through RHI/RenderGraph presentation flow. |
+| **SampledTexture** | Shader-readable texture created from CPU pixel data through the dedicated transfer upload path. Its creation returns a unique `SampledTexture` payload plus a transfer upload completion token. Public RHI sampled-texture APIs use this name instead of the generic `Texture` name. |
+| **Render target** | GPU-owned attachment image used as a color/depth rendering destination. It is created through render-target-specific APIs as a unique payload, not through sampled texture asset loading. |
+| **Swapchain image** | Backend-private presentation image acquired from the window surface. It is not exposed as a Resource-managed texture; final presentation copies, blits, resolves, or renders engine-owned output into it through RHI/RenderGraph presentation flow. Current Vulkan presentation blits `CommandList::PresentSource` into the acquired swapchain image. |
 | **GraphicsPipeline** | Empty polymorphic base class for graphics pipeline resources. Same pattern as VertexBuffer/IndexBuffer — backend casts down. |
 | **BufferUsage** | Bitmask enum for buffer creation hints. Not a type — backend uses it to decide VkBufferUsageFlags at allocation time. |
 | **Format, BufferUsage etc.** | Enums and trivial descriptor structs in `SoulEngine::RHI`. |
@@ -57,7 +57,8 @@ EngineLoop::Shutdown()
   ├── SignalFatalError()             // wake all threads
   ├── join RenderLoop / RHILoop
   ├── App->OnDetach()                // renderer releases SPtrs
-  ├── clear FrameSlot.CmdList        // release SPtrs in variant commands
+  ├── clear FrameSlot.RenderPacket   // release command observers and Resource pins
+  ├── ResourceManager::Clear()       // release Manager-owned payloads
   ├── RenderDevice::Destroy()        // teardown singleton (VMA)
   └── WindowDisplay::Shutdown()
 ```
@@ -70,6 +71,9 @@ EngineLoop::Shutdown()
 - Vertex input binding descriptions (stride, binding slot, input rate) are not derived from shader reflection. `GraphicsPipelineDesc::VertexInputLayout` provides the explicit CPU layout, while the Vulkan backend uses reflection only to warn about missing locations or format mismatches. Extension to multi-binding / instance-rate is deferred.
 - Bindless texture selection belongs to **Draw material data**. The public RHI command surface should express draw/material payloads, not backend descriptor-slot mutation commands.
 - **Resource usage tracking** belongs to the RHI command model. Backends consume the tracked resource set after successful submission to publish completion tokens, but the question "which resources does this command reference?" is not a backend-private concept.
+- `CommandList` does not own GPU resources. Any RHI resource pointer in a command or attachment descriptor is an observer pointer.
+- `CommandList::PresentSource` is the engine-owned final color output for the frame. It is not a pass command and it must not be confused with a swapchain image.
+- `RHI` must not import `Resource` or use `ResourceHandle`. The producer side is responsible for keeping observer pointers valid through frame-scoped Resource pins.
 - `RHI` does not import any backend module — the factory creates backends via registered creator lambdas.
 - GPU completion tokens are RHI-owned completion points. Resource state remains owned by the Resource layer; RHI only creates and checks completion tokens.
 - `GpuCompletionToken` belongs to the public RHI type surface. Resource code may store it while a resource is GPU-pending, but token identity and interpretation remain owned by RHI.

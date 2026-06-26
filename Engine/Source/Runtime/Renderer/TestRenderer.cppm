@@ -1,5 +1,6 @@
 module;
 
+// stddef is explicitly needed for `offsetof`
 #include <cstddef>
 #include <hlsl++.h>
 
@@ -19,20 +20,28 @@ using namespace SoulEngine::Core;
 export namespace SoulEngine::Renderer {
 
 struct Vertex {
-    hlslpp::float3 Position;
-    hlslpp::float3 Color;
-    hlslpp::float2 UV;
+    hlslpp::interop::float3 Position;
+    hlslpp::interop::float3 Color;
+    hlslpp::interop::float2 UV;
 };
-static_assert(sizeof(Vertex) == 48, "TestRenderer vertex layout: 2x float3(16) + float2(8) + 8 padding = 48");
+static_assert(sizeof(Vertex) == 32, "TestRenderer vertex layout: 2x float3(12) + float2(8) = 32");
 static_assert(offsetof(Vertex, Position) == 0, "TestRenderer vertex position offset changed");
-static_assert(offsetof(Vertex, Color) == 16, "TestRenderer vertex color offset changed");
-static_assert(offsetof(Vertex, UV) == 32, "TestRenderer vertex uv offset changed");
+static_assert(offsetof(Vertex, Color) == 12, "TestRenderer vertex color offset changed");
+static_assert(offsetof(Vertex, UV) == 24, "TestRenderer vertex uv offset changed");
 
 const std::vector<Vertex> kQuadVertices = {
-    {.Position = {-0.5f, 0.0f, -0.5f}, .Color = {1.0f, 0.0f, 0.0f}, .UV = {0.0f, 1.0f}},
-    {.Position = {+0.5f, 0.0f, -0.5f}, .Color = {0.0f, 1.0f, 0.0f}, .UV = {1.0f, 1.0f}},
-    {.Position = {+0.5f, 0.0f, +0.5f}, .Color = {0.0f, 0.0f, 1.0f}, .UV = {1.0f, 0.0f}},
-    {.Position = {-0.5f, 0.0f, +0.5f}, .Color = {1.0f, 1.0f, 1.0f}, .UV = {0.0f, 0.0f}},
+    {.Position = hlslpp::float3(-0.5f, 0.0f, -0.5f),
+     .Color    = hlslpp::float3(1.0f, 0.0f, 0.0f),
+     .UV       = hlslpp::float2(0.0f, 1.0f)},
+    {.Position = hlslpp::float3(+0.5f, 0.0f, -0.5f),
+     .Color    = hlslpp::float3(0.0f, 1.0f, 0.0f),
+     .UV       = hlslpp::float2(1.0f, 1.0f)},
+    {.Position = hlslpp::float3(+0.5f, 0.0f, +0.5f),
+     .Color    = hlslpp::float3(0.0f, 0.0f, 1.0f),
+     .UV       = hlslpp::float2(1.0f, 0.0f)},
+    {.Position = hlslpp::float3(-0.5f, 0.0f, +0.5f),
+     .Color    = hlslpp::float3(1.0f, 1.0f, 1.0f),
+     .UV       = hlslpp::float2(0.0f, 0.0f)},
 };
 
 const std::vector<Uint32> kQuadIndices = {0, 1, 2, 2, 3, 0};
@@ -45,7 +54,7 @@ struct alignas(16) GlobalCBData {
 };
 static_assert(sizeof(GlobalCBData) == 144, "GlobalCBData must match Common.slang FrameData std140 layout");
 
-/// @brief Minimal prototype renderer — emits CommandList for RHIThread.
+/// @brief Minimal prototype renderer — emits CommandList plus frame pins for RHIThread.
 class TestRenderer final : public IRenderer {
   public:
     TestRenderer() = default;
@@ -58,7 +67,7 @@ class TestRenderer final : public IRenderer {
 
         auto ShaderDir = ConfigManager::Get().CurrentApplicationDir() / "Shaders";
         m_Pipeline     = Resource::Manager::Get()
-                             .RequestGraphicsPipeline(
+                             .RequestGraphicsPipelineRef(
                                  Resource::GraphicsPipelineRequest{
                                      .VertEntry =
                                          {
@@ -95,24 +104,24 @@ class TestRenderer final : public IRenderer {
                                          },
                                      .DepthFormat = RHI::Format::D32_SFLOAT,
                                  });
-        if (!m_Pipeline.IsValid())
+        if (!m_Pipeline)
             return std::unexpected(ErrorMessage("Graphics pipeline request failed"));
 
-        m_VertexBuffer = Resource::Manager::Get().RequestVertexBuffer(
+        m_VertexBuffer = Resource::Manager::Get().RequestVertexBufferRef(
             "quad_verts",
             RHI::VertexBufferDesc{
                 .Data = kQuadVertices.data(), .VertexCount = kQuadVertices.size(), .Stride = sizeof(Vertex)});
-        if (!m_VertexBuffer.IsValid())
+        if (!m_VertexBuffer)
             return std::unexpected(ErrorMessage("Vertex buffer request failed"));
 
-        m_IndexBuffer = Resource::Manager::Get().RequestIndexBuffer(
+        m_IndexBuffer = Resource::Manager::Get().RequestIndexBufferRef(
             "quad_indices", RHI::IndexBufferDesc{.Data = kQuadIndices.data(), .IndexCount = kQuadIndices.size()});
-        if (!m_IndexBuffer.IsValid())
+        if (!m_IndexBuffer)
             return std::unexpected(ErrorMessage("Index buffer request failed"));
 
-        m_Texture = Resource::Manager::Get().RequestSampledTexture(
+        m_Texture = Resource::Manager::Get().RequestSampledTextureRef(
             (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "statue.jpg").string());
-        if (!m_Texture.IsValid())
+        if (!m_Texture)
             return std::unexpected(ErrorMessage("Test texture request failed"));
 
         return {};
@@ -127,81 +136,85 @@ class TestRenderer final : public IRenderer {
 
     /// Produce a CommandList from the current scene snapshot.
     /// Called by RenderLoop. Does NOT call BeginFrame/EndFrame.
-    [[nodiscard]] auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RHI::CommandList, ErrorMessage> override {
+    [[nodiscard]] auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
         auto CbData = BuildGlobalCB(Scene);
 
         // Copy into command list
-        RHI::CommandList CmdList;
-        CmdList.GlobalConstantData.resize(sizeof(CbData));
-        std::memcpy(CmdList.GlobalConstantData.data(), &CbData, sizeof(CbData));
+        RenderResult Result;
+        Result.CmdList.GlobalConstantData.resize(sizeof(CbData));
+        std::memcpy(Result.CmdList.GlobalConstantData.data(), &CbData, sizeof(CbData));
 
         // Build pass — backend wraps each Pass in begin/end rendering.
+        auto* ColorRT = Result.Resources.Acquire(Scene.ColorRT);
+        if (!ColorRT)
+            return Result;
+
         RHI::Pass Pass;
         Pass.Desc = RHI::RenderingDesc{
             .ColorAttachment =
                 RHI::ColorAttachmentDesc{
+                    .TexturePtr = ColorRT,
                     .ClearValue = RHI::ClearColorValue{.R = 0.05f, .G = 0.05f, .B = 0.08f, .A = 1.0f},
                 },
         };
+        Result.CmdList.PresentSource = ColorRT;
 
-        auto DepthRT = Scene.Camera.DepthRT.TryGet();
-        if (!DepthRT || !DepthRT->Texture) {
-            CmdList.Passes.push_back(std::move(Pass));
-            return CmdList;
+        auto* DepthRT = Result.Resources.Acquire(Scene.DepthRT);
+        if (!DepthRT) {
+            Result.CmdList.Passes.push_back(std::move(Pass));
+            return Result;
         }
 
         Pass.Desc.DepthAttachment = RHI::DepthAttachmentDesc{
-            .TexturePtr = DepthRT->Texture.get(),
+            .TexturePtr = DepthRT,
             .ClearValue = RHI::ClearDepthStencilValue{.Depth = 1.0f, .Stencil = 0},
         };
 
-        auto Texture = m_Texture.TryGet();
-        if (!Texture || !Texture->Texture) {
-            CmdList.Passes.push_back(std::move(Pass));
-            return CmdList;
+        auto* Texture = Result.Resources.Acquire(m_Texture);
+        if (!Texture) {
+            Result.CmdList.Passes.push_back(std::move(Pass));
+            return Result;
         }
 
-        auto Pipeline = m_Pipeline.TryGet();
-        if (!Pipeline || !Pipeline->Pipeline) {
-            CmdList.Passes.push_back(std::move(Pass));
-            return CmdList;
+        auto* Pipeline = Result.Resources.Acquire(m_Pipeline);
+        if (!Pipeline) {
+            Result.CmdList.Passes.push_back(std::move(Pass));
+            return Result;
         }
 
-        auto VB = m_VertexBuffer.TryGet();
-        auto IB = m_IndexBuffer.TryGet();
-        if (!VB || !VB->Buffer || !IB || !IB->Buffer) {
-            CmdList.Passes.push_back(std::move(Pass));
-            return CmdList;
+        auto* VB = Result.Resources.Acquire(m_VertexBuffer);
+        auto* IB = Result.Resources.Acquire(m_IndexBuffer);
+        if (!VB || !IB) {
+            Result.CmdList.Passes.push_back(std::move(Pass));
+            return Result;
         }
 
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
-        Pass.SetPipeline(Pipeline->Pipeline);
-        Pass.BindVertexBuffer(VB->Buffer);
-        Pass.BindIndexBuffer(IB->Buffer);
-        Pass.SetDrawMaterialData(RHI::DrawMaterialData{.TestTexture = Texture->Texture});
+        Pass.SetPipeline(Pipeline);
+        Pass.BindVertexBuffer(VB);
+        Pass.BindIndexBuffer(IB);
+        Pass.SetDrawMaterialData(RHI::DrawMaterialData{.TestTexture = Texture});
         Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
 
-        CmdList.Passes.push_back(std::move(Pass));
+        Result.CmdList.Passes.push_back(std::move(Pass));
 
-        return CmdList;
+        return Result;
     }
 
   private:
     [[nodiscard]] auto BuildGlobalCB(const Scene::SceneSnapshot& Scene) const -> GlobalCBData {
-        const auto& Camera = Scene.Camera;
-
         return GlobalCBData{
-            .View       = Camera.GetViewMatrix(),
-            .Projection = Camera.GetProjectionMatrix(),
+            .View       = Scene.GetViewMatrix(),
+            .Projection = Scene.GetProjectionMatrix(),
             .Time       = Scene.Time,
         };
     }
 
-    Resource::VertexBufferHandle     m_VertexBuffer;
-    Resource::IndexBufferHandle      m_IndexBuffer;
-    Resource::GraphicsPipelineHandle m_Pipeline = {};
-    Resource::SampledTextureHandle   m_Texture  = {};
+    Resource::ResourceRef<RHI::VertexBuffer>     m_VertexBuffer;
+    Resource::ResourceRef<RHI::IndexBuffer>      m_IndexBuffer;
+    Resource::ResourceRef<RHI::GraphicsPipeline> m_Pipeline = {};
+    Resource::ResourceRef<RHI::SampledTexture>   m_Texture  = {};
 };
 
 } // namespace SoulEngine::Renderer

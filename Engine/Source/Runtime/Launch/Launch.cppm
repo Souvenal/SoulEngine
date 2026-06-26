@@ -34,7 +34,7 @@ struct FrameSlot {
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
     Scene::SceneSnapshot    SceneData;
-    RHI::CommandList        CmdList;
+    Renderer::RenderResult  RenderPacket;
 };
 
 constexpr Uint32 kSlotCount = 3;
@@ -136,11 +136,11 @@ class EngineLoop {
             m_Application.reset();
         }
 
-        // Release frame slot snapshots and command lists (SPtrs inside handles/variant commands)
-        // before RenderDevice::Destroy tears down VMA.
+        // Release frame slot snapshots, command observers, and pins before
+        // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
         for (auto& Slot : m_Slots) {
             Slot.SceneData = {};
-            Slot.CmdList = {};
+            Slot.RenderPacket = {};
         }
 
         // Release GPU textures before VMA allocator dies.
@@ -252,7 +252,7 @@ class EngineLoop {
                 break;
             }
 
-            Slot.CmdList = std::move(*RenderResult);
+            Slot.RenderPacket = std::move(*RenderResult);
 
             {
                 std::lock_guard Lock(Slot.Mutex);
@@ -288,7 +288,7 @@ class EngineLoop {
             // on the RHI thread before the next command list can observe them.
             Resource::Manager::Get().TickGpuPending();
 
-            if (auto R = RHI::RenderDevice::Get().Execute(Slot.CmdList); !R) {
+            if (auto R = RHI::RenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
                 break;
@@ -298,6 +298,9 @@ class EngineLoop {
             // rendering the frame. Ideally, that would be right after the
             // swap buffers command." — Execute() does submit + present.
             FrameMark;
+
+            Slot.RenderPacket = {};
+            Resource::Manager::Get().CollectReleasedResources();
 
             {
                 std::lock_guard Lock(Slot.Mutex);

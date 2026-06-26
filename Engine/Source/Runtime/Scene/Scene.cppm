@@ -19,7 +19,7 @@ export namespace SoulEngine::Scene {
 // TODO: Split Camera into specialized camera types when their ownership and
 // projection policies become concrete. Expected variants include gameplay
 // cameras, editor viewport cameras, and shadow cameras. Keep this base type
-// minimal for now: view parameters plus view-scoped resource handles only.
+// minimal for now: view parameters plus view-scoped resource refs only.
 struct Camera {
     hlslpp::float3 Position    = hlslpp::float3(1.25f, 1.25f, 2.0f);
     hlslpp::float3 Forward     = hlslpp::normalize(hlslpp::float3(0.0f, 0.0f, 0.0f) - Position);
@@ -28,16 +28,35 @@ struct Camera {
     float          NearPlane   = 0.1f;
     float          FarPlane    = 100.0f;
     float          AspectRatio = 16.0f / 9.0f;
-    Resource::RenderTargetHandle DepthRT = {};
+    Resource::ResourceRef<RHI::RenderTarget> ColorRT = {};
+    Resource::ResourceRef<RHI::RenderTarget> DepthRT = {};
 
     auto AllocateRenderTargets(Uint32 Width, Uint32 Height) -> void {
         if (Width == 0 || Height == 0) {
-            DepthRT = {};
+            ColorRT.Reset();
+            DepthRT.Reset();
             return;
         }
 
+        const auto ColorKey = Format("camera_color_{}x{}", Width, Height);
         const auto DepthKey = Format("camera_depth_{}x{}", Width, Height);
-        DepthRT = Resource::Manager::Get().RequestRenderTarget(
+        const auto& ColorHandle = ColorRT.GetHandle();
+        const auto& DepthHandle = DepthRT.GetHandle();
+        if (ColorHandle.IsValid() && ColorHandle.GetKey() == ColorKey && DepthHandle.IsValid() &&
+            DepthHandle.GetKey() == DepthKey) {
+            AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
+            return;
+        }
+
+        ColorRT = Resource::Manager::Get().RequestRenderTargetRef(
+            ColorKey,
+            RHI::RenderTargetDesc{
+                .Width  = Width,
+                .Height = Height,
+                .Format = RHI::Format::B8G8R8A8_UNORM,
+                .Usage  = RHI::TextureUsage::RenderTarget | RHI::TextureUsage::FrameOutput,
+            });
+        DepthRT = Resource::Manager::Get().RequestRenderTargetRef(
             DepthKey,
             RHI::RenderTargetDesc{
                 .Width  = Width,
@@ -64,8 +83,30 @@ struct Camera {
 };
 
 struct SceneSnapshot {
-    Camera Camera;
-    float  Time = 0.0f;
+    hlslpp::float3 Position    = hlslpp::float3(1.25f, 1.25f, 2.0f);
+    hlslpp::float3 Forward     = hlslpp::normalize(hlslpp::float3(0.0f, 0.0f, 0.0f) - Position);
+    hlslpp::float3 Up          = hlslpp::float3(0.0f, 1.0f, 0.0f);
+    float          FOV         = 60.0f;
+    float          NearPlane   = 0.1f;
+    float          FarPlane    = 100.0f;
+    float          AspectRatio = 16.0f / 9.0f;
+    Resource::ResourceHandle<RHI::RenderTarget> ColorRT = {};
+    Resource::ResourceHandle<RHI::RenderTarget> DepthRT = {};
+    float Time = 0.0f;
+
+    [[nodiscard]] auto GetViewMatrix() const -> hlslpp::float4x4 {
+        return hlslpp::float4x4::look_at(Position, Position + Forward, Up);
+    }
+
+    /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
+    [[nodiscard]] auto GetProjectionMatrix() const -> hlslpp::float4x4 {
+        float FovRad = FOV * (std::numbers::pi_v<float> / 180.0f);
+        return hlslpp::float4x4::perspective(
+            hlslpp::projection(hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, NearPlane, FarPlane),
+                               hlslpp::zclip::zero,
+                               hlslpp::zdirection::forward,
+                               hlslpp::zplane::finite));
+    }
 };
 
 /// @brief World state container read by renderers each frame.
@@ -80,8 +121,8 @@ class Scene {
     Scene()  = default;
     ~Scene() = default;
 
-    Scene(const Scene&)                    = default;
-    auto operator=(const Scene&) -> Scene& = default;
+    Scene(const Scene&)                    = delete;
+    auto operator=(const Scene&) -> Scene& = delete;
     Scene(Scene&&)                         = default;
     auto operator=(Scene&&) -> Scene&      = default;
 
@@ -105,8 +146,16 @@ class Scene {
 
     [[nodiscard]] auto BuildSnapshot() const -> SceneSnapshot {
         return SceneSnapshot{
-            .Camera = m_Camera,
-            .Time   = m_Time,
+            .Position    = m_Camera.Position,
+            .Forward     = m_Camera.Forward,
+            .Up          = m_Camera.Up,
+            .FOV         = m_Camera.FOV,
+            .NearPlane   = m_Camera.NearPlane,
+            .FarPlane    = m_Camera.FarPlane,
+            .AspectRatio = m_Camera.AspectRatio,
+            .ColorRT     = m_Camera.ColorRT.GetHandle(),
+            .DepthRT     = m_Camera.DepthRT.GetHandle(),
+            .Time        = m_Time,
         };
     }
 

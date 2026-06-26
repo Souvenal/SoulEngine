@@ -149,6 +149,9 @@ class Swapchain {
                 Result.m_Extent.height,
                 ImageCount);
 
+        if ((Caps.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferDst) == vk::ImageUsageFlags{})
+            return std::unexpected(ErrorMessage("Swapchain does not support transfer-destination presentation"));
+
         // ── Create swapchain ────────────────────────────────────────────
         vk::SwapchainCreateInfoKHR SwapchainCI{
             .surface          = *Result.m_Surface,
@@ -159,10 +162,9 @@ class Swapchain {
             // specifies the number of layers each image consists of,
             // always 1 unless developing for stereoscopic 3D applications.
             .imageArrayLayers = 1,
-            // eColorAttachment means that we're going to render directly to these images,
-            // if we want to render to a seperate image to perform operations like post-processing or multisampling,
-            // we would use eTransferDst instead
-            .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
+            // The engine renders to its own color RT and blits that output to
+            // swapchain; render passes must not use swapchain images directly.
+            .imageUsage       = vk::ImageUsageFlagBits::eTransferDst,
             // eExclusive means that an image is owned by one queue family at a time,
             // and ownership must be explicitly transferred before using the image in another queue family.
             //
@@ -198,44 +200,6 @@ class Swapchain {
                 Core::Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
         Result.m_Images = std::move(ImagesResult.value);
 
-        // ── Create image views ──────────────────────────────────────────
-        vk::ImageViewCreateInfo ViewCI{
-            // specifies we're rendering to a 2D screen
-            .viewType   = vk::ImageViewType::e2D,
-            .format     = ChosenFormat.format,
-            // components field allows us to swizzle the color channels if needed,
-            // e.g. map all the channels to the red channel for a monochrome texture,
-            // or map constant values of 0 and 1 to a channel.
-            // but we usually want to keep them as-is by default
-            .components = {.r = vk::ComponentSwizzle::eIdentity,
-                           .g = vk::ComponentSwizzle::eIdentity,
-                           .b = vk::ComponentSwizzle::eIdentity,
-                           .a = vk::ComponentSwizzle::eIdentity},
-            // subresourceRange specifies what the image is going to be used for,
-            // and which part of the image to use.
-            //
-            // If working on a stereographic 3D application, then we would
-            // create a swap chain with multiple layers. You could then create
-            // multiple image views for each image representing the views
-            // for the left and right eyes by accessing different layers.
-            .subresourceRange =
-                vk::ImageSubresourceRange{
-                    .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                    .baseMipLevel   = 0,
-                    .levelCount     = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount     = 1,
-                },
-        };
-        for (auto& Img : Result.m_Images) {
-            ViewCI.image      = Img;
-            auto [VRes, View] = Result.m_Device->createImageView(ViewCI);
-            if (VRes != vk::Result::eSuccess)
-                return std::unexpected(
-                    ErrorMessage(Core::Format("Failed to create swapchain image view: {}", vk::to_string(VRes))));
-            Result.m_ImageViews.emplace_back(std::move(View));
-        }
-
         // ── Create render-complete binary semaphores (one per swapchain image) ──
         Result.m_RenderComplete.reserve(Result.m_Images.size());
         for (size_t i = 0; i < Result.m_Images.size(); ++i) {
@@ -255,7 +219,6 @@ class Swapchain {
     }
 
     auto Cleanup() -> void {
-        m_ImageViews.clear();
         m_Images.clear();
         m_RenderComplete.clear();
         m_Swapchain    = nullptr;
@@ -323,10 +286,6 @@ class Swapchain {
         return (Index < m_Images.size()) ? m_Images[Index] : vk::Image{};
     }
 
-    [[nodiscard]] auto GetImageView(uint32_t Index) const -> vk::ImageView {
-        return (Index < m_ImageViews.size()) ? static_cast<vk::ImageView>(*m_ImageViews[Index]) : vk::ImageView{};
-    }
-
     /// Returns the render-complete semaphore for the currently acquired
     /// swapchain image.  Used by RenderDevice::EndFrame to build the
     /// semaphore-submit info for queue submit.
@@ -348,7 +307,6 @@ class Swapchain {
     vk::SurfaceFormatKHR             m_Format    = {};
     vk::Extent2D                     m_Extent    = {1, 1};
     std::vector<vk::Image>           m_Images;
-    std::vector<vk::raii::ImageView> m_ImageViews;
     std::vector<vk::raii::Semaphore> m_RenderComplete;
     uint32_t                         m_CurrentIndex = 0;
 };

@@ -77,14 +77,21 @@ class TaskGraph {
     }
 
     auto Shutdown() -> void {
-        m_ShutdownRequested.store(true, std::memory_order_release);
+        {
+            std::lock_guard Lock(m_BackgroundMutex);
+            m_ShutdownRequested.store(true, std::memory_order_release);
+        }
+
+        for (auto& Worker : m_Workers) {
+            if (Worker.joinable())
+                Worker.request_stop();
+        }
+
         m_BackgroundCv.notify_all();
 
         for (auto& Worker : m_Workers) {
-            if (Worker.joinable()) {
-                Worker.request_stop();
+            if (Worker.joinable())
                 Worker.join();
-            }
         }
         m_Workers.clear();
 

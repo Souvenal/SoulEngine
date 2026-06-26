@@ -44,7 +44,7 @@ class RenderDevice {
     [[nodiscard]] virtual auto CreateRenderTarget(const RenderTargetDesc& Desc)
         -> std::expected<RenderTargetCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
-        -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> = 0;
+        -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> = 0;
 
     /// Write data into the engine-global constant buffer bound to Set 0.
     /// Safe to call once per frame after BeginFrame().  Size must not exceed

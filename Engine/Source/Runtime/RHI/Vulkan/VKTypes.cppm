@@ -78,4 +78,53 @@ struct ImageState {
     bool                    isWrite     = false;
 };
 
+auto TransitionImage(vk::raii::CommandBuffer&              Buf,
+                     std::unordered_map<vk::Image, ImageState>& States,
+                     vk::Image                             Image,
+                     vk::PipelineStageFlags2               DstStage,
+                     vk::AccessFlags2                      DstAccess,
+                     vk::ImageLayout                       DstLayout,
+                     bool                                  IsWrite,
+                     vk::ImageAspectFlags                  Aspect = vk::ImageAspectFlagBits::eColor) -> void {
+    auto It      = States.find(Image);
+    auto Current = (It != States.end()) ? It->second : ImageState{};
+
+    const bool NeedsBarrier =
+        (Current.stage != DstStage) || (Current.access != DstAccess) || (Current.layout != DstLayout) ||
+        Current.isWrite;
+
+    if (NeedsBarrier) {
+        vk::ImageMemoryBarrier2 Barrier{
+            .srcStageMask        = Current.stage,
+            .srcAccessMask       = Current.access,
+            .dstStageMask        = DstStage,
+            .dstAccessMask       = DstAccess,
+            .oldLayout           = Current.layout,
+            .newLayout           = DstLayout,
+            .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+            .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+            .image               = Image,
+            .subresourceRange    = {.aspectMask     = Aspect,
+                                    .baseMipLevel   = 0,
+                                    .levelCount     = vk::RemainingMipLevels,
+                                    .baseArrayLayer = 0,
+                                    .layerCount     = vk::RemainingArrayLayers},
+        };
+        vk::DependencyInfo Dep{
+            .dependencyFlags         = vk::DependencyFlagBits::eByRegion,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers    = &Barrier,
+        };
+        Buf.pipelineBarrier2(Dep);
+    }
+
+    States[Image] = ImageState{
+        .stage       = DstStage,
+        .access      = DstAccess,
+        .layout      = DstLayout,
+        .queueFamily = vk::QueueFamilyIgnored,
+        .isWrite     = IsWrite,
+    };
+}
+
 } // namespace SoulEngine::RHI::Vulkan

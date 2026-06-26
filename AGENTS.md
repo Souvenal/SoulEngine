@@ -38,6 +38,7 @@ GitHub defaults: `bug`, `documentation`, `enhancement`. See `Docs/agents/triage-
 ### Domain docs
 
 Multi-context — `CONTEXT.md` at root maps to per-module `CONTEXT.md`. See `Docs/Agents/Domain.md`.
+Before reading, modifying, reviewing, or generating project code, read root `CONTEXT.md`, `CONTEXT-MAP.md`, and every per-module `CONTEXT.md` that contains the target files.
 
 ## Architecture & Design
 

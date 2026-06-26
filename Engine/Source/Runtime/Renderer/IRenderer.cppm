@@ -13,6 +13,12 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Renderer {
 
+/// @brief Render-thread packet kept alive until RHILoop finishes Execute().
+struct RenderResult {
+    RHI::CommandList             CmdList   = {};
+    Resource::FrameResourceScope Resources = {};
+};
+
 /// @brief Abstract base class for all renderers.
 ///
 /// A renderer owns command contexts and asynchronous resource handles
@@ -39,9 +45,9 @@ class IRenderer {
     /// @brief Release all GPU resources and owned objects.
     virtual auto OnDetach() -> void = 0;
 
-    /// @brief Render the scene snapshot and return a CommandList for RHIThread.
+    /// @brief Render the scene snapshot and return commands plus resource pins for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
-    [[nodiscard]] virtual auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RHI::CommandList, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
 };
 
 } // namespace SoulEngine::Renderer

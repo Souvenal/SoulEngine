@@ -60,7 +60,7 @@ class GpuResource {
 
 /// Empty polymorphic base for vertex buffer resources.
 /// Backend concrete class (e.g. Vulkan::VertexBuffer) owns the GPU allocation.
-/// Consumers hold SPtr<VertexBuffer> for type-safe API usage.
+/// Resource::Manager owns VertexBuffer instances; command lists only observe them.
 class VertexBuffer : public GpuResource {
   public:
     VertexBuffer()                                       = default;
@@ -107,7 +107,7 @@ class ConstantBuffer {
 
 /// Empty polymorphic base for graphics pipeline resources.
 /// Backend concrete class (e.g. Vulkan::GraphicsPipeline) owns the native
-/// pipeline. Consumers hold SPtr<GraphicsPipeline> for type-safe API usage.
+/// pipeline. Resource::Manager owns GraphicsPipeline instances.
 class GraphicsPipeline : public GpuResource {
   public:
     GraphicsPipeline()                                           = default;
@@ -122,7 +122,7 @@ class GraphicsPipeline : public GpuResource {
 
 /// Polymorphic base for shader-readable sampled texture resources.
 /// Backend concrete class (e.g. Vulkan::SampledTexture) owns the GPU allocation.
-/// Consumers hold SPtr<SampledTexture> for type-safe API usage.
+/// Resource::Manager owns SampledTexture instances.
 class SampledTexture : public GpuResource {
   public:
     SampledTexture()                                         = default;
@@ -171,9 +171,7 @@ enum class TextureUsage : Uint32 {
     RenderTarget   = 1u << 0,
     DepthStencil   = 1u << 1,
     ShaderResource = 1u << 2,
-    TransferSrc    = 1u << 3,
-    TransferDst    = 1u << 4,
-    Present        = 1u << 5,
+    FrameOutput    = 1u << 3,
 };
 
 [[nodiscard]] inline auto operator|(TextureUsage a, TextureUsage b) -> TextureUsage {
@@ -182,7 +180,7 @@ enum class TextureUsage : Uint32 {
 
 /// Polymorphic base for render-target images (color or depth/stencil).
 /// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
-/// Backend concrete class owns GPU allocation. Consumers hold SPtr<RenderTarget>.
+/// Backend concrete class owns GPU allocation. Resource::Manager owns render targets.
 class RenderTarget : public GpuResource {
   public:
     RenderTarget()                                       = default;
@@ -208,7 +206,7 @@ struct SampledTextureDesc {
 };
 
 struct SampledTextureCreateResult {
-    SPtr<SampledTexture> Texture          = nullptr;
+    UPtr<SampledTexture> Texture          = nullptr;
     GpuCompletionToken   UploadCompletion = {};
 };
 
@@ -220,16 +218,16 @@ struct RenderTargetDesc {
 };
 
 struct RenderTargetCreateResult {
-    SPtr<RenderTarget> Texture = nullptr;
+    UPtr<RenderTarget> Texture = nullptr;
 };
 
 struct VertexBufferCreateResult {
-    SPtr<VertexBuffer> Buffer           = nullptr;
+    UPtr<VertexBuffer> Buffer           = nullptr;
     GpuCompletionToken UploadCompletion = {};
 };
 
 struct IndexBufferCreateResult {
-    SPtr<IndexBuffer>  Buffer           = nullptr;
+    UPtr<IndexBuffer>  Buffer           = nullptr;
     GpuCompletionToken UploadCompletion = {};
 };
 

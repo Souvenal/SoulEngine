@@ -10,19 +10,22 @@ export namespace SoulEngine::RHI {
 
 /// @brief Set the active graphics pipeline for subsequent draw calls.
 struct SetPipelineCmd {
-    SPtr<GraphicsPipeline> Pipeline;
+    /// Non-owning observer. Producer must keep the pipeline alive until Execute() completes.
+    GraphicsPipeline* Pipeline = nullptr;
 };
 
 /// @brief Bind a vertex buffer at binding slot 0.
 struct BindVertexBufferCmd {
-    SPtr<VertexBuffer> Buffer;
-    Uint64             Offset = 0;
+    /// Non-owning observer. Producer must keep the buffer alive until Execute() completes.
+    VertexBuffer* Buffer = nullptr;
+    Uint64        Offset = 0;
 };
 
 /// @brief Bind an index buffer.
 struct BindIndexBufferCmd {
-    SPtr<IndexBuffer> Buffer;
-    Uint64            Offset = 0;
+    /// Non-owning observer. Producer must keep the buffer alive until Execute() completes.
+    IndexBuffer* Buffer = nullptr;
+    Uint64       Offset = 0;
 };
 
 /// @brief Set viewport rectangle.
@@ -71,7 +74,8 @@ struct DrawCmd {
 
 /// @brief Material data for a draw call — holds bindless texture references.
 struct DrawMaterialData {
-    SPtr<SampledTexture> TestTexture = nullptr;
+    /// Non-owning observer. Producer must keep the texture alive until Execute() completes.
+    SampledTexture* TestTexture = nullptr;
 };
 
 /// @brief Set draw material data (replaces SetSampledTexture).
@@ -99,13 +103,13 @@ struct Pass {
 
     // ── Builder helpers ──────────────────────────────────────────────
 
-    auto SetPipeline(SPtr<GraphicsPipeline> P) -> void {
+    auto SetPipeline(GraphicsPipeline* P) -> void {
         Commands.emplace_back(SetPipelineCmd{P});
     }
-    auto BindVertexBuffer(SPtr<VertexBuffer> Buf, Uint64 Offset = 0) -> void {
+    auto BindVertexBuffer(VertexBuffer* Buf, Uint64 Offset = 0) -> void {
         Commands.emplace_back(BindVertexBufferCmd{Buf, Offset});
     }
-    auto BindIndexBuffer(SPtr<IndexBuffer> Buf, Uint64 Offset = 0) -> void {
+    auto BindIndexBuffer(IndexBuffer* Buf, Uint64 Offset = 0) -> void {
         Commands.emplace_back(BindIndexBufferCmd{Buf, Offset});
     }
     auto SetViewport(Float32 X, Float32 Y, Float32 W, Float32 H, Float32 MinDepth = 0.0f, Float32 MaxDepth = 1.0f)
@@ -141,6 +145,8 @@ struct Pass {
 struct CommandList {
     std::vector<Pass>      Passes;
     std::vector<std::byte> GlobalConstantData;
+    /// Final frame output. Backend presents this engine-owned RT to swapchain.
+    RenderTarget* PresentSource = nullptr;
 };
 
 } // namespace SoulEngine::RHI

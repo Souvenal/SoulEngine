@@ -295,7 +295,7 @@ class RenderDevice final : public RHI::RenderDevice {
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
-        -> std::expected<SPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
+        -> std::expected<UPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
         return GraphicsPipeline::Create(m_Device, Desc, *m_DescriptorManager, m_DeletionQueue);
     }
 
@@ -638,11 +638,92 @@ class RenderDevice final : public RHI::RenderDevice {
         for (uint32_t i = 0; i < m_Swapchain.GetImageCount(); ++i) {
             auto Image                    = m_Swapchain.GetImage(i);
             m_CommittedImageStates[Image] = ImageState{
-                .stage  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                .stage  = vk::PipelineStageFlagBits2::eNone,
                 .access = vk::AccessFlagBits2::eNone,
                 .layout = vk::ImageLayout::eUndefined,
             };
         }
+    }
+
+    [[nodiscard]] auto ValidateCommandList(const RHI::CommandList& CmdList) const -> std::expected<void, ErrorMessage> {
+        if (CmdList.Passes.empty() && !CmdList.PresentSource)
+            return {};
+
+        if (!CmdList.PresentSource)
+            return std::unexpected(ErrorMessage("Execute: command list with passes must specify PresentSource"));
+
+        for (const auto& Pass : CmdList.Passes) {
+            if (!Pass.Desc.ColorAttachment.TexturePtr)
+                return std::unexpected(
+                    ErrorMessage("Execute: pass color attachment must be an explicit render target"));
+        }
+
+        return {};
+    }
+
+    auto RecordPresentBlit(vk::raii::CommandBuffer& Buf, RHI::RenderTarget* Source) -> void {
+        auto& SrcRT = static_cast<const Vulkan::RenderTarget&>(*Source);
+
+        const auto SrcImage = SrcRT.GetVkImage();
+        const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
+
+        TransitionImage(Buf,
+                        m_CommittedImageStates,
+                        SrcImage,
+                        vk::PipelineStageFlagBits2::eTransfer,
+                        vk::AccessFlagBits2::eTransferRead,
+                        vk::ImageLayout::eTransferSrcOptimal,
+                        false,
+                        ToVkImageAspect(SrcRT.GetFormat()));
+        // The acquire semaphore is waited at Transfer. Make the first
+        // swapchain barrier source stage participate in that wait so sync
+        // validation sees the acquire read ordered before our transfer write.
+        auto& DstState = m_CommittedImageStates[DstImage];
+        DstState.stage = vk::PipelineStageFlagBits2::eTransfer;
+        DstState.access = vk::AccessFlagBits2::eNone;
+
+        TransitionImage(Buf,
+                        m_CommittedImageStates,
+                        DstImage,
+                        vk::PipelineStageFlagBits2::eTransfer,
+                        vk::AccessFlagBits2::eTransferWrite,
+                        vk::ImageLayout::eTransferDstOptimal,
+                        true);
+
+        const auto DstExtent = m_Swapchain.GetExtent();
+        vk::ImageBlit BlitRegion{
+            .srcSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel       = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount     = 1},
+            .srcOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{0, 0, 0},
+                                                       vk::Offset3D{static_cast<Int32>(SrcRT.GetWidth()),
+                                                                    static_cast<Int32>(SrcRT.GetHeight()),
+                                                                    1}},
+            .dstSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel       = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount     = 1},
+            .dstOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{0, 0, 0},
+                                                       vk::Offset3D{static_cast<Int32>(DstExtent.width),
+                                                                    static_cast<Int32>(DstExtent.height),
+                                                                    1}},
+        };
+
+        Buf.blitImage(SrcImage,
+                      vk::ImageLayout::eTransferSrcOptimal,
+                      DstImage,
+                      vk::ImageLayout::eTransferDstOptimal,
+                      {BlitRegion},
+                      vk::Filter::eNearest);
+
+        TransitionImage(Buf,
+                        m_CommittedImageStates,
+                        DstImage,
+                        vk::PipelineStageFlagBits2::eBottomOfPipe,
+                        vk::AccessFlagBits2::eNone,
+                        vk::ImageLayout::ePresentSrcKHR,
+                        false);
     }
 
     // CommandVisitor lives in VKCommand.cppm — imported via :Command partition.
@@ -652,8 +733,10 @@ class RenderDevice final : public RHI::RenderDevice {
     // ═════════════════════════════════════════════════════════════════════════════
 
     [[nodiscard]] auto Execute(const RHI::CommandList& CmdList) -> std::expected<void, ErrorMessage> override {
-        if (CmdList.Passes.empty())
-            return std::unexpected(ErrorMessage("Execute: command list must contain at least one pass"));
+        if (auto R = ValidateCommandList(CmdList); !R)
+            return std::unexpected(R.error());
+        if (CmdList.Passes.empty() && !CmdList.PresentSource)
+            return {};
 
         if (auto R = BeginFrame(); !R)
             return R;
@@ -667,13 +750,14 @@ class RenderDevice final : public RHI::RenderDevice {
         // Frame token for usage tracking — this frame's signal value on the timeline
         const Uint64                  FrameTokenValue = m_Timeline.NextValue();
         const RHI::GpuCompletionToken FrameToken{.Id = FrameTokenValue};
+        RHI::UsageVisitor             UsageTracker{.CurrentToken = FrameToken};
+        UsageTracker.StampPresentSource(CmdList.PresentSource);
 
         std::vector<vk::CommandBuffer> Secondaries;
         Secondaries.reserve(CmdList.Passes.size());
 
         for (const auto& Pass : CmdList.Passes) {
             // ── Update usage tokens on all resources referenced by this pass ──
-            RHI::UsageVisitor UsageTracker{.CurrentToken = FrameToken};
             UsageTracker.StampPassAttachments(Pass.Desc);
             for (const auto& Cmd : Pass.Commands)
                 std::visit(UsageTracker, Cmd);
@@ -712,7 +796,6 @@ class RenderDevice final : public RHI::RenderDevice {
                 CommandVisitor Visitor{
                     .Buf            = SecBuf,
                     .LocalStates    = ImageStateCopy,
-                    .Swc            = &m_Swapchain,
                     .PipelineLayout = m_DescriptorManager->GetPipelineLayout(),
                 };
                 Visitor.BeginPass(Pass.Desc);
@@ -731,14 +814,16 @@ class RenderDevice final : public RHI::RenderDevice {
         auto& FC      = m_FrameContext[m_CurrentFrame];
         auto& Primary = FC.PrimaryBuffer;
 
-        Primary.executeCommands(Secondaries);
+        if (!Secondaries.empty())
+            Primary.executeCommands(Secondaries);
+        RecordPresentBlit(Primary, CmdList.PresentSource);
         if (auto R = Primary.end(); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Execute: primary end failed"));
 
         vk::CommandBufferSubmitInfo PrimarySubmitInfo{.commandBuffer = *Primary};
         vk::SemaphoreSubmitInfo     PresentCompleteSema{
             .semaphore = *m_FrameContext[m_CurrentFrame].PresentComplete,
-            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .stageMask = vk::PipelineStageFlagBits2::eTransfer,
         };
         vk::SemaphoreSubmitInfo RenderingCompleteSema{
             .semaphore = m_Swapchain.GetCurrentRenderCompleteSemaphore(),
@@ -747,7 +832,7 @@ class RenderDevice final : public RHI::RenderDevice {
         vk::SemaphoreSubmitInfo TimelineSignalSema{
             .semaphore = m_Timeline.Get(),
             .value     = FrameTokenValue,
-            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .stageMask = vk::PipelineStageFlagBits2::eAllCommands,
         };
         vk::SemaphoreSubmitInfo SignalSemas[]{RenderingCompleteSema, TimelineSignalSema};
 

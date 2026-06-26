@@ -269,7 +269,7 @@ class SampledTexture final : public RHI::SampledTexture {
         Staging.DeferredDelete(CompletionQueue, *CopyResult);
 
         return RHI::SampledTextureCreateResult{
-            .Texture          = std::make_shared<SampledTexture>(std::move(Tex), DelQueue, Desc.Width, Desc.Height),
+            .Texture          = std::make_unique<SampledTexture>(std::move(Tex), DelQueue, Desc.Width, Desc.Height),
             .UploadCompletion = *CopyResult,
         };
     }
@@ -339,6 +339,8 @@ class RenderTarget final : public RHI::RenderTarget {
 
         const bool IsDepth = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::DepthStencil)) != 0;
         const bool IsColor = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::RenderTarget)) != 0;
+        const bool IsFrameOutput =
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::FrameOutput)) != 0;
         if (!IsDepth && !IsColor)
             return std::unexpected(ErrorMessage("RenderTarget::Create: missing attachment usage"));
 
@@ -347,6 +349,8 @@ class RenderTarget final : public RHI::RenderTarget {
             Usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
         if (IsColor)
             Usage |= vk::ImageUsageFlagBits::eColorAttachment;
+        if (IsFrameOutput)
+            Usage |= vk::ImageUsageFlagBits::eTransferSrc;
 
         const auto VkFmt = SoulEngine::RHI::Vulkan::ToVkFormat(Desc.Format);
         vk::ImageCreateInfo ImageCI{
@@ -395,7 +399,7 @@ class RenderTarget final : public RHI::RenderTarget {
 
         auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value), nullptr, 0);
         return RHI::RenderTargetCreateResult{
-            .Texture = std::make_shared<RenderTarget>(std::move(Tex), DelQueue, Desc.Width, Desc.Height, Desc.Format, Desc.Usage),
+            .Texture = std::make_unique<RenderTarget>(std::move(Tex), DelQueue, Desc.Width, Desc.Height, Desc.Format, Desc.Usage),
         };
     }
 

@@ -17,12 +17,11 @@ using namespace SoulEngine::Core;
 namespace SoulEngine::RHI::Vulkan {
 
 // ═════════════════════════════════════════════════════════════════════════════
-// GraphicsPipeline — concrete Vulkan pipeline owned by SPtr<RHI::GraphicsPipeline>
+// GraphicsPipeline — concrete Vulkan pipeline owned by Resource::Manager.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Vulkan graphics pipeline with shared bindless pipeline layout.
-/// Created via the static `Create` factory. Callers hold an
-/// `SPtr<RHI::GraphicsPipeline>` and pass it to `CommandList::BindPipeline()`.
+/// Created via the static `Create` factory. Command lists only observe it.
 class GraphicsPipeline final : public RHI::GraphicsPipeline {
   public:
     // Public for std::make_shared compatibility per ADR 02.
@@ -46,7 +45,7 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
     [[nodiscard]] static auto Create(vk::raii::Device&           Device,
                                      const GraphicsPipelineDesc& Desc,
                                      const DescriptorManager&    Manager,
-                                     DeletionQueue& Queue) -> std::expected<SPtr<GraphicsPipeline>, ErrorMessage> {
+                                     DeletionQueue& Queue) -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> {
 
         // ── Shader stages ──────────────────────────────────────────────
         auto ShaderStates = GraphicsShaderStates::Create(Device, Desc);
@@ -227,7 +226,7 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
             return std::unexpected(
                 ErrorMessage(Core::Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
-        auto Ret             = std::make_shared<GraphicsPipeline>();
+        auto Ret             = std::make_unique<GraphicsPipeline>();
         Ret->m_Pipeline      = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
         Ret->m_DeletionQueue = &Queue;
         return Ret;

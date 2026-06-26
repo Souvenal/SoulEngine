@@ -20,56 +20,8 @@ namespace SoulEngine::RHI::Vulkan {
 struct CommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
     std::unordered_map<vk::Image, ImageState>& LocalStates;
-    Swapchain*                                 Swc;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
     vk::PipelineLayout                         PipelineLayout             = nullptr;
-    bool                                       m_CurrentPassUsesSwapchain = true;
-
-    auto TransitionImage(vk::Image               Image,
-                         vk::PipelineStageFlags2 DstStage,
-                         vk::AccessFlags2        DstAccess,
-                         vk::ImageLayout         DstLayout,
-                         bool                    IsWrite,
-                         vk::ImageAspectFlags    Aspect = vk::ImageAspectFlagBits::eColor) -> void {
-        auto It      = LocalStates.find(Image);
-        auto Current = (It != LocalStates.end()) ? It->second : ImageState{};
-
-        bool NeedsBarrier = (Current.stage != DstStage) || (Current.access != DstAccess) ||
-                            (Current.layout != DstLayout) || Current.isWrite;
-
-        if (NeedsBarrier) {
-            vk::ImageMemoryBarrier2 Barrier{
-                .srcStageMask        = Current.stage,
-                .srcAccessMask       = Current.access,
-                .dstStageMask        = DstStage,
-                .dstAccessMask       = DstAccess,
-                .oldLayout           = Current.layout,
-                .newLayout           = DstLayout,
-                .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-                .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-                .image               = Image,
-                .subresourceRange    = {.aspectMask     = Aspect,
-                                        .baseMipLevel   = 0,
-                                        .levelCount     = vk::RemainingMipLevels,
-                                        .baseArrayLayer = 0,
-                                        .layerCount     = vk::RemainingArrayLayers},
-            };
-            vk::DependencyInfo Dep{
-                .dependencyFlags         = vk::DependencyFlagBits::eByRegion,
-                .imageMemoryBarrierCount = 1,
-                .pImageMemoryBarriers    = &Barrier,
-            };
-            Buf.pipelineBarrier2(Dep);
-        }
-
-        LocalStates[Image] = ImageState{
-            .stage       = DstStage,
-            .access      = DstAccess,
-            .layout      = DstLayout,
-            .queueFamily = vk::QueueFamilyIgnored,
-            .isWrite     = IsWrite,
-        };
-    }
 
     /// Begin rendering scope from Pass desc.
     auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
@@ -80,38 +32,19 @@ struct CommandVisitor {
         Uint32                      RenderWidth  = 1;
         Uint32                      RenderHeight = 1;
 
-        m_CurrentPassUsesSwapchain = false;
-
-        if (!Desc.ColorAttachment.TexturePtr) {
-            // Swapchain color
-            if (!Swc)
-                return;
-            const auto CurrentIndex = Swc->GetCurrentIndex();
-            const auto CurrentImage = Swc->GetImage(CurrentIndex);
-            ColorImageView          = Swc->GetImageView(CurrentIndex);
-            ColorImage              = CurrentImage;
-            RenderWidth             = Swc->GetExtent().width;
-            RenderHeight            = Swc->GetExtent().height;
-            TransitionImage(CurrentImage,
-                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                            vk::AccessFlagBits2::eColorAttachmentWrite,
-                            vk::ImageLayout::eColorAttachmentOptimal,
-                            true);
-            m_CurrentPassUsesSwapchain = true;
-        } else {
-            // Off-screen render target
-            auto& VkRT     = static_cast<const Vulkan::RenderTarget&>(*Desc.ColorAttachment.TexturePtr);
-            ColorImage     = VkRT.GetVkImage();
-            ColorImageView = VkRT.GetVkImageView();
-            RenderWidth    = VkRT.GetWidth();
-            RenderHeight   = VkRT.GetHeight();
-            TransitionImage(ColorImage,
-                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                            vk::AccessFlagBits2::eColorAttachmentWrite,
-                            vk::ImageLayout::eColorAttachmentOptimal,
-                            true,
-                            ToVkImageAspect(VkRT.GetFormat()));
-        }
+        auto& VkRT     = static_cast<const Vulkan::RenderTarget&>(*Desc.ColorAttachment.TexturePtr);
+        ColorImage     = VkRT.GetVkImage();
+        ColorImageView = VkRT.GetVkImageView();
+        RenderWidth    = VkRT.GetWidth();
+        RenderHeight   = VkRT.GetHeight();
+        TransitionImage(Buf,
+                        LocalStates,
+                        ColorImage,
+                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                        vk::AccessFlagBits2::eColorAttachmentWrite,
+                        vk::ImageLayout::eColorAttachmentOptimal,
+                        true,
+                        ToVkImageAspect(VkRT.GetFormat()));
 
         ColorAttachment = vk::RenderingAttachmentInfo{
             .imageView   = ColorImageView,
@@ -135,7 +68,9 @@ struct CommandVisitor {
             auto  DepthImage  = VkDepthRT.GetVkImage();
             auto  DepthView   = VkDepthRT.GetVkImageView();
             auto  DepthAspect = ToVkImageAspect(VkDepthRT.GetFormat());
-            TransitionImage(DepthImage,
+            TransitionImage(Buf,
+                            LocalStates,
+                            DepthImage,
                             vk::PipelineStageFlagBits2::eEarlyFragmentTests,
                             vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
                             vk::ImageLayout::eDepthAttachmentOptimal,
@@ -173,15 +108,9 @@ struct CommandVisitor {
         Buf.beginRendering(RenderingInfo);
     }
 
-    /// End rendering scope and transition swapchain to PresentSrc.
+    /// End rendering scope.
     auto EndPass() -> void {
         Buf.endRendering();
-        if (m_CurrentPassUsesSwapchain && Swc)
-            TransitionImage(Swc->GetImage(Swc->GetCurrentIndex()),
-                            vk::PipelineStageFlagBits2::eBottomOfPipe,
-                            vk::AccessFlagBits2::eNone,
-                            vk::ImageLayout::ePresentSrcKHR,
-                            false);
     }
 
     auto operator()(const RHI::SetPipelineCmd& Cmd) -> void {

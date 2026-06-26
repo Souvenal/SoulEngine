@@ -13,8 +13,11 @@ This skill is only a router. The authoritative rules live in `.agents/rules/`.
 Before reading, writing, modifying, reviewing, refactoring, debugging, or generating project code:
 
 1. Inspect the target file paths.
-2. Read every rule file in `.agents/rules/` whose frontmatter `paths` glob matches those files.
-3. Apply all matched rules while working.
+2. Read root `CONTEXT.md`.
+3. Read `CONTEXT-MAP.md`.
+4. Read every per-module `CONTEXT.md` whose module directory contains one of the target files.
+5. Read every rule file in `.agents/rules/` whose frontmatter `paths` glob matches those files.
+6. Apply all matched context and rule guidance while working.
 
 Current rule files:
 
@@ -24,4 +27,4 @@ Current rule files:
 
 If multiple rules match a file, load and apply all of them. For example, Vulkan C++ source must follow both the C++ rules and the Vulkan rules.
 
-If the relevant files are not known yet, inspect the repository first, then load the matching rule files before making code decisions.
+If the relevant files are not known yet, inspect the repository first, then load the root context, context map, matching module contexts, and matching rule files before making code decisions.

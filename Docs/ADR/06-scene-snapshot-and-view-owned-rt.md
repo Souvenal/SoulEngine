@@ -37,11 +37,12 @@ data.
 applied all game-state mutations and resource requests, but before the frame is
 published to the Render thread. The frame slot holds this snapshot by value.
 
-`Camera` remains a logical camera type, but it may own view-scoped resource
-handles such as `Resource::RenderTargetHandle DepthRT`. The handle represents
+`Camera` remains a logical camera type, but it may own view-scoped transient
+resource owners such as a depth render target. That owner represents
 camera-owned render target identity and lifecycle, not a backend RHI object.
-Renderers consume the handle from `SceneSnapshot` and skip dependent work when
-the target is not ready.
+`SceneSnapshot` carries only the weak render-target handle for render-thread
+consumption. Renderers consume the handle from `SceneSnapshot` and skip
+dependent work when the target is not ready.
 
 For now, the base `Camera` stays intentionally minimal. Specialized camera
 forms, such as gameplay cameras, editor viewport cameras, and shadow cameras,
@@ -76,4 +77,3 @@ to add future camera specialization without reworking the frame pipeline.
 This ADR does not define the final camera inheritance tree.
 It does not introduce editor-specific viewport systems.
 It does not change how swapchain images are managed inside RHI.
-

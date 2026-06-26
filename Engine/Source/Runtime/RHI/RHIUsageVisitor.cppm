@@ -49,6 +49,12 @@ struct UsageVisitor {
         if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr)
             Desc.DepthAttachment->TexturePtr->UpdateLastUsageToken(CurrentToken);
     }
+
+    /// @brief Stamp usage token on the final frame output used for presentation.
+    auto StampPresentSource(RenderTarget* Source) -> void {
+        if (Source)
+            Source->UpdateLastUsageToken(CurrentToken);
+    }
 };
 
 } // namespace SoulEngine::RHI

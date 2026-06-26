@@ -309,12 +309,12 @@ class VertexBuffer final : public RHI::VertexBuffer {
         // ── Defer staging destruction ──────────────────────────────────
         Staging.DeferredDelete(CompletionQueue, *CopyToken);
 
-        // ── Move DeviceBuffer into shared ownership ───────────────────
-        // DevBuf is a local; move it onto the heap so VertexBuffer and
-        // DeletionQueue can share its lifetime.  The moved-from local's
+        // ── Move DeviceBuffer into delayed-deletion ownership ──────────
+        // DevBuf is a local; move it onto the heap so VertexBuffer's
+        // destructor can hand it to DeletionQueue. The moved-from local's
         // destructor is a no-op.
         return RHI::VertexBufferCreateResult{
-            .Buffer = std::make_shared<VertexBuffer>(
+            .Buffer = std::make_unique<VertexBuffer>(
                 std::make_shared<DeviceBuffer>(std::move(DevBuf)), DelQueue, Strid, VCnt),
             .UploadCompletion = *CopyToken,
         };
@@ -391,10 +391,10 @@ class IndexBuffer final : public RHI::IndexBuffer {
 
         Staging.DeferredDelete(CompletionQueue, *CopyToken);
 
-        // ── Move DeviceBuffer into shared ownership ───────────────────
+        // ── Move DeviceBuffer into delayed-deletion ownership ──────────
         return RHI::IndexBufferCreateResult{
             .Buffer =
-                std::make_shared<IndexBuffer>(std::make_shared<DeviceBuffer>(std::move(DevBuf)), DelQueue, IndexCount),
+                std::make_unique<IndexBuffer>(std::make_shared<DeviceBuffer>(std::move(DevBuf)), DelQueue, IndexCount),
             .UploadCompletion = *CopyToken,
         };
     }

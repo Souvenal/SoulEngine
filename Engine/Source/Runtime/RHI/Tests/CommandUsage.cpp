@@ -41,25 +41,25 @@ class UsageVisitorTest : public ::testing::Test {
 
 TEST_F(UsageVisitorTest, SetPipelineCmdUpdatesToken) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
-    std::visit(m_Visitor, Command{SetPipelineCmd{m_Pipeline}});
+    std::visit(m_Visitor, Command{SetPipelineCmd{m_Pipeline.get()}});
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, BindVertexBufferCmdUpdatesToken) {
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
-    std::visit(m_Visitor, Command{BindVertexBufferCmd{m_VB, 0}});
+    std::visit(m_Visitor, Command{BindVertexBufferCmd{m_VB.get(), 0}});
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, BindIndexBufferCmdUpdatesToken) {
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
-    std::visit(m_Visitor, Command{BindIndexBufferCmd{m_IB, 0}});
+    std::visit(m_Visitor, Command{BindIndexBufferCmd{m_IB.get(), 0}});
     EXPECT_EQ(m_IB->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, SetDrawMaterialDataCmdUpdatesTextureToken) {
     ASSERT_EQ(m_Texture->GetLastUsageToken().Id, 0);
-    DrawMaterialData Mat{.TestTexture = m_Texture};
+    DrawMaterialData Mat{.TestTexture = m_Texture.get()};
     std::visit(m_Visitor, Command{SetDrawMaterialDataCmd{Mat}});
     EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
 }
@@ -94,10 +94,10 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
     CommandList CmdList;
     auto&       Pass = CmdList.Passes.emplace_back();
 
-    Pass.SetPipeline(m_Pipeline);
-    Pass.BindVertexBuffer(m_VB);
-    Pass.BindIndexBuffer(m_IB);
-    Pass.SetDrawMaterialData(DrawMaterialData{.TestTexture = m_Texture});
+    Pass.SetPipeline(m_Pipeline.get());
+    Pass.BindVertexBuffer(m_VB.get());
+    Pass.BindIndexBuffer(m_IB.get());
+    Pass.SetDrawMaterialData(DrawMaterialData{.TestTexture = m_Texture.get()});
     Pass.SetViewport(0, 0, 800, 600);
     Pass.DrawIndexed(6);
 

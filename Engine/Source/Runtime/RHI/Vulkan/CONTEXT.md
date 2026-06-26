@@ -55,3 +55,13 @@ No sampler bindless or buffer bindless. GPU buffer data access is planned via BD
 | :TransferCompletionQueue | VKTransferCompletionQueue.cppm | `TransferCompletionQueue` — transfer timeline, upload completion token allocation/query, and deferred callback execution |
 | :Descriptor | VKDescriptor.cppm | `DescriptorManager` — pool, 3-set layout, pipeline layout, BindTo, texture slot management |
 | :Texture | VKTexture.cppm | `DeviceTexture`, `SampledTexture`, and `RenderTarget` image resources |
+
+## Presentation
+
+Normal render passes target engine-owned `RHI::RenderTarget` images. The Vulkan
+backend does not treat a null color attachment as the swapchain. At the end of
+`RenderDevice::Execute()`, `CommandList::PresentSource` is transitioned to a
+backend transfer-source layout, the acquired swapchain image is transitioned to
+a backend transfer-destination layout, and the source is blitted into the
+swapchain image before presentation. Public RHI callers express this intent
+with `TextureUsage::FrameOutput`; they do not request native transfer usage.

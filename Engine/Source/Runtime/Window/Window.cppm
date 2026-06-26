@@ -18,6 +18,11 @@ auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
 
 namespace SoulEngine {
 
+/// @brief Drawable framebuffer size in physical pixels.
+///
+/// Vulkan swapchains and render targets must use framebuffer pixels, not GLFW
+/// window coordinates. On HiDPI/Retina displays these can differ, for example
+/// a 1920x1080 window may have a larger framebuffer backing store.
 export struct FramebufferExtent {
     int Width  = 0;
     int Height = 0;
@@ -89,6 +94,9 @@ export class WindowDisplay final {
         glfwSetWindowUserPointer(Result.m_Window, &Result);
         glfwSetFramebufferSizeCallback(Result.m_Window, &WindowDisplay::OnFramebufferResize);
 
+        // Use framebuffer size rather than window size because Vulkan renders
+        // to drawable pixels. GLFW window size is logical screen coordinates
+        // and can be smaller than the framebuffer on HiDPI/Retina displays.
         glfwGetFramebufferSize(Result.m_Window, &Result.m_Extent.Width, &Result.m_Extent.Height);
 
         Result.m_bFramebufferResized = true;
