@@ -59,9 +59,14 @@ enum class ScalarType : Uint8 {
 /// combined image samplers, etc.).
 enum class ResourceType : Uint8 {
     Unknown        = 0,
-    UniformBuffer  = 1,
+    ConstantBuffer = 1,
     StorageBuffer  = 2,
+    /// Shader-read-only texture descriptor (DX: SRV).
     SampledTexture = 3,
+    /// Shader read-write texture/image descriptor (DX: UAV), not a render
+    /// target attachment (DX: RTV/DSV).  Attachments usually use
+    /// attachment-optimal layouts and may get hardware compression/tile-local
+    /// paths; storage images commonly use general layouts for random access.
     StorageTexture = 4,
     Sampler        = 5,
 };
@@ -75,10 +80,12 @@ struct ValueType {
 
 /// @brief Reflected shader-visible resource binding.
 struct Binding {
-    Uint32       Set        = 0;
-    Uint32       Binding    = 0;
-    ResourceType Type       = ResourceType::Unknown;
-    Uint32       ArrayCount = 1;
+    /// Shader parameter access path, e.g. "g_frame.cb"; not a resource key or file path.
+    String       ParameterPath = {};
+    Uint32       Set           = 0;
+    Uint32       Binding       = 0;
+    ResourceType Type          = ResourceType::Unknown;
+    Uint32       ArrayCount    = 1;
 };
 
 /// @brief Reflected push-constant byte range.
@@ -100,7 +107,7 @@ struct VertexInputAttribute {
     ValueType             ValueType     = {};
 };
 
-/// @brief Normalized per-program reflection data.
+/// @brief Normalized pipeline reflection data.
 ///
 /// TODO: Add specialization-constant reflection when pipeline specialization
 /// is introduced.
@@ -110,12 +117,14 @@ struct Reflection {
     std::vector<VertexInputAttribute> VertexInputs  = {};
 };
 
-/// @brief Compiled shader artifact for one pipeline stage.
-struct Program {
-    SPtr<const std::vector<Uint32>> Code           = nullptr;
-    String                          EntryPointName = {};
-    Stage                           Stage          = Stage::Unknown;
-    SPtr<const Reflection>          Reflection     = nullptr;
+/// @brief Compiled shader artifact for one graphics pipeline shader combination.
+struct GraphicsProgram {
+    /// SPIR-V binary is defined as 32-bit words, and Vulkan consumes shader
+    /// module code through a uint32_t pointer rather than a byte buffer.
+    std::vector<Uint32> Code                   = {};
+    String              VertexEntryPointName   = {};
+    String              FragmentEntryPointName = {};
+    Reflection          Reflection             = {};
 };
 
 } // namespace SoulEngine::Shader

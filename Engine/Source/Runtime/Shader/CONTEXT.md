@@ -17,13 +17,16 @@ _Avoid_: RHIStage (deleted — was a 3-value subset), SlangStage (native Slang t
 Minimal scalar-type vocabulary for normalized reflection (`Float32`, `Int32`, `Uint32`).
 
 **ResourceType**:
-Minimal resource categories (`UniformBuffer`, `StorageBuffer`, `SampledTexture`, `StorageTexture`, `Sampler`).
+Minimal resource categories (`ConstantBuffer`, `StorageBuffer`, `SampledTexture`, `StorageTexture`, `Sampler`).
 
 **ValueType**:
 Reflected scalar/vector/matrix shape (scalar type, rows, columns).
 
 **Binding**:
-Reflected shader-visible resource binding (set, binding, type, array count).
+Reflected shader-visible resource binding (parameter path, set, binding, type, array count).
+The path is the full shader parameter path within the reflected program, such as
+`g_frameView.view`, and is the stable host-side lookup key inside one pipeline
+layout. It is not a Resource cache key or backend descriptor name.
 
 **PushConstantRange**:
 Reflected push-constant byte range (offset, size).
@@ -32,17 +35,21 @@ Reflected push-constant byte range (offset, size).
 Reflected vertex attribute requirement (semantic name/index, location, value type). Describes what the shader consumes, not how CPU-side vertex buffers feed it.
 
 **Reflection**:
-Normalized per-program reflection data (bindings, push constants, vertex inputs).
+Normalized pipeline reflection data (bindings, push constants, vertex inputs).
+`GraphicsProgram` owns the linked graphics shader combination's reflection by
+value.
 
-**Program**:
-Compiled shader artifact for one pipeline stage (code blob, entry-point name, stage, reflection). Produced by ShaderCompiler, consumed by RHI.
+**GraphicsProgram**:
+Compiled shader artifact for one graphics pipeline shader combination. It owns
+one linked SPIR-V code blob, the vertex/fragment entry-point names inside that
+blob, and the linked pipeline-level reflection.
 
 ## Relationships
 
-- A **Shader module** type (`Stage`, `Program`, `Reflection`) is defined in `Shader`, referenced by both `ShaderCompiler` and `RHI`.
-- **ShaderCompiler** produces **Program** values through cached and uncached compile paths; `Shader` itself has no compiler dependency.
-- **RHI** consumes **Program** values directly when constructing pipelines and merges their **Reflection** into a pipeline-level **PipelineResourceLayout**.
-- Backends (Slang → `ToShaderStage`, Vulkan → `ToVkShaderStage`) map between `Stage` and their native stage enums.
+- A **Shader module** type (`Stage`, `GraphicsProgram`, `Reflection`) is defined in `Shader`, referenced by both `ShaderCompiler` and `RHI`.
+- **ShaderCompiler** produces **GraphicsProgram** values for graphics pipeline compile requests; `Shader` itself has no compiler dependency.
+- **RHI** consumes **GraphicsProgram** values directly when constructing graphics pipelines. The pipeline-level **Reflection** is already part of the `GraphicsProgram`.
+- Backends map between `Stage` and their native stage enums where stage metadata is still needed.
 
 ## Example dialogue
 
@@ -52,4 +59,3 @@ Compiled shader artifact for one pipeline stage (code blob, entry-point name, st
 ## Flagged ambiguities
 
 - `RHIStage` was a 3-value subset that duplicated `Stage` — removed in ADR 0001. All code now uses `Shader::Stage`.
-- `CompileDesc` lives in ShaderCompiler because it describes a compiler request, not a shared shader artifact.

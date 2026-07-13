@@ -48,23 +48,29 @@ struct PreparedGraphicsPipeline {
     -> std::expected<PreparedGraphicsPipeline, ErrorMessage> {
     namespace SC = SoulEngine::ShaderCompiler;
 
-    auto Vert = SC::ShaderCompiler::Get().GetOrCompile(Req.VertEntry);
-    if (!Vert)
-        return std::unexpected(Vert.error().Append(Format("Graphics pipeline vertex shader '{}'/'{}'",
-                                                          Req.VertEntry.SourcePath.string(),
-                                                          Req.VertEntry.EntryPoint)));
+    const auto&       Cfg = ConfigManager::Get();
+    std::vector<Path> IncludeDirs{
+        Cfg.EngineShadersDirPath(),
+        Cfg.CurrentApplicationDir() / "Shaders",
+    };
 
-    auto Frag = SC::ShaderCompiler::Get().GetOrCompile(Req.FragEntry);
-    if (!Frag)
-        return std::unexpected(Frag.error().Append(Format("Graphics pipeline fragment shader '{}'/'{}'",
-                                                          Req.FragEntry.SourcePath.string(),
-                                                          Req.FragEntry.EntryPoint)));
+    auto Program = SC::ShaderCompiler::Get().CompileGraphics(SC::GraphicsCompileDesc{
+        .Vertex      = Req.VertEntry,
+        .Fragment    = Req.FragEntry,
+        .IncludeDirs = IncludeDirs,
+    });
+    if (!Program) {
+        return std::unexpected(Program.error().Append(Format("Graphics pipeline shaders '{}'/'{}' + '{}'/'{}'",
+                                                             Req.VertEntry.SourcePath.string(),
+                                                             Req.VertEntry.EntryPoint,
+                                                             Req.FragEntry.SourcePath.string(),
+                                                             Req.FragEntry.EntryPoint)));
+    }
 
     return PreparedGraphicsPipeline{
         .Desc =
             RHI::GraphicsPipelineDesc{
-                .VertexProgram     = std::move(*Vert),
-                .FragmentProgram   = std::move(*Frag),
+                .Program           = std::move(*Program),
                 .VertexInputLayout = Req.VertexInputLayout,
                 .Topology          = Req.Topology,
                 .Rasterizer        = Req.Rasterizer,

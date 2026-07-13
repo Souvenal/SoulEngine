@@ -5,6 +5,7 @@ export module Vulkan:Pipeline;
 import vulkan;
 
 import RHI;
+import Shader;
 import std;
 
 import :Types;
@@ -16,11 +17,195 @@ using namespace SoulEngine::Core;
 
 namespace SoulEngine::RHI::Vulkan {
 
+[[nodiscard]] auto ToVkDescriptorType(const Shader::Binding& Binding)
+    -> std::expected<vk::DescriptorType, ErrorMessage> {
+    switch (Binding.Type) {
+    case Shader::ResourceType::ConstantBuffer:
+        return vk::DescriptorType::eUniformBufferDynamic;
+    case Shader::ResourceType::StorageBuffer:
+        return vk::DescriptorType::eStorageBuffer;
+    case Shader::ResourceType::SampledTexture:
+        return vk::DescriptorType::eSampledImage;
+    case Shader::ResourceType::StorageTexture:
+        return vk::DescriptorType::eStorageImage;
+    case Shader::ResourceType::Sampler:
+        return vk::DescriptorType::eSampler;
+    case Shader::ResourceType::Unknown:
+        break;
+    }
+    return std::unexpected(
+        ErrorMessage(Core::Format("Unsupported reflected resource type for '{}'", Binding.ParameterPath)));
+}
+
+[[nodiscard]] auto CreateDescriptorSetLayout(vk::raii::Device&                Device,
+                                             std::span<const Shader::Binding> Bindings,
+                                             const DescriptorLayoutConfig&     LayoutConfig)
+    -> std::expected<vk::raii::DescriptorSetLayout, ErrorMessage> {
+    // Pipeline layouts are generated from linked shader reflection.  The reflected
+    // set/binding numbers are the engine shader ABI:
+    //   Set 0 = frame dynamic uniform buffers
+    //   Set 1 = immutable samplers
+    //   Set 2 = bindless sampled-image table
+    // DescriptorManager allocates the matching long-lived descriptor sets; this
+    // function only creates the pipeline-owned set layout that must be compatible
+    // with those sets.
+    std::vector<vk::DescriptorSetLayoutBinding>     VkBindings;
+    std::vector<vk::DescriptorBindingFlags>         BindingFlags;
+    std::vector<std::optional<vk::Sampler>>         ImmutableSamplerStorage;
+    VkBindings.reserve(Bindings.size());
+    BindingFlags.reserve(Bindings.size());
+    ImmutableSamplerStorage.reserve(Bindings.size());
+
+    bool bHasBindingFlags = false;
+    for (const auto& Binding : Bindings) {
+        auto DescriptorType = ToVkDescriptorType(Binding);
+        if (!DescriptorType)
+            return std::unexpected(DescriptorType.error());
+
+        const bool bUnboundedArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
+        const Uint32 DescriptorCount = bUnboundedArray ? LayoutConfig.MaxTextures : Binding.ArrayCount;
+        if (DescriptorCount == 0)
+            return std::unexpected(
+                ErrorMessage(Core::Format("Reflected binding '{}' has zero descriptor count", Binding.ParameterPath)));
+
+        // Set 1 samplers are immutable: the actual VkSampler handle is baked into
+        // the descriptor set layout and the allocated descriptor set never needs a
+        // descriptor write for that binding.
+        ImmutableSamplerStorage.push_back(std::nullopt);
+        if (Binding.Type == Shader::ResourceType::Sampler && Binding.Set == 1 &&
+            Binding.Binding < LayoutConfig.ImmutableSamplers.size()) {
+            ImmutableSamplerStorage.back() = LayoutConfig.ImmutableSamplers[Binding.Binding];
+        }
+
+        VkBindings.push_back(vk::DescriptorSetLayoutBinding{
+            .binding            = Binding.Binding,
+            .descriptorType     = *DescriptorType,
+            .descriptorCount    = DescriptorCount,
+            .stageFlags         = vk::ShaderStageFlagBits::eAllGraphics,
+            .pImmutableSamplers = ImmutableSamplerStorage.back() ? &*ImmutableSamplerStorage.back() : nullptr,
+        });
+
+        // Runtime-sized sampled texture arrays are lowered to the global bindless
+        // texture table.  Vulkan requires the variable descriptor count and
+        // update-after-bind flags to live in a pNext struct parallel to the layout
+        // bindings, so we keep one flag entry per reflected binding.
+        auto Flags = vk::DescriptorBindingFlags{};
+        if (bUnboundedArray && Binding.Type == Shader::ResourceType::SampledTexture) {
+            Flags = vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+                    vk::DescriptorBindingFlagBits::ePartiallyBound |
+                    vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
+            bHasBindingFlags = true;
+        }
+        BindingFlags.push_back(Flags);
+    }
+
+    if (bHasBindingFlags) {
+        // Any binding using UPDATE_AFTER_BIND requires the layout-level
+        // eUpdateAfterBindPool flag and the per-binding flags pNext chain.
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo FlagsCI{
+            .bindingCount  = static_cast<Uint32>(BindingFlags.size()),
+            .pBindingFlags = BindingFlags.data(),
+        };
+        vk::StructureChain<vk::DescriptorSetLayoutCreateInfo, vk::DescriptorSetLayoutBindingFlagsCreateInfo>
+             LayoutChain = {
+                 {.flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+                  .bindingCount = static_cast<Uint32>(VkBindings.size()),
+                  .pBindings    = VkBindings.data()},
+                 FlagsCI,
+             };
+        auto Result = Device.createDescriptorSetLayout(LayoutChain.get<vk::DescriptorSetLayoutCreateInfo>());
+        if (Result.result != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage("Failed to create reflected descriptor set layout"));
+        return std::move(Result.value);
+    }
+
+    vk::DescriptorSetLayoutCreateInfo LayoutCI{
+        .bindingCount = static_cast<Uint32>(VkBindings.size()),
+        .pBindings    = VkBindings.empty() ? nullptr : VkBindings.data(),
+    };
+    auto Result = Device.createDescriptorSetLayout(LayoutCI);
+    if (Result.result != vk::Result::eSuccess)
+        return std::unexpected(ErrorMessage("Failed to create reflected descriptor set layout"));
+    return std::move(Result.value);
+}
+
+[[nodiscard]] auto CreatePipelineLayout(vk::raii::Device&             Device,
+                                        const Shader::Reflection&     Reflection,
+                                        const DescriptorLayoutConfig& LayoutConfig)
+    -> std::expected<std::pair<std::vector<vk::raii::DescriptorSetLayout>, vk::raii::PipelineLayout>, ErrorMessage> {
+    Uint32 MaxSet = 0;
+    for (const auto& Binding : Reflection.Bindings) {
+        if (Binding.Set > 2)
+            return std::unexpected(ErrorMessage(
+                Core::Format("Reflected binding '{}' uses unsupported set {}", Binding.ParameterPath, Binding.Set)));
+        MaxSet = (std::max)(MaxSet, Binding.Set);
+    }
+
+    std::vector<std::vector<Shader::Binding>> BindingsBySet(MaxSet + 1);
+    for (const auto& Binding : Reflection.Bindings)
+        BindingsBySet[Binding.Set].push_back(Binding);
+    for (auto& SetBindings : BindingsBySet) {
+        std::ranges::sort(SetBindings, {}, &Shader::Binding::Binding);
+    }
+
+    std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
+    SetLayouts.reserve(BindingsBySet.size());
+    for (const auto& SetBindings : BindingsBySet) {
+        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, LayoutConfig);
+        if (!SetLayout)
+            return std::unexpected(SetLayout.error());
+        SetLayouts.push_back(std::move(*SetLayout));
+    }
+
+    std::vector<vk::DescriptorSetLayout> RawSetLayouts;
+    RawSetLayouts.reserve(SetLayouts.size());
+    for (const auto& SetLayout : SetLayouts)
+        RawSetLayouts.push_back(*SetLayout);
+
+    std::vector<vk::PushConstantRange> PushConstants;
+    PushConstants.reserve(Reflection.PushConstants.size());
+    for (const auto& Range : Reflection.PushConstants) {
+        PushConstants.push_back(vk::PushConstantRange{
+            .stageFlags = vk::ShaderStageFlagBits::eAllGraphics,
+            .offset     = Range.Offset,
+            .size       = Range.Size,
+        });
+    }
+
+    vk::PipelineLayoutCreateInfo PipelineLayoutCI{
+        .setLayoutCount         = static_cast<Uint32>(RawSetLayouts.size()),
+        .pSetLayouts            = RawSetLayouts.empty() ? nullptr : RawSetLayouts.data(),
+        .pushConstantRangeCount = static_cast<Uint32>(PushConstants.size()),
+        .pPushConstantRanges    = PushConstants.empty() ? nullptr : PushConstants.data(),
+    };
+    auto PipelineLayout = Device.createPipelineLayout(PipelineLayoutCI);
+    if (PipelineLayout.result != vk::Result::eSuccess)
+        return std::unexpected(ErrorMessage("Failed to create reflected pipeline layout"));
+
+    return std::pair{std::move(SetLayouts), std::move(PipelineLayout.value)};
+}
+
+[[nodiscard]] auto CountDynamicOffsets(const Shader::Reflection& Reflection) -> Uint32 {
+    Uint32 Count = 0;
+    for (const auto& Binding : Reflection.Bindings) {
+        if (Binding.Type == Shader::ResourceType::ConstantBuffer)
+            ++Count;
+    }
+    return Count;
+}
+
+[[nodiscard]] auto MaxPushConstantSize(const Shader::Reflection& Reflection) -> Uint32 {
+    Uint32 Size = 0;
+    for (const auto& Range : Reflection.PushConstants)
+        Size = (std::max)(Size, Range.Offset + Range.Size);
+    return Size;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // GraphicsPipeline — concrete Vulkan pipeline owned by Resource::Manager.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Vulkan graphics pipeline with shared bindless pipeline layout.
+/// Vulkan graphics pipeline with a shader-reflected pipeline layout.
 /// Created via the static `Create` factory. Command lists only observe it.
 class GraphicsPipeline final : public RHI::GraphicsPipeline {
   public:
@@ -30,7 +215,10 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
 
     ~GraphicsPipeline() override {
         if (m_DeletionQueue) {
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Pipeline = m_Pipeline]() {});
+            m_DeletionQueue->Enqueue(GetLastUsageToken(),
+                                     [Pipeline = m_Pipeline,
+                                      PipelineLayout = m_PipelineLayout,
+                                      SetLayouts = m_SetLayouts]() {});
         }
     }
 
@@ -39,13 +227,17 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
 
     /// Create a Vulkan graphics pipeline from an RHI descriptor.
     ///
-    /// Uses the global bindless pipeline layout shared by all pipelines in
-    /// this backend. Shader modules are transient — destroyed when this
-    /// function returns.
-    [[nodiscard]] static auto Create(vk::raii::Device&           Device,
-                                     const GraphicsPipelineDesc& Desc,
-                                     const DescriptorManager&    Manager,
-                                     DeletionQueue& Queue) -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> {
+    /// Uses a pipeline layout generated from pipeline-level shader reflection. Shader
+    /// modules are transient — destroyed when this function returns.
+    [[nodiscard]] static auto Create(vk::raii::Device&             Device,
+                                     const GraphicsPipelineDesc&   Desc,
+                                     const DescriptorLayoutConfig& LayoutConfig,
+                                     DeletionQueue&                Queue)
+        -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> {
+
+        auto LayoutObjects = CreatePipelineLayout(Device, Desc.Program.Reflection, LayoutConfig);
+        if (!LayoutObjects)
+            return std::unexpected(LayoutObjects.error().Append("Failed to create graphics pipeline layout"));
 
         // ── Shader stages ──────────────────────────────────────────────
         auto ShaderStates = GraphicsShaderStates::Create(Device, Desc);
@@ -215,7 +407,7 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
              .pDepthStencilState  = HasDepth ? &DepthStencilCI : nullptr,
              .pColorBlendState    = &BlendCI,
              .pDynamicState       = &DynamicStateCI,
-             .layout              = Manager.GetPipelineLayout(),
+             .layout              = *LayoutObjects->second,
              // using dynamic rendering rather than traditional render pass
              .renderPass          = nullptr},
             RenderingCI};
@@ -227,8 +419,14 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
                 ErrorMessage(Core::Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
         auto Ret             = std::make_unique<GraphicsPipeline>();
-        Ret->m_Pipeline      = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
-        Ret->m_DeletionQueue = &Queue;
+        Ret->m_Pipeline           = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
+        Ret->m_SetLayouts         =
+            std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));
+        Ret->m_PipelineLayout     = std::make_shared<vk::raii::PipelineLayout>(std::move(LayoutObjects->second));
+        Ret->m_DescriptorSetCount = static_cast<Uint32>(Ret->m_SetLayouts->size());
+        Ret->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
+        Ret->m_PushConstantSize   = MaxPushConstantSize(Desc.Program.Reflection);
+        Ret->m_DeletionQueue      = &Queue;
         return Ret;
     }
 
@@ -237,9 +435,30 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
         return *(*m_Pipeline);
     }
 
+    [[nodiscard]] auto GetPipelineLayout() const -> vk::PipelineLayout {
+        return *(*m_PipelineLayout);
+    }
+
+    [[nodiscard]] auto GetDescriptorSetCount() const -> Uint32 {
+        return m_DescriptorSetCount;
+    }
+
+    [[nodiscard]] auto GetDynamicOffsetCount() const -> Uint32 {
+        return m_DynamicOffsetCount;
+    }
+
+    [[nodiscard]] auto GetPushConstantSize() const -> Uint32 {
+        return m_PushConstantSize;
+    }
+
   private:
-    SPtr<vk::raii::Pipeline> m_Pipeline      = nullptr;
-    DeletionQueue*           m_DeletionQueue = nullptr;
+    SPtr<vk::raii::Pipeline>                         m_Pipeline           = nullptr;
+    SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout     = nullptr;
+    SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts         = nullptr;
+    Uint32                                           m_DescriptorSetCount = 0;
+    Uint32                                           m_DynamicOffsetCount = 0;
+    Uint32                                           m_PushConstantSize   = 0;
+    DeletionQueue*                                   m_DeletionQueue      = nullptr;
 };
 
 } // namespace SoulEngine::RHI::Vulkan

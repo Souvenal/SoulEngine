@@ -55,7 +55,7 @@ Before reading, modifying, reviewing, or generating project code, read root `CON
 
 ## Build System Notes
 
-- **Build System:** xmake `set_languages()` needs string quoting (e.g., `set_languages('c++23')`, NOT `set_languages(c++23)`). Clean module cache (`xmake f -c`) when C++ module compilation gives inexplicable errors.
+- **Build System:** xmake `set_languages()` needs string quoting (e.g., `set_languages('c++23')`, NOT `set_languages(c++23)`). Clean generated build artifacts (`xmake clean --all`) when C++ module compilation gives inexplicable errors.
 - **Package Dependencies:** When using local xmake package repos, prefer inline `package()` definitions in `xmake.lua` over `add_repositories()` — xmake may silently ignore local repos for official ones.
 
 ## Vulkan / RHI Conventions

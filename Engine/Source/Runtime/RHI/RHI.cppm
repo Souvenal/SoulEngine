@@ -2,7 +2,6 @@ export module RHI;
 
 export import Core;
 export import :Types;
-export import :Reflection;
 export import :RenderDevice;
 export import :Command;      // CommandList, Pass, Command variant
 export import :UsageVisitor; // UsageVisitor for command resource tracking

@@ -13,23 +13,20 @@ using namespace SoulEngine::Core;
 
 namespace SoulEngine::RHI::Vulkan {
 
+struct DescriptorLayoutConfig {
+    /// Raw sampler handles for Set 1 immutable bindings.
+    /// Index 0 = linear-repeat, Index 1 = linear-repeat-aniso.
+    std::array<vk::Sampler, 2> ImmutableSamplers = {};
+    Uint32                     MaxTextures       = 4096;
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 // DescriptorManager
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Owns global descriptor resources for the Vulkan backend:
-///
-///   Set 0 — per-frame UniformBuffer (one descriptor set per frame-in-flight slot)
-///   Set 1 — Immutable samplers (baked into layout at init time)
-///   Set 2 — SampledImage bindless array (variable count, UPDATE_AFTER_BIND)
-///
-/// Pipelines all share the same 3-set pipeline layout.
-/// Buffer bindless is deliberately omitted — future GPU buffer access uses BDA.
-///
-/// DescriptorSet 0 is duplicated per FramesInFlight so that each frame slot
-/// has its own descriptor set, pre-wired at init time to point at that slot's
-/// GlobalConstantBuffer.  This avoids vkUpdateDescriptorSets on a set that is
-/// still referenced by a pending command buffer (VUID-vkUpdateDescriptorSets-None-03047).
+/// Owns descriptor allocation and long-lived global descriptor sets.
+/// Pipeline-specific descriptor set layouts and pipeline layouts are created
+/// from shader reflection by Vulkan::GraphicsPipeline.
 class DescriptorManager {
   public:
     DescriptorManager() = default;
@@ -44,12 +41,11 @@ class DescriptorManager {
     /// @param FramesInFlight   Number of frame slots.
     /// @param FrameContexts    Per-frame state (must have FramesInFlight entries).
     ///                         GlobalConstantBuffer is wired to Set 0 at init time.
-    /// @param Samplers         Raw sampler handles for Set 1 immutable bindings.
-    ///                         Index 0 = linear-repeat, Index 1 = linear-repeat-aniso.
-    [[nodiscard]] static auto Create(vk::raii::Device&               Device,
-                                     Uint32                          FramesInFlight,
-                                     std::span<FrameContext>         FrameContexts,
-                                     std::span<const vk::Sampler, 2> Samplers)
+    /// @param LayoutConfig     Shared descriptor layout ABI config.
+    [[nodiscard]] static auto Create(vk::raii::Device&             Device,
+                                     Uint32                        FramesInFlight,
+                                     std::span<FrameContext>       FrameContexts,
+                                     const DescriptorLayoutConfig& LayoutConfig)
         -> std::expected<DescriptorManager, ErrorMessage> {
         // ── Verify bindless features are supported ──────────────────────
         const auto& V12 = Capability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
@@ -59,19 +55,20 @@ class DescriptorManager {
             return std::unexpected(
                 ErrorMessage("DescriptorManager: required Vulkan 1.2 bindless features not supported by device"));
 
-        const auto&       VkCfg = ConfigManager::Get().GetConfig().RhiVulkan;
+        if (LayoutConfig.MaxTextures == 0)
+            return std::unexpected(ErrorMessage("DescriptorManager: MaxTextures must be greater than zero"));
+
         DescriptorManager Mgr;
         Mgr.m_Device         = &Device;
-        Mgr.m_MaxTextures    = VkCfg.MaxTextures.value_or(Mgr.m_MaxTextures);
         Mgr.m_FramesInFlight = FramesInFlight;
 
         // ── Descriptor pool ─────────────────────────────────────────────
         // Need FramesInFlight UBO descriptors (one per Set 0) +
         // 2 sampler descriptors (Set 1 immutable) + MaxTextures sampled images (Set 2).
         std::array PoolSizes = {
-            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, FramesInFlight},
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, FramesInFlight},
             vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 2},
-            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, Mgr.m_MaxTextures},
+            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, LayoutConfig.MaxTextures},
         };
         // maxSets = FramesInFlight (Set 0 copies) + 1 (Set 1) + 1 (Set 2)
         Uint32                       MaxSets = FramesInFlight + 2;
@@ -89,11 +86,11 @@ class DescriptorManager {
             return std::unexpected(ErrorMessage("DescriptorManager: failed to create descriptor pool"));
         Mgr.m_Pool = std::move(PoolRes.value);
 
-        // ── Set 0 layout: per-frame UniformBuffer (single, not bindless) ──
+        // ── Set 0 layout: per-frame dynamic UniformBuffer ────────────────
         {
             std::array                        Bindings = {vk::DescriptorSetLayoutBinding{
                 .binding         = 0,
-                .descriptorType  = vk::DescriptorType::eUniformBuffer,
+                .descriptorType  = vk::DescriptorType::eUniformBufferDynamic,
                 .descriptorCount = 1,
                 .stageFlags      = vk::ShaderStageFlagBits::eAllGraphics,
             }};
@@ -111,7 +108,7 @@ class DescriptorManager {
         // Binding 0 = linear-repeat, Binding 1 = linear-repeat-anisotropic.
         // Samplers are baked into the layout and never change at runtime.
         {
-            std::array SamplersArr = {Samplers[0], Samplers[1]};
+            std::array SamplersArr = LayoutConfig.ImmutableSamplers;
             std::array Bindings    = {
                 vk::DescriptorSetLayoutBinding{
                     .binding            = 0,
@@ -143,7 +140,7 @@ class DescriptorManager {
             std::array Bindings     = {vk::DescriptorSetLayoutBinding{
                 .binding         = 0,
                 .descriptorType  = vk::DescriptorType::eSampledImage,
-                .descriptorCount = Mgr.m_MaxTextures,
+                .descriptorCount = LayoutConfig.MaxTextures,
                 .stageFlags      = vk::ShaderStageFlagBits::eAllGraphics,
             }};
             std::array BindingFlags = {vk::DescriptorBindingFlagBits::eUpdateAfterBind |
@@ -153,13 +150,14 @@ class DescriptorManager {
                 .bindingCount  = static_cast<Uint32>(BindingFlags.size()),
                 .pBindingFlags = BindingFlags.data(),
             };
-            vk::DescriptorSetLayoutCreateInfo LayoutCI{
-                .pNext        = &FlagsCI,
-                .flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-                .bindingCount = static_cast<Uint32>(Bindings.size()),
-                .pBindings    = Bindings.data(),
-            };
-            auto Res = Device.createDescriptorSetLayout(LayoutCI);
+            vk::StructureChain<vk::DescriptorSetLayoutCreateInfo, vk::DescriptorSetLayoutBindingFlagsCreateInfo>
+                 LayoutChain = {
+                     {.flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+                      .bindingCount = static_cast<Uint32>(Bindings.size()),
+                      .pBindings    = Bindings.data()},
+                     FlagsCI,
+                 };
+            auto Res = Device.createDescriptorSetLayout(LayoutChain.get<vk::DescriptorSetLayoutCreateInfo>());
             if (Res.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("DescriptorManager: failed to create Set 2 layout"));
             Mgr.m_SetLayout2 = std::move(Res.value);
@@ -195,7 +193,7 @@ class DescriptorManager {
                 .dstBinding      = 0,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
-                .descriptorType  = vk::DescriptorType::eUniformBuffer,
+                .descriptorType  = vk::DescriptorType::eUniformBufferDynamic,
                 .pBufferInfo     = &BufInfo,
             };
             Device.updateDescriptorSets(Write, {});
@@ -219,41 +217,20 @@ class DescriptorManager {
         // ── Allocate Set 2 (bindless textures) ──────────────────────────
         {
             auto                                                 Layout2   = *Mgr.m_SetLayout2;
-            Uint32                                               VarCount2 = Mgr.m_MaxTextures;
+            Uint32                                               VarCount2 = LayoutConfig.MaxTextures;
             vk::DescriptorSetVariableDescriptorCountAllocateInfo VarInfo2{
                 .descriptorSetCount = 1,
                 .pDescriptorCounts  = &VarCount2,
             };
-            vk::DescriptorSetAllocateInfo AllocInfo2{
-                .pNext              = &VarInfo2,
-                .descriptorPool     = *Mgr.m_Pool,
-                .descriptorSetCount = 1,
-                .pSetLayouts        = &Layout2,
-            };
-            auto Res2 = Device.allocateDescriptorSets(AllocInfo2);
+            vk::StructureChain<vk::DescriptorSetAllocateInfo, vk::DescriptorSetVariableDescriptorCountAllocateInfo>
+                 AllocChain2 = {
+                     {.descriptorPool = *Mgr.m_Pool, .descriptorSetCount = 1, .pSetLayouts = &Layout2},
+                     VarInfo2,
+                 };
+            auto Res2 = Device.allocateDescriptorSets(AllocChain2.get<vk::DescriptorSetAllocateInfo>());
             if (Res2.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("DescriptorManager: failed to allocate Set 2"));
             Mgr.m_Set2 = std::move(Res2.value[0]);
-        }
-
-        // ── Shared pipeline layout ───────────────────────────────────────
-        {
-            std::array            DSLs = {*Mgr.m_SetLayout0, *Mgr.m_SetLayout1, *Mgr.m_SetLayout2};
-            vk::PushConstantRange PCRange{
-                .stageFlags = vk::ShaderStageFlagBits::eAllGraphics,
-                .offset     = 0,
-                .size       = 4,
-            };
-            vk::PipelineLayoutCreateInfo BaseLayoutCI{
-                .setLayoutCount         = static_cast<Uint32>(DSLs.size()),
-                .pSetLayouts            = DSLs.data(),
-                .pushConstantRangeCount = 1,
-                .pPushConstantRanges    = &PCRange,
-            };
-            auto LayoutRes = Device.createPipelineLayout(BaseLayoutCI);
-            if (LayoutRes.result != vk::Result::eSuccess)
-                return std::unexpected(ErrorMessage("DescriptorManager: failed to create pipeline layout"));
-            Mgr.m_BaseLayout = std::move(LayoutRes.value);
         }
 
         return Mgr;
@@ -261,24 +238,8 @@ class DescriptorManager {
 
     // ── Binding ─────────────────────────────────────────────────────────
 
-    /// Bind all three descriptor sets to a command buffer for a given frame slot.
-    /// Called by CommandList::Begin().  FrameIndex selects which Set 0 copy
-    /// to bind (pre-wired to that frame's GlobalConstantBuffer at init time).
-    auto BindTo(Uint32 FrameIndex, vk::raii::CommandBuffer& CmdBuf) const -> void {
-        std::array<vk::DescriptorSet, 3> Sets = {*m_Set0s[FrameIndex], *m_Set1, *m_Set2};
-        CmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *m_BaseLayout, 0, Sets, {});
-    }
-
-    // ── Pipeline layout (used internally by GraphicsPipeline::Create) ──
-
-    [[nodiscard]] auto GetPipelineLayout() const -> vk::PipelineLayout {
-        return *m_BaseLayout;
-    }
-
-    // ── Set layouts (for pipeline creation) ────────────────────────────
-
-    [[nodiscard]] auto GetSetLayouts() const -> std::array<vk::DescriptorSetLayout, 3> {
-        return {*m_SetLayout0, *m_SetLayout1, *m_SetLayout2};
+    [[nodiscard]] auto GetDescriptorSets(Uint32 FrameIndex) const -> std::array<vk::DescriptorSet, 3> {
+        return {*m_Set0s[FrameIndex], *m_Set1, *m_Set2};
     }
 
     // ── Texture slot management ────────────────────────────────────────
@@ -317,7 +278,6 @@ class DescriptorManager {
     // ── Members ─────────────────────────────────────────────────────────
 
     vk::raii::Device* m_Device         = nullptr;
-    Uint32            m_MaxTextures    = 4096;
     Uint32            m_FramesInFlight = 2;
 
     // Slot freelist & bump counter (texture only)
@@ -331,7 +291,6 @@ class DescriptorManager {
     std::vector<vk::raii::DescriptorSet> m_Set0s;                ///< One per frame slot
     vk::raii::DescriptorSet              m_Set1       = nullptr; ///< Immutable sampler set
     vk::raii::DescriptorSet              m_Set2       = nullptr; ///< Bindless texture set
-    vk::raii::PipelineLayout             m_BaseLayout = nullptr;
 };
 
 } // namespace SoulEngine::RHI::Vulkan

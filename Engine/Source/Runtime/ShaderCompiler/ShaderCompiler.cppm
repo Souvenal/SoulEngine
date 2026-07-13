@@ -3,12 +3,12 @@
 ///         compiler backends.
 ///
 /// Usage:
-///   auto Result = ShaderCompiler::Get().Compile(Desc);
+///   auto Result = ShaderCompiler::Get().CompileGraphics(Desc);
 ///
 /// Thread safety: each compiler backend has its own mutex.  Compiling
 /// concurrently; same-language compilations are serialized.
 ///
-/// Backend selection: explicit Backend enum in CompileDesc.  File extension
+/// Backend selection: explicit Backend enum in shader compile descriptors. File extension
 /// is validated against the enum value (warning on mismatch) but never overrides it.
 ///
 /// Backend registration: backend modules (e.g., Slang) self-register with
@@ -23,7 +23,6 @@ module;
 export module ShaderCompiler;
 
 export import :Types;
-import :Cache;
 
 import std;
 import Core;
@@ -43,7 +42,7 @@ export namespace SoulEngine::ShaderCompiler {
 ///
 /// Obtain via:
 ///   auto& Compiler = ShaderCompiler::Get();
-///   auto Result    = Compiler.Compile(Desc);
+///   auto Result    = Compiler.CompileGraphics(Desc);
 class ShaderCompiler : public Singleton<ShaderCompiler> {
     friend class Singleton<ShaderCompiler>;
 
@@ -60,31 +59,26 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
     ShaderCompiler(ShaderCompiler&&)                         = delete;
     auto operator=(ShaderCompiler&&) -> ShaderCompiler&      = delete;
 
-    /// @brief Compile shader source to one or more ShaderPrograms.
-    ///
-    /// Selects the backend by Backend enum, initializes it lazily if
-    /// this is the first use, and serializes access to it through its
-    /// per-backend mutex.
-    ///
-    /// Returns one ShaderProgram per reflected entry point.
-    /// When EntryPointName is set, returns exactly one program on success.
-    /// When EntryPointName is empty, returns all reflected entry points
-    /// sharing the same compiled bytecode.
-    [[nodiscard]] auto Compile(const CompileDesc& Desc) -> std::expected<std::vector<Shader::Program>, ErrorMessage> {
-        // Validate path/backend consistency (warning-only), then dispatch.
-        ValidateBackendConsistency(Desc);
+    /// @brief Compile a graphics-pipeline shader combination and pipeline-level reflection.
+    [[nodiscard]] auto CompileGraphics(const GraphicsCompileDesc& Desc)
+        -> std::expected<Shader::GraphicsProgram, ErrorMessage> {
+        ValidateEntryBackendConsistency(Desc.Vertex);
+        ValidateEntryBackendConsistency(Desc.Fragment);
+        if (Desc.Vertex.Backend != Desc.Fragment.Backend) {
+            return std::unexpected(ErrorMessage("Graphics shader compile requires matching vertex/fragment backends"));
+        }
 
-        return CompileWithBackend(Desc.Backend, Desc);
-    }
+        auto&           Slot = m_Backends[static_cast<std::size_t>(Desc.Vertex.Backend)];
+        std::lock_guard Lock(Slot.Mutex);
 
-    /// @brief Return a compiled shader program through the in-memory cache.
-    [[nodiscard]] auto GetOrCompile(const ShaderEntry& Entry) -> std::expected<Shader::Program, ErrorMessage> {
-        return Cache::Get().GetOrCompile(Entry, [this](const CompileDesc& Desc) { return Compile(Desc); });
-    }
+        if (!Slot.Instance) {
+            auto Inst = CreateBackend(Desc.Vertex.Backend);
+            if (!Inst)
+                return std::unexpected(std::move(Inst.error()));
+            Slot.Instance = std::move(*Inst);
+        }
 
-    /// @brief Clear cached shader programs.
-    auto ClearCache() -> void {
-        Cache::Get().Clear();
+        return Slot.Instance->CompileGraphics(Desc);
     }
 
   private:
@@ -93,46 +87,21 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
 
     // ── Backend router ──────────────────────────────────────────────
 
-    /// When Source is a filesystem Path, check that its extension is
-    /// consistent with the canonical one for Desc.Backend.  On mismatch
-    /// log a warning but still use the Backend enum as the source of truth.
-    /// Inline-source (StringView) mode has no extension to validate.
-    auto ValidateBackendConsistency(const CompileDesc& Desc) -> void {
-        auto* P = std::get_if<Path>(&Desc.Source);
-        if (!P)
-            return; // inline source — nothing to validate
-
+    auto ValidateEntryBackendConsistency(const ShaderEntry& Entry) -> void {
         auto ExpectedExt = StringView{};
-        switch (Desc.Backend) {
+        switch (Entry.Backend) {
         case Backend::Slang:
             ExpectedExt = ".slang";
             break;
         default:
             break;
         }
-        if (!ExpectedExt.empty() && P->extension() != ExpectedExt)
+        if (!ExpectedExt.empty() && Entry.SourcePath.extension() != ExpectedExt)
             LogWarning("Source '{}' has extension '{}', expected '{}' for Backend::{}",
-                       P->string(),
-                       P->extension().string(),
+                       Entry.SourcePath.string(),
+                       Entry.SourcePath.extension().string(),
                        ExpectedExt,
-                       magic_enum::enum_name(Desc.Backend));
-    }
-
-    /// Ensure the backend for a language is initialized (lazy) and
-    /// forward the compile request under its per-backend lock.
-    [[nodiscard]] auto CompileWithBackend(Backend Backend, const CompileDesc& Desc)
-        -> std::expected<std::vector<Shader::Program>, ErrorMessage> {
-        auto&           Slot = m_Backends[static_cast<std::size_t>(Backend)];
-        std::lock_guard Lock(Slot.Mutex);
-
-        if (!Slot.Instance) {
-            auto Inst = CreateBackend(Backend);
-            if (!Inst)
-                return std::unexpected(std::move(Inst.error()));
-            Slot.Instance = std::move(*Inst);
-        }
-
-        return Slot.Instance->Compile(Desc);
+                       magic_enum::enum_name(Entry.Backend));
     }
 
     /// Create a new backend instance via the factory.

@@ -279,6 +279,15 @@ class VertexBuffer final : public RHI::VertexBuffer {
                                      TransferCompletionQueue&     CompletionQueue,
                                      DeletionQueue&               DelQueue)
         -> std::expected<RHI::VertexBufferCreateResult, ErrorMessage> {
+        if (!Desc.Data)
+            return std::unexpected(ErrorMessage("VertexBuffer::Create: data pointer is null"));
+        if (Desc.VertexCount == 0)
+            return std::unexpected(ErrorMessage("VertexBuffer::Create: vertex count is zero"));
+        if (Desc.VertexCount > std::numeric_limits<Uint32>::max())
+            return std::unexpected(ErrorMessage("VertexBuffer::Create: vertex count exceeds Vulkan draw limit"));
+        if (Desc.Stride == 0)
+            return std::unexpected(ErrorMessage("VertexBuffer::Create: vertex stride is zero"));
+
         Uint64 Size  = Desc.VertexCount * Desc.Stride;
         Uint64 VCnt  = Desc.VertexCount;
         Uint32 Strid = Desc.Stride;
@@ -366,6 +375,13 @@ class IndexBuffer final : public RHI::IndexBuffer {
                                      TransferCompletionQueue&    CompletionQueue,
                                      DeletionQueue&              DelQueue)
         -> std::expected<RHI::IndexBufferCreateResult, ErrorMessage> {
+        if (!Desc.Data)
+            return std::unexpected(ErrorMessage("IndexBuffer::Create: data pointer is null"));
+        if (Desc.IndexCount == 0)
+            return std::unexpected(ErrorMessage("IndexBuffer::Create: index count is zero"));
+        if (Desc.IndexCount > std::numeric_limits<Uint32>::max())
+            return std::unexpected(ErrorMessage("IndexBuffer::Create: index count exceeds Vulkan draw limit"));
+
         Uint64 IndexCount = Desc.IndexCount;
         Uint64 Size       = IndexCount * 4ULL;
 

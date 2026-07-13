@@ -10,6 +10,34 @@ export import std;
 
 using namespace SoulEngine::Core;
 
+namespace SoulEngine::Resource {
+
+[[nodiscard]] auto ValidateVertexBufferDesc(const RHI::VertexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+    if (!Desc.Data)
+        return std::unexpected(ErrorMessage("Vertex buffer data pointer is null"));
+    if (Desc.VertexCount == 0)
+        return std::unexpected(ErrorMessage("Vertex buffer count is zero"));
+    if (Desc.VertexCount > std::numeric_limits<Uint32>::max())
+        return std::unexpected(ErrorMessage("Vertex buffer count exceeds draw limit"));
+    if (Desc.Stride == 0)
+        return std::unexpected(ErrorMessage("Vertex buffer stride is zero"));
+
+    return {};
+}
+
+[[nodiscard]] auto ValidateIndexBufferDesc(const RHI::IndexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+    if (!Desc.Data)
+        return std::unexpected(ErrorMessage("Index buffer data pointer is null"));
+    if (Desc.IndexCount == 0)
+        return std::unexpected(ErrorMessage("Index buffer count is zero"));
+    if (Desc.IndexCount > std::numeric_limits<Uint32>::max())
+        return std::unexpected(ErrorMessage("Index buffer count exceeds draw limit"));
+
+    return {};
+}
+
+} // namespace SoulEngine::Resource
+
 export namespace SoulEngine::Resource {
 
 [[nodiscard]] auto SubmitVertexBufferRequest(ResourceContext& Context, String Key, const RHI::VertexBufferDesc& Desc)
@@ -18,6 +46,12 @@ export namespace SoulEngine::Resource {
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
+
+    if (auto R = ValidateVertexBufferDesc(Desc); !R) {
+        PublishResourceFailed<RHI::VertexBuffer>(
+            Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid vertex buffer request '{}'", Key)));
+        return Handle;
+    }
 
     LogDebug("Vertex buffer requested '{}'", Key);
 
@@ -68,6 +102,12 @@ export namespace SoulEngine::Resource {
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
+
+    if (auto R = ValidateIndexBufferDesc(Desc); !R) {
+        PublishResourceFailed<RHI::IndexBuffer>(
+            Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid index buffer request '{}'", Key)));
+        return Handle;
+    }
 
     LogDebug("Index buffer requested '{}'", Key);
 

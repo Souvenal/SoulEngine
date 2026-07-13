@@ -1,28 +1,31 @@
 -- Test helper function to create test targets for each module
+-- C++ module BMI/object ownership is target-scoped in xmake. Keep every test file
+-- as a real binary target instead of registering many files on one aggregate test
+-- target; otherwise stale or mixed module artifacts can be reused across tests.
 function test_module(module_name, opt)
     opt = opt or {}
 
-    local test_target_name = "TestsFor" .. module_name
-    local deps = opt.additional_deps or {}
+    local deps = opt.deps or opt.additional_deps or {}
     table.insert(deps, module_name)
-    local packages = opt.additional_packages or {}
+    local packages = opt.packages or opt.additional_packages or {}
     table.insert(packages, "gtest")
     local tests_dir = path.absolute(path.join(os.scriptdir(), "Tests"))
 
-    target(test_target_name)
-        set_default(false)
-        add_deps(table.unpack(deps))
-
-        for _, testfile in ipairs(os.files("Tests/**.cpp")) do
-            add_tests(path.basename(testfile), {
+    for _, testfile in ipairs(os.files("Tests/**.cpp")) do
+        local test_target_name = "TestsFor" .. module_name .. "_" .. path.basename(testfile)
+        target(test_target_name)
+            set_kind("binary")
+            set_default(false)
+            add_deps(table.unpack(deps))
+            add_packages(table.unpack(packages))
+            add_files(testfile)
+            add_tests("default", {
                 group = module_name,
-                files = testfile,
-                packages = packages,
                 runenvs = {
                     SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
                 }
             })
-        end
+    end
 end
 
 includes("Core")

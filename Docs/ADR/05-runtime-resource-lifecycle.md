@@ -268,10 +268,11 @@ non-frame-path workflows.
 
 `RHI::CommandList` stores only observer pointers:
 
-- pipeline commands store `RHI::GraphicsPipeline*`;
-- vertex/index buffer commands store `RHI::VertexBuffer*` and
-  `RHI::IndexBuffer*`;
-- material data stores `RHI::SampledTexture*`;
+- pipeline binding commands store `RHI::GraphicsPipeline*`;
+- draw commands store the expected `RHI::GraphicsPipeline*` for validation
+  and draw-parameter lowering, plus `RHI::VertexBuffer*`, optional
+  `RHI::IndexBuffer*`, and draw parameters;
+- draw parameters store `RHI::SampledTexture*`;
 - attachment descriptors store `RHI::RenderTarget*`.
 
 Those pointers are valid only because the render packet owns a
@@ -284,7 +285,12 @@ auto* Texture = Result.Resources.Acquire(TextureRef);
 if (!Texture)
     return Result;
 
-Pass.SetDrawMaterialData(RHI::DrawMaterialData{.TestTexture = Texture});
+Pass.SetGraphicsPipeline(Pipeline);
+Pass.DrawIndexed(Pipeline,
+                 VertexBuffer,
+                 IndexBuffer,
+                 RHI::DrawParameter{.TestTexture = Texture},
+                 IndexCount);
 ```
 
 `FrameResourceScope::Acquire(ref)`:

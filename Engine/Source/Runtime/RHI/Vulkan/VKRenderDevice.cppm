@@ -131,11 +131,15 @@ class RenderDevice final : public RHI::RenderDevice {
         // ── Immutable samplers ──────────────────────────────────────────────
         if (auto Res = CreateSamplers(); !Res.has_value())
             return std::unexpected(Res.error());
+        m_DescriptorLayoutConfig = DescriptorLayoutConfig{
+            .ImmutableSamplers = {*m_Samplers[0], *m_Samplers[1]},
+            .MaxTextures       = ConfigManager::Get().GetConfig().RhiVulkan.MaxTextures.value_or(4096),
+        };
 
         // ── Global descriptor manager ─────────────────────────────────────
         {
-            std::array<vk::Sampler, 2> RawSamplers = {*m_Samplers[0], *m_Samplers[1]};
-            auto Heap = DescriptorManager::Create(m_Device, m_FramesInFlight, m_FrameContext, RawSamplers);
+            auto Heap =
+                DescriptorManager::Create(m_Device, m_FramesInFlight, m_FrameContext, m_DescriptorLayoutConfig);
             if (!Heap)
                 return std::unexpected(Heap.error().Append("DescriptorManager creation failed"));
             m_DescriptorManager = std::make_unique<DescriptorManager>(std::move(*Heap));
@@ -296,7 +300,7 @@ class RenderDevice final : public RHI::RenderDevice {
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
-        return GraphicsPipeline::Create(m_Device, Desc, *m_DescriptorManager, m_DeletionQueue);
+        return GraphicsPipeline::Create(m_Device, Desc, m_DescriptorLayoutConfig, m_DeletionQueue);
     }
 
     [[nodiscard]] auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
@@ -656,6 +660,43 @@ class RenderDevice final : public RHI::RenderDevice {
             if (!Pass.Desc.ColorAttachment.TexturePtr)
                 return std::unexpected(
                     ErrorMessage("Execute: pass color attachment must be an explicit render target"));
+
+            const RHI::GraphicsPipeline* BoundPipeline = nullptr;
+            for (const auto& Cmd : Pass.Commands) {
+                auto ValidateCommand = [&BoundPipeline](const auto& DrawCmd) -> std::expected<void, ErrorMessage> {
+                    using CommandType = std::decay_t<decltype(DrawCmd)>;
+
+                    if constexpr (std::is_same_v<CommandType, RHI::SetGraphicsPipelineCmd>) {
+                        if (!DrawCmd.PipelinePtr)
+                            return std::unexpected(
+                                ErrorMessage("Execute: SetGraphicsPipeline is missing graphics pipeline"));
+                        BoundPipeline = DrawCmd.PipelinePtr;
+                    } else if constexpr (std::is_same_v<CommandType, RHI::DrawIndexedCmd>) {
+                        if (!DrawCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: indexed draw is missing graphics pipeline"));
+                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage(
+                                "Execute: indexed draw pipeline does not match the currently bound graphics pipeline"));
+                        if (!DrawCmd.VertexBufferPtr)
+                            return std::unexpected(ErrorMessage("Execute: indexed draw is missing vertex buffer"));
+                        if (!DrawCmd.IndexBufferPtr)
+                            return std::unexpected(ErrorMessage("Execute: indexed draw is missing index buffer"));
+                    } else if constexpr (std::is_same_v<CommandType, RHI::DrawCmd>) {
+                        if (!DrawCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: draw is missing graphics pipeline"));
+                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                            return std::unexpected(
+                                ErrorMessage("Execute: draw pipeline does not match the currently bound graphics pipeline"));
+                        if (!DrawCmd.VertexBufferPtr)
+                            return std::unexpected(ErrorMessage("Execute: draw is missing vertex buffer"));
+                    }
+
+                    return {};
+                };
+
+                if (auto R = std::visit(ValidateCommand, Cmd); !R)
+                    return std::unexpected(R.error());
+            }
         }
 
         return {};
@@ -788,15 +829,13 @@ class RenderDevice final : public RHI::RenderDevice {
                 return std::unexpected(
                     ErrorMessage(Core::Format("Execute: secondary CB begin failed: {}", vk::to_string(R))));
 
-            m_DescriptorManager->BindTo(m_CurrentFrame, SecBuf);
-
             // Begin rendering scope from Pass desc
             {
                 auto           ImageStateCopy = m_CommittedImageStates;
                 CommandVisitor Visitor{
                     .Buf            = SecBuf,
                     .LocalStates    = ImageStateCopy,
-                    .PipelineLayout = m_DescriptorManager->GetPipelineLayout(),
+                    .DescriptorSets = m_DescriptorManager->GetDescriptorSets(m_CurrentFrame),
                 };
                 Visitor.BeginPass(Pass.Desc);
                 for (const auto& Cmd : Pass.Commands)
@@ -899,6 +938,7 @@ class RenderDevice final : public RHI::RenderDevice {
     std::array<vk::raii::Sampler, 2> m_Samplers = {nullptr, nullptr};
 
     // ── Global descriptor manager ─────────────────────────────────────────
+    DescriptorLayoutConfig        m_DescriptorLayoutConfig = {};
     Core::UPtr<DescriptorManager> m_DescriptorManager = nullptr;
 
     // ── Barrier state tracking ───────────────────────────────────────────

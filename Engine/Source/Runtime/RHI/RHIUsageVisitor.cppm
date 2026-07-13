@@ -16,21 +16,27 @@ export namespace SoulEngine::RHI {
 struct UsageVisitor {
     GpuCompletionToken CurrentToken = {};
 
-    auto operator()(const SetPipelineCmd& Cmd) -> void {
-        if (Cmd.Pipeline)
-            Cmd.Pipeline->UpdateLastUsageToken(CurrentToken);
+    auto operator()(const SetGraphicsPipelineCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
     }
-    auto operator()(const BindVertexBufferCmd& Cmd) -> void {
-        if (Cmd.Buffer)
-            Cmd.Buffer->UpdateLastUsageToken(CurrentToken);
+    auto operator()(const DrawIndexedCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
+        if (Cmd.VertexBufferPtr)
+            Cmd.VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        if (Cmd.IndexBufferPtr)
+            Cmd.IndexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        if (Cmd.Parameters.TestTexture)
+            Cmd.Parameters.TestTexture->UpdateLastUsageToken(CurrentToken);
     }
-    auto operator()(const BindIndexBufferCmd& Cmd) -> void {
-        if (Cmd.Buffer)
-            Cmd.Buffer->UpdateLastUsageToken(CurrentToken);
-    }
-    auto operator()(const SetDrawMaterialDataCmd& Cmd) -> void {
-        if (Cmd.Material.TestTexture)
-            Cmd.Material.TestTexture->UpdateLastUsageToken(CurrentToken);
+    auto operator()(const DrawCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
+        if (Cmd.VertexBufferPtr)
+            Cmd.VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        if (Cmd.Parameters.TestTexture)
+            Cmd.Parameters.TestTexture->UpdateLastUsageToken(CurrentToken);
     }
 
     // Commands that don't reference GPU resources — explicit empty overloads
@@ -38,8 +44,6 @@ struct UsageVisitor {
     auto operator()(const SetFullViewportCmd&) -> void {}
     auto operator()(const SetScissorCmd&) -> void {}
     auto operator()(const SetFullScissorRectCmd&) -> void {}
-    auto operator()(const DrawIndexedCmd&) -> void {}
-    auto operator()(const DrawCmd&) -> void {}
 
     /// @brief Stamp usage tokens on render targets referenced by the pass
     ///        descriptor. Called once per pass, before visiting commands.

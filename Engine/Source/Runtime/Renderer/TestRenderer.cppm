@@ -191,11 +191,8 @@ class TestRenderer final : public IRenderer {
 
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
-        Pass.SetPipeline(Pipeline);
-        Pass.BindVertexBuffer(VB);
-        Pass.BindIndexBuffer(IB);
-        Pass.SetDrawMaterialData(RHI::DrawMaterialData{.TestTexture = Texture});
-        Pass.DrawIndexed(static_cast<Uint32>(kQuadIndices.size()));
+        Pass.SetGraphicsPipeline(Pipeline);
+        Pass.DrawIndexed(Pipeline, VB, IB, RHI::DrawParameter{.TestTexture = Texture});
 
         Result.CmdList.Passes.push_back(std::move(Pass));
 

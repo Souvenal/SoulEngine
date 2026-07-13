@@ -1,7 +1,7 @@
 /// Vulkan shader reflection helpers and shader-module management.
 ///
-/// Converts RHI shader types (Shader::Stage, Shader::ResourceType, …) to
-/// their Vulkan equivalents, and provides CreateShaderStages for turning a
+/// Converts RHI shader resource and vertex-input types to their Vulkan
+/// equivalents, and provides CreateShaderStages for turning a
 /// GraphicsPipelineDesc into live VkShaderModule + PipelineShaderStageCreateInfo
 /// arrays.
 ///
@@ -24,60 +24,15 @@ using namespace SoulEngine::Core;
 namespace SoulEngine::RHI::Vulkan {
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Stage / resource-type conversion
+// Resource-type conversion
 // ═════════════════════════════════════════════════════════════════════════════
-
-[[nodiscard]] auto ToVkShaderStage(Shader::Stage Stage) -> vk::ShaderStageFlagBits {
-    switch (Stage) {
-    case Shader::Stage::Unknown:
-        return vk::ShaderStageFlagBits::eAll;
-    case Shader::Stage::Vertex:
-        return vk::ShaderStageFlagBits::eVertex;
-    case Shader::Stage::Fragment:
-        return vk::ShaderStageFlagBits::eFragment;
-    case Shader::Stage::Compute:
-        return vk::ShaderStageFlagBits::eCompute;
-    case Shader::Stage::Hull:
-        return vk::ShaderStageFlagBits::eTessellationControl;
-    case Shader::Stage::Domain:
-        return vk::ShaderStageFlagBits::eTessellationEvaluation;
-    case Shader::Stage::Geometry:
-        return vk::ShaderStageFlagBits::eGeometry;
-    case Shader::Stage::Mesh:
-        return vk::ShaderStageFlagBits::eMeshEXT;
-    case Shader::Stage::Amplification:
-        return vk::ShaderStageFlagBits::eTaskEXT;
-    }
-    return vk::ShaderStageFlagBits::eAll; // unreachable for valid enum values
-}
-
-[[nodiscard]] auto ToVkShaderStages(ShaderStageMask StageMask) -> vk::ShaderStageFlags {
-    vk::ShaderStageFlags Flags{};
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Vertex)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eVertex;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Fragment)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eFragment;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Compute)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eCompute;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Hull)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eTessellationControl;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Domain)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eTessellationEvaluation;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Geometry)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eGeometry;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Mesh)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eMeshEXT;
-    if ((static_cast<Uint32>(StageMask) & static_cast<Uint32>(ShaderStageMask::Amplification)) != 0)
-        Flags |= vk::ShaderStageFlagBits::eTaskEXT;
-    return Flags;
-}
 
 [[nodiscard]] auto ToVkDescriptorType(Shader::ResourceType ResourceType)
     -> std::expected<vk::DescriptorType, ErrorMessage> {
     switch (ResourceType) {
     case Shader::ResourceType::Unknown:
         return std::unexpected(ErrorMessage("Cannot lower Unknown shader resource type to Vulkan descriptor type"));
-    case Shader::ResourceType::UniformBuffer:
+    case Shader::ResourceType::ConstantBuffer:
         return vk::DescriptorType::eUniformBuffer;
     case Shader::ResourceType::StorageBuffer:
         return vk::DescriptorType::eStorageBuffer;
@@ -178,17 +133,14 @@ namespace SoulEngine::RHI::Vulkan {
 }
 
 auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
-    if (!Desc.VertexProgram.Reflection)
-        return;
-
-    const auto& ReflectedInputs = Desc.VertexProgram.Reflection->VertexInputs;
+    const auto& ReflectedInputs = Desc.Program.Reflection.VertexInputs;
     if (ReflectedInputs.empty())
         return;
 
     const auto& ExplicitLayout = Desc.VertexInputLayout;
     if (ExplicitLayout.Attributes.empty()) {
         LogWarning("Vertex shader '{}' reflects {} vertex input(s), but pipeline has no explicit vertex input layout",
-                   Desc.VertexProgram.EntryPointName,
+                   Desc.Program.VertexEntryPointName,
                    ReflectedInputs.size());
         return;
     }
@@ -196,7 +148,7 @@ auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
     for (const auto& Attr : ReflectedInputs) {
         if (!Attr.Location) {
             LogWarning("Vertex shader '{}' input '{}{}' has no reflected location; explicit layout validation skipped",
-                       Desc.VertexProgram.EntryPointName,
+                       Desc.Program.VertexEntryPointName,
                        Attr.SemanticName,
                        Attr.SemanticIndex);
             continue;
@@ -209,7 +161,7 @@ auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
                                });
         if (It == ExplicitLayout.Attributes.end()) {
             LogWarning("Vertex shader '{}' expects input at location {}, but explicit vertex layout does not provide it",
-                       Desc.VertexProgram.EntryPointName,
+                       Desc.Program.VertexEntryPointName,
                        *Attr.Location);
             continue;
         }
@@ -219,7 +171,7 @@ auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
         if (!ExpectedFormat || !ActualFormat) {
             LogWarning("Vertex shader '{}' location {} format validation skipped: reflected format ok={}, explicit "
                        "format ok={}",
-                       Desc.VertexProgram.EntryPointName,
+                       Desc.Program.VertexEntryPointName,
                        *Attr.Location,
                        ExpectedFormat.has_value(),
                        ActualFormat.has_value());
@@ -228,7 +180,7 @@ auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
 
         if (*ExpectedFormat != *ActualFormat) {
             LogWarning("Vertex shader '{}' location {} expects format {}, but explicit vertex layout provides {}",
-                       Desc.VertexProgram.EntryPointName,
+                       Desc.Program.VertexEntryPointName,
                        *Attr.Location,
                        vk::to_string(*ExpectedFormat),
                        vk::to_string(*ActualFormat));
@@ -239,7 +191,7 @@ auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
         if (FindReflectedVertexInputByLocation(ReflectedInputs, Attr.Location) == nullptr) {
             LogWarning("Explicit vertex layout provides location {}, but vertex shader '{}' does not consume it",
                        Attr.Location,
-                       Desc.VertexProgram.EntryPointName);
+                       Desc.Program.VertexEntryPointName);
         }
     }
 }
@@ -264,35 +216,34 @@ class GraphicsShaderStates {
         -> std::expected<GraphicsShaderStates, ErrorMessage> {
         GraphicsShaderStates Result;
 
-        auto AddShaderStage = [&](const Shader::Program& Program) -> std::expected<void, ErrorMessage> {
-            const auto&                CodeVec = *Program.Code;
-            vk::ShaderModuleCreateInfo ModuleCI{
-                .codeSize = CodeVec.size() * sizeof(Uint32),
-                .pCode    = CodeVec.data(),
-            };
-            auto [Res, Module] = Device.createShaderModule(ModuleCI);
-            if (Res != vk::Result::eSuccess) {
-                return std::unexpected(ErrorMessage(Core::Format(
-                    "Failed to create shader module for '{}': {}", Program.EntryPointName, vk::to_string(Res))));
-            }
+        if (Desc.Program.Code.empty())
+            return std::unexpected(ErrorMessage("Graphics shader program has no SPIR-V code"));
 
-            Result.m_Modules.push_back(std::move(Module));
-            auto StageCI = vk::PipelineShaderStageCreateInfo{
-                .stage  = ToVkShaderStage(Program.Stage),
-                .module = *Result.m_Modules.back(),
-                .pName  = Program.EntryPointName.c_str(),
-            };
-            Result.StageInfos.push_back(StageCI);
-            return {};
+        const auto& CodeVec = Desc.Program.Code;
+        vk::ShaderModuleCreateInfo ModuleCI{
+            .codeSize = CodeVec.size() * sizeof(Uint32),
+            .pCode    = CodeVec.data(),
         };
-
-        if (auto R = AddShaderStage(Desc.VertexProgram); !R)
-            return std::unexpected(R.error());
-
-        if (Desc.FragmentProgram) {
-            if (auto R = AddShaderStage(*Desc.FragmentProgram); !R)
-                return std::unexpected(R.error());
+        auto [Res, Module] = Device.createShaderModule(ModuleCI);
+        if (Res != vk::Result::eSuccess) {
+            return std::unexpected(ErrorMessage(Core::Format(
+                "Failed to create shader module for graphics program '{} + {}': {}",
+                Desc.Program.VertexEntryPointName,
+                Desc.Program.FragmentEntryPointName,
+                vk::to_string(Res))));
         }
+
+        Result.m_Modules.push_back(std::move(Module));
+        Result.StageInfos.push_back(vk::PipelineShaderStageCreateInfo{
+            .stage  = vk::ShaderStageFlagBits::eVertex,
+            .module = *Result.m_Modules.back(),
+            .pName  = Desc.Program.VertexEntryPointName.c_str(),
+        });
+        Result.StageInfos.push_back(vk::PipelineShaderStageCreateInfo{
+            .stage  = vk::ShaderStageFlagBits::eFragment,
+            .module = *Result.m_Modules.back(),
+            .pName  = Desc.Program.FragmentEntryPointName.c_str(),
+        });
 
         // ── Vertex input state ──────────────────────────────────────────────────
         // The explicit CPU vertex-buffer layout is authoritative. Shader

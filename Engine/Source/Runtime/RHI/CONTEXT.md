@@ -9,9 +9,9 @@ self-registering factory pattern.
 
 | Term | Definition |
 |------|------------|
-| **CommandList** | Data struct containing `std::vector<Pass>`, `GlobalConstantData`, and an optional `PresentSource` render target. Produced by `Renderer::Render()`, consumed by `RenderDevice::Execute()`. Commands are `std::variant` types (`SetPipelineCmd`, `BindVertexBufferCmd`, etc.) carrying non-owning observer pointers to RHI resources. |
-| **Pass** | One rendering scope with `RenderingDesc` and commands inside. Backend auto-wraps in begin/end rendering. Pass has builder methods (`SetPipeline`, `BindVertexBuffer`, `DrawIndexed`). |
-| **Draw material data** | Per-draw shader parameter payload emitted as an RHI command before a draw call. |
+| **CommandList** | Data struct containing `std::vector<Pass>`, `GlobalConstantData`, and an optional `PresentSource` render target. Produced by `Renderer::Render()`, consumed by `RenderDevice::Execute()`. Pipeline binding is explicit, while draw commands repeat the expected pipeline pointer for backend validation and draw-parameter lowering that needs pipeline layout information. |
+| **Pass** | One rendering scope with `RenderingDesc` and commands inside. Backend auto-wraps in begin/end rendering. A pass may contain multiple pipelines because the pass models attachment/rendering scope, not pipeline scope. |
+| **Draw parameter** | Per-draw shader parameter payload stored on the draw command. Backends may lower it to push constants, dynamic uniform data, or descriptors using the draw command's expected graphics pipeline layout. |
 | **Resource usage tracking** | RHI-command-level enumeration of GPU resources referenced by a command list submission. |
 | **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `Init(GLFWwindow*)` is pure virtual — backends do setup there, not in the constructor. Process-wide singleton: `RenderDevice::Create(Window)` bootstraps, `RenderDevice::Get()` accesses, `RenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
 | **VertexBuffer** | Runtime polymorphic base in `SoulEngine::RHI`. Immutable after creation. `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (`UPtr` buffer + upload completion token) so the Resource layer can own the payload and track when staging → device copies complete. |
@@ -23,8 +23,8 @@ self-registering factory pattern.
 | **BufferUsage** | Bitmask enum for buffer creation hints. Not a type — backend uses it to decide VkBufferUsageFlags at allocation time. |
 | **Format, BufferUsage etc.** | Enums and trivial descriptor structs in `SoulEngine::RHI`. |
 | **ResourceState** | Per-resource GPU state for barrier tracking. Backend maintains implicit last-known state per handle. |
-| **Program** | Shader artifact consumed directly by pipeline descriptors; RHI does not wrap it in an extra shader-stage descriptor when no RHI-only fields are needed. Refers to `Shader::Program`. |
-| **PipelineResourceLayout** | Backend-agnostic description of the shader-visible resource interface for a pipeline, derived by merging per-shader reflection and used as the cache/share key for backend-native layout objects instead of exposing a Vulkan-specific pipeline layout type. |
+| **GraphicsProgram** | Shader artifact consumed directly by graphics pipeline descriptors. It owns the selected stage programs plus pipeline-level reflection for the linked shader combination. Refers to `Shader::GraphicsProgram`. |
+| **Pipeline reflection** | Backend-agnostic shader-visible resource interface for one linked graphics pipeline shader combination. It records reflected parameter paths plus set/binding/type metadata in `Shader::Reflection`. Backend-native pipeline-layout objects are owned by backend pipeline resources rather than exposed through public RHI. |
 | **Vertex input layout** | CPU/feed-side description of how one vertex buffer maps onto the shader's reflected vertex input interface. This layout is explicit and authoritative for stride/offset/format; shader reflection is used only for validation warnings. |
 | **GPU completion token** | Public opaque RHI type representing the completion condition for submitted GPU work. Resource code may hold the token and query completion through RHI, but must not define the token or interpret backend-specific timeline, fence, or sync-object details. |
 | **Transfer upload completion** | GPU completion token produced by backend upload work submitted through the dedicated transfer path. Async Resource v1 uses this for sampled texture and buffer upload readiness; graphics pipelines normally do not produce one. |
@@ -65,8 +65,9 @@ EngineLoop::Shutdown()
 
 ## Relationships
 
-- `GraphicsPipelineDesc` accepts `Shader::Program` directly; stage-combination validation is deferred and should be defined at the RHI contract level before backend pipeline creation.
-- `PipelineResourceLayout` is derived inside the RHI/backend layer by merging normalized per-program shader reflection; it is not yet exposed as a public handle and should carry a TODO when implemented.
+- `GraphicsPipelineDesc` accepts `Shader::GraphicsProgram` directly; stage-combination validation is deferred and should be defined at the RHI contract level before backend pipeline creation.
+- Pipeline reflection is produced by ShaderCompiler for the linked graphics shader combination; it is not exposed as a public RHI handle. Public RHI callers bind resources by semantic command data or future shader-parameter paths, never by Vulkan set/binding.
+- Reflected binding paths identify shader parameters within one pipeline layout. They must not be conflated with Resource cache keys or debug names: binding connects a shader parameter path to an RHI resource observer for a command scope.
 - A shader's reflected vertex input interface is a different concept from **Vertex input layout**; the former states what attributes are required, the latter states how application-side vertex buffers feed them.
 - Vertex input binding descriptions (stride, binding slot, input rate) are not derived from shader reflection. `GraphicsPipelineDesc::VertexInputLayout` provides the explicit CPU layout, while the Vulkan backend uses reflection only to warn about missing locations or format mismatches. Extension to multi-binding / instance-rate is deferred.
 - Bindless texture selection belongs to **Draw material data**. The public RHI command surface should express draw/material payloads, not backend descriptor-slot mutation commands.
@@ -109,5 +110,5 @@ The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::
 ## Dependencies
 
 - `Core` — logging, config, `Singleton`, `Factory`
-- `Shader` — `Shader::Program` and compiled shader artifact types (consumes)
+- `Shader` — `Shader::GraphicsProgram` and compiled shader artifact types (consumes)
 - Third-party: vulkansdk, VMA

@@ -20,8 +20,8 @@ namespace SoulEngine::RHI::Vulkan {
 struct CommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
     std::unordered_map<vk::Image, ImageState>& LocalStates;
+    std::array<vk::DescriptorSet, 3>            DescriptorSets            = {};
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
-    vk::PipelineLayout                         PipelineLayout             = nullptr;
 
     /// Begin rendering scope from Pass desc.
     auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
@@ -113,19 +113,38 @@ struct CommandVisitor {
         Buf.endRendering();
     }
 
-    auto operator()(const RHI::SetPipelineCmd& Cmd) -> void {
-        auto& VkPipe = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.Pipeline);
-        Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, VkPipe.Get());
+    auto operator()(const RHI::SetGraphicsPipelineCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr)
+            return;
+
+        const auto& Pipeline = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
+
+        const auto SetCount = Pipeline.GetDescriptorSetCount();
+        std::vector<vk::DescriptorSet> Sets;
+        Sets.reserve(SetCount);
+        for (Uint32 Index = 0; Index < SetCount && Index < DescriptorSets.size(); ++Index)
+            Sets.push_back(DescriptorSets[Index]);
+
+        std::vector<Uint32> DynamicOffsets(Pipeline.GetDynamicOffsetCount(), 0);
+        Buf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                               Pipeline.GetPipelineLayout(),
+                               0,
+                               Sets,
+                               DynamicOffsets);
     }
 
-    auto operator()(const RHI::BindVertexBufferCmd& Cmd) -> void {
-        auto& VkBuf = static_cast<const Vulkan::VertexBuffer&>(*Cmd.Buffer);
-        Buf.bindVertexBuffers(0, {VkBuf.GetVkBuffer()}, {Cmd.Offset});
-    }
+    auto PushDrawParameters(const Vulkan::GraphicsPipeline& Pipeline, const RHI::DrawParameter& Parameters) -> void {
+        if (!Parameters.TestTexture || Pipeline.GetPushConstantSize() < sizeof(Uint32))
+            return;
 
-    auto operator()(const RHI::BindIndexBufferCmd& Cmd) -> void {
-        auto& VkBuf = static_cast<const Vulkan::IndexBuffer&>(*Cmd.Buffer);
-        Buf.bindIndexBuffer(VkBuf.GetVkBuffer(), Cmd.Offset, vk::IndexType::eUint32);
+        const auto&  VulkanTex = static_cast<const Vulkan::SampledTexture&>(*Parameters.TestTexture);
+        const Uint32 Slot      = VulkanTex.GetDescriptorSlot();
+        Buf.pushConstants(Pipeline.GetPipelineLayout(),
+                          vk::ShaderStageFlagBits::eAllGraphics,
+                          0,
+                          sizeof(Uint32),
+                          &Slot);
     }
 
     auto operator()(const RHI::SetViewportCmd& Cmd) -> void {
@@ -163,20 +182,27 @@ struct CommandVisitor {
     }
 
     auto operator()(const RHI::DrawIndexedCmd& Cmd) -> void {
-        Buf.drawIndexed(Cmd.IndexCount, Cmd.InstanceCount, Cmd.FirstIndex, Cmd.VertexOffset, Cmd.FirstInstance);
+        if (!Cmd.PipelinePtr || !Cmd.VertexBufferPtr || !Cmd.IndexBufferPtr)
+            return;
+
+        const auto& VkPipe = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        const auto& VkVB   = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBufferPtr);
+        const auto& VkIB   = static_cast<const Vulkan::IndexBuffer&>(*Cmd.IndexBufferPtr);
+        PushDrawParameters(VkPipe, Cmd.Parameters);
+        Buf.bindVertexBuffers(0, {VkVB.GetVkBuffer()}, {0});
+        Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
+        Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
     }
 
     auto operator()(const RHI::DrawCmd& Cmd) -> void {
-        Buf.draw(Cmd.VertexCount, Cmd.InstanceCount, Cmd.FirstVertex, Cmd.FirstInstance);
-    }
-
-    auto operator()(const RHI::SetDrawMaterialDataCmd& Cmd) -> void {
-        if (!Cmd.Material.TestTexture || !PipelineLayout)
+        if (!Cmd.PipelinePtr || !Cmd.VertexBufferPtr)
             return;
 
-        const auto&  VulkanTex = static_cast<const Vulkan::SampledTexture&>(*Cmd.Material.TestTexture);
-        const Uint32 Slot      = VulkanTex.GetDescriptorSlot();
-        Buf.pushConstants(PipelineLayout, vk::ShaderStageFlagBits::eAllGraphics, 0, sizeof(Uint32), &Slot);
+        const auto& VkPipe = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        const auto& VkVB   = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBufferPtr);
+        PushDrawParameters(VkPipe, Cmd.Parameters);
+        Buf.bindVertexBuffers(0, {VkVB.GetVkBuffer()}, {0});
+        Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
     }
 };
 

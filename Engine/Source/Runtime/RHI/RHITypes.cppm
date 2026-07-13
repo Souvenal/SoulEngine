@@ -238,14 +238,10 @@ enum class PrimitiveTopology : Uint8 {
     TriangleList = 1,
 };
 
-// TODO: Validate ShaderPrograms and merged shader reflection at pipeline
+// TODO: Validate GraphicsProgram and shader reflection at pipeline
 // creation time:
-//   - Code and Reflection must be non-null for every program
-//   - Graphics pipelines must only contain graphics-stage programs
-//     (Vertex, Fragment, Hull, Domain, Geometry, Mesh, Amplification)
-//   - Duplicate stages within a single graphics pipeline are illegal
+//   - Code and Reflection must be non-null for every stage program
 //   - Mesh shaders preclude Vertex/Hull/Domain/Geometry stages
-//   - Reflected resource-layout merge errors surface during pipeline creation
 
 struct RasterizerState {
     bool    FillMode  = true; // true = solid, false = wireframe
@@ -267,8 +263,7 @@ struct DepthStencilState {
 };
 
 struct GraphicsPipelineDesc {
-    Shader::Program                VertexProgram     = {};
-    std::optional<Shader::Program> FragmentProgram   = std::nullopt;
+    Shader::GraphicsProgram        Program           = {};
     VertexInputLayoutDesc          VertexInputLayout = {};
     PrimitiveTopology              Topology          = PrimitiveTopology::TriangleList;
     RasterizerState                Rasterizer        = {};

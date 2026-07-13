@@ -17,6 +17,54 @@ namespace SoulEngine::ShaderCompiler::SlangCompiler {
 
 using namespace SoulEngine::Core;
 
+// File-local helpers for normalizing Slang reflection details before public mappings.
+namespace {
+
+[[nodiscard]] auto StripArrayTypeLayout(slang::TypeLayoutReflection* TypeLayout) -> slang::TypeLayoutReflection* {
+    while (TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::Array)
+        TypeLayout = TypeLayout->getElementTypeLayout();
+    return TypeLayout;
+}
+
+[[nodiscard]] auto ToShaderTextureResourceType(SlangResourceAccess Access)
+    -> std::expected<Shader::ResourceType, ErrorMessage> {
+    switch (Access) {
+    case SLANG_RESOURCE_ACCESS_NONE:
+    case SLANG_RESOURCE_ACCESS_READ:
+        return Shader::ResourceType::SampledTexture;
+    case SLANG_RESOURCE_ACCESS_READ_WRITE:
+    case SLANG_RESOURCE_ACCESS_WRITE:
+    case SLANG_RESOURCE_ACCESS_RASTER_ORDERED:
+    case SLANG_RESOURCE_ACCESS_APPEND:
+    case SLANG_RESOURCE_ACCESS_CONSUME:
+    case SLANG_RESOURCE_ACCESS_FEEDBACK:
+        return Shader::ResourceType::StorageTexture;
+    default:
+        return std::unexpected(ErrorMessage("Unsupported texture access mode in reflection"));
+    }
+}
+
+[[nodiscard]] auto ToShaderResourceTypeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
+    -> std::expected<Shader::ResourceType, ErrorMessage> {
+    TypeLayout = StripArrayTypeLayout(TypeLayout);
+    if (!TypeLayout)
+        return std::unexpected(ErrorMessage("Binding reflection is missing a type layout"));
+
+    switch (TypeLayout->getKind()) {
+    case slang::TypeReflection::Kind::ConstantBuffer:
+        return Shader::ResourceType::ConstantBuffer;
+    case slang::TypeReflection::Kind::SamplerState:
+        return Shader::ResourceType::Sampler;
+    case slang::TypeReflection::Kind::Resource:
+        return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
+    default:
+        return std::unexpected(ErrorMessage(Format("Unsupported leaf type kind {} in reflection",
+                                                   static_cast<int>(TypeLayout->getKind()))));
+    }
+}
+
+} // namespace
+
 /// Map a SlangStage enum value to the project's Stage.
 [[nodiscard]] auto ToShaderStage(SlangStage Stage) -> Shader::Stage {
     switch (Stage) {
@@ -41,31 +89,25 @@ using namespace SoulEngine::Core;
     }
 }
 
-/// Map a Slang binding type + optional type layout to the engine's ResourceType.
+/// Map a Slang binding type + optional leaf type layout to the engine's ResourceType.
+/// TypeLayout supplies details that BindingType alone does not carry: ParameterBlock
+/// field kind and texture access mode (sampled vs storage).
 [[nodiscard]] auto ToShaderResourceType(slang::BindingType BindingType, slang::TypeLayoutReflection* TypeLayout)
     -> std::expected<Shader::ResourceType, ErrorMessage> {
     switch (BindingType) {
     case slang::BindingType::ConstantBuffer:
-        return Shader::ResourceType::UniformBuffer;
+        return Shader::ResourceType::ConstantBuffer;
+    case slang::BindingType::ParameterBlock:
+        // ParameterBlock is only a descriptor-container binding. TypeLayout is the
+        // reflected field/leaf resource inside that block.
+        return ToShaderResourceTypeFromLeafLayout(TypeLayout);
     case slang::BindingType::Sampler:
         return Shader::ResourceType::Sampler;
     case slang::BindingType::Texture:
+        TypeLayout = StripArrayTypeLayout(TypeLayout);
         if (!TypeLayout)
             return std::unexpected(ErrorMessage("Texture binding reflection is missing a type layout"));
-        switch (TypeLayout->getResourceAccess()) {
-        case SLANG_RESOURCE_ACCESS_NONE:
-        case SLANG_RESOURCE_ACCESS_READ:
-            return Shader::ResourceType::SampledTexture;
-        case SLANG_RESOURCE_ACCESS_READ_WRITE:
-        case SLANG_RESOURCE_ACCESS_WRITE:
-        case SLANG_RESOURCE_ACCESS_RASTER_ORDERED:
-        case SLANG_RESOURCE_ACCESS_APPEND:
-        case SLANG_RESOURCE_ACCESS_CONSUME:
-        case SLANG_RESOURCE_ACCESS_FEEDBACK:
-            return Shader::ResourceType::StorageTexture;
-        default:
-            return std::unexpected(ErrorMessage("Unsupported texture access mode in reflection"));
-        }
+        return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
     case slang::BindingType::TypedBuffer:
     case slang::BindingType::RawBuffer:
         return Shader::ResourceType::StorageBuffer;

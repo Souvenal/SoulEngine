@@ -23,9 +23,118 @@ namespace SoulEngine::ShaderCompiler::SlangCompiler {
 
 using namespace SoulEngine::Core;
 
+namespace {
+
+constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
+
 // ── Reflection extraction helpers ──────────────────────────────────
-// These are module-internal (not exported) — visible within the Slang
-// module but not to importers of ShaderCompiler.
+// File-local helpers for normalizing Slang reflection details before the
+// Slang module exposes the final Shader::Reflection value.
+
+[[nodiscard]] auto IsParameterBlockTypeLayout(slang::TypeLayoutReflection* TypeLayout) -> bool {
+    while (TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::Array)
+        TypeLayout = TypeLayout->getElementTypeLayout();
+    return TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::ParameterBlock;
+}
+
+[[nodiscard]] auto ExtractArrayCount(slang::ShaderReflection* ProgramLayout,
+                                     slang::TypeLayoutReflection* TypeLayout,
+                                     StringView ParameterName) -> std::expected<Uint32, ErrorMessage> {
+    if (!TypeLayout || !TypeLayout->isArray())
+        return 1U;
+
+    // Slang needs the full program layout to resolve array element counts,
+    // especially for arrays whose size is derived after composition/linking.
+    const auto ElementCount = TypeLayout->getElementCount(ProgramLayout);
+    if (ElementCount == SLANG_UNKNOWN_SIZE) {
+        return std::unexpected(
+            ErrorMessage(Format("Shader parameter '{}' has an unsupported array count in reflection", ParameterName)));
+    }
+
+    // Runtime-sized descriptor arrays are represented with a sentinel here.
+    // The Vulkan backend must lower that sentinel to the actual bindless table
+    // capacity instead of using it directly as a descriptor count.
+    const bool bUnboundedArray = ElementCount == 0 || ElementCount == SLANG_UNBOUNDED_SIZE ||
+                                 ElementCount == static_cast<size_t>(std::numeric_limits<Int32>::max());
+    return bUnboundedArray ? std::numeric_limits<Uint32>::max() : static_cast<Uint32>(ElementCount);
+}
+
+[[nodiscard]] auto ExtractParameterBlockBindings(slang::ShaderReflection*          ProgramLayout,
+                                                 slang::VariableLayoutReflection* Param)
+    -> std::expected<std::vector<Shader::Binding>, ErrorMessage> {
+    std::vector<Shader::Binding> Bindings;
+    if (!Param)
+        return Bindings;
+
+    auto* TypeLayout = Param->getTypeLayout();
+    if (!TypeLayout || TypeLayout->getKind() != slang::TypeReflection::Kind::ParameterBlock)
+        return Bindings;
+
+    // A ParameterBlock is reflected as one shader parameter whose descriptor
+    // set is on the outer parameter, while concrete bindings live on fields of
+    // the block element struct.  Emit one engine binding per field so host code
+    // can bind resources by stable paths such as "g_frame.cb".
+    const String ParameterName = Param->getName() ? String(Param->getName()) : String("<unnamed>");
+    const auto   Set          = Param->getBindingIndex();
+    if (Set == UnknownBindingIndex) {
+        return std::unexpected(
+            ErrorMessage(Format("Shader parameter '{}' is missing a concrete descriptor set location", ParameterName)));
+    }
+
+    auto* ElementLayout = TypeLayout->getElementVarLayout();
+    auto* ElementType   = ElementLayout ? ElementLayout->getTypeLayout() : nullptr;
+    if (!ElementType || ElementType->getKind() != slang::TypeReflection::Kind::Struct) {
+        return std::unexpected(
+            ErrorMessage(Format("ParameterBlock '{}' is missing a reflected element struct", ParameterName)));
+    }
+
+    for (unsigned int FieldIndex = 0; FieldIndex < ElementType->getFieldCount(); ++FieldIndex) {
+        auto* Field = ElementType->getFieldByIndex(FieldIndex);
+        if (!Field)
+            continue;
+
+        auto* ResourceTypeLayout = Field->getTypeLayout();
+        if (!ResourceTypeLayout)
+            continue;
+
+        if (IsParameterBlockTypeLayout(ResourceTypeLayout)) {
+            return std::unexpected(ErrorMessage(Format(
+                "Nested ParameterBlock '{}.{}' is not supported; flatten shader parameter groups instead",
+                ParameterName,
+                Field->getName() ? Field->getName() : "<unnamed>")));
+        }
+
+        const auto BindingIndex = Field->getBindingIndex();
+        if (BindingIndex == UnknownBindingIndex) {
+            return std::unexpected(ErrorMessage(Format(
+                "ParameterBlock field '{}.{}' is missing a concrete descriptor binding location",
+                ParameterName,
+                Field->getName() ? Field->getName() : "<unnamed>")));
+        }
+
+        auto ArrayCount = ExtractArrayCount(ProgramLayout, ResourceTypeLayout, ParameterName);
+        if (!ArrayCount)
+            return std::unexpected(std::move(ArrayCount.error()));
+
+        const auto ResourceType = ToShaderResourceType(slang::BindingType::ParameterBlock, ResourceTypeLayout);
+        if (!ResourceType) {
+            return std::unexpected(ResourceType.error().Append(
+                Format("Failed to normalize shader parameter '{}.{}'",
+                       ParameterName,
+                       Field->getName() ? Field->getName() : "<unnamed>")));
+        }
+
+        Bindings.emplace_back(Shader::Binding{
+            .ParameterPath = Format("{}.{}", ParameterName, Field->getName() ? Field->getName() : "<unnamed>"),
+            .Set           = static_cast<Uint32>(Set),
+            .Binding       = static_cast<Uint32>(BindingIndex),
+            .Type          = *ResourceType,
+            .ArrayCount    = *ArrayCount,
+        });
+    }
+
+    return Bindings;
+}
 
 [[nodiscard]] auto ExtractShaderBindings(slang::ShaderReflection* ProgramLayout)
     -> std::expected<std::vector<Shader::Binding>, ErrorMessage> {
@@ -44,43 +153,95 @@ using namespace SoulEngine::Core;
         if (!TypeLayout)
             continue;
 
+        // ParameterBlock is the common path for logical constant/resource
+        // groups.  Handle it explicitly before the generic binding-range path
+        // because the host-visible binding path should name the block field,
+        // not just the outer block object.
+        if (TypeLayout->getKind() == slang::TypeReflection::Kind::ParameterBlock) {
+            auto ParameterBlockBindings = ExtractParameterBlockBindings(ProgramLayout, Param);
+            if (!ParameterBlockBindings)
+                return std::unexpected(std::move(ParameterBlockBindings.error()));
+            Bindings.append_range(*ParameterBlockBindings);
+            continue;
+        }
+
+        // A Slang binding range describes one contiguous descriptor allocation
+        // owned by a shader parameter: resource kind, set/space, binding base,
+        // and descriptor count.  Slang may split arrays, descriptor ranges, or
+        // aggregate resources into multiple ranges, so this code emits the
+        // flattened engine bindings that Vulkan layout creation consumes later.
         const auto RangeCount = TypeLayout->getBindingRangeCount();
         if (RangeCount == 0)
             continue;
-        if (RangeCount != 1) {
-            return std::unexpected(ErrorMessage(Format("Shader parameter '{}' uses {} binding ranges; only one is "
-                                                       "supported in the initial normalized reflection",
-                                                       Param->getName() ? Param->getName() : "<unnamed>",
-                                                       RangeCount)));
-        }
-
-        const auto BindingCount = TypeLayout->getBindingRangeBindingCount(0);
-        if (BindingCount == SLANG_UNKNOWN_SIZE || BindingCount == SLANG_UNBOUNDED_SIZE) {
-            return std::unexpected(
-                ErrorMessage(Format("Shader parameter '{}' has an unsupported descriptor count in reflection",
-                                    Param->getName() ? Param->getName() : "<unnamed>")));
-        }
-
-        const auto ResourceType = ToShaderResourceType(TypeLayout->getBindingRangeType(0), TypeLayout);
-        if (!ResourceType)
-            return std::unexpected(ResourceType.error().Append(Format(
-                "Failed to normalize shader parameter '{}'", Param->getName() ? Param->getName() : "<unnamed>")));
-
-        const auto     Set                 = TypeLayout->getBindingRangeDescriptorSetIndex(0);
-        const auto     Binding             = Param->getBindingIndex();
-        constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
-        if (Set < 0 || Binding == UnknownBindingIndex) {
+        const auto BindingBase = Param->getBindingIndex();
+        if (BindingBase == UnknownBindingIndex) {
             return std::unexpected(
                 ErrorMessage(Format("Shader parameter '{}' is missing a concrete descriptor set/binding location",
                                     Param->getName() ? Param->getName() : "<unnamed>")));
         }
 
-        Bindings.push_back(Shader::Binding{
-            .Set        = static_cast<Uint32>(Set),
-            .Binding    = static_cast<Uint32>(Binding),
-            .Type       = *ResourceType,
-            .ArrayCount = static_cast<Uint32>(BindingCount),
-        });
+        Uint32 BindingCursor = 0;
+        // BindingCursor tracks how many descriptor slots previous ranges used
+        // when Slang gives only a binding base on the outer parameter.
+        for (SlangInt RangeIndex = 0; RangeIndex < RangeCount; ++RangeIndex) {
+            const auto BindingType = TypeLayout->getBindingRangeType(RangeIndex);
+            if (BindingType == slang::BindingType::ParameterBlock) {
+                return std::unexpected(ErrorMessage(Format(
+                    "ParameterBlock shader parameter '{}' must use the explicit ParameterBlock reflection path",
+                    Param->getName() ? Param->getName() : "<unnamed>")));
+            }
+
+            // This is the number of descriptor slots occupied by this reflected
+            // range after Slang lowers the source type to the target layout.
+            // Resource arrays commonly make this greater than one; aggregate
+            // resource structs can also contribute multiple slots.
+            const auto BindingCount = TypeLayout->getBindingRangeBindingCount(RangeIndex);
+            if (BindingCount == SLANG_UNKNOWN_SIZE) {
+                return std::unexpected(
+                    ErrorMessage(Format("Shader parameter '{}' has an unsupported descriptor count in reflection",
+                                        Param->getName() ? Param->getName() : "<unnamed>")));
+            }
+
+            // Slang's binding-range descriptor-set index is an internal index
+            // into the reflected descriptor-set list, not the Vulkan set number.
+            // The parameter binding space is the HLSL space / Vulkan set.
+            const auto Set = Param->getBindingSpace();
+            if (Set == UnknownBindingIndex) {
+                return std::unexpected(
+                    ErrorMessage(Format("Shader parameter '{}' is missing a concrete descriptor set location",
+                                        Param->getName() ? Param->getName() : "<unnamed>")));
+            }
+
+            const auto DescriptorRangeCount = TypeLayout->getBindingRangeDescriptorRangeCount(RangeIndex);
+            // Multi-descriptor ranges are expanded into separate Binding
+            // records when each descriptor has a distinct binding number.
+            // True arrays stay as one Binding with ArrayCount > 1.
+            const bool   bExpandBindings    = DescriptorRangeCount != SLANG_UNKNOWN_SIZE && DescriptorRangeCount > 1;
+            const Uint32 OutputBindingCount = bExpandBindings ? static_cast<Uint32>(DescriptorRangeCount) : 1;
+            const Uint32 OutputArrayCount   = bExpandBindings ? 1 : static_cast<Uint32>(BindingCount);
+
+            for (Uint32 BindingOffset = 0; BindingOffset < OutputBindingCount; ++BindingOffset) {
+                auto*  ResourceTypeLayout = TypeLayout->getBindingRangeLeafTypeLayout(RangeIndex);
+                auto   BindingIndex       = static_cast<Uint32>(BindingBase) + BindingCursor + BindingOffset;
+                String ParameterPath      = Param->getName() ? String(Param->getName()) : String{};
+
+                const auto ResourceType = ToShaderResourceType(BindingType, ResourceTypeLayout);
+                if (!ResourceType) {
+                    return std::unexpected(ResourceType.error().Append(
+                        Format("Failed to normalize shader parameter '{}'",
+                               Param->getName() ? Param->getName() : "<unnamed>")));
+                }
+
+                Bindings.emplace_back(Shader::Binding{
+                    .ParameterPath = std::move(ParameterPath),
+                    .Set           = static_cast<Uint32>(Set),
+                    .Binding       = BindingIndex,
+                    .Type          = *ResourceType,
+                    .ArrayCount    = OutputArrayCount,
+                });
+            }
+            BindingCursor += bExpandBindings ? OutputBindingCount : static_cast<Uint32>(BindingCount);
+        }
     }
 
     return Bindings;
@@ -101,6 +262,8 @@ using namespace SoulEngine::Core;
         if (!TypeLayout)
             continue;
 
+        // Push constants are not descriptor bindings.  Keep them as byte ranges
+        // so the Vulkan backend can build pipeline-layout push-constant ranges.
         const auto Offset = Param->getOffset(slang::ParameterCategory::PushConstantBuffer);
         const auto Size   = TypeLayout->getSize(slang::ParameterCategory::PushConstantBuffer);
         if (Offset == SLANG_UNKNOWN_SIZE || Size == SLANG_UNKNOWN_SIZE || Size == SLANG_UNBOUNDED_SIZE) {
@@ -109,7 +272,7 @@ using namespace SoulEngine::Core;
                                     Param->getName() ? Param->getName() : "<unnamed>")));
         }
 
-        PushConstants.push_back(Shader::PushConstantRange{
+        PushConstants.emplace_back(Shader::PushConstantRange{
             .Offset = static_cast<Uint32>(Offset),
             .Size   = static_cast<Uint32>(Size),
         });
@@ -128,6 +291,9 @@ using namespace SoulEngine::Core;
     if (!TypeLayout)
         return {};
 
+    // Entry-point inputs are often reflected as a single struct parameter.
+    // Flatten it into individual vertex attributes so RHI vertex input
+    // validation can reason about locations and formats directly.
     if (TypeLayout->getKind() == slang::TypeReflection::Kind::Struct) {
         for (unsigned int FieldIndex = 0; FieldIndex < TypeLayout->getFieldCount(); ++FieldIndex) {
             if (auto R = ExtractVertexInputsFromVarLayout(TypeLayout->getFieldByIndex(FieldIndex), VertexInputs); !R) {
@@ -138,16 +304,17 @@ using namespace SoulEngine::Core;
     }
 
     StringView SemanticName = VarLayout->getSemanticName() ? StringView(VarLayout->getSemanticName()) : StringView{};
+    // System-value semantics such as SV_VertexID are generated by the pipeline
+    // and must not be matched against CPU vertex-buffer layout.
     if (IsSystemValueSemantic(SemanticName))
         return {};
 
     std::optional<Uint32> Location            = std::nullopt;
     const auto            BindingIndex        = VarLayout->getBindingIndex();
-    constexpr auto        UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (BindingIndex != UnknownBindingIndex)
         Location = static_cast<Uint32>(BindingIndex);
 
-    VertexInputs.push_back(Shader::VertexInputAttribute{
+    VertexInputs.emplace_back(Shader::VertexInputAttribute{
         .SemanticName  = String(SemanticName),
         .SemanticIndex = static_cast<Uint32>(VarLayout->getSemanticIndex()),
         .Location      = Location,
@@ -159,6 +326,7 @@ using namespace SoulEngine::Core;
 [[nodiscard]] auto ExtractVertexInputs(slang::EntryPointReflection* EntryPoint)
     -> std::expected<std::vector<Shader::VertexInputAttribute>, ErrorMessage> {
     std::vector<Shader::VertexInputAttribute> VertexInputs;
+    // Only vertex entry points consume fixed-function vertex inputs.
     if (!EntryPoint || EntryPoint->getStage() != SLANG_STAGE_VERTEX)
         return VertexInputs;
 
@@ -171,12 +339,18 @@ using namespace SoulEngine::Core;
     return VertexInputs;
 }
 
+} // anonymous namespace
+
 [[nodiscard]] auto BuildShaderReflection(slang::ShaderReflection*     ProgramLayout,
                                          slang::EntryPointReflection* EntryPoint)
-    -> std::expected<SPtr<const Shader::Reflection>, ErrorMessage> {
+    -> std::expected<Shader::Reflection, ErrorMessage> {
     if (!ProgramLayout || !EntryPoint)
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
+    // Bindings and push constants come from the linked program layout so they
+    // include all graphics stages.  Vertex inputs come specifically from the
+    // vertex entry point because fragment inputs are interpolants, not CPU
+    // vertex-buffer attributes.
     auto Bindings = ExtractShaderBindings(ProgramLayout);
     if (!Bindings)
         return std::unexpected(Bindings.error());
@@ -189,12 +363,11 @@ using namespace SoulEngine::Core;
     if (!VertexInputs)
         return std::unexpected(VertexInputs.error());
 
-    SPtr<const Shader::Reflection> Reflection = std::make_shared<Shader::Reflection>(Shader::Reflection{
+    return Shader::Reflection{
         .Bindings      = std::move(*Bindings),
         .PushConstants = std::move(*PushConstants),
         .VertexInputs  = std::move(*VertexInputs),
-    });
-    return Reflection;
+    };
 }
 
 } // namespace SoulEngine::ShaderCompiler::SlangCompiler
