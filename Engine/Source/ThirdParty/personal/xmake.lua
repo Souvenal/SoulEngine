@@ -1,4 +1,4 @@
-add_repositories("souvenal-repo git@github.com:Souvenal/xmake-repo.git")
+add_repositories("souvenal-repo https://github.com/Souvenal/xmake-repo.git")
 
 add_requires("vulkan-headers 1.4.350+0", {
     configs = {
