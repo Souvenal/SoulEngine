@@ -54,7 +54,7 @@ struct alignas(16) GlobalCBData {
 };
 static_assert(sizeof(GlobalCBData) == 144, "GlobalCBData must match Common.slang FrameData std140 layout");
 
-/// @brief Minimal prototype renderer — emits CommandList plus frame pins for RHIThread.
+/// @brief Minimal prototype renderer that emits a CommandList for RHIThread.
 class TestRenderer final : public IRenderer {
   public:
     TestRenderer() = default;
@@ -145,7 +145,7 @@ class TestRenderer final : public IRenderer {
         std::memcpy(Result.CmdList.GlobalConstantData.data(), &CbData, sizeof(CbData));
 
         // Build pass — backend wraps each Pass in begin/end rendering.
-        auto* ColorRT = Result.Resources.Acquire(Scene.ColorRT);
+        auto* ColorRT = Resource::Manager::Get().TryGetReady(Scene.ColorRT);
         if (!ColorRT)
             return Result;
 
@@ -159,7 +159,7 @@ class TestRenderer final : public IRenderer {
         };
         Result.CmdList.PresentSource = ColorRT;
 
-        auto* DepthRT = Result.Resources.Acquire(Scene.DepthRT);
+        auto* DepthRT = Resource::Manager::Get().TryGetReady(Scene.DepthRT);
         if (!DepthRT) {
             Result.CmdList.Passes.push_back(std::move(Pass));
             return Result;
@@ -170,20 +170,20 @@ class TestRenderer final : public IRenderer {
             .ClearValue = RHI::ClearDepthStencilValue{.Depth = 1.0f, .Stencil = 0},
         };
 
-        auto* Texture = Result.Resources.Acquire(m_Texture);
+        auto* Texture = Resource::Manager::Get().TryGetReady(m_Texture);
         if (!Texture) {
             Result.CmdList.Passes.push_back(std::move(Pass));
             return Result;
         }
 
-        auto* Pipeline = Result.Resources.Acquire(m_Pipeline);
+        auto* Pipeline = Resource::Manager::Get().TryGetReady(m_Pipeline);
         if (!Pipeline) {
             Result.CmdList.Passes.push_back(std::move(Pass));
             return Result;
         }
 
-        auto* VB = Result.Resources.Acquire(m_VertexBuffer);
-        auto* IB = Result.Resources.Acquire(m_IndexBuffer);
+        auto* VB = Resource::Manager::Get().TryGetReady(m_VertexBuffer);
+        auto* IB = Resource::Manager::Get().TryGetReady(m_IndexBuffer);
         if (!VB || !IB) {
             Result.CmdList.Passes.push_back(std::move(Pass));
             return Result;

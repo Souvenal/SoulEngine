@@ -1,4 +1,4 @@
-export module Resource:RenderTargetRequests;
+export module Resource:RenderTarget;
 
 export import Core;
 export import RHI;

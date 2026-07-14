@@ -156,12 +156,12 @@ class ResourceContext {
     }
 
     template <ManagedRHIResource T>
-    [[nodiscard]] auto Pin(const ResourceHandle<T>& Handle) -> ResourcePin<T> {
+    [[nodiscard]] auto TryGetReady(const ResourceHandle<T>& Handle) -> T* {
         auto Locked = LockEntry(Handle);
         if (!Locked)
-            return {};
+            return nullptr;
 
-        return Locked.Entry->Slot.PinReady(Handle.GetGeneration());
+        return Locked.Entry->Slot.TryGetReady(Handle.GetGeneration());
     }
 
     template <ManagedRHIResource T>
@@ -345,10 +345,7 @@ class ResourceContext {
         for (auto It = Entries.begin(); It != Entries.end();) {
             if (It->second)
                 It->second->Slot.RequestRelease();
-            if (!It->second || !It->second->Slot.HasPins())
-                It = Entries.erase(It);
-            else
-                ++It;
+            It = Entries.erase(It);
         }
     }
 
@@ -357,7 +354,7 @@ class ResourceContext {
         for (auto It = Entries.begin(); It != Entries.end();) {
             if (!It->second ||
                 (It->second->Policy == ResourceLifetimePolicy::Transient && It->second->RefCount == 0 &&
-                 !It->second->Slot.HasPins() && It->second->Slot.IsReleased()))
+                 It->second->Slot.IsReleased()))
                 It = Entries.erase(It);
             else
                 ++It;

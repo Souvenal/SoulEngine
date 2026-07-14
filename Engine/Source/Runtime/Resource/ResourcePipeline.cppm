@@ -1,4 +1,4 @@
-export module Resource:PipelineRequests;
+export module Resource:Pipeline;
 
 export import Core;
 export import RHI;

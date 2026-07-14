@@ -136,7 +136,7 @@ class EngineLoop {
             m_Application.reset();
         }
 
-        // Release frame slot snapshots, command observers, and pins before
+        // Release frame slot snapshots and command observers before
         // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
         for (auto& Slot : m_Slots) {
             Slot.SceneData = {};

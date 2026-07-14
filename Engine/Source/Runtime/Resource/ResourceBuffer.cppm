@@ -1,4 +1,4 @@
-export module Resource:BufferRequests;
+export module Resource:Buffer;
 
 export import Core;
 export import RHI;

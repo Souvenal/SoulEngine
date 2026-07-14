@@ -2,7 +2,7 @@ module;
 
 #include <stb_image.h>
 
-export module Resource:TextureRequests;
+export module Resource:Texture;
 
 export import Core;
 export import RHI;

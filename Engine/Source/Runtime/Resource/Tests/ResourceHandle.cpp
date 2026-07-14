@@ -1,5 +1,5 @@
 /// @file   ResourceHandle.cpp
-/// @brief  Tests for ResourceContext-owned slots, handles, and pins.
+/// @brief  Tests for ResourceContext-owned slots and handles.
 
 #include <gtest/gtest.h>
 
@@ -63,7 +63,7 @@ auto ResetManagerForTest() -> void {
 
 } // namespace
 
-TEST(ResourceSlotTest, ReadyPublishMakesSlotReadyAndPinnable) {
+TEST(ResourceSlotTest, ReadyPublishMakesSlotReadyAndReadable) {
     ResourceSlot<RHI::SampledTexture> Slot;
     auto Generation = Slot.Reset();
 
@@ -71,9 +71,7 @@ TEST(ResourceSlotTest, ReadyPublishMakesSlotReadyAndPinnable) {
     EXPECT_TRUE(Slot.PublishReady(Generation, MakeTextureResource()));
 
     EXPECT_EQ(Slot.GetState(Generation), ResourceState::Ready);
-    auto Pin = Slot.PinReady(Generation);
-    EXPECT_TRUE(Pin);
-    EXPECT_NE(Pin.Get(), nullptr);
+    EXPECT_NE(Slot.TryGetReady(Generation), nullptr);
 }
 
 TEST(ResourceSlotTest, FailedPublishMakesSlotFailed) {
@@ -106,9 +104,8 @@ TEST(ResourceHandleTest, DefaultHandleStateIsUnknown) {
 
     EXPECT_FALSE(Handle.IsValid());
     EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Unknown);
-    FrameResourceScope Scope;
-    EXPECT_EQ(Scope.Acquire(Handle), nullptr);
-    EXPECT_EQ(Scope.Acquire(Ref), nullptr);
+    EXPECT_EQ(Manager::Get().TryGetReady(Handle), nullptr);
+    EXPECT_EQ(Manager::Get().TryGetReady(Ref), nullptr);
 }
 
 TEST(ResourceSlotTest, ExplicitStateTransitionsPublishExpectedStates) {
@@ -137,67 +134,18 @@ TEST(ResourceSlotTest, StaleGenerationCannotPublishPendingReadyOrFailed) {
     EXPECT_EQ(Slot.GetState(SecondGeneration), ResourceState::CpuPreparing);
 }
 
-TEST(ResourcePinTest, PinReadyOnlySucceedsForReadyMatchingGeneration) {
+TEST(ResourceSlotTest, TryGetReadyOnlySucceedsForReadyMatchingGeneration) {
     ResourceSlot<RHI::SampledTexture> Slot;
     auto FirstGeneration = Slot.Reset();
 
-    EXPECT_FALSE(Slot.PinReady(FirstGeneration));
+    EXPECT_EQ(Slot.TryGetReady(FirstGeneration), nullptr);
 
     EXPECT_TRUE(Slot.PublishReady(FirstGeneration, MakeTextureResource()));
-    EXPECT_TRUE(Slot.PinReady(FirstGeneration));
+    EXPECT_NE(Slot.TryGetReady(FirstGeneration), nullptr);
 
     auto SecondGeneration = Slot.Reset();
-    EXPECT_FALSE(Slot.PinReady(FirstGeneration));
-    EXPECT_FALSE(Slot.PinReady(SecondGeneration));
-}
-
-TEST(ResourcePinTest, ReleaseDefersPayloadReleaseUntilPinDestructs) {
-    ResourceSlot<RHI::SampledTexture> Slot;
-    auto Generation = Slot.Reset();
-    bool Destroyed  = false;
-    EXPECT_TRUE(Slot.PublishReady(Generation, MakeTextureResource(&Destroyed)));
-
-    {
-        auto Pin = Slot.PinReady(Generation);
-        ASSERT_TRUE(Pin);
-        ASSERT_FALSE(Destroyed);
-
-        Slot.RequestRelease();
-
-        EXPECT_EQ(Slot.GetState(Generation), ResourceState::Stale);
-        EXPECT_FALSE(Destroyed);
-    }
-
-    EXPECT_TRUE(Destroyed);
-}
-
-TEST(ResourcePinTest, ResetRetiresPinnedPayloadUntilPinDestructs) {
-    ResourceSlot<RHI::SampledTexture> Slot;
-    auto FirstGeneration = Slot.Reset();
-    bool OldDestroyed    = false;
-    bool NewDestroyed    = false;
-    EXPECT_TRUE(Slot.PublishReady(FirstGeneration, MakeTextureResource(&OldDestroyed)));
-
-    {
-        auto Pin = Slot.PinReady(FirstGeneration);
-        ASSERT_TRUE(Pin);
-
-        auto SecondGeneration = Slot.Reset();
-        EXPECT_EQ(Slot.GetState(FirstGeneration), ResourceState::Stale);
-        EXPECT_EQ(Slot.GetState(SecondGeneration), ResourceState::CpuPreparing);
-        EXPECT_FALSE(OldDestroyed);
-
-        EXPECT_TRUE(Slot.PublishReady(SecondGeneration, MakeTextureResource(&NewDestroyed)));
-        EXPECT_EQ(Slot.GetState(SecondGeneration), ResourceState::Ready);
-        EXPECT_FALSE(OldDestroyed);
-        EXPECT_FALSE(NewDestroyed);
-    }
-
-    EXPECT_TRUE(OldDestroyed);
-    EXPECT_FALSE(NewDestroyed);
-
-    Slot.RequestRelease();
-    EXPECT_TRUE(NewDestroyed);
+    EXPECT_EQ(Slot.TryGetReady(FirstGeneration), nullptr);
+    EXPECT_EQ(Slot.TryGetReady(SecondGeneration), nullptr);
 }
 
 TEST(ResourceSlotTest, RequestReleaseDestroysPayload) {

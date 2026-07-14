@@ -10,11 +10,10 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 |------|------------|
 | **Resource** | Runtime object requested by engine systems and eventually consumed by rendering or other runtime workflows. |
 | **Resource handle** | Passive typed ticket for a resource key and generation, independent of whether the resource is ready. |
-| **Resource ref** | Move-only logical owner for a resource request. It tracks that a runtime system still wants the resource, but does not expose or pin the ready payload. |
+| **Resource ref** | Move-only logical owner for a resource request. It tracks that a runtime system still wants the resource, but does not expose the ready payload. |
 | **Resource entry** | ResourceContext-owned registry node for one canonical key. It owns request coalescing metadata such as logical ref count and lifetime policy, and contains the slot for the current generation. |
-| **Resource slot** | Internal payload state machine for one resource entry. It owns generation, state, error, ready payload, retired pinned payloads, frame pin count, and deferred payload release, but not logical ownership policy. |
-| **Resource pin** | RAII typed view held inside `FrameResourceScope`. It is non-owning to callers but prevents the ResourceContext-owned ready payload from being reset while the pin lives. |
-| **Frame resource pins** | Per-frame packet of pins held beside a command list until RHILoop finishes `RenderDevice::Execute()`. |
+| **Resource slot** | Internal payload state machine for one resource entry. It owns generation, state, error, and ready payload, but not logical ownership policy. |
+| **Ready resource observer** | Raw pointer returned by `Resource::Manager::TryGetReady(ref)` for immediate command-list recording or inspection. It does not own or extend payload lifetime. |
 | **Resource generation** | Version of a resource identity used to distinguish current asynchronous work from stale completions. |
 | **Resource payload** | Committed runtime object published by a ready resource, represented as `Resource<RHI::T>` with a ResourceContext-owned `UPtr<T>`. |
 | **Resource key** | Canonical identity used to deduplicate equivalent resource requests. |
@@ -38,9 +37,9 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Skip policy** | Resource wait policy that omits dependent rendering or runtime work for the current frame. |
 | **Fallback policy** | Resource wait policy that substitutes a known ready resource when the requested resource is not ready. |
 | **Block policy** | Resource wait policy that waits for the requested resource outside normal per-frame runtime execution. |
-| **Cached asset lifetime** | Lifetime policy for reusable assets such as sampled textures, buffers, and pipelines. Unpinned ready payloads may remain cached until `ResourceManager::Clear()`. |
-| **Transient lifetime** | Lifetime policy for view/frame-scoped resources such as camera render targets. The last `ResourceRef` release requests payload destruction after live pins drop. |
-| **Released transient collection** | Cleanup pass that erases transient entries only after their last logical ref already requested release and their live frame pins have dropped. It does not initiate release. |
+| **Cached asset lifetime** | Lifetime policy for reusable assets such as sampled textures, buffers, and pipelines. Ready payloads may remain cached until `ResourceManager::Clear()`. |
+| **Transient lifetime** | Lifetime policy for view/frame-scoped resources such as camera render targets. The last `ResourceRef` release requests immediate payload destruction. |
+| **Released transient collection** | Cleanup pass that erases transient entries only after their last logical ref already requested release and the payload has been released. It does not initiate release. |
 
 ## Relationships
 
@@ -49,17 +48,15 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - Consumers may use **Resource state** directly; helper predicates such as ready/failed checks are optional convenience, not required API surface.
 - A **Resource handle** refers to a resource identity and generation, not directly to a **Resource payload**.
 - A **Resource handle** stores only **Resource key** and `ResourceGeneration`; it does not hold `SPtr<ResourceSlot<T>>`, does not call back into `Resource::Manager`, and does not keep the payload alive.
-- A **Resource ref** tracks logical ownership separately from frame pins. It is created by `Resource::Manager`, retains a non-owning observer for the creating `ResourceContext`, and calls that context to release logical demand. When the resource entry's ref count reaches zero, the entry's lifetime policy decides whether the resource is merely cache-eligible or should release its payload after live pins drop.
+- A **Resource ref** tracks logical ownership. It is created by `Resource::Manager`, retains a non-owning observer for the creating `ResourceContext`, and calls that context to release logical demand. When the resource entry's ref count reaches zero, the entry's lifetime policy decides whether the resource is merely cache-eligible or should release its payload.
 - A **Resource entry** owns registry/cache metadata. New lifetime policy fields, logical ref counts, eviction markers, budget metadata, and reload bookkeeping belong here or in `ResourceContext`, not in the slot.
-- A **Resource slot** owns payload readiness and frame-safety state only. New state-machine transitions, generation checks, publish results, pin counts, retired pinned payloads, and deferred payload reset belong here.
+- A **Resource slot** owns payload readiness state only. New state-machine transitions, generation checks, publish results, and payload reset belong here.
 - `ResourceContext` is the sole owner of resource entries, slots, and ready payloads. `Resource::Manager` is the public facade over that context.
 - `Resource::Manager` may own the `ResourceContext` instance, but it is not a second lifecycle owner. Manager should stay a facade for public Runtime call sites.
 - Supported RHI payload families require both `ResourceTraits<RHI::T>::Info` and inclusion in `ManagedRHIResourceTypes`; unsupported `Resource<T>` / `ResourceHandle<T>` / `ResourceSlot<T>` instantiations fail at compile time.
-- Consumers must query `Resource::Manager::GetState(handle)` and `GetError(handle)` instead of resolving payloads from the handle. Renderers acquire command-list observer pointers only through `FrameResourceScope::Acquire(ref)` or `FrameResourceScope::Acquire(handle)`, both of which immediately store the corresponding pin.
-- A successful **Resource pin** requires matching generation and `Ready` state.
-- A **Resource pin** exposes observer access to the payload while keeping the ResourceContext-owned payload from being reset.
-- Render code that writes RHI observer pointers into a command list must move every corresponding pin into **Frame resource pins**.
-- **Frame resource pins** must outlive RHI command execution and may be released only after the frame reaches `RHIDone`.
+- Consumers must query `Resource::Manager::GetState(handle)` and `GetError(handle)` instead of resolving payloads from the handle. Renderers resolve ready observer pointers through `Resource::Manager::TryGetReady(ref)`.
+- A successful **Ready resource observer** requires matching generation and `Ready` state.
+- A **Ready resource observer** does not keep the ResourceContext-owned payload alive. The owning renderer, scene, or application must keep a `ResourceRef<T>` alive for every resource whose observer pointer is recorded into a command list.
 - A **Resource key** maps equivalent requests to the same **Resource**.
 - A **Resource generation** changes when a resource is reloaded or recreated.
 - A **Resource payload** exists only after **RHI commitment** succeeds.
@@ -98,22 +95,19 @@ separate:
 
 | Layer | Visibility | Answers | Owns | Must not own |
 |-------|------------|---------|------|--------------|
-| `ResourceRef<T>` | Public owner API | Does a runtime system still want this resource? | Logical demand from a runtime system, plus the creating `ResourceContext` observer needed to release that demand. | Payload pointers, frame pins, cache eviction details, async publication. |
-| `ResourceHandle<T>` | Passive ticket API, exposed through refs, snapshots, and state/acquire queries | Which key and generation is this reference about? | Canonical key plus generation. | Slot ownership, logical ownership, destructor side effects, or Manager callbacks. |
+| `ResourceRef<T>` | Public owner API | Does a runtime system still want this resource? | Logical demand from a runtime system, plus the creating `ResourceContext` observer needed to release that demand. | Payload pointers, cache eviction details, async publication. |
+| `ResourceHandle<T>` | Passive ticket API, exposed through refs, snapshots, and state/readiness queries | Which key and generation is this reference about? | Canonical key plus generation. | Slot ownership, logical ownership, destructor side effects, or Manager callbacks. |
 | Resource entry | `ResourceContext` internals | What registry record exists for this key? | Ref count, lifetime policy, cache/eviction metadata, request coalescing for one key. | RHI payload state transitions or command-list observer safety. |
-| `ResourceSlot<T>` | Resource internals | What is the payload state for this generation? | Generation, state, error, ready payload, retired pinned payloads, pin count, deferred payload release. | Logical ref count, cache policy, budget policy, request coalescing. |
-| `ResourcePin<T>` | Stored by `FrameResourceScope` | Is this ready payload protected for the frame packet? | Temporary protection for a ready payload while command-list observer pointers may be consumed. | Logical resource ownership or cache retention. |
-| `FrameResourceScope` | Public frame-packet helper | Where are pins stored until RHI consumes command-list observers? | Per-frame pins produced by `Acquire(ref)` or `Acquire(handle)`. | Resource requests, cache policy, or async publication. |
+| `ResourceSlot<T>` | Resource internals | What is the payload state for this generation? | Generation, state, error, and ready payload. | Logical ref count, cache policy, budget policy, request coalescing, or command-list observer lifetime. |
 | `ResourceContext` | Resource internals | Where does lifecycle state live? | Resource families, entries, slots, ready payloads, ref counts, lifetime policy state, and GPU-pending queues. | Public facade behavior or family-specific loading code. |
 | `Resource::Manager` | Public Runtime facade | What API should the rest of Runtime call? | The singleton `ResourceContext` instance and public request/query/tick/clear/collect entry points. | Slot internals, entry maps, per-family loading implementation, or ownership hidden in handles. |
-| Request partitions | Resource internals | How does one resource family prepare work? | Key derivation, CPU preparation, RHI-thread creation/upload, and result publication for one family. | Registry ownership, logical ref counts, frame pin storage, or public owner semantics. |
+| Request partitions | Resource internals | How does one resource family prepare work? | Key derivation, CPU preparation, RHI-thread creation/upload, and result publication for one family. | Registry ownership, logical ref counts, observer lifetime, or public owner semantics. |
 
 When a new feature needs to answer "does anyone still want this resource?",
 modify `ResourceRef`/Resource entry/`ResourceContext`. When it needs to answer
-"is the ready payload safe to reset?", modify `ResourceSlot`/`ResourcePin`.
-Do not use pins as cache-retention signals, do not use refs as command-list
-observer lifetime guards, and do not add Manager callbacks to
-`ResourceHandle<T>`.
+"what state is this generation's payload in?", modify `ResourceSlot`.
+Do not use ready observer pointers as cache-retention signals, and do not add
+Manager callbacks to `ResourceHandle<T>`.
 
 When code needs entry maps, ref counts, lifetime policy application, or
 GPU-pending queues, it belongs in `ResourceContext`. When code needs texture
@@ -124,14 +118,13 @@ for external callers, it belongs in `Resource::Manager`.
 `CollectReleasedResources()` is a collection pass, not a release trigger. A
 transient resource is released by last-ref release through `ResourceRef<T>` and
 `ResourceContext::ReleaseRef()`. Collection later erases the entry only after
-`ResourceSlot<T>` reports that the payload has already been released and no live
-pins remain.
+`ResourceSlot<T>` reports that the payload has already been released.
 
 `ManagedRHIResourceTypes` is the central family list used by both
-`ResourceContext` and `FrameResourceScope`. `ResourceTraits<T>` describes how a
-listed family behaves. A type with traits but not in the list is deliberately
-not a `ManagedRHIResource`, because Context and FrameScope would not have
-storage for it.
+`ResourceContext` and Resource request helpers. `ResourceTraits<T>` describes
+how a listed family behaves. A type with traits but not in the list is
+deliberately not a `ManagedRHIResource`, because Context would not have storage
+for it.
 
 ## Extension Guide
 
@@ -143,17 +136,15 @@ eventually require fewer central edits than it does today.
 
 | File | Role |
 |------|------|
-| `ResourceTypes.cppm` | Public typed resource primitives: state enums, lifetime policy, `ResourceTraitInfo`, `ResourceTraits<T>`, `ManagedRHIResourceTypes`, `Resource<T>`, `ResourceSlot<T>`, `ResourceHandle<T>`, and `ResourcePin<T>`. |
-| `ResourceRef.cppm` | Public move-only logical owner type. It depends on `ResourceContext` directly so ref destruction can release logical demand without type-erased callbacks or Manager callbacks. |
+| `ResourceTypes.cppm` | Public typed resource primitives: state enums, lifetime policy, `ResourceTraitInfo`, `ResourceTraits<T>`, `ManagedRHIResourceTypes`, `Resource<T>`, `ResourceSlot<T>`, and `ResourceHandle<T>`. |
 | `ResourceContext.cppm` | Internal lifecycle owner: typed resource families, resource entries, request coalescing, logical ref counts, lifetime policy application, state publication, GPU-pending queues, clear, and released-transient collection. |
-| `ResourceManager.cppm` | Public facade over `ResourceContext`; owns the singleton context, creates valid `ResourceRef<T>` instances after Context accepts logical demand, and exposes request/state/release APIs. |
+| `ResourceManager.cppm` | Public facade over `ResourceContext`; owns the singleton context, defines `ResourceRef<T>`, creates valid refs after Context accepts logical demand, and exposes request/state/query APIs. |
 | `ResourceRequestCommon.cppm` | Internal request-flow helpers shared by resource request partitions: begin request work, publish ready/failed/GPU-pending results, mark RHI commit, and produce consistent stale/shutdown logging. |
-| `ResourceTextureRequests.cppm` | Sampled-texture submit flow: key normalization, CPU decode, async task scheduling, RHI upload creation, and result publication. |
-| `ResourcePipelineRequests.cppm` | Graphics-pipeline submit flow: key creation, shader compilation/preparation, RHI pipeline creation, and result publication. |
-| `ResourceBufferRequests.cppm` | Vertex/index buffer submit flow: data copy, RHI buffer creation, GPU-pending upload publication, and failure publication. |
-| `ResourceRenderTargetRequests.cppm` | Render-target submit flow: transient key request orchestration, RHI creation, and result publication. |
-| `ResourceFrameScope.cppm` | Per-frame pin storage for resources whose raw RHI observer pointers are written into command lists. |
-| `Resource.cppm` | Public aggregate module exporting `:Types`, `:Ref`, `:Manager`, and `:FrameScope`. |
+| `ResourceTexture.cppm` | Sampled-texture submit flow: key normalization, CPU decode, async task scheduling, RHI upload creation, and result publication. |
+| `ResourcePipeline.cppm` | Graphics-pipeline submit flow: key creation, shader compilation/preparation, RHI pipeline creation, and result publication. |
+| `ResourceBuffer.cppm` | Vertex/index buffer submit flow: data validation/copy, RHI buffer creation, GPU-pending upload publication, and failure publication. |
+| `ResourceRenderTarget.cppm` | Render-target submit flow: transient key request orchestration, RHI creation, and result publication. |
+| `Resource.cppm` | Public aggregate module exporting `:Types` and `:Manager`. |
 
 ### Current steps to add a resource type
 
@@ -169,14 +160,12 @@ eventually require fewer central edits than it does today.
    - `Label` for logs and diagnostics.
    - `DefaultPolicy` for cache/eviction behavior.
 3. Add `RHI::T` to `ManagedRHIResourceTypes`. `ResourceContext` derives its
-   `ResourceFamilies` tuple from this list, and `ResourceFrameScope` derives
-   its pin-storage tuple from the same list. A type is not accepted by
+   `ResourceFamilies` tuple from this list. A type is not accepted by
    `ManagedRHIResource` unless both this list entry and
    `ResourceTraits<RHI::T>::Info` exist.
 4. Do not add per-type branches for Context lookup, clear,
-   released-transient collection, GPU-pending iteration, or frame pin storage.
-   These paths derive from
-   `ManagedRHIResourceTypes` plus `ResourceTraits`.
+   released-transient collection, or GPU-pending iteration. These paths derive
+   from `ManagedRHIResourceTypes` plus `ResourceTraits`.
 5. If the new type uses GPU-pending readiness, update:
    - `ResourceTraits<RHI::T>::Info` to use
      `ResourceGpuPendingPolicy::WaitForCompletion`; `ForEachGpuPendingFamily()`
@@ -186,12 +175,12 @@ eventually require fewer central edits than it does today.
 6. If the new type has special release or collection behavior, keep the policy
    decision in the resource entry or `ResourceContext`. Do not add cache or
    owner-count behavior to `ResourceSlot<T>`.
-7. Add or extend the relevant `Resource*Requests.cppm` partition. These
+7. Add or extend the relevant `Resource*.cppm` request partition. These
    partitions expose internal `SubmitXxxRequest(...)` functions that return
    handles to `ResourceManager` facade methods; they are not public owner
    APIs. If the new
    resource family has independent workflow, create a new
-   `ResourceXxxRequests.cppm` partition and import it from `ResourceManager.cppm`.
+   `ResourceXxx.cppm` partition and import it from `ResourceManager.cppm`.
    The submit path should:
    - Derive a canonical resource key.
    - Call `BeginResourceWork<RHI::T>(Context, Key)`.
@@ -210,8 +199,9 @@ eventually require fewer central edits than it does today.
 8. Add a public facade method to `ResourceManager.cppm` when external systems
    need to request the new resource type.
 9. If render code will pass the resource as a raw RHI observer pointer into a
-   command list, use `FrameResourceScope::Acquire(ref)`. Pin storage is derived
-   from `ManagedRHIResourceTypes`; do not add a per-type storage branch.
+   command list, make sure the owning scene/application/renderer keeps a
+   `ResourceRef<T>` alive, then resolve the pointer through
+   `Resource::Manager::TryGetReady(ref)` or `TryGetReady(handle)`.
 10. Add focused tests under `Engine/Source/Runtime/Resource/Tests/`.
 
 ### When to add a new file
@@ -238,11 +228,11 @@ Adding a resource type currently requires central edits in several places:
 - `ResourceTypes.cppm` for `ResourceTraits<RHI::T>` and
   `ManagedRHIResourceTypes`.
 - `ResourceManager.cppm` for public request API.
-- A `Resource*Requests.cppm` partition for submit flow.
+- A `Resource*.cppm` request partition for submit flow.
 
 Future Resource refactors should reduce these central edits. A preferred target
 is that a new resource family declares its traits and requests flow in one local
-place, while Context/Manager/FrameScope either derive behavior from traits or
-use the centralized managed-type list. Avoid adding more per-type
+place, while Context/Manager derive behavior from traits or use the centralized
+managed-type list. Avoid adding more per-type
 `if constexpr` chains unless the change is deliberately temporary and
 documented here.

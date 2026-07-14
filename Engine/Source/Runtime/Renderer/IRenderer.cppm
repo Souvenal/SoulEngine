@@ -15,8 +15,7 @@ export namespace SoulEngine::Renderer {
 
 /// @brief Render-thread packet kept alive until RHILoop finishes Execute().
 struct RenderResult {
-    RHI::CommandList             CmdList   = {};
-    Resource::FrameResourceScope Resources = {};
+    RHI::CommandList CmdList = {};
 };
 
 /// @brief Abstract base class for all renderers.
@@ -45,7 +44,7 @@ class IRenderer {
     /// @brief Release all GPU resources and owned objects.
     virtual auto OnDetach() -> void = 0;
 
-    /// @brief Render the scene snapshot and return commands plus resource pins for RHIThread.
+    /// @brief Render the scene snapshot and return commands for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
     [[nodiscard]] virtual auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
 };
