@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 import RHI;
+import Shader;
 import std;
 
 using namespace SoulEngine::Core;
@@ -47,37 +48,131 @@ TEST_F(UsageVisitorTest, SetGraphicsPipelineCmdUpdatesToken) {
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
 }
 
+TEST_F(UsageVisitorTest, PushConstantsCmdUpdatesPipelineToken) {
+    ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{PushConstantsCmd{
+                   .PipelinePtr = m_Pipeline.get(),
+                   .Data        = {std::byte{0}},
+               }});
+
+    EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
+}
+
+TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
+    ResourceArray<SampledTexture> Textures;
+    Textures.Set(3, m_Texture.get());
+    EXPECT_EQ(Textures.GetSize(), 4);
+    auto Parameters = ShaderParameters::Create(ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+        .Bindings =
+            {
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_textures.uTextures",
+                    .Set           = 0,
+                    .Binding       = 0,
+                    .Type          = SoulEngine::Shader::ResourceType::SampledTexture,
+                    .ArrayCount    = std::numeric_limits<Uint32>::max(),
+                },
+            },
+    }));
+    ASSERT_TRUE(Parameters.SetResourceArray("g_textures.uTextures", Textures));
+
+    ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_Texture->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{BindShaderParametersCmd{
+                   .PipelinePtr = m_Pipeline.get(),
+                   .Parameters  = std::move(Parameters),
+               }});
+
+    EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
+}
+
+TEST(ResourceArrayTest, SupportsMultipleResourceTypes) {
+    Sampler SamplerValue{SamplerDesc{}};
+    ResourceArray<Sampler> Samplers;
+
+    Samplers.Set(2, &SamplerValue);
+
+    ASSERT_EQ(Samplers.GetSize(), 3);
+    EXPECT_EQ(Samplers.GetResources()[2], &SamplerValue);
+}
+
+TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
+    auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+        .Bindings =
+            {
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_frame.cb",
+                    .Set           = 0,
+                    .Binding       = 0,
+                    .Type          = SoulEngine::Shader::ResourceType::ConstantBuffer,
+                },
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_samplers.uLinear",
+                    .Set           = 1,
+                    .Binding       = 0,
+                    .Type          = SoulEngine::Shader::ResourceType::Sampler,
+                },
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_textures.uTextures",
+                    .Set           = 1,
+                    .Binding       = 1,
+                    .Type          = SoulEngine::Shader::ResourceType::SampledTexture,
+                    .ArrayCount    = std::numeric_limits<Uint32>::max(),
+                },
+            },
+    });
+
+    auto Parameters = ShaderParameters::Create(Layout);
+
+    EXPECT_NE(Layout.GetId(), 0);
+    EXPECT_EQ(Parameters.GetLayoutId(), Layout.GetId());
+    ASSERT_EQ(Parameters.GetSets().size(), 2);
+    EXPECT_EQ(Parameters.GetSets()[0].GetLayout().GetSetIndex(), 0);
+    EXPECT_EQ(Parameters.GetSets()[1].GetLayout().GetSetIndex(), 1);
+
+    ResourceArray<SampledTexture> Textures;
+    EXPECT_FALSE(Parameters.SetSampledTexture("g_textures.uTextures", nullptr));
+    EXPECT_TRUE(Parameters.SetResourceArray("g_textures.uTextures", Textures));
+    const auto TextureSetRevision = Parameters.GetSets()[1].GetRevision();
+    EXPECT_TRUE(Parameters.SetResourceArray("g_textures.uTextures", Textures));
+    EXPECT_EQ(Parameters.GetSets()[1].GetRevision(), TextureSetRevision);
+    EXPECT_FALSE(Parameters.SetSampler("g_textures.uTextures", nullptr));
+
+    Sampler LinearSampler{SamplerDesc{}};
+    EXPECT_TRUE(Parameters.SetSampler("g_samplers.uLinear", &LinearSampler));
+    const auto SamplerSetRevision = Parameters.GetSets()[1].GetRevision();
+    EXPECT_TRUE(Parameters.SetSampler("g_samplers.uLinear", &LinearSampler));
+    EXPECT_EQ(Parameters.GetSets()[1].GetRevision(), SamplerSetRevision);
+}
+
 TEST_F(UsageVisitorTest, DrawIndexedCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
-    ASSERT_EQ(m_Texture->GetLastUsageToken().Id, 0);
-
     std::visit(m_Visitor,
                Command{DrawIndexedCmd{.PipelinePtr     = m_Pipeline.get(),
                                        .VertexBufferPtr = m_VB.get(),
-                                       .IndexBufferPtr  = m_IB.get(),
-                                       .Parameters      = DrawParameter{.TestTexture = m_Texture.get()}}});
+                                       .IndexBufferPtr  = m_IB.get()}});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_IB->GetLastUsageToken().Id, 42);
-    EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, DrawCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
-    ASSERT_EQ(m_Texture->GetLastUsageToken().Id, 0);
-
     std::visit(m_Visitor,
                Command{DrawCmd{.PipelinePtr     = m_Pipeline.get(),
-                               .VertexBufferPtr = m_VB.get(),
-                               .Parameters      = DrawParameter{.TestTexture = m_Texture.get()}}});
+                               .VertexBufferPtr = m_VB.get()}});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
-    EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, NullPipelineDoesNotCrash) {
@@ -111,16 +206,12 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
 
     Pass.SetViewport(0, 0, 800, 600);
     Pass.SetGraphicsPipeline(m_Pipeline.get());
-    Pass.DrawIndexed(m_Pipeline.get(),
-                     m_VB.get(),
-                     m_IB.get(),
-                     DrawParameter{.TestTexture = m_Texture.get()});
+    Pass.DrawIndexed(m_Pipeline.get(), m_VB.get(), m_IB.get());
 
     // Token starts at 0 for all resources
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
-    ASSERT_EQ(m_Texture->GetLastUsageToken().Id, 0);
 
     // Visit all commands with a single UsageVisitor
     for (const auto& Cmd : Pass.Commands)
@@ -130,5 +221,4 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 99);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 99);
     EXPECT_EQ(m_IB->GetLastUsageToken().Id, 99);
-    EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 99);
 }

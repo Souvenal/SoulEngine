@@ -9,6 +9,7 @@ import :Types;
 import :Swapchain;
 import :Buffer;
 import :Pipeline;
+import :Sampler;
 import :Texture;
 import :Descriptor;
 
@@ -20,8 +21,11 @@ namespace SoulEngine::RHI::Vulkan {
 struct CommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
     std::unordered_map<vk::Image, ImageState>& LocalStates;
-    std::array<vk::DescriptorSet, 3>            DescriptorSets            = {};
+    DescriptorManager*                         Descriptors                = nullptr;
+    UniformBufferArena*                        ConstantArena              = nullptr;
+    Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
+    std::optional<ErrorMessage>                Error                      = std::nullopt;
 
     /// Begin rendering scope from Pass desc.
     auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
@@ -117,34 +121,203 @@ struct CommandVisitor {
         if (!Cmd.PipelinePtr)
             return;
 
-        const auto& Pipeline = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
-
-        const auto SetCount = Pipeline.GetDescriptorSetCount();
-        std::vector<vk::DescriptorSet> Sets;
-        Sets.reserve(SetCount);
-        for (Uint32 Index = 0; Index < SetCount && Index < DescriptorSets.size(); ++Index)
-            Sets.push_back(DescriptorSets[Index]);
-
-        std::vector<Uint32> DynamicOffsets(Pipeline.GetDynamicOffsetCount(), 0);
-        Buf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                               Pipeline.GetPipelineLayout(),
-                               0,
-                               Sets,
-                               DynamicOffsets);
     }
 
-    auto PushDrawParameters(const Vulkan::GraphicsPipeline& Pipeline, const RHI::DrawParameter& Parameters) -> void {
-        if (!Parameters.TestTexture || Pipeline.GetPushConstantSize() < sizeof(Uint32))
+    auto operator()(const RHI::PushConstantsCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr || Cmd.Data.empty())
             return;
 
-        const auto&  VulkanTex = static_cast<const Vulkan::SampledTexture&>(*Parameters.TestTexture);
-        const Uint32 Slot      = VulkanTex.GetDescriptorSlot();
+        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        if (Cmd.Offset + Cmd.Data.size() > Pipeline.GetPushConstantSize()) {
+            Error = ErrorMessage(Core::Format("PushConstants range exceeds reflected pipeline push-constant size ({} + {} > {})",
+                                              Cmd.Offset,
+                                              Cmd.Data.size(),
+                                              Pipeline.GetPushConstantSize()));
+            return;
+        }
+
         Buf.pushConstants(Pipeline.GetPipelineLayout(),
                           vk::ShaderStageFlagBits::eAllGraphics,
-                          0,
-                          sizeof(Uint32),
-                          &Slot);
+                          Cmd.Offset,
+                          static_cast<Uint32>(Cmd.Data.size()),
+                          Cmd.Data.data());
+    }
+
+    auto operator()(const RHI::BindShaderParametersCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr)
+            return;
+        if (!Descriptors || !ConstantArena) {
+            Error = ErrorMessage("CommandVisitor: descriptor manager or constant arena is missing");
+            return;
+        }
+
+        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        if (Cmd.Parameters.GetLayoutId() != Pipeline.GetShaderParameterLayout().GetId()) {
+            Error = ErrorMessage("Shader parameters were created from a different pipeline layout");
+            return;
+        }
+
+        for (const auto& Parameters : Cmd.Parameters.GetSets()) {
+            const auto& Layout   = Parameters.GetLayout();
+            const auto  SetIndex = Layout.GetSetIndex();
+            const auto  Bindings = Layout.GetBindings();
+            const auto  Values   = Parameters.GetValues();
+
+            Uint32 VariableDescriptorCount = 1;
+            for (Uint32 Index = 0; Index < Bindings.size(); ++Index) {
+                const auto& Binding = Bindings[Index];
+                if (Binding.ArrayCount != std::numeric_limits<Uint32>::max())
+                    continue;
+                if (Binding.Type != Shader::ResourceType::SampledTexture) {
+                    Error = ErrorMessage(Core::Format(
+                        "Runtime resource array '{}' uses unsupported resource type",
+                        Binding.ParameterPath));
+                    return;
+                }
+                const auto* Array = std::get_if<RHI::ResourceArray<RHI::SampledTexture>>(&Values[Index]);
+                if (!Array || Array->GetSize() == 0) {
+                    Error = ErrorMessage(Core::Format(
+                        "Runtime sampled texture array '{}' is missing a non-empty resource array",
+                        Binding.ParameterPath));
+                    return;
+                }
+                VariableDescriptorCount = Array->GetSize();
+            }
+
+            auto Instance = Pipeline.GetOrCreateDescriptorSetInstance(
+                Cmd.Parameters.GetId(), SetIndex, VariableDescriptorCount, *Descriptors);
+            if (!Instance) {
+                Error = Instance.error();
+                return;
+            }
+
+            const bool bUpdateDescriptors = !(*Instance)->Initialized ||
+                                            (*Instance)->ParameterRevision != Parameters.GetRevision();
+            std::vector<std::pair<Uint32, Uint32>> DynamicOffsetWrites;
+            for (Uint32 Index = 0; Index < Bindings.size(); ++Index) {
+                const auto& Binding = Bindings[Index];
+                const auto& Value   = Values[Index];
+
+                if (const auto* Constant = std::get_if<RHI::ShaderParameterConstant>(&Value)) {
+                    if (!Constant->Buffer || Constant->Data.empty()) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has an invalid constant buffer value", Binding.ParameterPath));
+                        return;
+                    }
+                    auto& VkBuffer = static_cast<const Vulkan::ConstantBuffer&>(*Constant->Buffer);
+                    const auto Offset = VkBuffer.GetArenaOffset(FrameIndex);
+                    if (auto R = ConstantArena->Write(Constant->Data.data(), Constant->Data.size(), Offset); !R) {
+                        Error = R.error().Append("Shader parameter constant arena write failed");
+                        return;
+                    }
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized ||
+                        ResourceBindings[Binding.Binding] != Constant->Buffer) {
+                        Descriptors->WriteConstantDescriptor(
+                            *(*Instance)->Set, Binding.Binding, *ConstantArena, Constant->Buffer->GetSize());
+                        ResourceBindings[Binding.Binding] = Constant->Buffer;
+                    }
+                    DynamicOffsetWrites.push_back({Binding.Binding, Offset});
+                    continue;
+                }
+
+                if (!bUpdateDescriptors)
+                    continue;
+
+                if (const auto* Texture = std::get_if<RHI::SampledTexture*>(&Value)) {
+                    if (!*Texture) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null sampled texture", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkTexture = static_cast<const Vulkan::SampledTexture&>(**Texture);
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Texture) {
+                        Descriptors->WriteSampledTextureDescriptor(*(*Instance)->Set,
+                                                                   Binding.Binding,
+                                                                   0,
+                                                                   VkTexture.GetVkImageView(),
+                                                                   vk::ImageLayout::eShaderReadOnlyOptimal);
+                        ResourceBindings[Binding.Binding] = *Texture;
+                    }
+                    continue;
+                }
+
+                if (const auto* Array = std::get_if<RHI::ResourceArray<RHI::SampledTexture>>(&Value)) {
+                    if (Array->GetSize() == 0) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has an empty sampled-texture resource array",
+                            Binding.ParameterPath));
+                        return;
+                    }
+                    const bool bRuntimeArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
+                    if (!bRuntimeArray && Array->GetSize() != Binding.ArrayCount) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' sampled-texture array size {} does not match reflected array count {}",
+                            Binding.ParameterPath,
+                            Array->GetSize(),
+                            Binding.ArrayCount));
+                        return;
+                    }
+                    for (Uint32 Slot = 0; Slot < Array->GetResources().size(); ++Slot) {
+                        auto* Texture = Array->GetResources()[Slot];
+                        if (!Texture && bRuntimeArray)
+                            continue;
+                        if (!Texture) {
+                            Error = ErrorMessage(Core::Format(
+                                "Fixed-size shader parameter '{}' has an unset sampled-texture array slot {}",
+                                Binding.ParameterPath,
+                                Slot));
+                            return;
+                        }
+                        const auto& VkTexture = static_cast<const Vulkan::SampledTexture&>(*Texture);
+                        Descriptors->WriteSampledTextureDescriptor(*(*Instance)->Set,
+                                                                   Binding.Binding,
+                                                                   Slot,
+                                                                   VkTexture.GetVkImageView(),
+                                                                   vk::ImageLayout::eShaderReadOnlyOptimal);
+                    }
+                    continue;
+                }
+
+                if (const auto* Sampler = std::get_if<RHI::Sampler*>(&Value)) {
+                    if (!*Sampler) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null sampler", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkSampler = static_cast<const Vulkan::Sampler&>(**Sampler);
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Sampler) {
+                        Descriptors->WriteSamplerDescriptor(
+                            *(*Instance)->Set, Binding.Binding, VkSampler.GetVkSampler());
+                        ResourceBindings[Binding.Binding] = *Sampler;
+                    }
+                    continue;
+                }
+
+                LogWarning("Shader parameter '{}' is unset", Binding.ParameterPath);
+            }
+
+            if (bUpdateDescriptors) {
+                (*Instance)->ParameterRevision = Parameters.GetRevision();
+                (*Instance)->Initialized       = true;
+            }
+
+            std::ranges::sort(DynamicOffsetWrites, {}, &std::pair<Uint32, Uint32>::first);
+            std::vector<Uint32> DynamicOffsets;
+            DynamicOffsets.reserve(DynamicOffsetWrites.size());
+            for (const auto& [Binding, Offset] : DynamicOffsetWrites)
+                DynamicOffsets.push_back(Offset);
+
+            Buf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                   Pipeline.GetPipelineLayout(),
+                                   SetIndex,
+                                   std::array{*(*Instance)->Set},
+                                   DynamicOffsets);
+        }
     }
 
     auto operator()(const RHI::SetViewportCmd& Cmd) -> void {
@@ -185,10 +358,8 @@ struct CommandVisitor {
         if (!Cmd.PipelinePtr || !Cmd.VertexBufferPtr || !Cmd.IndexBufferPtr)
             return;
 
-        const auto& VkPipe = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
         const auto& VkVB   = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBufferPtr);
         const auto& VkIB   = static_cast<const Vulkan::IndexBuffer&>(*Cmd.IndexBufferPtr);
-        PushDrawParameters(VkPipe, Cmd.Parameters);
         Buf.bindVertexBuffers(0, {VkVB.GetVkBuffer()}, {0});
         Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
         Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
@@ -198,9 +369,7 @@ struct CommandVisitor {
         if (!Cmd.PipelinePtr || !Cmd.VertexBufferPtr)
             return;
 
-        const auto& VkPipe = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
         const auto& VkVB   = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBufferPtr);
-        PushDrawParameters(VkPipe, Cmd.Parameters);
         Buf.bindVertexBuffers(0, {VkVB.GetVkBuffer()}, {0});
         Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
     }

@@ -15,9 +15,9 @@ Vulkan RHI backend — implements `SoulEngine::RHI::RenderDevice`.
 
 | Term | Definition |
 |------|------------|
-| **DescriptorLayoutConfig** | Vulkan-internal read-only descriptor ABI config. It carries immutable sampler handles and bindless table limits from `RenderDevice` to both `DescriptorManager` and `Vulkan::GraphicsPipeline`, so pipeline layout generation does not query descriptor allocation state. |
-| **DescriptorManager** | Class in `:Descriptor` partition. Owns descriptor pool policy plus long-lived descriptor sets such as the immutable sampler set and the bindless SampledImage table. It allocates/writes descriptor sets, but it does not own a global pipeline layout and does not bind descriptor sets for a command buffer. Pipeline layouts are generated from shader reflection and owned by `Vulkan::GraphicsPipeline`. No buffer bindless — future buffer access via BDA. |
-| **Shader-oriented pipeline layout** | Each `Vulkan::GraphicsPipeline` consumes `Shader::GraphicsProgram::Reflection`, creates the matching Vulkan descriptor set layouts and `vk::PipelineLayout`, and keeps reflected binding path lookup data for recording-time descriptor binding. |
+| **DescriptorManager** | Class in `:Descriptor` partition. Owns descriptor pool policy and descriptor write helpers. It allocates persistent descriptor-set instances owned by compatible Vulkan pipelines. |
+| **Shader-oriented pipeline layout** | Each `Vulkan::GraphicsPipeline` consumes `Shader::GraphicsProgram::Reflection`, creates the matching Vulkan descriptor set layouts and `vk::PipelineLayout`, and keeps shader binding name lookup data for recording-time descriptor binding. |
+| **Mutable sampler descriptor** | Vulkan sampler descriptor whose `VkSampler` comes from a draw shader binding. It replaces immutable sampler layouts in the target model so Renderer-authored sampler resources can be bound by shader binding name. |
 | **Explicit vertex input layout** | `GraphicsPipelineDesc::VertexInputLayout` is lowered to Vulkan binding and attribute descriptions. Shader reflection validates location/format compatibility with warnings only; it does not define CPU stride or offset. |
 | **VertexBinding slot** | Currently one explicit binding, single interleaved buffer, per-vertex rate. Multi-binding and per-instance rate deferred. |
 | **TimelineSemaphore** | Wrapper in `:Semaphore` partition around a single per-device VkSemaphore (VK_SEMAPHORE_TYPE_TIMELINE). Owns the monotonic CPU signal counter. Exposes `NextValue()` to allocate the next signal value, `Wait(Value)` for blocking CPU sync, `GetCurrentValue()` for non-blocking GPU-side query. |
@@ -29,25 +29,23 @@ Vulkan RHI backend — implements `SoulEngine::RHI::RenderDevice`.
 
 ## Descriptor Model
 
-Descriptor set layouts are generated per graphics pipeline from shader
-reflection. All uniform buffers are lowered as dynamic uniform-buffer
-descriptors backed by the backend constant-buffer upload path. Dynamic offsets
-are ordered from the reflected set/binding layout, not hard-coded at call sites.
-Descriptor stage visibility is currently lowered conservatively to all graphics
-stages so pipeline-owned set layouts remain compatible with the long-lived
-descriptor sets allocated by `DescriptorManager`.
+Descriptor set layouts should be generated per graphics pipeline from shader
+reflection. Sampled textures, samplers, and uniform buffers are bound by shader
+binding name and resolved through the active pipeline's reflected binding table.
+All uniform buffers are lowered as dynamic uniform-buffer descriptors backed by
+the backend constant-buffer upload path. Dynamic offsets are ordered from the
+reflected set/binding layout, not hard-coded at call sites. Descriptor stage
+visibility is currently lowered conservatively to all graphics stages.
 
-The current shader convention still uses three logical groups:
-
-| Set | Content | Binding Flags |
-|-----|---------|--------------|
-| 0   | Frame UniformBuffers from `g_frame` | (none — fixed) |
-| 1   | Immutable samplers | (none — fixed) |
-| 2   | Bindless SampledImage array | UPDATE_AFTER_BIND \| PARTIALLY_BOUND \| VARIABLE_DESCRIPTOR_COUNT |
-
-Those set numbers are reflected shader ABI, not public RHI API. No sampler
-bindless or buffer bindless. GPU buffer data access is planned via BDA (Buffer
-Device Address) rather than descriptor tables.
+The implementation derives descriptor set layout, descriptor lookup, dynamic
+uniform-buffer offset order, and descriptor writes from shader reflection.
+`RHI::ShaderParameters` are automatically partitioned into reflected sets;
+Vulkan associates each partition with a persistent descriptor-set instance
+owned by the compatible graphics pipeline and updates it by parameter revision.
+Sampler bindings use mutable sampler descriptors, not immutable sampler
+layouts. Renderer code never sees the Vulkan set or binding number.
+No sampler bindless or buffer bindless. GPU buffer data access is planned via
+BDA (Buffer Device Address) rather than descriptor tables.
 
 ## Partitions
 
@@ -59,13 +57,14 @@ Device Address) rather than descriptor tables.
 | :CommandList | VKCommandList.cppm | Command recording and barriers |
 | :Shader | VKShader.cppm | Stage conversion, shader module creation, explicit vertex input lowering |
 | :Pipeline | VKPipeline.cppm | Graphics pipeline creation |
+| :Sampler | VKSampler.cppm | `Sampler` — mutable VkSampler payload creation from RHI sampler profiles |
 | :Capability | VKCapability.cppm | Extension + feature capability declaration, resolution (extension availability + feature pNext chain assembly), and reflection. Owns the device feature chain for the device's lifetime. |
 | :Buffer | VKBuffer.cppm | `HostBuffer` (mappable staging), `DeviceBuffer` (device-local), `VertexBuffer`, `IndexBuffer` — VMA-backed buffer classes with Create factories per ADR 02 |
 | :VertexBuffer | VKVertexBuffer.cppm | (unused — logic consolidated into :Buffer) |
 | :IndexBuffer | VKIndexBuffer.cppm | (unused — logic consolidated into :Buffer) |
 | :ImmediateContext | VKImmediateContext.cppm | One-shot async GPU command executor for staging uploads, initial barriers, etc. Transient command buffers, no waitIdle. |
 | :TransferCompletionQueue | VKTransferCompletionQueue.cppm | `TransferCompletionQueue` — transfer timeline, upload completion token allocation/query, and deferred callback execution |
-| :Descriptor | VKDescriptor.cppm | `DescriptorManager` — descriptor allocation/write policy, immutable sampler descriptors, bindless texture slot management |
+| :Descriptor | VKDescriptor.cppm | `DescriptorManager` — descriptor allocation/write policy and descriptor write helpers |
 | :Texture | VKTexture.cppm | `DeviceTexture`, `SampledTexture`, and `RenderTarget` image resources |
 
 ## Presentation

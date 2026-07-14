@@ -24,9 +24,9 @@ VSOutput vertMain(VSInput input) {
 }
 
 [shader("fragment")]
-float4 fragMain(VSOutput vertIn) : SV_TARGET {
+float4 fragMain(VSOutput vertIn, uniform uint baseColorTextureIndex) : SV_TARGET {
     float pulse     = 0.5 + 0.5 * sin(g_frame.cb.time);
-    float4 texColor = g_textures.uTextures[0].Sample(g_samplers.uSamplerLinear, vertIn.uv);
+    float4 texColor = g_textures.uTextures[baseColorTextureIndex].Sample(g_samplers.uSamplerLinear, vertIn.uv);
     float3 pulsed   = vertIn.color * pulse * texColor.rgb;
     return float4(pulsed, 1.0);
 }

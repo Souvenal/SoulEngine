@@ -27,6 +27,7 @@ import :ImmediateContext;
 import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
+import :Sampler;
 import :Texture;
 import :DeletionQueue;
 
@@ -114,32 +115,35 @@ class RenderDevice final : public RHI::RenderDevice {
         m_DeletionQueue = DeletionQueue{m_Timeline};
 
         // ── FrameContext ───────────────────────────────────────────────────
-        // Each frame slot gets its own Pool, PrimaryBuffer, SubPool, and
-        // GlobalConstantBuffer.
+        // Each frame slot gets its own Pool, PrimaryBuffer, and SubPool.
         m_FrameContext.clear();
         m_FrameContext.reserve(m_FramesInFlight);
         for (uint32_t i = 0; i < m_FramesInFlight; ++i) {
-            auto FCRes = FrameContext::Create(m_Device, m_GraphicsFamily, m_Allocator);
+            auto FCRes = FrameContext::Create(m_Device, m_GraphicsFamily);
             if (!FCRes)
                 return std::unexpected(FCRes.error().Append("FrameContext creation failed"));
             m_FrameContext.push_back(std::move(*FCRes));
         }
 
+        // ── Constant arena ───────────────────────────────────────────────
+        const auto ConstantArenaCapacity = Cfg.RhiVulkan.ConstantArenaBufferSize.value_or(4096);
+        if (ConstantArenaCapacity > std::numeric_limits<Uint64>::max() / m_FramesInFlight)
+            return std::unexpected(ErrorMessage("UniformBufferArena total buffer size overflow"));
+
+        auto ConstantArena =
+            UniformBufferArena::Create(static_cast<Uint64>(ConstantArenaCapacity) * m_FramesInFlight, *m_Device, m_Allocator);
+        if (!ConstantArena)
+            return std::unexpected(ConstantArena.error().Append("UniformBufferArena creation failed"));
+        m_ConstantArena = std::move(*ConstantArena);
+
         // ── Pre-register swapchain images in the committed state map ─────────
         RegisterSwapchainImages();
 
-        // ── Immutable samplers ──────────────────────────────────────────────
-        if (auto Res = CreateSamplers(); !Res.has_value())
-            return std::unexpected(Res.error());
-        m_DescriptorLayoutConfig = DescriptorLayoutConfig{
-            .ImmutableSamplers = {*m_Samplers[0], *m_Samplers[1]},
-            .MaxTextures       = ConfigManager::Get().GetConfig().RhiVulkan.MaxTextures.value_or(4096),
-        };
+        m_MaxTextures = ConfigManager::Get().GetConfig().RhiVulkan.MaxTextures.value_or(4096);
 
         // ── Global descriptor manager ─────────────────────────────────────
         {
-            auto Heap =
-                DescriptorManager::Create(m_Device, m_FramesInFlight, m_FrameContext, m_DescriptorLayoutConfig);
+            auto Heap = DescriptorManager::Create(m_Device, m_FramesInFlight);
             if (!Heap)
                 return std::unexpected(Heap.error().Append("DescriptorManager creation failed"));
             m_DescriptorManager = std::make_unique<DescriptorManager>(std::move(*Heap));
@@ -159,6 +163,8 @@ class RenderDevice final : public RHI::RenderDevice {
 
         // GPU done with this frame slot — safe to free scratch secondaries.
         m_FrameContext[m_CurrentFrame].ScratchSecondaries.clear();
+        if (m_DescriptorManager)
+            m_DescriptorManager->BeginFrame(m_CurrentFrame);
 
         // Free any GPU resources whose transfer operations have completed.
         m_TransferCompletionQueue.Tick();
@@ -275,11 +281,28 @@ class RenderDevice final : public RHI::RenderDevice {
     }
 
     [[nodiscard]] auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
-        -> std::expected<SPtr<RHI::ConstantBuffer>, ErrorMessage> override {
-        auto Buf = UniformBuffer::Create(Desc, *m_Device, m_Allocator);
-        if (!Buf)
-            return std::unexpected(Buf.error().Append("Failed to create constant buffer"));
-        return SPtr<RHI::ConstantBuffer>(std::move(*Buf));
+        -> std::expected<UPtr<RHI::ConstantBuffer>, ErrorMessage> override {
+        if (Desc.Size == 0)
+            return std::unexpected(ErrorMessage("CreateConstantBuffer: size must be greater than zero"));
+
+        std::vector<Uint32> Offsets;
+        Offsets.reserve(m_FramesInFlight);
+        // One logical ConstantBuffer needs one backing arena slot per
+        // frame-in-flight so writes for the current frame never overwrite
+        // constant data still referenced by older GPU submissions.
+        for (Uint32 FrameIndex = 0; FrameIndex < m_FramesInFlight; ++FrameIndex) {
+            auto Offset = m_ConstantArena.Allocate(Desc.Size);
+            if (!Offset)
+                return std::unexpected(Offset.error().Append("CreateConstantBuffer: arena offset allocation failed"));
+            Offsets.push_back(*Offset);
+        }
+
+        return std::make_unique<Vulkan::ConstantBuffer>(Desc, std::move(Offsets));
+    }
+
+    [[nodiscard]] auto CreateSampler(const SamplerDesc& Desc)
+        -> std::expected<UPtr<RHI::Sampler>, ErrorMessage> override {
+        return Sampler::Create(Desc, m_Device, m_DeletionQueue);
     }
 
     [[nodiscard]] auto CreateSampledTexture(const SampledTextureDesc& Desc)
@@ -289,7 +312,6 @@ class RenderDevice final : public RHI::RenderDevice {
                                       m_Device,
                                       m_ImmediateContext,
                                       m_TransferCompletionQueue,
-                                      *m_DescriptorManager,
                                       m_DeletionQueue);
     }
 
@@ -300,13 +322,7 @@ class RenderDevice final : public RHI::RenderDevice {
 
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
-        return GraphicsPipeline::Create(m_Device, Desc, m_DescriptorLayoutConfig, m_DeletionQueue);
-    }
-
-    [[nodiscard]] auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
-        -> std::expected<void, ErrorMessage> override {
-        auto& FC = m_FrameContext[m_CurrentFrame];
-        return FC.GlobalConstantBuffer->Write(Data, Size);
+        return GraphicsPipeline::Create(m_Device, Desc, m_MaxTextures, m_DeletionQueue);
     }
 
     [[nodiscard]] auto IsGpuComplete(GpuCompletionToken Token) -> bool override {
@@ -327,8 +343,8 @@ class RenderDevice final : public RHI::RenderDevice {
         if (!DeletionDrain)
             LogError("{}", DeletionDrain.error().ToString());
         WaitIdle();
-        // Destroy per-frame resources (including HostBuffers with VMA allocations)
-        // before vmaDestroyAllocator.
+        // Destroy VMA-backed buffers before vmaDestroyAllocator.
+        m_ConstantArena = {};
         m_FrameContext.clear();
         if (m_Allocator)
             vmaDestroyAllocator(m_Allocator);
@@ -480,56 +496,6 @@ class RenderDevice final : public RHI::RenderDevice {
         return {};
     }
 
-    /// Create two immutable samplers:
-    ///   [0] linear + repeat (no anisotropy)
-    ///   [1] linear + repeat + max anisotropy
-    [[nodiscard]] auto CreateSamplers() -> std::expected<void, ErrorMessage> {
-        if (!Capability::Get().GetFeatures().samplerAnisotropy)
-            return std::unexpected(ErrorMessage("samplerAnisotropy feature not supported by device"));
-
-        const auto& Limits = Capability::Get().GetProperties().limits;
-
-        auto MakeSampler = [&](bool Aniso) -> std::expected<vk::raii::Sampler, ErrorMessage> {
-            vk::SamplerCreateInfo CI{
-                .magFilter               = vk::Filter::eLinear,
-                .minFilter               = vk::Filter::eLinear,
-                .mipmapMode              = vk::SamplerMipmapMode::eLinear,
-                .addressModeU            = vk::SamplerAddressMode::eRepeat,
-                .addressModeV            = vk::SamplerAddressMode::eRepeat,
-                .addressModeW            = vk::SamplerAddressMode::eRepeat,
-                .mipLodBias              = 0.0f,
-                .anisotropyEnable        = Aniso,
-                .maxAnisotropy           = Aniso ? Limits.maxSamplerAnisotropy : 1.0f,
-                // TODO: compareOp can be used for PCF
-                .compareEnable           = vk::False,
-                .compareOp               = vk::CompareOp::eAlways,
-                // TODO: figure out the lod here
-                .minLod                  = 0.0f,
-                .maxLod                  = vk::LodClampNone,
-                .borderColor             = vk::BorderColor::eIntOpaqueBlack,
-                // normalized:   sample within [0, 1]
-                // unnormalized: sample within [0, texWidth)
-                .unnormalizedCoordinates = vk::False,
-            };
-            auto Res = m_Device.createSampler(CI);
-            if (Res.result != vk::Result::eSuccess)
-                return std::unexpected(ErrorMessage("Failed to create immutable sampler"));
-            return std::move(Res.value);
-        };
-
-        auto S0 = MakeSampler(false);
-        if (!S0)
-            return std::unexpected(S0.error());
-        m_Samplers[0] = std::move(*S0);
-
-        auto S1 = MakeSampler(true);
-        if (!S1)
-            return std::unexpected(S1.error());
-        m_Samplers[1] = std::move(*S1);
-
-        return {};
-    }
-
     [[nodiscard]] auto CreateVMA(vk::raii::Context& Context) -> std::expected<void, ErrorMessage> {
         const auto&        CtxDispatcher  = Context.getDispatcher();
         const auto&        InstDispatcher = m_Instance.getDispatcher();
@@ -671,6 +637,23 @@ class RenderDevice final : public RHI::RenderDevice {
                             return std::unexpected(
                                 ErrorMessage("Execute: SetGraphicsPipeline is missing graphics pipeline"));
                         BoundPipeline = DrawCmd.PipelinePtr;
+                    } else if constexpr (std::is_same_v<CommandType, RHI::PushConstantsCmd>) {
+                        if (!DrawCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: PushConstants is missing graphics pipeline"));
+                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage(
+                                "Execute: PushConstants pipeline does not match the currently bound graphics pipeline"));
+                        if (DrawCmd.Data.empty())
+                            return std::unexpected(ErrorMessage("Execute: PushConstants data is empty"));
+                    } else if constexpr (std::is_same_v<CommandType, RHI::BindShaderParametersCmd>) {
+                        if (!DrawCmd.PipelinePtr)
+                            return std::unexpected(
+                                ErrorMessage("Execute: BindShaderParameters is missing graphics pipeline"));
+                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage(
+                                "Execute: BindShaderParameters pipeline does not match the currently bound graphics pipeline"));
+                        if (DrawCmd.Parameters.GetSets().empty())
+                            return std::unexpected(ErrorMessage("Execute: BindShaderParameters has no parameter sets"));
                     } else if constexpr (std::is_same_v<CommandType, RHI::DrawIndexedCmd>) {
                         if (!DrawCmd.PipelinePtr)
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing graphics pipeline"));
@@ -781,13 +764,6 @@ class RenderDevice final : public RHI::RenderDevice {
 
         if (auto R = BeginFrame(); !R)
             return R;
-        if (!CmdList.GlobalConstantData.empty()) {
-            if (auto R =
-                    WriteGlobalConstantBuffer(CmdList.GlobalConstantData.data(), CmdList.GlobalConstantData.size());
-                !R)
-                return R;
-        }
-
         // Frame token for usage tracking — this frame's signal value on the timeline
         const Uint64                  FrameTokenValue = m_Timeline.NextValue();
         const RHI::GpuCompletionToken FrameToken{.Id = FrameTokenValue};
@@ -833,13 +809,18 @@ class RenderDevice final : public RHI::RenderDevice {
             {
                 auto           ImageStateCopy = m_CommittedImageStates;
                 CommandVisitor Visitor{
-                    .Buf            = SecBuf,
-                    .LocalStates    = ImageStateCopy,
-                    .DescriptorSets = m_DescriptorManager->GetDescriptorSets(m_CurrentFrame),
+                    .Buf           = SecBuf,
+                    .LocalStates   = ImageStateCopy,
+                    .Descriptors   = m_DescriptorManager.get(),
+                    .ConstantArena = &m_ConstantArena,
+                    .FrameIndex    = m_CurrentFrame,
                 };
                 Visitor.BeginPass(Pass.Desc);
-                for (const auto& Cmd : Pass.Commands)
+                for (const auto& Cmd : Pass.Commands) {
                     std::visit(Visitor, Cmd);
+                    if (Visitor.Error)
+                        return std::unexpected(*Visitor.Error);
+                }
                 Visitor.EndPass();
                 m_CommittedImageStates = std::move(ImageStateCopy);
             }
@@ -932,14 +913,11 @@ class RenderDevice final : public RHI::RenderDevice {
     DeletionQueue m_DeletionQueue; // re-initialized after m_Timeline created
 
     std::vector<FrameContext> m_FrameContext;
-
-    // ── Immutable samplers ──────────────────────────────────────────────────
-    // Index 0 = linear-repeat, Index 1 = linear-repeat-anisotropic.
-    std::array<vk::raii::Sampler, 2> m_Samplers = {nullptr, nullptr};
+    UniformBufferArena        m_ConstantArena = {};
 
     // ── Global descriptor manager ─────────────────────────────────────────
-    DescriptorLayoutConfig        m_DescriptorLayoutConfig = {};
     Core::UPtr<DescriptorManager> m_DescriptorManager = nullptr;
+    Uint32                        m_MaxTextures        = 4096;
 
     // ── Barrier state tracking ───────────────────────────────────────────
 

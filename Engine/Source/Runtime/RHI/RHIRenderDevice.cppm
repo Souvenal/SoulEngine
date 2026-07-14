@@ -34,23 +34,18 @@ class RenderDevice {
         -> std::expected<VertexBufferCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateIndexBuffer(const IndexBufferDesc& Desc)
         -> std::expected<IndexBufferCreateResult, ErrorMessage> = 0;
-    /// Create a constant (uniform) buffer with per-frame backing storage.
-    /// The returned buffer auto-selects the current frame's slot on Write().
-    /// @param Size  Total size in bytes per-frame slot.
+    /// Create a logical shader-visible constant block identity.
+    /// Constant data is supplied through draw-scope shader bindings.
     [[nodiscard]] virtual auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
-        -> std::expected<SPtr<ConstantBuffer>, ErrorMessage> = 0;
+        -> std::expected<UPtr<ConstantBuffer>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateSampler(const SamplerDesc& Desc)
+        -> std::expected<UPtr<Sampler>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateSampledTexture(const SampledTextureDesc& Desc)
         -> std::expected<SampledTextureCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateRenderTarget(const RenderTargetDesc& Desc)
         -> std::expected<RenderTargetCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> = 0;
-
-    /// Write data into the engine-global constant buffer bound to Set 0.
-    /// Safe to call once per frame after BeginFrame().  Size must not exceed
-    /// the global CB capacity (configured via [RHI.Vulkan].GlobalConstantBufferSize).
-    [[nodiscard]] virtual auto WriteGlobalConstantBuffer(const void* Data, Uint64 Size)
-        -> std::expected<void, ErrorMessage> = 0;
 
     // ── Command execution ────────────────────────────────────
 

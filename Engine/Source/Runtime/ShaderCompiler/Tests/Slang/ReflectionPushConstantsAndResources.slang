@@ -4,8 +4,6 @@ struct PushData
     float  intensity;
 };
 
-[[vk::push_constant]] PushData g_push;
-
 [[vk::binding(0, 0)]] ConstantBuffer<float4> g_cb;
 [[vk::binding(1, 0)]] Texture2D<float4>      g_tex;
 [[vk::binding(2, 0)]] SamplerState           g_sam;
@@ -17,10 +15,10 @@ struct VSOutput
 };
 
 [shader("vertex")]
-VSOutput VertexMain(uint vid : SV_VertexID)
+VSOutput VertexMain(uint vid : SV_VertexID, uniform PushData push)
 {
     VSOutput o;
-    o.position = float4(0, 0, 0, 1) + g_push.color * g_cb[0];
+    o.position = float4(0, 0, 0, 1) + push.color * g_cb[0];
     o.color = g_tex.Sample(g_sam, float2(0, 0));
     return o;
 }

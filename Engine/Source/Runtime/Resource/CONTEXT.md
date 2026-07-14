@@ -16,9 +16,12 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Ready resource observer** | Raw pointer returned by `Resource::Manager::TryGetReady(ref)` for immediate command-list recording or inspection. It does not own or extend payload lifetime. |
 | **Resource generation** | Version of a resource identity used to distinguish current asynchronous work from stale completions. |
 | **Resource payload** | Committed runtime object published by a ready resource, represented as `Resource<RHI::T>` with a ResourceContext-owned `UPtr<T>`. |
-| **Resource key** | Canonical identity used to deduplicate equivalent resource requests. |
+| **Resource name** | Human-authored runtime identity for a resource request, such as a material texture name or buffer name. It may contribute to a Resource key, but it is not a shader binding name and does not bind the resource to a shader parameter by itself. |
+| **Resource key** | Canonical identity used to deduplicate equivalent resource requests. It may be derived from a resource name, normalized path, descriptor contents, or a combination of request fields. |
 | **In-flight resource request** | Resource request that has been accepted and has not yet reached ready or failed state. |
 | **Sampled texture resource** | Resource-system identity for a sampled texture asset request; its ready payload is an RHI `SampledTexture`. It does not represent render targets or swapchain images. |
+| **Resource array** | Mutable non-global `Array<T>` Resource-layer object for one ordered array of managed resources. It owns `ResourceRef<T>` values and produces ready `RHI::ResourceArray<T>` snapshots with non-owning observers. It is not a ResourceManager registry entry. |
+| **Sampler resource** | Resource-system identity for a small RHI sampler profile such as linear-repeat or anisotropic-repeat; its ready payload is an RHI `Sampler`. |
 | **Buffer resource** | Resource-system identity for a buffer request; its ready payload is an RHI buffer. |
 | **Pipeline resource** | Resource-system identity for a graphics pipeline request; its ready payload is an RHI graphics pipeline. |
 | **Async Resource v1** | Initial async resource scope covering sampled texture resources and graphics pipeline resources. |
@@ -58,6 +61,8 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - A successful **Ready resource observer** requires matching generation and `Ready` state.
 - A **Ready resource observer** does not keep the ResourceContext-owned payload alive. The owning renderer, scene, or application must keep a `ResourceRef<T>` alive for every resource whose observer pointer is recorded into a command list.
 - A **Resource key** maps equivalent requests to the same **Resource**.
+- A **Resource name** is caller-facing identity; a **Resource key** is cache identity.
+  Equivalent names and request descriptors may normalize to the same key.
 - A **Resource generation** changes when a resource is reloaded or recreated.
 - A **Resource payload** exists only after **RHI commitment** succeeds.
 - **RHI commitment** belongs to the RHI thread.
@@ -70,6 +75,7 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - **GPU-pending list** is rebuilt into a fresh vector on each poll: completed entries publish ready, stale-generation entries are dropped, and still-pending entries move into the next vector.
 - Sampled texture and vertex/index buffer resources commonly move from CPU-preparing to RHI-committing to GPU-pending to ready.
 - Pipeline resources commonly move from CPU-preparing to RHI-committing to ready, without a GPU-pending upload phase.
+- Sampler resources derive cache identity from a canonical sampler profile and commonly move from RHI-committing directly to ready.
 - A **Ready resource** is safe for render consumption in the current frame.
 - A **Failed resource** is distinct from a resource that is still preparing.
 - A **Failed resource** does not automatically trigger engine fatal error; the consuming use-site decides whether to skip, fallback, or escalate.
@@ -78,7 +84,7 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - A **Resource wait policy** is chosen by the consumer of a **Resource**, not by the resource object alone.
 - A **Resource dependency** affects the consumer scope that owns it: pass dependencies decide pass execution, draw/material dependencies decide draw execution or fallback.
 - **Skip policy** is the default non-blocking behavior; **Fallback policy** is used when a suitable substitute exists; **Block policy** is opt-in for startup, tooling, tests, or other non-frame-path operations.
-- **Async Resource v1** includes **Sampled texture resource**, **Vertex buffer resource**, **Index buffer resource**, and **Pipeline resource**.
+- **Async Resource v1** includes **Sampled texture resource**, **Vertex buffer resource**, **Index buffer resource**, and **Pipeline resource**. A resource array is a local owner object that composes managed resources rather than an additional async resource family.
 - Render targets are Resource-managed attachment resources when requested
   through typed render-target handles. They are not sampled texture resources
   and do not belong to Async Resource v1.
@@ -141,8 +147,9 @@ eventually require fewer central edits than it does today.
 | `ResourceManager.cppm` | Public facade over `ResourceContext`; owns the singleton context, defines `ResourceRef<T>`, creates valid refs after Context accepts logical demand, and exposes request/state/query APIs. |
 | `ResourceRequestCommon.cppm` | Internal request-flow helpers shared by resource request partitions: begin request work, publish ready/failed/GPU-pending results, mark RHI commit, and produce consistent stale/shutdown logging. |
 | `ResourceTexture.cppm` | Sampled-texture submit flow: key normalization, CPU decode, async task scheduling, RHI upload creation, and result publication. |
+| `ResourceSampler.cppm` | Sampler submit flow: canonical descriptor key derivation, RHI sampler creation, and ready/failure publication. |
 | `ResourcePipeline.cppm` | Graphics-pipeline submit flow: key creation, shader compilation/preparation, RHI pipeline creation, and result publication. |
-| `ResourceBuffer.cppm` | Vertex/index buffer submit flow: data validation/copy, RHI buffer creation, GPU-pending upload publication, and failure publication. |
+| `ResourceBuffer.cppm` | Buffer submit flows: vertex/index buffer data validation/copy, RHI buffer creation, GPU-pending upload publication, constant buffer creation, and failure publication. |
 | `ResourceRenderTarget.cppm` | Render-target submit flow: transient key request orchestration, RHI creation, and result publication. |
 | `Resource.cppm` | Public aggregate module exporting `:Types` and `:Manager`. |
 

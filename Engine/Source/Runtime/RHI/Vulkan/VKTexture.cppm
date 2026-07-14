@@ -13,7 +13,6 @@ import :Types;
 import :Buffer;
 import :ImmediateContext;
 import :TransferCompletionQueue;
-import :Descriptor;
 import :DeletionQueue;
 
 using namespace SoulEngine::Core;
@@ -25,10 +24,6 @@ namespace SoulEngine::RHI::Vulkan {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Owns VkImage + VkImageView + VMA allocation lifecycle.
-///
-/// For sampled textures: holds a bindless descriptor slot and releases it
-/// on destruction.  Pass DescManager = nullptr to skip descriptor management
-/// (e.g. for render targets owned by a different allocation path).
 class DeviceTexture {
   public:
     DeviceTexture() = default;
@@ -36,19 +31,13 @@ class DeviceTexture {
     DeviceTexture(VmaAllocator          Alloc,
                   vk::Image             Image,
                   VmaAllocation         Allocation,
-                  vk::raii::ImageView&& ImageView,
-                  DescriptorManager*    DescManager,
-                  Uint32                DescriptorSlot)
+                  vk::raii::ImageView&& ImageView)
         : m_Allocator(Alloc),
           m_Image(Image),
           m_Allocation(Allocation),
-          m_ImageView(std::move(ImageView)),
-          m_DescManager(DescManager),
-          m_DescriptorSlot(DescriptorSlot) {}
+          m_ImageView(std::move(ImageView)) {}
 
     ~DeviceTexture() {
-        if (m_DescManager)
-            m_DescManager->FreeTexture(m_DescriptorSlot);
         if (m_Allocation)
             vmaDestroyImage(m_Allocator, static_cast<VkImage>(m_Image), m_Allocation);
     }
@@ -58,9 +47,7 @@ class DeviceTexture {
         : m_Allocator(std::exchange(Other.m_Allocator, nullptr)),
           m_Image(std::exchange(Other.m_Image, nullptr)),
           m_Allocation(std::exchange(Other.m_Allocation, nullptr)),
-          m_ImageView(std::move(Other.m_ImageView)),
-          m_DescManager(std::exchange(Other.m_DescManager, nullptr)),
-          m_DescriptorSlot(std::exchange(Other.m_DescriptorSlot, 0u)) {}
+          m_ImageView(std::move(Other.m_ImageView)) {}
 
     auto operator=(DeviceTexture&& Other) noexcept -> DeviceTexture& {
         if (this != &Other) {
@@ -68,8 +55,6 @@ class DeviceTexture {
             std::swap(m_Image, Other.m_Image);
             std::swap(m_Allocation, Other.m_Allocation);
             std::swap(m_ImageView, Other.m_ImageView);
-            std::swap(m_DescManager, Other.m_DescManager);
-            std::swap(m_DescriptorSlot, Other.m_DescriptorSlot);
         }
         return *this;
     }
@@ -82,9 +67,6 @@ class DeviceTexture {
     }
     [[nodiscard]] auto GetImageView() const -> vk::ImageView {
         return *m_ImageView;
-    }
-    [[nodiscard]] auto GetDescriptorSlot() const -> Uint32 {
-        return m_DescriptorSlot;
     }
     [[nodiscard]] auto GetAllocation() const -> VmaAllocation {
         return m_Allocation;
@@ -163,8 +145,6 @@ class DeviceTexture {
     vk::Image           m_Image          = nullptr;
     VmaAllocation       m_Allocation     = nullptr;
     vk::raii::ImageView m_ImageView      = nullptr;
-    DescriptorManager*  m_DescManager    = nullptr;
-    Uint32              m_DescriptorSlot = 0;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -192,7 +172,6 @@ class SampledTexture final : public RHI::SampledTexture {
                                      vk::raii::Device&              Dev,
                                      ImmediateContext&              ImmCtx,
                                      TransferCompletionQueue&       CompletionQueue,
-                                     DescriptorManager&             DescMgr,
                                      DeletionQueue&                 DelQueue)
         -> std::expected<RHI::SampledTextureCreateResult, ErrorMessage> {
 
@@ -254,12 +233,8 @@ class SampledTexture final : public RHI::SampledTexture {
         if (ViewRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("SampledTexture::Create: vkCreateImageView failed"));
 
-        // ── Bindless descriptor ────────────────────────────────────────
-        Uint32 Slot = DescMgr.AllocateTexture();
-        DescMgr.WriteTextureSlot(Slot, *ViewRes.value, vk::ImageLayout::eShaderReadOnlyOptimal);
-
         // ── Copy staging → device via DeviceTexture ────────────────────
-        auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value), &DescMgr, Slot);
+        auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value));
 
         auto CopyResult = Tex->CopyFrom(Staging, ImmCtx, Desc.Width, Desc.Height, VkFmt);
         if (!CopyResult)
@@ -291,10 +266,6 @@ class SampledTexture final : public RHI::SampledTexture {
     [[nodiscard]] auto GetVkImageView() const -> vk::ImageView {
         return m_Texture->GetImageView();
     }
-    [[nodiscard]] auto GetDescriptorSlot() const -> Uint32 {
-        return m_Texture->GetDescriptorSlot();
-    }
-
   private:
     SPtr<DeviceTexture> m_Texture       = nullptr;
     DeletionQueue*      m_DeletionQueue = nullptr;
@@ -397,7 +368,7 @@ class RenderTarget final : public RHI::RenderTarget {
             return std::unexpected(ErrorMessage("RenderTarget::Create: vkCreateImageView failed"));
         }
 
-        auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value), nullptr, 0);
+        auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value));
         return RHI::RenderTargetCreateResult{
             .Texture = std::make_unique<RenderTarget>(std::move(Tex), DelQueue, Desc.Width, Desc.Height, Desc.Format, Desc.Usage),
         };

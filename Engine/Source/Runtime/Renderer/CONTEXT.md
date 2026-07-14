@@ -12,7 +12,7 @@ Render pipeline orchestration layer — drives RHI command execution and pass co
 | **TestRenderer** | Prototype concrete renderer. Owns async pipeline/texture/vertex/index buffer refs and emits variant commands when dependencies are ready. |
 | **Pass dependency** | Resource dependency whose absence makes an entire pass incoherent for the current frame. |
 | **Draw dependency** | Resource dependency whose absence affects one draw packet or material use, not necessarily the entire pass. |
-| **Draw material data** | Per-draw or per-material shader data that selects resources or parameters for one draw packet. |
+| **Draw material data** | Per-draw or per-material shader data that selects resources or parameters for one draw packet. It names shader bindings by reflected parameter path, never by backend set or binding number. |
 
 ## Architecture
 
@@ -38,4 +38,5 @@ IRenderer
 - Pipeline, texture, and buffer lifetime flow through `Resource::Manager` refs; sync resource creation is not done in renderer attach or render-frame code.
 - Resource readiness is resolved before emitting coherent RHI commands. Pass dependencies decide whether a pass is emitted; draw dependencies decide whether an individual draw is emitted, skipped, or substituted with fallback resources.
 - Renderers must render normal color output into explicit render targets and set `CommandList::PresentSource` for window presentation. They must not rely on null color attachments as an implicit swapchain target.
-- Bindless texture selection is **Draw material data**, not a shader entry-point identity or pipeline compile-time interface.
+- Renderer creates `RHI::ShaderParameters` from a ready pipeline's reflection-derived layout, assigns values by shader parameter path, and binds the resulting snapshot. Renderer code must not know Vulkan set or binding numbers.
+- Bindless texture selection is **Draw material data**, not a shader entry-point identity or pipeline compile-time interface. Texture tables are assigned as shader parameter values; material/object data selects entries by integer texture indices.

@@ -247,38 +247,97 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return Bindings;
 }
 
-[[nodiscard]] auto ExtractPushConstantRanges(slang::ShaderReflection* ProgramLayout)
+[[nodiscard]] auto AppendPushConstantRange(std::vector<Shader::PushConstantRange>& PushConstants,
+                                           slang::VariableLayoutReflection*        Param,
+                                           slang::ParameterCategory                Category)
+    -> std::expected<void, ErrorMessage> {
+    if (!Param || !HasCategory(Param, Category))
+        return {};
+
+    auto* TypeLayout = Param->getTypeLayout();
+    if (!TypeLayout)
+        return {};
+
+    // Push constants are not descriptor bindings.  Keep them as byte ranges
+    // so the Vulkan backend can build pipeline-layout push-constant ranges.
+    const auto Offset = Param->getOffset(Category);
+    const auto Size   = TypeLayout->getSize(Category);
+    if (Offset == SLANG_UNKNOWN_SIZE || Size == SLANG_UNKNOWN_SIZE || Size == SLANG_UNBOUNDED_SIZE) {
+        return std::unexpected(
+            ErrorMessage(Format("Push-constant parameter '{}' has an unsupported layout in reflection",
+                                Param->getName() ? Param->getName() : "<unnamed>")));
+    }
+
+    PushConstants.emplace_back(Shader::PushConstantRange{
+        .Offset = static_cast<Uint32>(Offset),
+        .Size   = static_cast<Uint32>(Size),
+    });
+    return {};
+}
+
+[[nodiscard]] auto MergePushConstantRanges(std::vector<Shader::PushConstantRange> Ranges)
+    -> std::vector<Shader::PushConstantRange> {
+    std::ranges::sort(Ranges, {}, &Shader::PushConstantRange::Offset);
+
+    std::vector<Shader::PushConstantRange> Merged;
+    for (const auto& Range : Ranges) {
+        if (Range.Size == 0)
+            continue;
+
+        if (Merged.empty()) {
+            Merged.push_back(Range);
+            continue;
+        }
+
+        auto&      Last    = Merged.back();
+        const auto LastEnd = Last.Offset + Last.Size;
+        const auto NextEnd = Range.Offset + Range.Size;
+        if (Range.Offset <= LastEnd) {
+            Last.Size = (std::max)(LastEnd, NextEnd) - Last.Offset;
+            continue;
+        }
+
+        Merged.push_back(Range);
+    }
+
+    return Merged;
+}
+
+[[nodiscard]] auto ExtractPushConstantRanges(slang::ShaderReflection*     ProgramLayout,
+                                             slang::EntryPointReflection* VertexEntryPoint,
+                                             slang::EntryPointReflection* FragmentEntryPoint)
     -> std::expected<std::vector<Shader::PushConstantRange>, ErrorMessage> {
     std::vector<Shader::PushConstantRange> PushConstants;
     if (!ProgramLayout)
         return PushConstants;
 
     for (unsigned Index = 0; Index < ProgramLayout->getParameterCount(); ++Index) {
-        auto* Param = ProgramLayout->getParameterByIndex(Index);
-        if (!Param || !HasCategory(Param, slang::ParameterCategory::PushConstantBuffer))
-            continue;
-
-        auto* TypeLayout = Param->getTypeLayout();
-        if (!TypeLayout)
-            continue;
-
-        // Push constants are not descriptor bindings.  Keep them as byte ranges
-        // so the Vulkan backend can build pipeline-layout push-constant ranges.
-        const auto Offset = Param->getOffset(slang::ParameterCategory::PushConstantBuffer);
-        const auto Size   = TypeLayout->getSize(slang::ParameterCategory::PushConstantBuffer);
-        if (Offset == SLANG_UNKNOWN_SIZE || Size == SLANG_UNKNOWN_SIZE || Size == SLANG_UNBOUNDED_SIZE) {
-            return std::unexpected(
-                ErrorMessage(Format("Push-constant parameter '{}' has an unsupported layout in reflection",
-                                    Param->getName() ? Param->getName() : "<unnamed>")));
+        if (auto R = AppendPushConstantRange(PushConstants,
+                                             ProgramLayout->getParameterByIndex(Index),
+                                             slang::ParameterCategory::PushConstantBuffer);
+            !R) {
+            return std::unexpected(std::move(R.error()));
         }
-
-        PushConstants.emplace_back(Shader::PushConstantRange{
-            .Offset = static_cast<Uint32>(Offset),
-            .Size   = static_cast<Uint32>(Size),
-        });
     }
 
-    return PushConstants;
+    for (auto* EntryPoint : {VertexEntryPoint, FragmentEntryPoint}) {
+        if (!EntryPoint)
+            continue;
+        for (unsigned Index = 0; Index < EntryPoint->getParameterCount(); ++Index) {
+            // Slang lowers ordinary-data `uniform` entry-point parameters to
+            // SPIR-V push constants. Reflection reports those source parameters
+            // under the Uniform category, while explicitly attributed global
+            // push-constant parameters use PushConstantBuffer above.
+            if (auto R = AppendPushConstantRange(PushConstants,
+                                                 EntryPoint->getParameterByIndex(Index),
+                                                 slang::ParameterCategory::Uniform);
+                !R) {
+                return std::unexpected(std::move(R.error()));
+            }
+        }
+    }
+
+    return MergePushConstantRanges(std::move(PushConstants));
 }
 
 [[nodiscard]] auto ExtractVertexInputsFromVarLayout(slang::VariableLayoutReflection*           VarLayout,
@@ -342,9 +401,10 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 } // anonymous namespace
 
 [[nodiscard]] auto BuildShaderReflection(slang::ShaderReflection*     ProgramLayout,
-                                         slang::EntryPointReflection* EntryPoint)
+                                         slang::EntryPointReflection* VertexEntryPoint,
+                                         slang::EntryPointReflection* FragmentEntryPoint)
     -> std::expected<Shader::Reflection, ErrorMessage> {
-    if (!ProgramLayout || !EntryPoint)
+    if (!ProgramLayout || !VertexEntryPoint || !FragmentEntryPoint)
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
     // Bindings and push constants come from the linked program layout so they
@@ -355,11 +415,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!Bindings)
         return std::unexpected(Bindings.error());
 
-    auto PushConstants = ExtractPushConstantRanges(ProgramLayout);
+    auto PushConstants = ExtractPushConstantRanges(ProgramLayout, VertexEntryPoint, FragmentEntryPoint);
     if (!PushConstants)
         return std::unexpected(PushConstants.error());
 
-    auto VertexInputs = ExtractVertexInputs(EntryPoint);
+    auto VertexInputs = ExtractVertexInputs(VertexEntryPoint);
     if (!VertexInputs)
         return std::unexpected(VertexInputs.error());
 

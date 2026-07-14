@@ -110,6 +110,24 @@ struct ResourceTraits<RHI::IndexBuffer> {
     };
 };
 
+template <>
+struct ResourceTraits<RHI::ConstantBuffer> {
+    static constexpr ResourceTraitInfo Info{
+        ResourceGpuPendingPolicy::None,
+        "constant buffer",
+        ResourceLifetimePolicy::Transient,
+    };
+};
+
+template <>
+struct ResourceTraits<RHI::Sampler> {
+    static constexpr ResourceTraitInfo Info{
+        ResourceGpuPendingPolicy::None,
+        "sampler",
+        ResourceLifetimePolicy::CachedAsset,
+    };
+};
+
 /// @brief Central list of RHI payload families managed by Resource.
 ///
 /// A payload type must appear here and define `ResourceTraits<T>::Info` before
@@ -120,7 +138,9 @@ using ManagedRHIResourceTypes = std::tuple<RHI::SampledTexture,
                                           RHI::RenderTarget,
                                           RHI::GraphicsPipeline,
                                           RHI::VertexBuffer,
-                                          RHI::IndexBuffer>;
+                                          RHI::IndexBuffer,
+                                          RHI::ConstantBuffer,
+                                          RHI::Sampler>;
 
 template <typename T, typename Tuple>
 struct TupleContains;
@@ -149,6 +169,8 @@ static_assert(ManagedRHIResource<RHI::RenderTarget>);
 static_assert(ManagedRHIResource<RHI::GraphicsPipeline>);
 static_assert(ManagedRHIResource<RHI::VertexBuffer>);
 static_assert(ManagedRHIResource<RHI::IndexBuffer>);
+static_assert(ManagedRHIResource<RHI::ConstantBuffer>);
+static_assert(ManagedRHIResource<RHI::Sampler>);
 
 /// @brief ResourceContext-owned RHI payload for supported resource types.
 ///

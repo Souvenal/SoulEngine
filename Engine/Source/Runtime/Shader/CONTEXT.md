@@ -28,6 +28,12 @@ The path is the full shader parameter path within the reflected program, such as
 `g_frameView.view`, and is the stable host-side lookup key inside one pipeline
 layout. It is not a Resource cache key or backend descriptor name.
 
+**Shader binding name**:
+Canonical host-side name for one reflected shader resource binding inside one
+linked pipeline layout. It is currently the reflected `Binding::ParameterPath`.
+It must be unique within that pipeline layout and must not be conflated with a
+Resource name, Resource key, asset path, or backend descriptor object name.
+
 **PushConstantRange**:
 Reflected push-constant byte range (offset, size).
 
@@ -49,6 +55,9 @@ blob, and the linked pipeline-level reflection.
 - A **Shader module** type (`Stage`, `GraphicsProgram`, `Reflection`) is defined in `Shader`, referenced by both `ShaderCompiler` and `RHI`.
 - **ShaderCompiler** produces **GraphicsProgram** values for graphics pipeline compile requests; `Shader` itself has no compiler dependency.
 - **RHI** consumes **GraphicsProgram** values directly when constructing graphics pipelines. The pipeline-level **Reflection** is already part of the `GraphicsProgram`.
+- A **Shader binding name** identifies where a resource should be bound in one
+  pipeline layout; it does not identify which runtime resource should be loaded
+  or cached.
 - Backends map between `Stage` and their native stage enums where stage metadata is still needed.
 
 ## Example dialogue

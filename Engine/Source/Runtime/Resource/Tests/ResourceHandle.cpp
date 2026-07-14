@@ -162,10 +162,9 @@ TEST(ResourceSlotTest, RequestReleaseDestroysPayload) {
 TEST(ResourceRefTest, RequestRefCreatesLogicalOwnerHandle) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Graph.Init(1);
     Manager::Get().Init(Graph);
 
-    auto Ref    = Manager::Get().RequestSampledTextureRef("DefinitelyMissingRefTexture.png");
+    auto Ref    = Manager::Get().RequestRenderTargetRef("TransientRefOwnerHandle", MakeTestRenderTargetDesc());
     auto Handle = Ref.GetHandle();
     ASSERT_TRUE(Handle.IsValid());
 
@@ -322,6 +321,15 @@ TEST(ResourceSampledTextureRequestTest, StaleTexturePublishIgnored) {
     EXPECT_FALSE(Slot.PublishFailed(FirstGeneration, ErrorMessage{"old failure"}));
     EXPECT_EQ(Slot.GetState(FirstGeneration), ResourceState::Stale);
     EXPECT_EQ(Slot.GetState(SecondGeneration), ResourceState::CpuPreparing);
+}
+
+TEST(ResourceArrayTest, RejectsInvalidResourceRef) {
+    Array<RHI::SampledTexture> Resources;
+
+    auto Result = Resources.Set(0, {});
+
+    ASSERT_FALSE(Result.has_value());
+    EXPECT_NE(Result.error().ToString().find("invalid resource ref"), String::npos);
 }
 
 TEST(ResourcePipelineRequestTest, CoalescesPipelineKeys) {

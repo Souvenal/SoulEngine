@@ -39,56 +39,45 @@ namespace SoulEngine::RHI::Vulkan {
 
 [[nodiscard]] auto CreateDescriptorSetLayout(vk::raii::Device&                Device,
                                              std::span<const Shader::Binding> Bindings,
-                                             const DescriptorLayoutConfig&     LayoutConfig)
+                                             Uint32                            MaxTextures)
     -> std::expected<vk::raii::DescriptorSetLayout, ErrorMessage> {
-    // Pipeline layouts are generated from linked shader reflection.  The reflected
-    // set/binding numbers are the engine shader ABI:
-    //   Set 0 = frame dynamic uniform buffers
-    //   Set 1 = immutable samplers
-    //   Set 2 = bindless sampled-image table
-    // DescriptorManager allocates the matching long-lived descriptor sets; this
-    // function only creates the pipeline-owned set layout that must be compatible
-    // with those sets.
-    std::vector<vk::DescriptorSetLayoutBinding>     VkBindings;
-    std::vector<vk::DescriptorBindingFlags>         BindingFlags;
-    std::vector<std::optional<vk::Sampler>>         ImmutableSamplerStorage;
+    // Pipeline layouts are generated from linked shader reflection. The reflected
+    // set/binding numbers are consumed only inside Vulkan; renderer code binds by
+    // shader parameter path.
+    std::vector<vk::DescriptorSetLayoutBinding> VkBindings;
+    std::vector<vk::DescriptorBindingFlags>     BindingFlags;
     VkBindings.reserve(Bindings.size());
     BindingFlags.reserve(Bindings.size());
-    ImmutableSamplerStorage.reserve(Bindings.size());
 
     bool bHasBindingFlags = false;
-    for (const auto& Binding : Bindings) {
+    for (Uint32 BindingIndex = 0; BindingIndex < Bindings.size(); ++BindingIndex) {
+        const auto& Binding = Bindings[BindingIndex];
         auto DescriptorType = ToVkDescriptorType(Binding);
         if (!DescriptorType)
             return std::unexpected(DescriptorType.error());
 
-        const bool bUnboundedArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
-        const Uint32 DescriptorCount = bUnboundedArray ? LayoutConfig.MaxTextures : Binding.ArrayCount;
+        const bool   bUnboundedArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
+        if (bUnboundedArray &&
+            (Binding.Type != Shader::ResourceType::SampledTexture || BindingIndex + 1 != Bindings.size())) {
+            return std::unexpected(ErrorMessage(Core::Format(
+                "Reflected runtime array '{}' must be the final sampled-texture binding in its descriptor set",
+                Binding.ParameterPath)));
+        }
+        const Uint32 DescriptorCount = bUnboundedArray ? MaxTextures : Binding.ArrayCount;
         if (DescriptorCount == 0)
             return std::unexpected(
                 ErrorMessage(Core::Format("Reflected binding '{}' has zero descriptor count", Binding.ParameterPath)));
-
-        // Set 1 samplers are immutable: the actual VkSampler handle is baked into
-        // the descriptor set layout and the allocated descriptor set never needs a
-        // descriptor write for that binding.
-        ImmutableSamplerStorage.push_back(std::nullopt);
-        if (Binding.Type == Shader::ResourceType::Sampler && Binding.Set == 1 &&
-            Binding.Binding < LayoutConfig.ImmutableSamplers.size()) {
-            ImmutableSamplerStorage.back() = LayoutConfig.ImmutableSamplers[Binding.Binding];
-        }
 
         VkBindings.push_back(vk::DescriptorSetLayoutBinding{
             .binding            = Binding.Binding,
             .descriptorType     = *DescriptorType,
             .descriptorCount    = DescriptorCount,
             .stageFlags         = vk::ShaderStageFlagBits::eAllGraphics,
-            .pImmutableSamplers = ImmutableSamplerStorage.back() ? &*ImmutableSamplerStorage.back() : nullptr,
+            .pImmutableSamplers = nullptr,
         });
 
-        // Runtime-sized sampled texture arrays are lowered to the global bindless
-        // texture table.  Vulkan requires the variable descriptor count and
-        // update-after-bind flags to live in a pNext struct parallel to the layout
-        // bindings, so we keep one flag entry per reflected binding.
+        // Runtime-sized sampled texture arrays use Vulkan variable descriptor
+        // count and update-after-bind flags.
         auto Flags = vk::DescriptorBindingFlags{};
         if (bUnboundedArray && Binding.Type == Shader::ResourceType::SampledTexture) {
             Flags = vk::DescriptorBindingFlagBits::eUpdateAfterBind |
@@ -131,7 +120,7 @@ namespace SoulEngine::RHI::Vulkan {
 
 [[nodiscard]] auto CreatePipelineLayout(vk::raii::Device&             Device,
                                         const Shader::Reflection&     Reflection,
-                                        const DescriptorLayoutConfig& LayoutConfig)
+                                        Uint32                        MaxTextures)
     -> std::expected<std::pair<std::vector<vk::raii::DescriptorSetLayout>, vk::raii::PipelineLayout>, ErrorMessage> {
     Uint32 MaxSet = 0;
     for (const auto& Binding : Reflection.Bindings) {
@@ -151,7 +140,7 @@ namespace SoulEngine::RHI::Vulkan {
     std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
     SetLayouts.reserve(BindingsBySet.size());
     for (const auto& SetBindings : BindingsBySet) {
-        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, LayoutConfig);
+        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, MaxTextures);
         if (!SetLayout)
             return std::unexpected(SetLayout.error());
         SetLayouts.push_back(std::move(*SetLayout));
@@ -194,6 +183,52 @@ namespace SoulEngine::RHI::Vulkan {
     return Count;
 }
 
+struct ReflectedDescriptorBinding {
+    String               ParameterPath      = {};
+    Uint32               Set                = 0;
+    Uint32               Binding            = 0;
+    Shader::ResourceType Type               = Shader::ResourceType::Unknown;
+    Uint32               ArrayCount         = 1;
+    Uint32               DynamicOffsetIndex = std::numeric_limits<Uint32>::max();
+};
+
+struct DescriptorSetInstance {
+    vk::raii::DescriptorSet                  Set                     = nullptr;
+    Uint32                                   VariableDescriptorCount = 0;
+    Uint64                                   ParameterRevision       = 0;
+    bool                                     Initialized             = false;
+    std::unordered_map<Uint32, const void*> ResourceBindings = {};
+};
+
+struct PipelineParameterSetInstances {
+    std::unordered_map<Uint64, std::vector<std::vector<DescriptorSetInstance>>> ByParameterId = {};
+};
+
+[[nodiscard]] auto BuildReflectedBindings(const Shader::Reflection& Reflection)
+    -> std::vector<ReflectedDescriptorBinding> {
+    std::vector<Shader::Binding> Sorted = Reflection.Bindings;
+    std::ranges::sort(Sorted, [](const Shader::Binding& Lhs, const Shader::Binding& Rhs) {
+        if (Lhs.Set != Rhs.Set)
+            return Lhs.Set < Rhs.Set;
+        return Lhs.Binding < Rhs.Binding;
+    });
+
+    std::vector<ReflectedDescriptorBinding> Result;
+    Result.reserve(Sorted.size());
+    Uint32 DynamicOffsetIndex = 0;
+    for (const auto& Binding : Sorted) {
+        auto& Out          = Result.emplace_back();
+        Out.ParameterPath  = Binding.ParameterPath;
+        Out.Set            = Binding.Set;
+        Out.Binding        = Binding.Binding;
+        Out.Type           = Binding.Type;
+        Out.ArrayCount     = Binding.ArrayCount;
+        if (Binding.Type == Shader::ResourceType::ConstantBuffer)
+            Out.DynamicOffsetIndex = DynamicOffsetIndex++;
+    }
+    return Result;
+}
+
 [[nodiscard]] auto MaxPushConstantSize(const Shader::Reflection& Reflection) -> Uint32 {
     Uint32 Size = 0;
     for (const auto& Range : Reflection.PushConstants)
@@ -218,7 +253,8 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
             m_DeletionQueue->Enqueue(GetLastUsageToken(),
                                      [Pipeline = m_Pipeline,
                                       PipelineLayout = m_PipelineLayout,
-                                      SetLayouts = m_SetLayouts]() {});
+                                      SetLayouts = m_SetLayouts,
+                                      ParameterSets = m_ParameterSets]() {});
         }
     }
 
@@ -231,11 +267,11 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
     /// modules are transient — destroyed when this function returns.
     [[nodiscard]] static auto Create(vk::raii::Device&             Device,
                                      const GraphicsPipelineDesc&   Desc,
-                                     const DescriptorLayoutConfig& LayoutConfig,
+                                     Uint32                        MaxTextures,
                                      DeletionQueue&                Queue)
         -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> {
 
-        auto LayoutObjects = CreatePipelineLayout(Device, Desc.Program.Reflection, LayoutConfig);
+        auto LayoutObjects = CreatePipelineLayout(Device, Desc.Program.Reflection, MaxTextures);
         if (!LayoutObjects)
             return std::unexpected(LayoutObjects.error().Append("Failed to create graphics pipeline layout"));
 
@@ -424,8 +460,13 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
             std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));
         Ret->m_PipelineLayout     = std::make_shared<vk::raii::PipelineLayout>(std::move(LayoutObjects->second));
         Ret->m_DescriptorSetCount = static_cast<Uint32>(Ret->m_SetLayouts->size());
+        Ret->m_RawSetLayouts.reserve(Ret->m_SetLayouts->size());
+        for (const auto& SetLayout : *Ret->m_SetLayouts)
+            Ret->m_RawSetLayouts.push_back(*SetLayout);
         Ret->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
+        Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
         Ret->m_PushConstantSize   = MaxPushConstantSize(Desc.Program.Reflection);
+        Ret->SetShaderParameterLayout(RHI::ShaderParameterLayout::Create(Desc.Program.Reflection));
         Ret->m_DeletionQueue      = &Queue;
         return Ret;
     }
@@ -443,6 +484,25 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
         return m_DescriptorSetCount;
     }
 
+    [[nodiscard]] auto GetDescriptorSetLayouts() const -> std::span<const vk::DescriptorSetLayout> {
+        return m_RawSetLayouts;
+    }
+
+    [[nodiscard]] auto GetDescriptorSetLayout(Uint32 Set) const -> vk::DescriptorSetLayout;
+
+    [[nodiscard]] auto GetBindings() const -> std::span<const ReflectedDescriptorBinding> {
+        return m_Bindings;
+    }
+
+    [[nodiscard]] auto FindBinding(StringView ParameterPath, Shader::ResourceType Type) const
+        -> const ReflectedDescriptorBinding* {
+        for (const auto& Binding : m_Bindings) {
+            if (Binding.Type == Type && Binding.ParameterPath == ParameterPath)
+                return &Binding;
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] auto GetDynamicOffsetCount() const -> Uint32 {
         return m_DynamicOffsetCount;
     }
@@ -451,14 +511,58 @@ class GraphicsPipeline final : public RHI::GraphicsPipeline {
         return m_PushConstantSize;
     }
 
+    [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
+                                                         Uint32             SetIndex,
+                                                         Uint32             VariableDescriptorCount,
+                                                         DescriptorManager& Descriptors)
+        -> std::expected<DescriptorSetInstance*, ErrorMessage>;
+
   private:
     SPtr<vk::raii::Pipeline>                         m_Pipeline           = nullptr;
     SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout     = nullptr;
     SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts         = nullptr;
+    std::vector<vk::DescriptorSetLayout>             m_RawSetLayouts      = {};
+    std::vector<ReflectedDescriptorBinding>          m_Bindings           = {};
+    SPtr<PipelineParameterSetInstances>              m_ParameterSets      = std::make_shared<PipelineParameterSetInstances>();
     Uint32                                           m_DescriptorSetCount = 0;
     Uint32                                           m_DynamicOffsetCount = 0;
     Uint32                                           m_PushConstantSize   = 0;
     DeletionQueue*                                   m_DeletionQueue      = nullptr;
 };
+
+auto GraphicsPipeline::GetDescriptorSetLayout(Uint32 Set) const -> vk::DescriptorSetLayout {
+    if (Set >= m_RawSetLayouts.size())
+        return nullptr;
+    return m_RawSetLayouts[Set];
+}
+
+auto GraphicsPipeline::GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
+                                                         Uint32             SetIndex,
+                                                         Uint32             VariableDescriptorCount,
+                                                         DescriptorManager& Descriptors)
+    -> std::expected<DescriptorSetInstance*, ErrorMessage> {
+    if (SetIndex >= m_RawSetLayouts.size())
+        return std::unexpected(ErrorMessage(Core::Format("Parameter set uses missing descriptor set {}", SetIndex)));
+
+    auto& Instances = m_ParameterSets->ByParameterId[ParameterId];
+    if (Instances.size() < m_RawSetLayouts.size())
+        Instances.resize(m_RawSetLayouts.size());
+
+    auto& Versions = Instances[SetIndex];
+    for (auto& Instance : Versions) {
+        if (Instance.VariableDescriptorCount == VariableDescriptorCount)
+            return &Instance;
+    }
+
+    auto Set = Descriptors.AllocatePersistentDescriptorSet(m_RawSetLayouts[SetIndex], VariableDescriptorCount);
+    if (!Set)
+        return std::unexpected(Set.error());
+
+    Versions.push_back(DescriptorSetInstance{
+        .Set                     = std::move(*Set),
+        .VariableDescriptorCount = VariableDescriptorCount,
+    });
+    return &Versions.back();
+}
 
 } // namespace SoulEngine::RHI::Vulkan

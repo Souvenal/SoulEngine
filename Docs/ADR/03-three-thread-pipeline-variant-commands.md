@@ -111,7 +111,7 @@ Details:
 Responsible for: draining RHI-side cross-thread tasks, uploading command data to GPU (descriptor writes, constant buffer upload), submitting GPU work and presenting.
 
 ```
-wait for RenderReady → drain RHI task queue → write global constant buffer → for each Pass: allocate secondary CB → begin rendering → dispatch commands → end rendering → submit primary CB → present → RHIDone → notify_all
+wait for RenderReady → drain RHI task queue → for each Pass: allocate secondary CB → begin rendering → dispatch commands → end rendering → submit primary CB → present → RHIDone → notify_all
 → on stop: WaitIdle() → return
 ```
 
@@ -119,10 +119,9 @@ Details:
 - Drains the RHI queue from `TaskGraph`
 - Takes the `CommandList` from the slot and calls `RenderDevice::Execute()`:
   1. **Frame begin:** Wait on timeline semaphore (CPU-GPU sync), acquire swapchain image, begin primary command buffer
-  2. **Constant buffer upload:** Write per-frame global data (time, sin/cos) via `WriteGlobalConstantBuffer`
-  3. **Per-pass recording:** For each `Pass` in the command list — allocate a secondary command buffer from the frame's SubPool, bind global descriptor sets (per-frame UBO + bindless texture array), call `beginRendering`, dispatch variant commands via `CommandVisitor::operator()`, call `endRendering`, end secondary
-  4. **Submit:** ExecuteCommands from primary, signal timeline semaphore, present
-  5. **Frame end:** Advance `m_CurrentFrame`
+  2. **Per-pass recording:** For each `Pass` in the command list — allocate a secondary command buffer from the frame's SubPool, call `beginRendering`, dispatch variant commands via `CommandVisitor::operator()`, bind draw-scope descriptors from the active pipeline's reflected layout, call `endRendering`, end secondary
+  3. **Submit:** ExecuteCommands from primary, signal timeline semaphore, present
+  4. **Frame end:** Advance `m_CurrentFrame`
 
 - All Vulkan API calls are confined to this thread — no other thread touches vkCmd*, vkQueueSubmit, or vkQueuePresent
 - Per-pass secondary command buffers are stored in `FrameContext::ScratchSecondaries` — freed when the same FrameContext is reused next frame (after timeline wait guarantees GPU completion)

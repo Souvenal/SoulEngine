@@ -26,6 +26,16 @@ struct ConstantBufferDesc {
     Uint64 Size = 0;
 };
 
+enum class SamplerProfile : Uint8 {
+    Unknown = 0,
+    LinearRepeat,
+    AnisotropicRepeat,
+};
+
+struct SamplerDesc {
+    SamplerProfile Profile = SamplerProfile::LinearRepeat;
+};
+
 // ── GpuResource — base for GPU resources with usage tracking ────────────
 
 struct GpuCompletionToken {
@@ -83,26 +93,144 @@ class IndexBuffer : public GpuResource {
     virtual ~IndexBuffer()                             = default;
 };
 
-/// Abstract base for constant (uniform) buffer resources.
-/// Backend concrete class (e.g. Vulkan::UniformBuffer) holds per-frame
-/// mappable buffer copies and auto-selects the current frame's copy on Write().
-/// Consumers hold SPtr<ConstantBuffer> and call Write() each frame with
-/// updated data — the FramesInFlight count is an internal backend detail.
+/// Logical shader-visible constant block identity.
+///
+/// This object declares the size and stable RHI identity of a constant block.
+/// It does not imply a dedicated backend buffer allocation. Backends lower
+/// command-list constant writes into their own in-flight-safe storage.
 class ConstantBuffer {
   public:
-    ConstantBuffer()                                         = default;
+    explicit ConstantBuffer(const ConstantBufferDesc& Desc) {
+        m_Size = Desc.Size;
+    }
     ConstantBuffer(const ConstantBuffer&)                    = delete;
     auto operator=(const ConstantBuffer&) -> ConstantBuffer& = delete;
     ConstantBuffer(ConstantBuffer&&)                         = delete;
     auto operator=(ConstantBuffer&&) -> ConstantBuffer&      = delete;
     virtual ~ConstantBuffer()                                = default;
 
-    /// Upload new data to the current frame's buffer slot.
-    /// Size must not exceed the buffer's capacity.
-    [[nodiscard]] virtual auto Write(const void* Data, Uint64 Size) -> std::expected<void, ErrorMessage> = 0;
+    /// Return the declared size in bytes.
+    [[nodiscard]] auto GetSize() const -> Uint64 {
+        return m_Size;
+    }
 
-    /// Return the buffer size in bytes (same for all frame slots).
-    [[nodiscard]] virtual auto GetSize() const -> Uint64 = 0;
+  private:
+    Uint64 m_Size = 0;
+};
+
+/// Shader-visible sampling state object.
+///
+/// Backends own the native sampler handle. Resource::Manager owns Sampler
+/// instances; command lists only observe them.
+class Sampler : public GpuResource {
+  public:
+    explicit Sampler(const SamplerDesc& Desc) {
+        m_Desc = Desc;
+    }
+    Sampler(const Sampler&)                    = delete;
+    auto operator=(const Sampler&) -> Sampler& = delete;
+    Sampler(Sampler&&)                         = delete;
+    auto operator=(Sampler&&) -> Sampler&      = delete;
+    virtual ~Sampler()                         = default;
+
+    [[nodiscard]] auto GetDesc() const -> const SamplerDesc& {
+        return m_Desc;
+    }
+
+  private:
+    SamplerDesc m_Desc = {};
+};
+
+/// @brief One reflected resource binding in a shader parameter-set layout.
+struct ShaderParameterBindingLayout {
+    String               ParameterPath = {};
+    Uint32               Binding       = 0;
+    Shader::ResourceType Type          = Shader::ResourceType::Unknown;
+    Uint32               ArrayCount    = 1;
+};
+
+/// @brief Immutable reflected layout for one shader descriptor set.
+class ShaderParameterSetLayout {
+  public:
+    ShaderParameterSetLayout() = default;
+
+    [[nodiscard]] auto GetSetIndex() const -> Uint32 {
+        return m_SetIndex;
+    }
+
+    [[nodiscard]] auto GetBindings() const -> std::span<const ShaderParameterBindingLayout> {
+        return m_Bindings;
+    }
+
+    [[nodiscard]] auto FindBinding(StringView ParameterPath) const -> const ShaderParameterBindingLayout* {
+        for (const auto& Binding : m_Bindings) {
+            if (Binding.ParameterPath == ParameterPath)
+                return &Binding;
+        }
+        return nullptr;
+    }
+
+  private:
+    friend class ShaderParameterLayout;
+
+    Uint32                                        m_SetIndex = 0;
+    std::vector<ShaderParameterBindingLayout> m_Bindings = {};
+};
+
+/// @brief Immutable shader parameter interface derived from pipeline reflection.
+class ShaderParameterLayout {
+  public:
+    [[nodiscard]] static auto Create(const Shader::Reflection& Reflection) -> ShaderParameterLayout {
+        ShaderParameterLayout Result;
+        Result.m_Id = NextId();
+        if (Reflection.Bindings.empty())
+            return Result;
+
+        Uint32 MaxSet = 0;
+        for (const auto& Binding : Reflection.Bindings)
+            MaxSet = (std::max)(MaxSet, Binding.Set);
+
+        Result.m_Sets.resize(MaxSet + 1);
+        for (Uint32 SetIndex = 0; SetIndex < Result.m_Sets.size(); ++SetIndex)
+            Result.m_Sets[SetIndex].m_SetIndex = SetIndex;
+
+        for (const auto& Binding : Reflection.Bindings) {
+            Result.m_Sets[Binding.Set].m_Bindings.push_back(ShaderParameterBindingLayout{
+                .ParameterPath = Binding.ParameterPath,
+                .Binding       = Binding.Binding,
+                .Type          = Binding.Type,
+                .ArrayCount    = Binding.ArrayCount,
+            });
+        }
+
+        for (auto& Set : Result.m_Sets)
+            std::ranges::sort(Set.m_Bindings, {}, &ShaderParameterBindingLayout::Binding);
+
+        return Result;
+    }
+
+    [[nodiscard]] auto GetId() const -> Uint64 {
+        return m_Id;
+    }
+
+    [[nodiscard]] auto GetSets() const -> std::span<const ShaderParameterSetLayout> {
+        return m_Sets;
+    }
+
+    [[nodiscard]] auto GetSetLayout(Uint32 SetIndex) const -> const ShaderParameterSetLayout* {
+        if (SetIndex >= m_Sets.size())
+            return nullptr;
+        return &m_Sets[SetIndex];
+    }
+
+  private:
+    [[nodiscard]] static auto NextId() -> Uint64 {
+        static std::atomic<Uint64> Next = 1;
+        return Next.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    Uint64                                m_Id   = 0;
+    std::vector<ShaderParameterSetLayout> m_Sets = {};
 };
 
 /// Empty polymorphic base for graphics pipeline resources.
@@ -116,6 +244,18 @@ class GraphicsPipeline : public GpuResource {
     GraphicsPipeline(GraphicsPipeline&&)                         = delete;
     auto operator=(GraphicsPipeline&&) -> GraphicsPipeline&      = delete;
     virtual ~GraphicsPipeline()                                  = default;
+
+    [[nodiscard]] auto GetShaderParameterLayout() const -> const ShaderParameterLayout& {
+        return m_ShaderParameterLayout;
+    }
+
+  protected:
+    auto SetShaderParameterLayout(ShaderParameterLayout Layout) -> void {
+        m_ShaderParameterLayout = std::move(Layout);
+    }
+
+  private:
+    ShaderParameterLayout m_ShaderParameterLayout = {};
 };
 
 // ── Opaque handle types ───────────────────────────────────────────────────
@@ -134,6 +274,242 @@ class SampledTexture : public GpuResource {
 
     [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
     [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
+};
+
+/// @brief Mutable shader-visible array of resource observers.
+///
+/// Resource-layer arrays retain the corresponding ResourceRefs. This RHI value
+/// contains only the resolved observers recorded into command lists.
+template <typename T>
+class ResourceArray {
+  public:
+    ResourceArray() = default;
+
+    [[nodiscard]] auto GetSize() const -> Uint32 {
+        return static_cast<Uint32>(m_Resources.size());
+    }
+
+    [[nodiscard]] auto GetResources() const -> std::span<T* const> {
+        return m_Resources;
+    }
+
+    [[nodiscard]] auto GetRevision() const -> Uint64 {
+        return m_Revision;
+    }
+
+    auto Set(Uint32 Slot, T* Resource) -> void {
+        if (Slot >= m_Resources.size())
+            m_Resources.resize(Slot + 1);
+        if (m_Resources[Slot] == Resource)
+            return;
+
+        m_Resources[Slot] = Resource;
+        ++m_Revision;
+    }
+
+  private:
+    std::vector<T*> m_Resources = {};
+    Uint64          m_Revision  = 0;
+};
+
+template <typename T>
+struct ShaderParameterResourceTraits;
+
+template <>
+struct ShaderParameterResourceTraits<SampledTexture> {
+    static constexpr Shader::ResourceType Type = Shader::ResourceType::SampledTexture;
+};
+
+template <typename T>
+concept ShaderParameterArrayResource = requires {
+    { ShaderParameterResourceTraits<T>::Type } -> std::convertible_to<Shader::ResourceType>;
+};
+
+/// @brief CPU-side snapshot for one reflected constant-buffer binding.
+struct ShaderParameterConstant {
+    ConstantBuffer*        Buffer = nullptr;
+    std::vector<std::byte> Data   = {};
+};
+
+/// @brief One value assigned to a reflected shader parameter binding.
+using ShaderParameterValue =
+    std::variant<std::monostate, SampledTexture*, ResourceArray<SampledTexture>, Sampler*, ShaderParameterConstant>;
+
+/// @brief Runtime values for one reflected shader descriptor set.
+class ShaderParameterSet {
+  public:
+    ShaderParameterSet() = default;
+
+    [[nodiscard]] auto GetLayout() const -> const ShaderParameterSetLayout& {
+        return m_Layout;
+    }
+
+    [[nodiscard]] auto GetValues() const -> std::span<const ShaderParameterValue> {
+        return m_Values;
+    }
+
+    [[nodiscard]] auto GetRevision() const -> Uint64 {
+        return m_Revision;
+    }
+
+  private:
+    friend class ShaderParameters;
+
+    explicit ShaderParameterSet(ShaderParameterSetLayout Layout)
+        : m_Layout(std::move(Layout)), m_Values(m_Layout.GetBindings().size()) {}
+
+    [[nodiscard]] auto FindBindingIndex(StringView ParameterPath) const -> std::optional<Uint32> {
+        const auto Bindings = m_Layout.GetBindings();
+        for (Uint32 Index = 0; Index < Bindings.size(); ++Index) {
+            if (Bindings[Index].ParameterPath == ParameterPath)
+                return Index;
+        }
+        return std::nullopt;
+    }
+
+    auto SetValue(Uint32 Index, ShaderParameterValue Value) -> void {
+        if (AreEquivalent(m_Values[Index], Value))
+            return;
+
+        m_Values[Index] = std::move(Value);
+        ++m_Revision;
+    }
+
+    [[nodiscard]] static auto AreEquivalent(const ShaderParameterValue& Left, const ShaderParameterValue& Right)
+        -> bool {
+        return std::visit(
+            [](const auto& LeftValue, const auto& RightValue) -> bool {
+                using LeftType  = std::decay_t<decltype(LeftValue)>;
+                using RightType = std::decay_t<decltype(RightValue)>;
+                if constexpr (!std::same_as<LeftType, RightType>) {
+                    return false;
+                } else if constexpr (std::same_as<LeftType, std::monostate>) {
+                    return true;
+                } else if constexpr (std::same_as<LeftType, ResourceArray<SampledTexture>>) {
+                    return std::ranges::equal(LeftValue.GetResources(), RightValue.GetResources());
+                } else if constexpr (std::same_as<LeftType, ShaderParameterConstant>) {
+                    return LeftValue.Buffer == RightValue.Buffer && LeftValue.Data == RightValue.Data;
+                } else {
+                    return LeftValue == RightValue;
+                }
+            },
+            Left,
+            Right);
+    }
+
+    ShaderParameterSetLayout           m_Layout   = {};
+    std::vector<ShaderParameterValue>  m_Values   = {};
+    Uint64                              m_Revision = 0;
+};
+
+/// @brief Renderer-facing shader binding values automatically partitioned by reflection.
+class ShaderParameters {
+  public:
+    ShaderParameters() = default;
+
+    [[nodiscard]] static auto Create(const GraphicsPipeline& Pipeline) -> ShaderParameters {
+        return Create(Pipeline.GetShaderParameterLayout());
+    }
+
+    [[nodiscard]] static auto Create(const ShaderParameterLayout& Layout) -> ShaderParameters {
+        ShaderParameters Result;
+        Result.m_Id       = NextId();
+        Result.m_LayoutId = Layout.GetId();
+        for (const auto& SetLayout : Layout.GetSets())
+            Result.m_Sets.push_back(ShaderParameterSet{SetLayout});
+        return Result;
+    }
+
+    [[nodiscard]] auto GetId() const -> Uint64 {
+        return m_Id;
+    }
+
+    [[nodiscard]] auto GetLayoutId() const -> Uint64 {
+        return m_LayoutId;
+    }
+
+    [[nodiscard]] auto GetSets() const -> std::span<const ShaderParameterSet> {
+        return m_Sets;
+    }
+
+    [[nodiscard]] auto SetSampledTexture(StringView ParameterPath, SampledTexture* Texture)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::SampledTexture, false, Texture);
+    }
+
+    template <ShaderParameterArrayResource T>
+    [[nodiscard]] auto SetResourceArray(StringView ParameterPath, const ResourceArray<T>& Array)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, ShaderParameterResourceTraits<T>::Type, true, Array);
+    }
+
+    [[nodiscard]] auto SetSampler(StringView ParameterPath, Sampler* SamplerPtr) -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::Sampler, false, SamplerPtr);
+    }
+
+    [[nodiscard]] auto SetConstantBuffer(StringView            ParameterPath,
+                                         ConstantBuffer*       Buffer,
+                                         const void*           Data,
+                                         Uint64                Size)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer)
+            return std::unexpected(ErrorMessage("Shader parameter constant buffer is null"));
+        if (!Data || Size == 0)
+            return std::unexpected(ErrorMessage("Shader parameter constant buffer data is empty"));
+        if (Size > Buffer->GetSize()) {
+            return std::unexpected(ErrorMessage(
+                Format("Shader parameter '{}' exceeds declared ConstantBuffer size ({} bytes > {} bytes)",
+                       ParameterPath,
+                       Size,
+                       Buffer->GetSize())));
+        }
+
+        ShaderParameterConstant Constant{
+            .Buffer = Buffer,
+        };
+        Constant.Data.resize(Size);
+        std::memcpy(Constant.Data.data(), Data, Size);
+        return Set(ParameterPath, Shader::ResourceType::ConstantBuffer, false, std::move(Constant));
+    }
+
+  private:
+    [[nodiscard]] static auto NextId() -> Uint64 {
+        static std::atomic<Uint64> Next = 1;
+        return Next.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    template <typename T>
+    [[nodiscard]] auto Set(StringView ParameterPath, Shader::ResourceType ExpectedType, bool bExpectArray, T Value)
+        -> std::expected<void, ErrorMessage> {
+        for (auto& Set : m_Sets) {
+            auto Index = Set.FindBindingIndex(ParameterPath);
+            if (!Index)
+                continue;
+
+            const auto& Binding = Set.m_Layout.GetBindings()[*Index];
+            if (Binding.Type != ExpectedType) {
+                return std::unexpected(ErrorMessage(
+                    Format("Shader parameter '{}' has incompatible reflected resource type", ParameterPath)));
+            }
+            if (!bExpectArray && Binding.ArrayCount != 1) {
+                return std::unexpected(ErrorMessage(
+                    Format("Shader parameter '{}' is an array; bind a resource array instead", ParameterPath)));
+            }
+            if (bExpectArray && Binding.ArrayCount == 1) {
+                return std::unexpected(ErrorMessage(
+                    Format("Shader parameter '{}' is not an array; bind one sampled texture instead", ParameterPath)));
+            }
+
+            Set.SetValue(*Index, ShaderParameterValue{std::move(Value)});
+            return {};
+        }
+
+        return std::unexpected(ErrorMessage(Format("Shader parameter '{}' is not present in the pipeline layout", ParameterPath)));
+    }
+
+    Uint64                           m_Id       = 0;
+    Uint64                           m_LayoutId = 0;
+    std::vector<ShaderParameterSet> m_Sets = {};
 };
 
 // ── Texture ──────────────────────────────────────────────────────────────────

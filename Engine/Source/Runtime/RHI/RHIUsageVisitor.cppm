@@ -20,6 +20,15 @@ struct UsageVisitor {
         if (Cmd.PipelinePtr)
             Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
     }
+    auto operator()(const PushConstantsCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
+    }
+    auto operator()(const BindShaderParametersCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
+        StampShaderParameters(Cmd.Parameters);
+    }
     auto operator()(const DrawIndexedCmd& Cmd) -> void {
         if (Cmd.PipelinePtr)
             Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
@@ -27,16 +36,12 @@ struct UsageVisitor {
             Cmd.VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
         if (Cmd.IndexBufferPtr)
             Cmd.IndexBufferPtr->UpdateLastUsageToken(CurrentToken);
-        if (Cmd.Parameters.TestTexture)
-            Cmd.Parameters.TestTexture->UpdateLastUsageToken(CurrentToken);
     }
     auto operator()(const DrawCmd& Cmd) -> void {
         if (Cmd.PipelinePtr)
             Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
         if (Cmd.VertexBufferPtr)
             Cmd.VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
-        if (Cmd.Parameters.TestTexture)
-            Cmd.Parameters.TestTexture->UpdateLastUsageToken(CurrentToken);
     }
 
     // Commands that don't reference GPU resources — explicit empty overloads
@@ -58,6 +63,31 @@ struct UsageVisitor {
     auto StampPresentSource(RenderTarget* Source) -> void {
         if (Source)
             Source->UpdateLastUsageToken(CurrentToken);
+    }
+
+  private:
+    auto StampShaderParameters(const ShaderParameters& Parameters) -> void {
+        for (const auto& Set : Parameters.GetSets()) {
+            for (const auto& Value : Set.GetValues()) {
+                std::visit(
+                    [this](const auto& TypedValue) -> void {
+                        using ValueType = std::decay_t<decltype(TypedValue)>;
+                        if constexpr (std::same_as<ValueType, SampledTexture*>) {
+                            if (TypedValue)
+                                TypedValue->UpdateLastUsageToken(CurrentToken);
+                        } else if constexpr (std::same_as<ValueType, ResourceArray<SampledTexture>>) {
+                            for (auto* Resource : TypedValue.GetResources()) {
+                                if (Resource)
+                                    Resource->UpdateLastUsageToken(CurrentToken);
+                            }
+                        } else if constexpr (std::same_as<ValueType, Sampler*>) {
+                            if (TypedValue)
+                                TypedValue->UpdateLastUsageToken(CurrentToken);
+                        }
+                    },
+                    Value);
+            }
+        }
     }
 };
 

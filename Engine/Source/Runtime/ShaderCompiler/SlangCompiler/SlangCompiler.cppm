@@ -285,7 +285,7 @@ class Backend final : public IBackend {
             return std::unexpected(ErrorMessage(
                 Format("Linked graphics reflection is missing fragment entry point '{}'", Desc.Fragment.EntryPoint)));
 
-        auto PipelineReflection = BuildShaderReflection(Layout, VertexInfo);
+        auto PipelineReflection = BuildShaderReflection(Layout, VertexInfo, FragmentInfo);
         if (!PipelineReflection) {
             return std::unexpected(PipelineReflection.error().Append("Failed to build graphics pipeline reflection"));
         }

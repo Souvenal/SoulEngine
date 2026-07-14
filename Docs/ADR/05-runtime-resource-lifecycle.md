@@ -4,6 +4,12 @@
 
 Accepted (2026-06-27)
 
+Partially superseded (2026-07-14): the frame pin mechanism described in this
+ADR was removed. Current Resource lifetime authority is `ResourceRef<T>` for
+logical demand plus ready observer pointers resolved through
+`Resource::Manager::TryGetReady()`. Command lists do not own or pin Resource
+payloads. See `Engine/Source/Runtime/Resource/CONTEXT.md` for current terms.
+
 ## Part 1 — Problem
 
 Runtime resources such as sampled texture assets, vertex/index buffers,

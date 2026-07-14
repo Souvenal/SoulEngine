@@ -89,8 +89,8 @@ struct ShaderConfig {
 /// Pure mirror of the `[RHI.Vulkan]` TOML table.  All fields are optional;
 /// the Vulkan backend provides the actual defaults.
 struct VulkanConfig {
-    std::optional<Uint32> MaxTextures;              ///< Bindless texture descriptor slots
-    std::optional<Uint32> GlobalConstantBufferSize; ///< Per-frame global UBO size (bytes)
+    std::optional<Uint32> MaxTextures;             ///< Bindless texture descriptor slots
+    std::optional<Uint32> ConstantArenaBufferSize; ///< Per-frame dynamic constant arena capacity (bytes)
 };
 
 /// @brief Top-level engine configuration, aggregating all subsystems.
@@ -239,8 +239,8 @@ class ConfigManager final : public Singleton<ConfigManager> {
         Cfg.Shader.DebugInfo = Table["Shader"]["DebugInfo"].value<bool>();
 
         // --- Vulkan RHI config ---
-        Cfg.RhiVulkan.MaxTextures              = Table["RHI"]["Vulkan"]["MaxTextures"].value<Uint32>();
-        Cfg.RhiVulkan.GlobalConstantBufferSize = Table["RHI"]["Vulkan"]["GlobalConstantBufferSize"].value<Uint32>();
+        Cfg.RhiVulkan.MaxTextures             = Table["RHI"]["Vulkan"]["MaxTextures"].value<Uint32>();
+        Cfg.RhiVulkan.ConstantArenaBufferSize = Table["RHI"]["Vulkan"]["ConstantArenaBufferSize"].value<Uint32>();
 
         return {};
     }

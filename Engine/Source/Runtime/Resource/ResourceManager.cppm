@@ -4,6 +4,7 @@ import :Buffer;
 import :Context;
 import :Pipeline;
 import :RenderTarget;
+import :Sampler;
 import :Texture;
 
 export import Core;
@@ -125,6 +126,17 @@ class Manager : public Singleton<Manager> {
     [[nodiscard]] auto RequestRenderTargetRef(String Key, const RHI::RenderTargetDesc& Desc)
         -> ResourceRef<RHI::RenderTarget> {
         return ResourceRef<RHI::RenderTarget>(m_Context, SubmitRenderTargetRequest(m_Context, std::move(Key), Desc));
+    }
+
+    /// @brief Request constant buffer and retain an owner ref.
+    [[nodiscard]] auto RequestConstantBufferRef(String Key, const RHI::ConstantBufferDesc& Desc)
+        -> ResourceRef<RHI::ConstantBuffer> {
+        return ResourceRef<RHI::ConstantBuffer>(m_Context, SubmitConstantBufferRequest(m_Context, std::move(Key), Desc));
+    }
+
+    /// @brief Request sampler state and retain an owner ref.
+    [[nodiscard]] auto RequestSamplerRef(const RHI::SamplerDesc& Desc) -> ResourceRef<RHI::Sampler> {
+        return ResourceRef<RHI::Sampler>(m_Context, SubmitSamplerRequest(m_Context, Desc));
     }
 
     template <ManagedRHIResource T>

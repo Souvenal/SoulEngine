@@ -11,6 +11,7 @@ export import std;
 using namespace SoulEngine::Core;
 
 namespace SoulEngine::Resource {
+namespace {
 
 [[nodiscard]] auto ValidateVertexBufferDesc(const RHI::VertexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
     if (!Desc.Data)
@@ -36,9 +37,15 @@ namespace SoulEngine::Resource {
     return {};
 }
 
-} // namespace SoulEngine::Resource
+[[nodiscard]] auto ValidateConstantBufferDesc(const RHI::ConstantBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+    if (Desc.Size == 0)
+        return std::unexpected(ErrorMessage("Constant buffer size is zero"));
 
-export namespace SoulEngine::Resource {
+    return {};
+}
+
+} // namespace
+
 
 [[nodiscard]] auto SubmitVertexBufferRequest(ResourceContext& Context, String Key, const RHI::VertexBufferDesc& Desc)
     -> ResourceHandle<RHI::VertexBuffer> {
@@ -148,6 +155,52 @@ export namespace SoulEngine::Resource {
                            Resource<RHI::IndexBuffer>{.Object = std::move(Result->Buffer)},
                            Result->UploadCompletion);
                    });
+
+    return Handle;
+}
+
+[[nodiscard]] auto SubmitConstantBufferRequest(ResourceContext& Context,
+                                               String           Key,
+                                               const RHI::ConstantBufferDesc& Desc)
+    -> ResourceHandle<RHI::ConstantBuffer> {
+    auto Work   = BeginResourceWork<RHI::ConstantBuffer>(Context, Key);
+    auto Handle = Work.Handle;
+    if (!Work.ShouldStartWork)
+        return Handle;
+
+    if (auto R = ValidateConstantBufferDesc(Desc); !R) {
+        PublishResourceFailed<RHI::ConstantBuffer>(
+            Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid constant buffer request '{}'", Key)));
+        return Handle;
+    }
+
+    LogDebug("Constant buffer requested '{}'", Key);
+
+    auto* Graph      = Work.Graph;
+    auto* ContextPtr = &Context;
+    Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
+        auto& Context = *ContextPtr;
+        if (Context.IsShutdownRequested()) {
+            LogDebug("Async constant buffer RHI commit discarded after shutdown '{}'", Key);
+            return;
+        }
+
+        if (!MarkResourceRhiCommitting<RHI::ConstantBuffer>(Context, Key, Generation))
+            return;
+
+        auto Result = RHI::RenderDevice::Get().CreateConstantBuffer(Desc);
+        if (!Result) {
+            PublishResourceFailed<RHI::ConstantBuffer>(
+                Context,
+                Generation,
+                Key,
+                Result.error().Append(Format("Failed to create constant buffer '{}'", Key)));
+            return;
+        }
+
+        PublishResourceReady<RHI::ConstantBuffer>(
+            Context, Generation, Key, Resource<RHI::ConstantBuffer>{.Object = std::move(*Result)});
+    });
 
     return Handle;
 }

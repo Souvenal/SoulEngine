@@ -255,19 +255,22 @@ class ResourceContext {
     }
 
     auto TickGpuPending() -> void {
-        std::lock_guard Lock(m_PublishMutex);
-        if (IsShutdownRequested()) {
-            ClearGpuPendingQueues();
-            return;
+        {
+            std::lock_guard Lock(m_PublishMutex);
+            if (IsShutdownRequested()) {
+                ClearGpuPendingQueues();
+                return;
+            }
+
+            ForEachGpuPendingFamily([this]<GpuPendingManagedRHIResource T>() -> void {
+                TickGpuPendingFamily<T>();
+            });
         }
 
-        ForEachGpuPendingFamily([this]<GpuPendingManagedRHIResource T>() -> void {
-            TickGpuPendingFamily<T>();
-        });
     }
 
     auto Clear() -> void {
-        ForEachFamily([]<ManagedRHIResource T>(ResourceFamily<T>& Family) -> void {
+        ForEachFamily([this]<ManagedRHIResource T>(ResourceFamily<T>& Family) -> void {
             std::lock_guard Lock(Family.Mutex);
             ReleaseAndEraseEntries(Family.Entries);
         });
@@ -341,7 +344,7 @@ class ResourceContext {
     }
 
     template <typename T>
-    static auto ReleaseAndEraseEntries(ResourceEntryMap<T>& Entries) -> void {
+    auto ReleaseAndEraseEntries(ResourceEntryMap<T>& Entries) -> void {
         for (auto It = Entries.begin(); It != Entries.end();) {
             if (It->second)
                 It->second->Slot.RequestRelease();
@@ -401,10 +404,10 @@ class ResourceContext {
         Family.GpuPending = std::move(Next);
     }
 
-    ResourceFamilies                            m_Families = {};
-    TaskGraph*                                  m_TaskGraph = nullptr;
-    std::atomic<bool>                           m_ShutdownRequested = false;
-    std::mutex                                  m_PublishMutex;
+    ResourceFamilies      m_Families          = {};
+    TaskGraph*            m_TaskGraph         = nullptr;
+    std::atomic<bool>     m_ShutdownRequested = false;
+    std::mutex            m_PublishMutex;
 };
 
 } // namespace SoulEngine::Resource

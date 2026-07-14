@@ -41,10 +41,21 @@ struct SetGraphicsPipelineCmd {
     GraphicsPipeline* PipelinePtr = nullptr;
 };
 
-/// @brief Draw parameters interpreted by the draw call's graphics pipeline.
-struct DrawParameter {
-    /// Non-owning observer. Producer must keep the texture alive until Execute() completes.
-    SampledTexture* TestTexture = nullptr;
+/// @brief Push a CPU-side byte snapshot into the active graphics pipeline's push-constant range.
+struct PushConstantsCmd {
+    /// Pipeline expected to be bound when the push happens. Backends use this for
+    /// validation and pipeline-layout lookup.
+    GraphicsPipeline*        PipelinePtr = nullptr;
+    Uint32                   Offset      = 0;
+    std::vector<std::byte>   Data        = {};
+};
+
+/// @brief Bind a reflection-derived shader parameter snapshot to the active pipeline.
+struct BindShaderParametersCmd {
+    /// Pipeline expected to be bound when the parameter snapshot is bound.
+    GraphicsPipeline* PipelinePtr = nullptr;
+    /// Value snapshot keeps per-frame constant data stable until the RHI thread consumes it.
+    ShaderParameters  Parameters  = {};
 };
 
 /// @brief Draw indexed primitives.
@@ -55,7 +66,6 @@ struct DrawIndexedCmd {
     GraphicsPipeline* PipelinePtr     = nullptr;
     VertexBuffer*     VertexBufferPtr = nullptr;
     IndexBuffer*      IndexBufferPtr  = nullptr;
-    DrawParameter     Parameters      = {};
 };
 
 /// @brief Draw non-indexed primitives.
@@ -65,7 +75,6 @@ struct DrawCmd {
     /// layout information, such as Vulkan push constants.
     GraphicsPipeline* PipelinePtr     = nullptr;
     VertexBuffer*     VertexBufferPtr = nullptr;
-    DrawParameter     Parameters      = {};
 };
 
 /// @brief All command types dispatched via std::visit.
@@ -74,6 +83,8 @@ using Command = std::variant<SetViewportCmd,
                              SetScissorCmd,
                              SetFullScissorRectCmd,
                              SetGraphicsPipelineCmd,
+                             PushConstantsCmd,
+                             BindShaderParametersCmd,
                              DrawIndexedCmd,
                              DrawCmd>;
 
@@ -101,28 +112,42 @@ struct Pass {
     auto SetGraphicsPipeline(GraphicsPipeline* PipelinePtr) -> void {
         Commands.emplace_back(SetGraphicsPipelineCmd{.PipelinePtr = PipelinePtr});
     }
+    auto PushConstants(GraphicsPipeline* PipelinePtr, Uint32 Offset, const void* Data, Uint64 Size) -> void {
+        if (Size == 0)
+            return;
+
+        PushConstantsCmd Cmd{
+            .PipelinePtr = PipelinePtr,
+            .Offset      = Offset,
+        };
+        Cmd.Data.resize(Size);
+        std::memcpy(Cmd.Data.data(), Data, Size);
+        Commands.emplace_back(std::move(Cmd));
+    }
+    auto BindShaderParameters(GraphicsPipeline* PipelinePtr, ShaderParameters Parameters) -> void {
+        Commands.emplace_back(BindShaderParametersCmd{
+            .PipelinePtr = PipelinePtr,
+            .Parameters  = std::move(Parameters),
+        });
+    }
     auto DrawIndexed(GraphicsPipeline* PipelinePtr,
                      VertexBuffer*     VertexBufferPtr,
-                     IndexBuffer*      IndexBufferPtr,
-                     DrawParameter     Parameters) -> void {
+                     IndexBuffer*      IndexBufferPtr) -> void {
         Commands.emplace_back(DrawIndexedCmd{.PipelinePtr     = PipelinePtr,
                                              .VertexBufferPtr = VertexBufferPtr,
-                                             .IndexBufferPtr  = IndexBufferPtr,
-                                             .Parameters      = Parameters});
+                                             .IndexBufferPtr  = IndexBufferPtr});
     }
-    auto Draw(GraphicsPipeline* PipelinePtr, VertexBuffer* VertexBufferPtr, DrawParameter Parameters) -> void {
-        Commands.emplace_back(
-            DrawCmd{.PipelinePtr = PipelinePtr, .VertexBufferPtr = VertexBufferPtr, .Parameters = Parameters});
+    auto Draw(GraphicsPipeline* PipelinePtr, VertexBuffer* VertexBufferPtr) -> void {
+        Commands.emplace_back(DrawCmd{.PipelinePtr = PipelinePtr, .VertexBufferPtr = VertexBufferPtr});
     }
 };
 
 /// @brief Complete frame's worth of GPU commands, produced by RenderLoop,
 /// consumed by RenderDevice::Execute().
 struct CommandList {
-    std::vector<Pass>      Passes;
-    std::vector<std::byte> GlobalConstantData;
+    std::vector<Pass> Passes;
     /// Final frame output. Backend presents this engine-owned RT to swapchain.
-    RenderTarget*          PresentSource = nullptr;
+    RenderTarget*     PresentSource = nullptr;
 };
 
 } // namespace SoulEngine::RHI

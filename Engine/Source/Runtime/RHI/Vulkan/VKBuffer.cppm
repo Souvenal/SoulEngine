@@ -9,6 +9,7 @@ import vulkan;
 import RHI;
 import std;
 
+import :Capability;
 import :Types;
 import :ImmediateContext;
 import :TransferCompletionQueue;
@@ -434,51 +435,123 @@ class IndexBuffer final : public RHI::IndexBuffer {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Vulkan::UniformBuffer — single mappable uniform buffer
+// Vulkan::ConstantBuffer — logical RHI constant block with arena offset
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Mappable uniform buffer backed by a single HostBuffer.
-/// No awareness of FramesInFlight — Write() writes to this one buffer.
-///
-/// Per-frame duplication is the caller's concern (RenderDevice creates N
-/// copies, one per FrameContext slot).
-class UniformBuffer final : public RHI::ConstantBuffer {
+/// Vulkan backend constant-buffer handle.
+/// Owns no VkBuffer; it records the per-frame offsets reserved in the shared
+/// UniformBufferArena.
+class ConstantBuffer final : public RHI::ConstantBuffer {
   public:
-    // Public for std::make_shared compatibility per ADR 02.
-    // All callers should use Create() instead.
-    UniformBuffer(HostBuffer&& Buf, Uint64 Size) : m_Buffer(std::move(Buf)), m_Size(Size) {}
-
-    /// Static factory: creates a mappable UniformBuffer.
-    /// Returns error if VMA allocation fails.
-    [[nodiscard]] static auto Create(const RHI::ConstantBufferDesc& Desc, vk::Device Dev, VmaAllocator Alloc)
-        -> std::expected<SPtr<UniformBuffer>, ErrorMessage> {
-        auto HostRes = HostBuffer::Create(Desc.Size, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
-        if (!HostRes)
-            return std::unexpected(HostRes.error().Append("UniformBuffer::Create: HostBuffer creation failed"));
-        return std::make_shared<UniformBuffer>(std::move(*HostRes), Desc.Size);
+    ConstantBuffer(const RHI::ConstantBufferDesc& Desc, std::vector<Uint32> ArenaOffsets)
+        : RHI::ConstantBuffer(Desc) {
+        m_ArenaOffsets = std::move(ArenaOffsets);
     }
 
-    UniformBuffer(const UniformBuffer&)                    = delete;
-    auto operator=(const UniformBuffer&) -> UniformBuffer& = delete;
-    UniformBuffer(UniformBuffer&&)                         = delete;
-    auto operator=(UniformBuffer&&) -> UniformBuffer&      = delete;
-
-    /// Upload new data to the buffer.
-    [[nodiscard]] auto Write(const void* Data, Uint64 Size) -> std::expected<void, ErrorMessage> override {
-        return m_Buffer.Upload(Data, Size, 0);
+    [[nodiscard]] auto GetArenaOffset(Uint32 FrameIndex) const -> Uint32 {
+        return m_ArenaOffsets[FrameIndex];
     }
 
-    [[nodiscard]] auto GetSize() const -> Uint64 override {
-        return m_Size;
+  private:
+    std::vector<Uint32> m_ArenaOffsets = {};
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Vulkan::UniformBufferArena — shared dynamic uniform storage
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Shared uniform-buffer arena used by dynamic UBO descriptors.
+class UniformBufferArena final {
+  public:
+    UniformBufferArena() = default;
+
+    explicit UniformBufferArena(HostBuffer&& Buffer) {
+        m_Buffer = std::move(Buffer);
+        m_Size   = m_Buffer.GetSize();
+    }
+
+    [[nodiscard]] static auto Create(Uint64 Size, vk::Device Dev, VmaAllocator Alloc)
+        -> std::expected<UniformBufferArena, ErrorMessage> {
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("UniformBufferArena::Create: size must be greater than zero"));
+
+        auto Buffer = HostBuffer::Create(Size, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
+        if (!Buffer)
+            return std::unexpected(Buffer.error().Append("UniformBufferArena::Create: HostBuffer creation failed"));
+        return UniformBufferArena(std::move(*Buffer));
+    }
+
+    UniformBufferArena(const UniformBufferArena&)                       = delete;
+    auto operator=(const UniformBufferArena&) -> UniformBufferArena&    = delete;
+    UniformBufferArena(UniformBufferArena&&) noexcept                   = default;
+    auto operator=(UniformBufferArena&&) noexcept -> UniformBufferArena& = default;
+
+    [[nodiscard]] auto Allocate(Uint64 Size) -> std::expected<Uint32, ErrorMessage> {
+        const auto MaxRange =
+            static_cast<Uint64>(Capability::Get().GetProperties().limits.maxUniformBufferRange);
+        if (Size > MaxRange) {
+            return std::unexpected(
+                ErrorMessage(Core::Format("UniformBufferArena allocation exceeds maxUniformBufferRange ({} bytes > {})",
+                                          Size,
+                                          MaxRange)));
+        }
+
+        const auto Alignment =
+            static_cast<Uint64>(Capability::Get().GetProperties().limits.minUniformBufferOffsetAlignment);
+
+        auto LogicalOffset = AlignUp(m_NextLogicalOffset, Alignment);
+        if (!LogicalOffset)
+            return std::unexpected(
+                LogicalOffset.error().Append("UniformBufferArena::Allocate: offset alignment failed"));
+        if (*LogicalOffset > std::numeric_limits<Uint64>::max() - Size)
+            return std::unexpected(ErrorMessage("UniformBufferArena allocation size overflow"));
+        if (*LogicalOffset + Size > m_Size) {
+            return std::unexpected(ErrorMessage(
+                Core::Format("UniformBufferArena allocation exceeds capacity (offset {} + size {} > {})",
+                             *LogicalOffset,
+                             Size,
+                             m_Size)));
+        }
+        if (*LogicalOffset > std::numeric_limits<Uint32>::max())
+            return std::unexpected(ErrorMessage("UniformBufferArena offset exceeds dynamic offset range"));
+
+        m_NextLogicalOffset = *LogicalOffset + Size;
+        return static_cast<Uint32>(*LogicalOffset);
+    }
+
+    [[nodiscard]] auto Write(const void* Data, Uint64 Size, Uint32 Offset) -> std::expected<void, ErrorMessage> {
+        if (static_cast<Uint64>(Offset) + Size > m_Size) {
+            return std::unexpected(ErrorMessage(
+                Core::Format("UniformBufferArena: write exceeds capacity (offset {} + size {} > capacity {})",
+                             Offset,
+                             Size,
+                             m_Size)));
+        }
+        if (auto R = m_Buffer.Upload(Data, Size, Offset); !R)
+            return std::unexpected(R.error().Append("UniformBufferArena::Write failed"));
+        return {};
     }
 
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer.Get();
     }
 
+    [[nodiscard]] auto GetSize() const -> Uint64 {
+        return m_Size;
+    }
+
   private:
-    HostBuffer m_Buffer;
-    Uint64     m_Size = 0;
+    [[nodiscard]] static auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
+        if (Alignment == 0)
+            return Value;
+        if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1))
+            return std::unexpected(ErrorMessage("UniformBufferArena alignment overflow"));
+        return ((Value + Alignment - 1) / Alignment) * Alignment;
+    }
+
+    HostBuffer m_Buffer            = {};
+    Uint64     m_Size              = 0;
+    Uint64     m_NextLogicalOffset = 0;
 };
 
 } // namespace SoulEngine::RHI::Vulkan

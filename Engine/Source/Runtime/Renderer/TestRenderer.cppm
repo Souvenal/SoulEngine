@@ -119,10 +119,29 @@ class TestRenderer final : public IRenderer {
         if (!m_IndexBuffer)
             return std::unexpected(ErrorMessage("Index buffer request failed"));
 
-        m_Texture = Resource::Manager::Get().RequestSampledTextureRef(
+        m_FrameConstants =
+            Resource::Manager::Get().RequestConstantBufferRef("frame_constants", {.Size = sizeof(GlobalCBData)});
+        if (!m_FrameConstants)
+            return std::unexpected(ErrorMessage("Frame constant buffer request failed"));
+
+        m_LinearSampler = Resource::Manager::Get().RequestSamplerRef(RHI::SamplerDesc{});
+        if (!m_LinearSampler)
+            return std::unexpected(ErrorMessage("Linear sampler request failed"));
+
+        m_AnisoSampler = Resource::Manager::Get().RequestSamplerRef(
+            RHI::SamplerDesc{.Profile = RHI::SamplerProfile::AnisotropicRepeat});
+        if (!m_AnisoSampler)
+            return std::unexpected(ErrorMessage("Anisotropic sampler request failed"));
+
+        auto Texture = Resource::Manager::Get().RequestSampledTextureRef(
             (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "statue.jpg").string());
-        if (!m_Texture)
+        if (!Texture)
             return std::unexpected(ErrorMessage("Test texture request failed"));
+
+        Resource::Array<RHI::SampledTexture> Textures;
+        if (auto R = Textures.Set(0, std::move(Texture)); !R)
+            return std::unexpected(R.error().Append("Test texture array initialization failed"));
+        m_Textures = std::move(Textures);
 
         return {};
     }
@@ -131,7 +150,11 @@ class TestRenderer final : public IRenderer {
         m_Pipeline     = {};
         m_VertexBuffer = {};
         m_IndexBuffer  = {};
-        m_Texture      = {};
+        m_FrameConstants = {};
+        m_LinearSampler  = {};
+        m_AnisoSampler   = {};
+        m_Textures.reset();
+        m_Parameters.reset();
     }
 
     /// Produce a CommandList from the current scene snapshot.
@@ -139,10 +162,7 @@ class TestRenderer final : public IRenderer {
     [[nodiscard]] auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
         auto CbData = BuildGlobalCB(Scene);
 
-        // Copy into command list
         RenderResult Result;
-        Result.CmdList.GlobalConstantData.resize(sizeof(CbData));
-        std::memcpy(Result.CmdList.GlobalConstantData.data(), &CbData, sizeof(CbData));
 
         // Build pass — backend wraps each Pass in begin/end rendering.
         auto* ColorRT = Resource::Manager::Get().TryGetReady(Scene.ColorRT);
@@ -170,8 +190,8 @@ class TestRenderer final : public IRenderer {
             .ClearValue = RHI::ClearDepthStencilValue{.Depth = 1.0f, .Stencil = 0},
         };
 
-        auto* Texture = Resource::Manager::Get().TryGetReady(m_Texture);
-        if (!Texture) {
+        auto* Sampler = Resource::Manager::Get().TryGetReady(m_LinearSampler);
+        if (!Sampler) {
             Result.CmdList.Passes.push_back(std::move(Pass));
             return Result;
         }
@@ -189,10 +209,38 @@ class TestRenderer final : public IRenderer {
             return Result;
         }
 
+        if (!m_Textures) {
+            Result.CmdList.Passes.push_back(std::move(Pass));
+            return Result;
+        }
+        auto Textures = m_Textures->TryGetReady();
+        if (!Textures) {
+            Result.CmdList.Passes.push_back(std::move(Pass));
+            return Result;
+        }
+
+        if (!m_Parameters)
+            m_Parameters = RHI::ShaderParameters::Create(*Pipeline);
+
+        if (auto* FrameCB = Resource::Manager::Get().TryGetReady(m_FrameConstants)) {
+            if (auto R = m_Parameters->SetConstantBuffer("g_frame.cb", FrameCB, &CbData, sizeof(CbData)); !R)
+                return std::unexpected(R.error().Append("Test frame parameter binding failed"));
+        }
+        auto* AnisoSampler = Resource::Manager::Get().TryGetReady(m_AnisoSampler);
+        if (auto R = m_Parameters->SetSampler("g_samplers.uSamplerLinear", Sampler); !R)
+            return std::unexpected(R.error().Append("Test linear sampler parameter binding failed"));
+        if (auto R = m_Parameters->SetSampler("g_samplers.uSamplerAniso", AnisoSampler ? AnisoSampler : Sampler); !R)
+            return std::unexpected(R.error().Append("Test anisotropic sampler parameter binding failed"));
+        if (auto R = m_Parameters->SetResourceArray("g_textures.uTextures", *Textures); !R)
+            return std::unexpected(R.error().Append("Test texture-array parameter binding failed"));
+
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
         Pass.SetGraphicsPipeline(Pipeline);
-        Pass.DrawIndexed(Pipeline, VB, IB, RHI::DrawParameter{.TestTexture = Texture});
+        Pass.BindShaderParameters(Pipeline, *m_Parameters);
+        const Uint32 BaseColorTextureIndex = 0;
+        Pass.PushConstants(Pipeline, 0, &BaseColorTextureIndex, sizeof(BaseColorTextureIndex));
+        Pass.DrawIndexed(Pipeline, VB, IB);
 
         Result.CmdList.Passes.push_back(std::move(Pass));
 
@@ -211,7 +259,11 @@ class TestRenderer final : public IRenderer {
     Resource::ResourceRef<RHI::VertexBuffer>     m_VertexBuffer;
     Resource::ResourceRef<RHI::IndexBuffer>      m_IndexBuffer;
     Resource::ResourceRef<RHI::GraphicsPipeline> m_Pipeline = {};
-    Resource::ResourceRef<RHI::SampledTexture>   m_Texture  = {};
+    Resource::ResourceRef<RHI::ConstantBuffer>   m_FrameConstants = {};
+    Resource::ResourceRef<RHI::Sampler>          m_LinearSampler   = {};
+    Resource::ResourceRef<RHI::Sampler>          m_AnisoSampler    = {};
+    std::optional<Resource::Array<RHI::SampledTexture>> m_Textures   = std::nullopt;
+    std::optional<RHI::ShaderParameters>                m_Parameters = std::nullopt;
 };
 
 } // namespace SoulEngine::Renderer
