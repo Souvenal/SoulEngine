@@ -16,8 +16,7 @@ struct VSOutput {
 VSOutput vertMain(VSInput input) {
     VSOutput output;
     float4 worldPos = float4(input.inPosition, 1.0);
-    float4 viewPos  = mul(worldPos, g_frame.cb.view);
-    output.pos      = mul(viewPos, g_frame.cb.projection);
+    output.pos      = mul(worldPos, g_frameView.view.viewProjection);
     output.color    = input.inColor;
     output.uv       = input.inUV;
     return output;
@@ -25,7 +24,7 @@ VSOutput vertMain(VSInput input) {
 
 [shader("fragment")]
 float4 fragMain(VSOutput vertIn, uniform uint baseColorTextureIndex) : SV_TARGET {
-    float pulse     = 0.5 + 0.5 * sin(g_frame.cb.time);
+    float pulse     = 0.5 + 0.5 * sin(g_frameView.frame.time);
     float4 texColor = g_textures.uTextures[baseColorTextureIndex].Sample(g_samplers.uSamplerLinear, vertIn.uv);
     float3 pulsed   = vertIn.color * pulse * texColor.rgb;
     return float4(pulsed, 1.0);

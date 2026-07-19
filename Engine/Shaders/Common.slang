@@ -1,16 +1,19 @@
 module Common;
 
 public struct FrameData {
-    public float4x4 view;
-    public float4x4 projection;
-    public float    time;
+    public float time;
 };
 
-public struct FrameResources {
-    public ConstantBuffer<FrameData> cb;
+public struct ViewData {
+    public float4x4 viewProjection;
 };
 
-public ParameterBlock<FrameResources> g_frame;
+public struct FrameViewResources {
+    public ConstantBuffer<FrameData> frame;
+    public ConstantBuffer<ViewData>  view;
+};
+
+public ParameterBlock<FrameViewResources> g_frameView;
 
 // Sampler resources are bound by renderer draw parameters through reflection.
 // g_samplers.uSamplerLinear = linear-repeat

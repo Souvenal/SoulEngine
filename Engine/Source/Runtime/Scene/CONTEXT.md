@@ -10,8 +10,9 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | Term | Definition |
 |------|------------|
 | **Scene** | Concrete mutable data container owned by Application. Holds logical cameras, meshes, materials, lights, transforms, and other runtime/editor state. |
-| **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. Renderer consumes this snapshot, not the mutable `Scene`. |
-| **Camera** | Logical camera entity. Owns world-space view parameters and may also own view-scoped `ResourceRef` values such as color and depth render target refs. |
+| **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains one `RenderViewSnapshot` per camera/view. Renderer consumes this snapshot, not the mutable `Scene`. |
+| **RenderViewSnapshot** | One immutable camera/view record: view-projection data plus passive handles for color/depth targets and that view's logical constant buffer. |
+| **Camera** | Logical camera entity. Owns world-space view parameters and view-scoped `ResourceRef` values for color/depth render targets and the view constant buffer. Concurrent cameras must use distinct view constant-buffer keys. |
 
 ## Architecture
 

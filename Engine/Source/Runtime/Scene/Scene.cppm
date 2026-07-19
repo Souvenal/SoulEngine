@@ -12,6 +12,13 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Scene {
 
+/// @brief GPU data layout for one render view's constant buffer.
+/// Matches Common.slang ViewData std140 layout.
+struct alignas(16) ViewConstants {
+    alignas(16) hlslpp::float4x4 ViewProjection = hlslpp::float4x4::identity();
+};
+static_assert(sizeof(ViewConstants) == 64, "ViewConstants must match Common.slang ViewData std140 layout");
+
 /// @brief Simple camera holding world-space position and orientation.
 ///
 /// Minimal prototype — projection parameters are included so renderers can
@@ -30,6 +37,10 @@ struct Camera {
     float          AspectRatio = 16.0f / 9.0f;
     Resource::ResourceRef<RHI::RenderTarget> ColorRT = {};
     Resource::ResourceRef<RHI::RenderTarget> DepthRT = {};
+    /// Must be unique among concurrently rendered cameras.
+    String ViewConstantBufferKey = "camera_viewcb";
+    /// Logical constant buffer owned by this view.
+    Resource::ResourceRef<RHI::ConstantBuffer> ViewCB = {};
 
     auto AllocateRenderTargets(Uint32 Width, Uint32 Height) -> void {
         if (Width == 0 || Height == 0) {
@@ -40,6 +51,10 @@ struct Camera {
 
         const auto ColorKey = Format("camera_color_{}x{}", Width, Height);
         const auto DepthKey = Format("camera_depth_{}x{}", Width, Height);
+        if (!ViewCB)
+            ViewCB = Resource::Manager::Get().RequestConstantBufferRef(
+                ViewConstantBufferKey, {.Size = sizeof(ViewConstants)});
+
         const auto& ColorHandle = ColorRT.GetHandle();
         const auto& DepthHandle = DepthRT.GetHandle();
         if (ColorHandle.IsValid() && ColorHandle.GetKey() == ColorKey && DepthHandle.IsValid() &&
@@ -82,31 +97,21 @@ struct Camera {
     }
 };
 
+/// @brief Immutable render data and resources for one camera/view.
+struct RenderViewSnapshot {
+    hlslpp::float4x4                               ViewProjection = hlslpp::float4x4::identity();
+    Resource::ResourceHandle<RHI::RenderTarget>    ColorRT        = {};
+    Resource::ResourceHandle<RHI::RenderTarget>    DepthRT        = {};
+    Resource::ResourceHandle<RHI::ConstantBuffer>  ViewCB         = {};
+
+    [[nodiscard]] auto GetViewConstants() const -> ViewConstants {
+        return ViewConstants{.ViewProjection = ViewProjection};
+    }
+};
+
 struct SceneSnapshot {
-    hlslpp::float3 Position    = hlslpp::float3(1.25f, 1.25f, 2.0f);
-    hlslpp::float3 Forward     = hlslpp::normalize(hlslpp::float3(0.0f, 0.0f, 0.0f) - Position);
-    hlslpp::float3 Up          = hlslpp::float3(0.0f, 1.0f, 0.0f);
-    float          FOV         = 60.0f;
-    float          NearPlane   = 0.1f;
-    float          FarPlane    = 100.0f;
-    float          AspectRatio = 16.0f / 9.0f;
-    Resource::ResourceHandle<RHI::RenderTarget> ColorRT = {};
-    Resource::ResourceHandle<RHI::RenderTarget> DepthRT = {};
-    float Time = 0.0f;
-
-    [[nodiscard]] auto GetViewMatrix() const -> hlslpp::float4x4 {
-        return hlslpp::float4x4::look_at(Position, Position + Forward, Up);
-    }
-
-    /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
-    [[nodiscard]] auto GetProjectionMatrix() const -> hlslpp::float4x4 {
-        float FovRad = FOV * (std::numbers::pi_v<float> / 180.0f);
-        return hlslpp::float4x4::perspective(
-            hlslpp::projection(hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, NearPlane, FarPlane),
-                               hlslpp::zclip::zero,
-                               hlslpp::zdirection::forward,
-                               hlslpp::zplane::finite));
-    }
+    std::vector<RenderViewSnapshot> Views = {};
+    float                           Time  = 0.0f;
 };
 
 /// @brief World state container read by renderers each frame.
@@ -145,18 +150,21 @@ class Scene {
     }
 
     [[nodiscard]] auto BuildSnapshot() const -> SceneSnapshot {
-        return SceneSnapshot{
-            .Position    = m_Camera.Position,
-            .Forward     = m_Camera.Forward,
-            .Up          = m_Camera.Up,
-            .FOV         = m_Camera.FOV,
-            .NearPlane   = m_Camera.NearPlane,
-            .FarPlane    = m_Camera.FarPlane,
-            .AspectRatio = m_Camera.AspectRatio,
-            .ColorRT     = m_Camera.ColorRT.GetHandle(),
-            .DepthRT     = m_Camera.DepthRT.GetHandle(),
-            .Time        = m_Time,
+        const auto View       = m_Camera.GetViewMatrix();
+        const auto Projection = m_Camera.GetProjectionMatrix();
+        SceneSnapshot Snapshot{
+            .Views =
+                {
+                    RenderViewSnapshot{
+                        .ViewProjection = hlslpp::mul(View, Projection),
+                        .ColorRT        = m_Camera.ColorRT.GetHandle(),
+                        .DepthRT        = m_Camera.DepthRT.GetHandle(),
+                        .ViewCB         = m_Camera.ViewCB.GetHandle(),
+                    },
+                },
+            .Time = m_Time,
         };
+        return Snapshot;
     }
 
     Camera m_Camera;

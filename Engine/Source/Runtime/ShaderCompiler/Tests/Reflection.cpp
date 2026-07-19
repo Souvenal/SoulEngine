@@ -218,12 +218,22 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
     const auto& R = Result->Reflection;
-    ASSERT_EQ(R.Bindings.size(), 4UL);
+    ASSERT_EQ(R.Bindings.size(), 5UL);
 
-    auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.ParameterPath == "g_frame.cb"; });
+    auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+        return B.ParameterPath == "g_frameView.frame";
+    });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 0U);
     EXPECT_EQ(It->Binding, 0U);
+    EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
+
+    It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+        return B.ParameterPath == "g_frameView.view";
+    });
+    ASSERT_NE(It, R.Bindings.end());
+    EXPECT_EQ(It->Set, 0U);
+    EXPECT_EQ(It->Binding, 1U);
     EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
 
     It = std::ranges::find_if(R.Bindings, [](const Binding& B) {

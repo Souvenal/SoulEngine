@@ -47,12 +47,15 @@ const std::vector<Vertex> kQuadVertices = {
 const std::vector<Uint32> kQuadIndices = {0, 1, 2, 2, 3, 0};
 
 /// @brief Constant buffer layout matching Common.slang FrameData.
-struct alignas(16) GlobalCBData {
-    alignas(16) hlslpp::float4x4 View       = hlslpp::float4x4::identity();
-    alignas(16) hlslpp::float4x4 Projection = hlslpp::float4x4::identity();
-    alignas(16) float Time                  = 0.0f;
+struct alignas(16) FrameConstants {
+    alignas(16) float Time = 0.0f;
 };
-static_assert(sizeof(GlobalCBData) == 144, "GlobalCBData must match Common.slang FrameData std140 layout");
+static_assert(sizeof(FrameConstants) == 16, "FrameConstants must match Common.slang FrameData std140 layout");
+
+struct ViewParameterState {
+    String                ViewConstantBufferKey = {};
+    RHI::ShaderParameters Parameters            = {};
+};
 
 /// @brief Minimal prototype renderer that emits a CommandList for RHIThread.
 class TestRenderer final : public IRenderer {
@@ -120,7 +123,7 @@ class TestRenderer final : public IRenderer {
             return std::unexpected(ErrorMessage("Index buffer request failed"));
 
         m_FrameConstants =
-            Resource::Manager::Get().RequestConstantBufferRef("frame_constants", {.Size = sizeof(GlobalCBData)});
+            Resource::Manager::Get().RequestConstantBufferRef("frame_constants", {.Size = sizeof(FrameConstants)});
         if (!m_FrameConstants)
             return std::unexpected(ErrorMessage("Frame constant buffer request failed"));
 
@@ -154,21 +157,40 @@ class TestRenderer final : public IRenderer {
         m_LinearSampler  = {};
         m_AnisoSampler   = {};
         m_Textures.reset();
-        m_Parameters.reset();
+        m_ViewParameters.clear();
     }
 
     /// Produce a CommandList from the current scene snapshot.
     /// Called by RenderLoop. Does NOT call BeginFrame/EndFrame.
     [[nodiscard]] auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
-        auto CbData = BuildGlobalCB(Scene);
-
         RenderResult Result;
-
-        // Build pass — backend wraps each Pass in begin/end rendering.
-        auto* ColorRT = Resource::Manager::Get().TryGetReady(Scene.ColorRT);
-        if (!ColorRT)
+        if (Scene.Views.empty())
             return Result;
 
+        auto* FrameCB = Resource::Manager::Get().TryGetReady(m_FrameConstants);
+        if (!FrameCB)
+            return Result;
+
+        const auto FrameData = BuildFrameConstants(Scene.Time);
+        for (const auto& View : Scene.Views) {
+            if (auto R = RenderView(Result.CmdList, View, FrameCB, FrameData); !R)
+                return std::unexpected(R.error());
+        }
+
+        return Result;
+    }
+
+  private:
+    [[nodiscard]] auto RenderView(RHI::CommandList&                    CmdList,
+                                  const Scene::RenderViewSnapshot&    View,
+                                  RHI::ConstantBuffer*                FrameCB,
+                                  const FrameConstants&               FrameData)
+        -> std::expected<void, ErrorMessage> {
+        auto* ColorRT = Resource::Manager::Get().TryGetReady(View.ColorRT);
+        if (!ColorRT)
+            return {};
+
+        // Build pass — backend wraps each Pass in begin/end rendering.
         RHI::Pass Pass;
         Pass.Desc = RHI::RenderingDesc{
             .ColorAttachment =
@@ -177,12 +199,13 @@ class TestRenderer final : public IRenderer {
                     .ClearValue = RHI::ClearColorValue{.R = 0.05f, .G = 0.05f, .B = 0.08f, .A = 1.0f},
                 },
         };
-        Result.CmdList.PresentSource = ColorRT;
+        if (!CmdList.PresentSource)
+            CmdList.PresentSource = ColorRT;
 
-        auto* DepthRT = Resource::Manager::Get().TryGetReady(Scene.DepthRT);
+        auto* DepthRT = Resource::Manager::Get().TryGetReady(View.DepthRT);
         if (!DepthRT) {
-            Result.CmdList.Passes.push_back(std::move(Pass));
-            return Result;
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
 
         Pass.Desc.DepthAttachment = RHI::DepthAttachmentDesc{
@@ -192,68 +215,87 @@ class TestRenderer final : public IRenderer {
 
         auto* Sampler = Resource::Manager::Get().TryGetReady(m_LinearSampler);
         if (!Sampler) {
-            Result.CmdList.Passes.push_back(std::move(Pass));
-            return Result;
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
 
         auto* Pipeline = Resource::Manager::Get().TryGetReady(m_Pipeline);
         if (!Pipeline) {
-            Result.CmdList.Passes.push_back(std::move(Pass));
-            return Result;
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
 
         auto* VB = Resource::Manager::Get().TryGetReady(m_VertexBuffer);
         auto* IB = Resource::Manager::Get().TryGetReady(m_IndexBuffer);
         if (!VB || !IB) {
-            Result.CmdList.Passes.push_back(std::move(Pass));
-            return Result;
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
 
         if (!m_Textures) {
-            Result.CmdList.Passes.push_back(std::move(Pass));
-            return Result;
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
         auto Textures = m_Textures->TryGetReady();
         if (!Textures) {
-            Result.CmdList.Passes.push_back(std::move(Pass));
-            return Result;
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
 
-        if (!m_Parameters)
-            m_Parameters = RHI::ShaderParameters::Create(*Pipeline);
-
-        if (auto* FrameCB = Resource::Manager::Get().TryGetReady(m_FrameConstants)) {
-            if (auto R = m_Parameters->SetConstantBuffer("g_frame.cb", FrameCB, &CbData, sizeof(CbData)); !R)
-                return std::unexpected(R.error().Append("Test frame parameter binding failed"));
+        auto* ViewCB = Resource::Manager::Get().TryGetReady(View.ViewCB);
+        if (!ViewCB) {
+            CmdList.Passes.push_back(std::move(Pass));
+            return {};
         }
+
+        auto& Parameters = GetViewParameters(View, *Pipeline);
+        if (auto R = Parameters.SetConstantBuffer("g_frameView.frame", FrameCB, &FrameData, sizeof(FrameData)); !R)
+            return std::unexpected(R.error().Append("Test frame parameter binding failed"));
+        const auto ViewData = View.GetViewConstants();
+        if (auto R = Parameters.SetConstantBuffer("g_frameView.view", ViewCB, &ViewData, sizeof(ViewData)); !R)
+            return std::unexpected(R.error().Append("Test view parameter binding failed"));
         auto* AnisoSampler = Resource::Manager::Get().TryGetReady(m_AnisoSampler);
-        if (auto R = m_Parameters->SetSampler("g_samplers.uSamplerLinear", Sampler); !R)
+        if (auto R = Parameters.SetSampler("g_samplers.uSamplerLinear", Sampler); !R)
             return std::unexpected(R.error().Append("Test linear sampler parameter binding failed"));
-        if (auto R = m_Parameters->SetSampler("g_samplers.uSamplerAniso", AnisoSampler ? AnisoSampler : Sampler); !R)
+        if (auto R = Parameters.SetSampler("g_samplers.uSamplerAniso", AnisoSampler ? AnisoSampler : Sampler); !R)
             return std::unexpected(R.error().Append("Test anisotropic sampler parameter binding failed"));
-        if (auto R = m_Parameters->SetResourceArray("g_textures.uTextures", *Textures); !R)
+        if (auto R = Parameters.SetResourceArray("g_textures.uTextures", *Textures); !R)
             return std::unexpected(R.error().Append("Test texture-array parameter binding failed"));
 
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
         Pass.SetGraphicsPipeline(Pipeline);
-        Pass.BindShaderParameters(Pipeline, *m_Parameters);
+        Pass.BindShaderParameters(Pipeline, Parameters);
         const Uint32 BaseColorTextureIndex = 0;
         Pass.PushConstants(Pipeline, 0, &BaseColorTextureIndex, sizeof(BaseColorTextureIndex));
         Pass.DrawIndexed(Pipeline, VB, IB);
 
-        Result.CmdList.Passes.push_back(std::move(Pass));
-
-        return Result;
+        CmdList.Passes.push_back(std::move(Pass));
+        return {};
     }
 
-  private:
-    [[nodiscard]] auto BuildGlobalCB(const Scene::SceneSnapshot& Scene) const -> GlobalCBData {
-        return GlobalCBData{
-            .View       = Scene.GetViewMatrix(),
-            .Projection = Scene.GetProjectionMatrix(),
-            .Time       = Scene.Time,
+    [[nodiscard]] auto BuildFrameConstants(float Time) const -> FrameConstants {
+        return FrameConstants{
+            .Time = Time,
         };
+    }
+
+    auto GetViewParameters(const Scene::RenderViewSnapshot& View, const RHI::GraphicsPipeline& Pipeline)
+        -> RHI::ShaderParameters& {
+        const auto& ViewConstantBufferKey = View.ViewCB.GetKey();
+        for (auto& State : m_ViewParameters) {
+            if (State.ViewConstantBufferKey != ViewConstantBufferKey)
+                continue;
+            if (State.Parameters.GetLayoutId() != Pipeline.GetShaderParameterLayout().GetId())
+                State.Parameters = RHI::ShaderParameters::Create(Pipeline);
+            return State.Parameters;
+        }
+
+        auto& State = m_ViewParameters.emplace_back(ViewParameterState{
+            .ViewConstantBufferKey = ViewConstantBufferKey,
+            .Parameters            = RHI::ShaderParameters::Create(Pipeline),
+        });
+        return State.Parameters;
     }
 
     Resource::ResourceRef<RHI::VertexBuffer>     m_VertexBuffer;
@@ -263,7 +305,7 @@ class TestRenderer final : public IRenderer {
     Resource::ResourceRef<RHI::Sampler>          m_LinearSampler   = {};
     Resource::ResourceRef<RHI::Sampler>          m_AnisoSampler    = {};
     std::optional<Resource::Array<RHI::SampledTexture>> m_Textures   = std::nullopt;
-    std::optional<RHI::ShaderParameters>                m_Parameters = std::nullopt;
+    std::vector<ViewParameterState>                      m_ViewParameters = {};
 };
 
 } // namespace SoulEngine::Renderer

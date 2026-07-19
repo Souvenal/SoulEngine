@@ -1,16 +1,20 @@
 struct FrameData
 {
-    float4x4 view;
-    float4x4 projection;
     float time;
 };
 
-struct FrameResources
+struct ViewData
 {
-    ConstantBuffer<FrameData> cb;
+    float4x4 viewProjection;
 };
 
-ParameterBlock<FrameResources> g_frame;
+struct FrameViewResources
+{
+    ConstantBuffer<FrameData> frame;
+    ConstantBuffer<ViewData> view;
+};
+
+ParameterBlock<FrameViewResources> g_frameView;
 
 struct SamplerResources
 {
@@ -45,6 +49,6 @@ VSOutput VertexMain(uint vertexID : SV_VertexID)
 [shader("fragment")]
 float4 FragmentMain(VSOutput input) : SV_Target
 {
-    float pulse = 0.5 + 0.5 * sin(g_frame.cb.time);
+    float pulse = 0.5 + 0.5 * sin(g_frameView.frame.time);
     return g_textures.uTextures[0].Sample(g_samplers.uSamplerLinear, input.uv) * pulse;
 }
