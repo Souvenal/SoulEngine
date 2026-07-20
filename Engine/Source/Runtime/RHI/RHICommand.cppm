@@ -63,9 +63,9 @@ struct DrawIndexedCmd {
     /// Pipeline expected to be bound for this draw. Backends use this for
     /// validation and for lowering draw parameters that require pipeline
     /// layout information, such as Vulkan push constants.
-    GraphicsPipeline* PipelinePtr     = nullptr;
-    VertexBuffer*     VertexBufferPtr = nullptr;
-    IndexBuffer*      IndexBufferPtr  = nullptr;
+    GraphicsPipeline*                         PipelinePtr     = nullptr;
+    std::array<VertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
+    IndexBuffer*                              IndexBufferPtr  = nullptr;
 };
 
 /// @brief Draw non-indexed primitives.
@@ -73,8 +73,8 @@ struct DrawCmd {
     /// Pipeline expected to be bound for this draw. Backends use this for
     /// validation and for lowering draw parameters that require pipeline
     /// layout information, such as Vulkan push constants.
-    GraphicsPipeline* PipelinePtr     = nullptr;
-    VertexBuffer*     VertexBufferPtr = nullptr;
+    GraphicsPipeline*                         PipelinePtr     = nullptr;
+    std::array<VertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
 };
 
 /// @brief All command types dispatched via std::visit.
@@ -133,12 +133,26 @@ struct Pass {
     auto DrawIndexed(GraphicsPipeline* PipelinePtr,
                      VertexBuffer*     VertexBufferPtr,
                      IndexBuffer*      IndexBufferPtr) -> void {
-        Commands.emplace_back(DrawIndexedCmd{.PipelinePtr     = PipelinePtr,
-                                             .VertexBufferPtr = VertexBufferPtr,
-                                             .IndexBufferPtr  = IndexBufferPtr});
+        DrawIndexed(PipelinePtr, std::array<VertexBuffer*, kMaxVertexBufferBindings>{VertexBufferPtr}, IndexBufferPtr);
+    }
+    auto DrawIndexed(GraphicsPipeline*                                PipelinePtr,
+                     std::array<VertexBuffer*, kMaxVertexBufferBindings> VertexBuffers,
+                     IndexBuffer*                                     IndexBufferPtr) -> void {
+        Commands.emplace_back(DrawIndexedCmd{
+            .PipelinePtr     = PipelinePtr,
+            .VertexBuffers   = VertexBuffers,
+            .IndexBufferPtr  = IndexBufferPtr,
+        });
     }
     auto Draw(GraphicsPipeline* PipelinePtr, VertexBuffer* VertexBufferPtr) -> void {
-        Commands.emplace_back(DrawCmd{.PipelinePtr = PipelinePtr, .VertexBufferPtr = VertexBufferPtr});
+        Draw(PipelinePtr, std::array<VertexBuffer*, kMaxVertexBufferBindings>{VertexBufferPtr});
+    }
+    auto Draw(GraphicsPipeline*                                PipelinePtr,
+              std::array<VertexBuffer*, kMaxVertexBufferBindings> VertexBuffers) -> void {
+        Commands.emplace_back(DrawCmd{
+            .PipelinePtr   = PipelinePtr,
+            .VertexBuffers = VertexBuffers,
+        });
     }
 };
 

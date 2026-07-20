@@ -8,11 +8,11 @@ Application logic lifecycle. Owns the mutable scene and renderer.
 
 | Term | Definition |
 |------|------------|
-| **Application** | Top-level object created by `EngineLoop`. Owns `Scene::Scene m_Scene` and `UPtr<Renderer::IRenderer> m_Renderer`. Lifecycle: `Create(Name)` → `OnAttach()` → `OnTick(dt)` / `OnRender()` → `OnDetach()`. |
+| **Application** | Top-level object created by `EngineLoop`. Owns `Scene::Scene m_Scene` and `UPtr<Renderer::IRenderer> m_Renderer`. Lifecycle: `Create(Name)` → `OnAttach()` → `OnTick(dt, window)` / `OnRender()` → `OnDetach()`. |
 | **SceneSnapshot** | Immutable render-facing copy of `Scene` built at the end of `OnTick()` and published to the frame slot. |
 | **OnAttach** | Pure virtual. Derived class constructs the scene and renderer. Called by EngineLoop after RHI singleton is ready. |
 | **OnDetach** | Pure virtual. Derived class destroys the renderer and releases owned resources. Called by EngineLoop before RHI singleton shutdown. |
-| **OnTick** | Pure virtual. Per-frame application update for simulation and state changes. |
+| **OnTick** | Pure virtual. Per-frame application update for simulation, state changes, and main-thread Window input consumption. |
 | **OnRender** | Non-virtual. Fixed pipeline: calls `m_Renderer->Render(SceneSnapshot)`. |
 | **Create** | Static factory: looks up `Name` in `ApplicationFactory`, constructs the application. Does NOT call `OnAttach()` — EngineLoop controls attach/detach timing. |
 
@@ -21,10 +21,13 @@ Application logic lifecycle. Owns the mutable scene and renderer.
 - `Core` — logging, config, `Factory`, `Singleton`
 - `Renderer` — `IRenderer` (owns via UPtr)
 - `Scene` — `Scene::Scene` (owns by value)
+- `Window` — borrowed `WindowDisplay` passed to `OnTick`
 
 ## Relationships
 
 - **Application** does not own the window, RHI context, or GPU resources.
+- **Application** may consume the borrowed `WindowDisplay` during `OnTick`, but
+  must not retain it beyond that call.
 - **EngineLoop** creates the RHI singleton, creates applications via `Application::Create()`, and calls `OnAttach()`/`OnDetach()` at the right points.
 - **Application** owns the mutable scene that is converted into a per-frame `SceneSnapshot`.
 - **GameLoop** is responsible for building the `SceneSnapshot` at the end of `OnTick()` before publishing the frame slot.

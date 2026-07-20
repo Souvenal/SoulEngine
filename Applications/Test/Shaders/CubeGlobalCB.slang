@@ -2,7 +2,8 @@ import Common;
 
 struct VSInput {
     float3 inPosition;
-    float3 inColor;
+    float3 inNormal;
+    float4 inTangent;
     float2 inUV;
 };
 
@@ -17,7 +18,7 @@ VSOutput vertMain(VSInput input) {
     VSOutput output;
     float4 worldPos = float4(input.inPosition, 1.0);
     output.pos      = mul(worldPos, g_frameView.view.viewProjection);
-    output.color    = input.inColor;
+    output.color    = 0.5 + 0.5 * normalize(input.inNormal + input.inTangent.xyz * 0.001);
     output.uv       = input.inUV;
     return output;
 }

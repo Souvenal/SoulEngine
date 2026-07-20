@@ -10,7 +10,7 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Resource {
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 struct ResourceRequestResult {
     ResourceHandle<T> Handle          = {};
 
@@ -29,14 +29,14 @@ struct GpuPendingResource {
     RHI::GpuCompletionToken UploadCompletion = {};
 };
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 struct ResourceEntry {
     ResourceSlot<T>        Slot     = {};
     ResourceLifetimePolicy Policy   = ResourceTraits<T>::Info.DefaultPolicy;
     Uint32                 RefCount = 0;
 };
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 using ResourceEntryMap = std::unordered_map<String, UPtr<ResourceEntry<T>>>;
 
 /// @brief Per-resource-type entry registry.
@@ -44,7 +44,7 @@ using ResourceEntryMap = std::unordered_map<String, UPtr<ResourceEntry<T>>>;
 /// `HasGpuPending = true` means the resource type has a GPU upload/completion
 /// phase after RHI object creation, so the family owns a `GpuPending` queue.
 /// Types without that phase publish Ready directly and do not carry the queue.
-template <ManagedRHIResource T, bool HasGpuPending = ResourceTraits<T>::Info.HasGpuPending()>
+template <ManagedResource T, bool HasGpuPending = ResourceTraits<T>::Info.HasGpuPending()>
 struct ResourceFamily {
     using ResourceType = T;
 
@@ -64,14 +64,14 @@ struct ResourceFamily<T, true> {
 template <typename Tuple>
 struct ResourceFamilyTuple;
 
-template <ManagedRHIResource... T>
+template <ManagedResource... T>
 struct ResourceFamilyTuple<std::tuple<T...>> {
     using Type = std::tuple<ResourceFamily<T>...>;
 };
 
-using ResourceFamilies = typename ResourceFamilyTuple<ManagedRHIResourceTypes>::Type;
+using ResourceFamilies = typename ResourceFamilyTuple<ManagedResourceTypes>::Type;
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 struct LockedResourceEntry {
     std::unique_lock<std::mutex> Lock  = {};
     ResourceEntry<T>*            Entry = nullptr;
@@ -103,7 +103,7 @@ class ResourceContext {
         return m_ShutdownRequested.load(std::memory_order_acquire);
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto CreateOrGet(String Key) -> ResourceRequestResult<T> {
         auto& Family = GetFamily<T>();
 
@@ -137,7 +137,7 @@ class ResourceContext {
         };
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto GetState(const ResourceHandle<T>& Handle) -> ResourceState {
         auto Locked = LockEntry(Handle);
         if (!Locked)
@@ -146,7 +146,7 @@ class ResourceContext {
         return Locked.Entry->Slot.GetState(Handle.GetGeneration());
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto GetError(const ResourceHandle<T>& Handle) -> std::optional<ErrorMessage> {
         auto Locked = LockEntry(Handle);
         if (!Locked)
@@ -155,7 +155,7 @@ class ResourceContext {
         return Locked.Entry->Slot.GetError(Handle.GetGeneration());
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto TryGetReady(const ResourceHandle<T>& Handle) -> T* {
         auto Locked = LockEntry(Handle);
         if (!Locked)
@@ -164,7 +164,7 @@ class ResourceContext {
         return Locked.Entry->Slot.TryGetReady(Handle.GetGeneration());
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto AddRef(const ResourceHandle<T>& Handle) -> bool {
         auto Locked = LockEntry(Handle);
         if (!Locked)
@@ -179,7 +179,7 @@ class ResourceContext {
         return true;
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     auto ReleaseRef(const ResourceHandle<T>& Handle) -> void {
         auto Locked = LockEntry(Handle);
         if (!Locked || Locked.Entry->Slot.GetGeneration() != Handle.GetGeneration())
@@ -200,7 +200,7 @@ class ResourceContext {
         return Locked.Entry->Slot.MarkRhiCommitting(Generation);
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto PublishReady(const String& Key, ResourceGeneration Generation, Resource<T> Value) -> bool {
         std::lock_guard Lock(m_PublishMutex);
         if (IsShutdownRequested())
@@ -213,7 +213,7 @@ class ResourceContext {
         return Locked.Entry->Slot.PublishReady(Generation, std::move(Value));
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto PublishFailed(const String& Key, ResourceGeneration Generation, ErrorMessage Error) -> bool {
         std::lock_guard Lock(m_PublishMutex);
         if (IsShutdownRequested())
@@ -270,7 +270,7 @@ class ResourceContext {
     }
 
     auto Clear() -> void {
-        ForEachFamily([this]<ManagedRHIResource T>(ResourceFamily<T>& Family) -> void {
+        ForEachFamily([this]<ManagedResource T>(ResourceFamily<T>& Family) -> void {
             std::lock_guard Lock(Family.Mutex);
             ReleaseAndEraseEntries(Family.Entries);
         });
@@ -282,19 +282,19 @@ class ResourceContext {
     }
 
     auto CollectReleasedResources() -> void {
-        ForEachFamily([]<ManagedRHIResource T>(ResourceFamily<T>& Family) -> void {
+        ForEachFamily([]<ManagedResource T>(ResourceFamily<T>& Family) -> void {
             std::lock_guard Lock(Family.Mutex);
             EraseReleasedTransientEntries(Family.Entries);
         });
     }
 
   private:
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto GetFamily() -> ResourceFamily<T>& {
         return std::get<ResourceFamily<T>>(m_Families);
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto LockEntry(const ResourceHandle<T>& Handle) -> LockedResourceEntry<T> {
         if (!Handle.IsValid())
             return {};
@@ -302,7 +302,7 @@ class ResourceContext {
         return LockEntry<T>(Handle.GetKey());
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto LockEntry(const String& Key) -> LockedResourceEntry<T> {
         auto& Family = GetFamily<T>();
         auto  Lock   = std::unique_lock<std::mutex>(Family.Mutex);
@@ -312,7 +312,7 @@ class ResourceContext {
         };
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] static auto FindEntry(ResourceEntryMap<T>& Entries, const String& Key) -> ResourceEntry<T>* {
         auto It = Entries.find(Key);
         if (It == Entries.end() || !It->second)
@@ -331,8 +331,8 @@ class ResourceContext {
 
     template <typename Fn>
     auto ForEachGpuPendingFamily(Fn&& Callback) -> void {
-        ForEachFamily([&]<ManagedRHIResource T>(ResourceFamily<T>&) -> void {
-            if constexpr (ResourceTraits<T>::Info.HasGpuPending())
+        ForEachFamily([&]<ManagedResource T>(ResourceFamily<T>&) -> void {
+            if constexpr (ManagedRHIResource<T> && ResourceTraits<T>::Info.HasGpuPending())
                 Callback.template operator()<T>();
         });
     }

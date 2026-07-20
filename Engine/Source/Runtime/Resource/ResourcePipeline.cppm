@@ -30,9 +30,11 @@ export namespace SoulEngine::Resource {
                         Req.DepthStencil.DepthTestEnable,
                         Req.DepthStencil.DepthWriteEnable);
 
-    Key += Format("|vbind={}:{}", Req.VertexInputLayout.Binding, Req.VertexInputLayout.Stride);
+    for (const auto& Binding : Req.VertexInputLayout.Bindings)
+        Key += Format("|vbind={}:{}", Binding.Binding, Binding.Stride);
     for (const auto& Attribute : Req.VertexInputLayout.Attributes)
-        Key += Format("|attr={}:{}:{}", Attribute.Location, static_cast<Uint8>(Attribute.Format), Attribute.Offset);
+        Key += Format(
+            "|attr={}:{}:{}:{}", Attribute.Location, Attribute.Binding, static_cast<Uint8>(Attribute.Format), Attribute.Offset);
 
     for (const auto& Attachment : Req.Blend.Attachments)
         Key += Format("|blend={}", Attachment.BlendEnable);

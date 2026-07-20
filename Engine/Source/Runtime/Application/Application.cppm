@@ -17,6 +17,7 @@ import RHI;
 import Renderer;
 import Resource;
 import Scene;
+import Window;
 
 export import std;
 
@@ -58,7 +59,7 @@ class Application {
     virtual auto OnDetach() -> void = 0;
 
     /// @brief Per-frame application update (game logic, simulation).
-    virtual auto OnTick(float DeltaTime) -> void = 0;
+    virtual auto OnTick(float DeltaTime, WindowDisplay& Window) -> void = 0;
 
     /// @brief The factory key this application was registered under.
     [[nodiscard]] auto GetName() const -> StringView {

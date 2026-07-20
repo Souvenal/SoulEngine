@@ -132,17 +132,42 @@ namespace SoulEngine::RHI::Vulkan {
     return nullptr;
 }
 
-auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
+[[nodiscard]] auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> std::expected<void, ErrorMessage> {
+    const auto& ExplicitLayout = Desc.VertexInputLayout;
+    std::array<bool, kMaxVertexBufferBindings> DeclaredBindings = {};
+    for (const auto& Binding : ExplicitLayout.Bindings) {
+        if (Binding.Binding >= kMaxVertexBufferBindings) {
+            return std::unexpected(
+                ErrorMessage(Core::Format("Vertex input binding {} exceeds supported binding count {}", Binding.Binding,
+                                          kMaxVertexBufferBindings)));
+        }
+        if (Binding.Stride == 0)
+            return std::unexpected(
+                ErrorMessage(Core::Format("Vertex input binding {} has zero stride", Binding.Binding)));
+        if (DeclaredBindings[Binding.Binding])
+            return std::unexpected(
+                ErrorMessage(Core::Format("Vertex input binding {} is duplicated", Binding.Binding)));
+        DeclaredBindings[Binding.Binding] = true;
+    }
+
+    for (const auto& Attr : ExplicitLayout.Attributes) {
+        if (Attr.Binding >= kMaxVertexBufferBindings || !DeclaredBindings[Attr.Binding]) {
+            return std::unexpected(
+                ErrorMessage(Core::Format("Vertex input attribute location {} references undeclared binding {}",
+                                          Attr.Location,
+                                          Attr.Binding)));
+        }
+    }
+
     const auto& ReflectedInputs = Desc.Program.Reflection.VertexInputs;
     if (ReflectedInputs.empty())
-        return;
+        return {};
 
-    const auto& ExplicitLayout = Desc.VertexInputLayout;
     if (ExplicitLayout.Attributes.empty()) {
         LogWarning("Vertex shader '{}' reflects {} vertex input(s), but pipeline has no explicit vertex input layout",
                    Desc.Program.VertexEntryPointName,
                    ReflectedInputs.size());
-        return;
+        return {};
     }
 
     for (const auto& Attr : ReflectedInputs) {
@@ -194,6 +219,8 @@ auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> void {
                        Desc.Program.VertexEntryPointName);
         }
     }
+
+    return {};
 }
 
 //
@@ -248,8 +275,8 @@ class GraphicsShaderStates {
         // ── Vertex input state ──────────────────────────────────────────────────
         // The explicit CPU vertex-buffer layout is authoritative. Shader
         // reflection is used only to warn about location/format mismatches.
-        // TODO: Support multiple vertex buffer bindings and per-instance input rate.
-        ValidateVertexInputLayout(Desc);
+        if (auto R = ValidateVertexInputLayout(Desc); !R)
+            return std::unexpected(R.error());
         if (!Desc.VertexInputLayout.Attributes.empty()) {
             Result.m_VertexAttributes.reserve(Desc.VertexInputLayout.Attributes.size());
 
@@ -261,17 +288,20 @@ class GraphicsShaderStates {
 
                 Result.m_VertexAttributes.push_back(vk::VertexInputAttributeDescription{
                     .location = Attr.Location,
-                    .binding  = Desc.VertexInputLayout.Binding,
+                    .binding  = Attr.Binding,
                     .format   = *VkFormat,
                     .offset   = Attr.Offset,
                 });
             }
 
-            Result.m_VertexBinding = vk::VertexInputBindingDescription{
-                .binding   = Desc.VertexInputLayout.Binding,
-                .stride    = Desc.VertexInputLayout.Stride,
-                .inputRate = vk::VertexInputRate::eVertex,
-            };
+            Result.m_VertexBindings.reserve(Desc.VertexInputLayout.Bindings.size());
+            for (const auto& Binding : Desc.VertexInputLayout.Bindings) {
+                Result.m_VertexBindings.push_back(vk::VertexInputBindingDescription{
+                    .binding   = Binding.Binding,
+                    .stride    = Binding.Stride,
+                    .inputRate = vk::VertexInputRate::eVertex,
+                });
+            }
         }
 
         return Result;
@@ -286,8 +316,8 @@ class GraphicsShaderStates {
         if (m_VertexAttributes.empty())
             return {};
         return vk::PipelineVertexInputStateCreateInfo{
-            .vertexBindingDescriptionCount   = 1,
-            .pVertexBindingDescriptions      = &m_VertexBinding,
+            .vertexBindingDescriptionCount   = static_cast<Uint32>(m_VertexBindings.size()),
+            .pVertexBindingDescriptions      = m_VertexBindings.data(),
             .vertexAttributeDescriptionCount = static_cast<Uint32>(m_VertexAttributes.size()),
             .pVertexAttributeDescriptions    = m_VertexAttributes.data(),
         };
@@ -295,7 +325,7 @@ class GraphicsShaderStates {
 
   private:
     std::vector<vk::raii::ShaderModule>              m_Modules           = {};
-    vk::VertexInputBindingDescription                m_VertexBinding     = {};
+    std::vector<vk::VertexInputBindingDescription>   m_VertexBindings    = {};
     std::vector<vk::VertexInputAttributeDescription> m_VertexAttributes  = {};
 };
 

@@ -660,7 +660,7 @@ class RenderDevice final : public RHI::RenderDevice {
                         if (BoundPipeline != DrawCmd.PipelinePtr)
                             return std::unexpected(ErrorMessage(
                                 "Execute: indexed draw pipeline does not match the currently bound graphics pipeline"));
-                        if (!DrawCmd.VertexBufferPtr)
+                        if (!DrawCmd.VertexBuffers[0])
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing vertex buffer"));
                         if (!DrawCmd.IndexBufferPtr)
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing index buffer"));
@@ -670,7 +670,7 @@ class RenderDevice final : public RHI::RenderDevice {
                         if (BoundPipeline != DrawCmd.PipelinePtr)
                             return std::unexpected(
                                 ErrorMessage("Execute: draw pipeline does not match the currently bound graphics pipeline"));
-                        if (!DrawCmd.VertexBufferPtr)
+                        if (!DrawCmd.VertexBuffers[0])
                             return std::unexpected(ErrorMessage("Execute: draw is missing vertex buffer"));
                     }
 

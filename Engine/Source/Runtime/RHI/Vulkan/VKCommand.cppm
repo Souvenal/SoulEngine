@@ -355,22 +355,33 @@ struct CommandVisitor {
     }
 
     auto operator()(const RHI::DrawIndexedCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr || !Cmd.VertexBufferPtr || !Cmd.IndexBufferPtr)
+        if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0] || !Cmd.IndexBufferPtr)
             return;
 
-        const auto& VkVB   = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBufferPtr);
         const auto& VkIB   = static_cast<const Vulkan::IndexBuffer&>(*Cmd.IndexBufferPtr);
-        Buf.bindVertexBuffers(0, {VkVB.GetVkBuffer()}, {0});
+        for (Uint32 Binding = 0; Binding < Cmd.VertexBuffers.size(); ++Binding) {
+            auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
+            if (!VertexBufferPtr)
+                continue;
+            const auto& VkVB = static_cast<const Vulkan::VertexBuffer&>(*VertexBufferPtr);
+            Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
+        }
         Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
         Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
     }
 
     auto operator()(const RHI::DrawCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr || !Cmd.VertexBufferPtr)
+        if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0])
             return;
 
-        const auto& VkVB   = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBufferPtr);
-        Buf.bindVertexBuffers(0, {VkVB.GetVkBuffer()}, {0});
+        for (Uint32 Binding = 0; Binding < Cmd.VertexBuffers.size(); ++Binding) {
+            auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
+            if (!VertexBufferPtr)
+                continue;
+            const auto& VkVB = static_cast<const Vulkan::VertexBuffer&>(*VertexBufferPtr);
+            Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
+        }
+        const auto& VkVB = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBuffers[0]);
         Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
     }
 };

@@ -532,13 +532,20 @@ enum class Format : Uint8 {
 
 struct VertexInputAttributeDesc {
     Uint32 Location = 0;
+    Uint32 Binding  = 0;
     Format Format   = Format::Unknown;
     Uint32 Offset   = 0;
 };
 
+struct VertexInputBindingDesc {
+    Uint32 Binding = 0;
+    Uint32 Stride  = 0;
+};
+
+inline constexpr Uint32 kMaxVertexBufferBindings = 4;
+
 struct VertexInputLayoutDesc {
-    Uint32                                Binding    = 0;
-    Uint32                                Stride     = 0;
+    std::vector<VertexInputBindingDesc>   Bindings   = {};
     std::vector<VertexInputAttributeDesc> Attributes = {};
 };
 

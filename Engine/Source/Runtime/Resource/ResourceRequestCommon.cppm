@@ -11,7 +11,7 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Resource {
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 auto PublishResourceReady(ResourceContext& Context,
                           ResourceGeneration Generation,
                           const String& Key,
@@ -29,7 +29,7 @@ auto PublishResourceReady(ResourceContext& Context,
     LogInfo("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Key);
 }
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 auto PublishResourceFailed(ResourceContext& Context,
                            ResourceGeneration Generation,
                            const String& Key,
@@ -48,14 +48,14 @@ auto PublishResourceFailed(ResourceContext& Context,
     LogWarning("Async {} failed '{}': {}", ResourceTraits<T>::Info.Label, Key, Message);
 }
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 struct ResourceWorkStart {
     ResourceHandle<T> Handle          = {};
     TaskGraph*        Graph           = nullptr;
     bool              ShouldStartWork = false;
 };
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 [[nodiscard]] auto BeginResourceWork(ResourceContext& Context, const String& Key) -> ResourceWorkStart<T> {
     if (Context.IsShutdownRequested()) {
         LogWarning("{} request rejected after shutdown '{}'", ResourceTraits<T>::Info.Label, Key);

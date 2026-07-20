@@ -2,6 +2,7 @@ export module Resource:Manager;
 
 import :Buffer;
 import :Context;
+import :Mesh;
 import :Pipeline;
 import :RenderTarget;
 import :Sampler;
@@ -15,14 +16,12 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Resource {
 
-class Manager;
-
 /// @brief Move-only logical owner for a resource request.
 ///
 /// `ResourceRef` expresses that a runtime system still wants the resource.
 /// Ready payload observer pointers are resolved through `Resource::Manager`;
 /// this type owns logical demand only.
-template <ManagedRHIResource T>
+template <ManagedResource T>
 class ResourceRef {
   public:
     ResourceRef() = default;
@@ -79,8 +78,8 @@ class ResourceRef {
     }
 
     // Non-owning ResourceContext observer; ResourceRef owns logical demand only.
-    ResourceContext*   m_Context = nullptr;
-    ResourceHandle<T>  m_Handle  = {};
+    ResourceContext*  m_Context = nullptr;
+    ResourceHandle<T> m_Handle  = {};
 };
 
 /// @brief Central resource manager facade.
@@ -139,22 +138,39 @@ class Manager : public Singleton<Manager> {
         return ResourceRef<RHI::Sampler>(m_Context, SubmitSamplerRequest(m_Context, Desc));
     }
 
-    template <ManagedRHIResource T>
+    /// @brief Request a mesh asset and retain its logical owner ref.
+    [[nodiscard]] auto RequestMeshRef(StringView MeshPath) -> ResourceRef<Mesh> {
+        return ResourceRef<Mesh>(m_Context, SubmitMeshRequest(m_Context, MeshPath));
+    }
+
+    /// @brief Expand an imported mesh into snapshot-safe draw packets.
+    [[nodiscard]] auto PopulateMeshDrawPackets(const ResourceRef<Mesh>& MeshRef, std::vector<DrawPacket>& Out)
+        -> bool {
+        auto* MeshPtr = TryGetReady(MeshRef);
+        if (!MeshPtr)
+            return false;
+
+        const auto Count = Out.size();
+        MeshPtr->PopulateDrawPackets(Out);
+        return Out.size() != Count;
+    }
+
+    template <ManagedResource T>
     [[nodiscard]] auto GetState(const ResourceHandle<T>& Handle) -> ResourceState {
         return m_Context.GetState(Handle);
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto GetError(const ResourceHandle<T>& Handle) -> std::optional<ErrorMessage> {
         return m_Context.GetError(Handle);
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto TryGetReady(const ResourceHandle<T>& Handle) -> T* {
         return m_Context.TryGetReady(Handle);
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto TryGetReady(const ResourceRef<T>& Ref) -> T* {
         return m_Context.TryGetReady(Ref.GetHandle());
     }

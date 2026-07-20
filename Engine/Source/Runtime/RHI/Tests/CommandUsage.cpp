@@ -31,6 +31,7 @@ class UsageVisitorTest : public ::testing::Test {
   protected:
     SPtr<GraphicsPipeline>   m_Pipeline = std::make_shared<GraphicsPipeline>();
     SPtr<VertexBuffer>       m_VB       = std::make_shared<VertexBuffer>();
+    SPtr<VertexBuffer>       m_SecondVB = std::make_shared<VertexBuffer>();
     SPtr<IndexBuffer>        m_IB       = std::make_shared<IndexBuffer>();
     SPtr<MockSampledTexture> m_Texture  = std::make_shared<MockSampledTexture>();
 
@@ -153,14 +154,16 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
 TEST_F(UsageVisitorTest, DrawIndexedCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_SecondVB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
     std::visit(m_Visitor,
                Command{DrawIndexedCmd{.PipelinePtr     = m_Pipeline.get(),
-                                       .VertexBufferPtr = m_VB.get(),
+                                       .VertexBuffers   = {m_VB.get(), m_SecondVB.get()},
                                        .IndexBufferPtr  = m_IB.get()}});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_SecondVB->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_IB->GetLastUsageToken().Id, 42);
 }
 
@@ -168,8 +171,7 @@ TEST_F(UsageVisitorTest, DrawCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
     std::visit(m_Visitor,
-               Command{DrawCmd{.PipelinePtr     = m_Pipeline.get(),
-                               .VertexBufferPtr = m_VB.get()}});
+               Command{DrawCmd{.PipelinePtr = m_Pipeline.get(), .VertexBuffers = {m_VB.get()}}});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);

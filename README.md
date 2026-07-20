@@ -19,6 +19,7 @@ The project structure is inspired by Unreal Engine's modular design (see the `En
 | Build system | xmake | Cross-platform build with built-in dependency management |
 | Graphics API | Vulkan | Primary and only RHI backend for now |
 | Shader language | Slang | Cross-platform shader compilation |
+| Model import | Assimp | Runtime import for mesh assets such as OBJ |
 | Dependency management | xmake packages | Global cache shared across worktrees; no submodule overhead in agent + worktree workflows |
 
 ## Project Structure

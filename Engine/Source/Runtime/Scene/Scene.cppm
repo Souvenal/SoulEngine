@@ -35,6 +35,9 @@ struct Camera {
     float          NearPlane   = 0.1f;
     float          FarPlane    = 100.0f;
     float          AspectRatio = 16.0f / 9.0f;
+    float          Yaw         = 0.0f;
+    float          Pitch       = 0.0f;
+    bool           HasOrientationAngles = false;
     Resource::ResourceRef<RHI::RenderTarget> ColorRT = {};
     Resource::ResourceRef<RHI::RenderTarget> DepthRT = {};
     /// Must be unique among concurrently rendered cameras.
@@ -95,6 +98,38 @@ struct Camera {
                                hlslpp::zdirection::forward,
                                hlslpp::zplane::finite));
     }
+
+    /// @brief Move relative to the camera's horizontal facing direction and world up.
+    auto Move(float ForwardInput, float RightInput, float VerticalInput, float ZoomInput, float DeltaTime) -> void {
+        const auto HorizontalForward = hlslpp::normalize(hlslpp::float3(Forward.x, 0.0f, Forward.z));
+        const auto Right             = hlslpp::normalize(hlslpp::cross(HorizontalForward, Up));
+        auto       MoveDirection     = HorizontalForward * ForwardInput + Right * RightInput + Up * VerticalInput;
+        if (MoveDirection.x != 0.0f || MoveDirection.y != 0.0f || MoveDirection.z != 0.0f)
+            Position += hlslpp::normalize(MoveDirection) * (2.0f * DeltaTime);
+
+        Position += Forward * (ZoomInput * 0.75f);
+    }
+
+    /// @brief Rotate from relative cursor movement using yaw and pitch angles.
+    auto Rotate(float CursorDeltaX, float CursorDeltaY) -> void {
+        constexpr float Sensitivity = 0.0025f;
+        constexpr float MaxPitch    = 1.55334306f;
+
+        if (!HasOrientationAngles) {
+            Yaw                  = std::atan2(Forward.z, Forward.x);
+            Pitch                = std::asin(Forward.y);
+            HasOrientationAngles = true;
+        }
+
+        Yaw += CursorDeltaX * Sensitivity;
+        Pitch = std::clamp(Pitch - CursorDeltaY * Sensitivity, -MaxPitch, MaxPitch);
+
+        const auto CosPitch = std::cos(Pitch);
+        Forward = hlslpp::normalize(hlslpp::float3(
+            CosPitch * std::cos(Yaw),
+            std::sin(Pitch),
+            CosPitch * std::sin(Yaw)));
+    }
 };
 
 /// @brief Immutable render data and resources for one camera/view.
@@ -110,8 +145,9 @@ struct RenderViewSnapshot {
 };
 
 struct SceneSnapshot {
-    std::vector<RenderViewSnapshot> Views = {};
-    float                           Time  = 0.0f;
+    std::vector<RenderViewSnapshot> Views       = {};
+    std::vector<Resource::DrawPacket> DrawPackets = {};
+    float                            Time        = 0.0f;
 };
 
 /// @brief World state container read by renderers each frame.
@@ -164,9 +200,14 @@ class Scene {
                 },
             .Time = m_Time,
         };
+        for (const auto& MeshRef : m_Meshes) {
+            const auto Populated = Resource::Manager::Get().PopulateMeshDrawPackets(MeshRef, Snapshot.DrawPackets);
+            (void)Populated;
+        }
         return Snapshot;
     }
 
+    std::vector<Resource::ResourceRef<Resource::Mesh>> m_Meshes = {};
     Camera m_Camera;
     float  m_Time = GetElapsedTime();
 

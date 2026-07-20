@@ -210,7 +210,7 @@ class EngineLoop {
                 Scene.m_Camera.AllocateRenderTargets(Width, Height);
             }
 
-            m_Application->OnTick(Delta);
+            m_Application->OnTick(Delta, WindowDisplay);
             auto& AppScene = m_Application->GetScene();
             AppScene.UpdateTime();
             Slot.SceneData = AppScene.BuildSnapshot();

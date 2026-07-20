@@ -24,3 +24,5 @@ add_requires("spdlog[std_format,noexcept]")
 add_requires("glfw")
 
 add_requires("hlslpp")
+
+add_requires("assimp")

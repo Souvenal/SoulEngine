@@ -32,16 +32,20 @@ struct UsageVisitor {
     auto operator()(const DrawIndexedCmd& Cmd) -> void {
         if (Cmd.PipelinePtr)
             Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
-        if (Cmd.VertexBufferPtr)
-            Cmd.VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        for (auto* VertexBufferPtr : Cmd.VertexBuffers) {
+            if (VertexBufferPtr)
+                VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        }
         if (Cmd.IndexBufferPtr)
             Cmd.IndexBufferPtr->UpdateLastUsageToken(CurrentToken);
     }
     auto operator()(const DrawCmd& Cmd) -> void {
         if (Cmd.PipelinePtr)
             Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
-        if (Cmd.VertexBufferPtr)
-            Cmd.VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        for (auto* VertexBufferPtr : Cmd.VertexBuffers) {
+            if (VertexBufferPtr)
+                VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
+        }
     }
 
     // Commands that don't reference GPU resources — explicit empty overloads

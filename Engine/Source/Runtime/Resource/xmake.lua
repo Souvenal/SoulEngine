@@ -10,6 +10,8 @@ target("Resource")
     set_kind("moduleonly")
 
     add_packages("stb")
+    add_packages("hlslpp")
+    add_packages("assimp", { public = true })
     add_deps("Core", "RHI", "ShaderCompiler", "TaskGraph", "STBImage")
     add_files("*.cppm")
 

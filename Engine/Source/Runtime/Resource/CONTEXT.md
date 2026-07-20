@@ -15,7 +15,7 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Resource slot** | Internal payload state machine for one resource entry. It owns generation, state, error, and ready payload, but not logical ownership policy. |
 | **Ready resource observer** | Raw pointer returned by `Resource::Manager::TryGetReady(ref)` for immediate command-list recording or inspection. It does not own or extend payload lifetime. |
 | **Resource generation** | Version of a resource identity used to distinguish current asynchronous work from stale completions. |
-| **Resource payload** | Committed runtime object published by a ready resource, represented as `Resource<RHI::T>` with a ResourceContext-owned `UPtr<T>`. |
+| **Resource payload** | Committed runtime object published by a ready resource, represented as `Resource<T>` with a ResourceContext-owned `UPtr<T>`. |
 | **Resource name** | Human-authored runtime identity for a resource request, such as a material texture name or buffer name. It may contribute to a Resource key, but it is not a shader binding name and does not bind the resource to a shader parameter by itself. |
 | **Resource key** | Canonical identity used to deduplicate equivalent resource requests. It may be derived from a resource name, normalized path, descriptor contents, or a combination of request fields. |
 | **In-flight resource request** | Resource request that has been accepted and has not yet reached ready or failed state. |
@@ -24,7 +24,9 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Sampler resource** | Resource-system identity for a small RHI sampler profile such as linear-repeat or anisotropic-repeat; its ready payload is an RHI `Sampler`. |
 | **Buffer resource** | Resource-system identity for a buffer request; its ready payload is an RHI buffer. |
 | **Pipeline resource** | Resource-system identity for a graphics pipeline request; its ready payload is an RHI graphics pipeline. |
-| **Async Resource v1** | Initial async resource scope covering sampled texture resources and graphics pipeline resources. |
+| **Mesh resource** | Cached high-level asset imported through Assimp. It owns parsed submesh metadata, CPU vertex/index arrays, and passive handles for the requested SOA GPU buffers. |
+| **Draw packet** | Snapshot-safe indexed draw description expanded from a ready Mesh. It contains passive position, normal, tangent, UV, and index-buffer handles plus index count. |
+| **Async Resource v1** | Current asynchronous scope covering sampled textures, vertex/index buffers, graphics pipelines, samplers, render targets, constant buffers, and imported meshes. |
 | **Resource state** | Exported lifecycle enum returned by a resource handle. Consumers inspect this state directly to understand whether a resource is CPU-preparing, RHI-committing, GPU-pending, ready, failed, stale, or invalid. |
 | **CPU-preparing resource** | Resource whose non-thread-affine CPU work is still running, such as file IO, image decode, shader compilation, or request metadata preparation. |
 | **RHI-committing resource** | Resource whose RHI-thread work is running, such as backend object creation, descriptor publication, or GPU work submission. |
@@ -57,6 +59,7 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - `ResourceContext` is the sole owner of resource entries, slots, and ready payloads. `Resource::Manager` is the public facade over that context.
 - `Resource::Manager` may own the `ResourceContext` instance, but it is not a second lifecycle owner. Manager should stay a facade for public Runtime call sites.
 - Supported RHI payload families require both `ResourceTraits<RHI::T>::Info` and inclusion in `ManagedRHIResourceTypes`; unsupported `Resource<T>` / `ResourceHandle<T>` / `ResourceSlot<T>` instantiations fail at compile time.
+- Supported asset payload families require both `ResourceTraits<T>::Info` and inclusion in `ManagedAssetResourceTypes`. `ManagedResourceTypes` combines the RHI and asset family lists for `ResourceContext` storage.
 - Consumers must query `Resource::Manager::GetState(handle)` and `GetError(handle)` instead of resolving payloads from the handle. Renderers resolve ready observer pointers through `Resource::Manager::TryGetReady(ref)`.
 - A successful **Ready resource observer** requires matching generation and `Ready` state.
 - A **Ready resource observer** does not keep the ResourceContext-owned payload alive. The owning renderer, scene, or application must keep a `ResourceRef<T>` alive for every resource whose observer pointer is recorded into a command list.
@@ -84,7 +87,9 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - A **Resource wait policy** is chosen by the consumer of a **Resource**, not by the resource object alone.
 - A **Resource dependency** affects the consumer scope that owns it: pass dependencies decide pass execution, draw/material dependencies decide draw execution or fallback.
 - **Skip policy** is the default non-blocking behavior; **Fallback policy** is used when a suitable substitute exists; **Block policy** is opt-in for startup, tooling, tests, or other non-frame-path operations.
-- **Async Resource v1** includes **Sampled texture resource**, **Vertex buffer resource**, **Index buffer resource**, and **Pipeline resource**. A resource array is a local owner object that composes managed resources rather than an additional async resource family.
+- **Async Resource v1** includes **Sampled texture resource**, **Vertex buffer resource**, **Index buffer resource**, **Pipeline resource**, **Sampler resource**, **Render target resource**, **Constant buffer resource**, and **Mesh resource**. A resource array is a local owner object that composes managed resources rather than an additional async resource family.
+- A Mesh publishes `Ready` after Assimp import succeeds and its child buffer requests have been submitted. It does not wait for every child GPU upload to complete; draw expansion emits passive handles and Renderer skips the draw until all required buffers are ready.
+- Mesh import currently creates one SOA stream per submesh attribute: position (`float3`), normal (`float3`), tangent (`float4`), UV (`float2`), and a `Uint32` index buffer.
 - Render targets are Resource-managed attachment resources when requested
   through typed render-target handles. They are not sampled texture resources
   and do not belong to Async Resource v1.
@@ -126,10 +131,11 @@ transient resource is released by last-ref release through `ResourceRef<T>` and
 `ResourceContext::ReleaseRef()`. Collection later erases the entry only after
 `ResourceSlot<T>` reports that the payload has already been released.
 
-`ManagedRHIResourceTypes` is the central family list used by both
-`ResourceContext` and Resource request helpers. `ResourceTraits<T>` describes
-how a listed family behaves. A type with traits but not in the list is
-deliberately not a `ManagedRHIResource`, because Context would not have storage
+`ManagedRHIResourceTypes` and `ManagedAssetResourceTypes` are the central
+family lists used by `ResourceContext` and request helpers.
+`ManagedResourceTypes` combines both. `ResourceTraits<T>` describes how a
+listed family behaves. A type with traits but not in its managed list is
+deliberately not a `ManagedResource`, because Context would not have storage
 for it.
 
 ## Extension Guide
@@ -142,7 +148,7 @@ eventually require fewer central edits than it does today.
 
 | File | Role |
 |------|------|
-| `ResourceTypes.cppm` | Public typed resource primitives: state enums, lifetime policy, `ResourceTraitInfo`, `ResourceTraits<T>`, `ManagedRHIResourceTypes`, `Resource<T>`, `ResourceSlot<T>`, and `ResourceHandle<T>`. |
+| `ResourceTypes.cppm` | Public typed resource primitives: state enums, lifetime policy, `ResourceTraitInfo`, `ResourceTraits<T>`, managed RHI/asset family lists, `Resource<T>`, `ResourceSlot<T>`, `ResourceHandle<T>`, Mesh structures, and draw packets. |
 | `ResourceContext.cppm` | Internal lifecycle owner: typed resource families, resource entries, request coalescing, logical ref counts, lifetime policy application, state publication, GPU-pending queues, clear, and released-transient collection. |
 | `ResourceManager.cppm` | Public facade over `ResourceContext`; owns the singleton context, defines `ResourceRef<T>`, creates valid refs after Context accepts logical demand, and exposes request/state/query APIs. |
 | `ResourceRequestCommon.cppm` | Internal request-flow helpers shared by resource request partitions: begin request work, publish ready/failed/GPU-pending results, mark RHI commit, and produce consistent stale/shutdown logging. |
@@ -151,14 +157,13 @@ eventually require fewer central edits than it does today.
 | `ResourcePipeline.cppm` | Graphics-pipeline submit flow: key creation, shader compilation/preparation, RHI pipeline creation, and result publication. |
 | `ResourceBuffer.cppm` | Buffer submit flows: vertex/index buffer data validation/copy, RHI buffer creation, GPU-pending upload publication, constant buffer creation, and failure publication. |
 | `ResourceRenderTarget.cppm` | Render-target submit flow: transient key request orchestration, RHI creation, and result publication. |
+| `ResourceMesh.cppm` | Assimp mesh submit flow: normalized asset path, CPU import, SOA submesh extraction, child vertex/index-buffer requests, and Mesh publication. |
 | `Resource.cppm` | Public aggregate module exporting `:Types` and `:Manager`. |
 
 ### Current steps to add a resource type
 
-1. Add or expose the underlying payload type in RHI or the owning runtime
-   module. The Resource layer currently manages RHI payloads through
-   `Resource<RHI::T>`.
-2. Add a `ResourceTraits<RHI::T>` specialization in `ResourceTypes.cppm`.
+1. Add or expose the payload type in RHI or the owning runtime module.
+2. Add a `ResourceTraits<T>` specialization in `ResourceTypes.cppm`.
    Set:
    - `ResourceGpuPendingPolicy::WaitForCompletion` when the ready payload must
      wait for an RHI `GpuCompletionToken`.
@@ -166,13 +171,13 @@ eventually require fewer central edits than it does today.
      directly.
    - `Label` for logs and diagnostics.
    - `DefaultPolicy` for cache/eviction behavior.
-3. Add `RHI::T` to `ManagedRHIResourceTypes`. `ResourceContext` derives its
-   `ResourceFamilies` tuple from this list. A type is not accepted by
-   `ManagedRHIResource` unless both this list entry and
-   `ResourceTraits<RHI::T>::Info` exist.
+3. Add RHI payloads to `ManagedRHIResourceTypes` or high-level assets to
+   `ManagedAssetResourceTypes`. `ResourceContext` derives `ResourceFamilies`
+   from the combined list. A type is not accepted unless both its list entry
+   and `ResourceTraits<T>::Info` exist.
 4. Do not add per-type branches for Context lookup, clear,
    released-transient collection, or GPU-pending iteration. These paths derive
-   from `ManagedRHIResourceTypes` plus `ResourceTraits`.
+   from the managed family lists plus `ResourceTraits`.
 5. If the new type uses GPU-pending readiness, update:
    - `ResourceTraits<RHI::T>::Info` to use
      `ResourceGpuPendingPolicy::WaitForCompletion`; `ForEachGpuPendingFamily()`
@@ -190,16 +195,17 @@ eventually require fewer central edits than it does today.
    `ResourceXxx.cppm` partition and import it from `ResourceManager.cppm`.
    The submit path should:
    - Derive a canonical resource key.
-   - Call `BeginResourceWork<RHI::T>(Context, Key)`.
+   - Call `BeginResourceWork<T>(Context, Key)`.
    - Start work only when `Work.ShouldStartWork` is true.
    - Use `Work.Graph` to move CPU-only work to background tasks when it is
      non-thread-affine.
    - Use `Work.Graph` to move RHI object creation and upload submission to
      `ThreadQueue::RHI`.
-   - Call `MarkResourceRhiCommitting<RHI::T>()` before RHI creation.
-   - Publish terminal failure through `PublishResourceFailed<RHI::T>()`.
-   - Publish direct readiness through `PublishResourceReady<RHI::T>()`, or
-     upload readiness through `PublishResourceGpuPending<RHI::T>()`.
+   - Call `MarkResourceRhiCommitting<RHI::T>()` before RHI creation when the
+     family owns an RHI payload.
+   - Publish terminal failure through `PublishResourceFailed<T>()`.
+   - Publish direct readiness through `PublishResourceReady<T>()`, or upload
+     readiness through `PublishResourceGpuPending<RHI::T>()`.
    - Keep per-family request partitions focused on key derivation, CPU loading,
      RHI object creation, and any family-specific preparation. Common
      stale/shutdown publish logging belongs in `ResourceRequestCommon.cppm`.
@@ -232,8 +238,8 @@ small partition only after at least two families actually share the behavior.
 
 Adding a resource type currently requires central edits in several places:
 
-- `ResourceTypes.cppm` for `ResourceTraits<RHI::T>` and
-  `ManagedRHIResourceTypes`.
+- `ResourceTypes.cppm` for `ResourceTraits<T>` and the appropriate managed
+  family list.
 - `ResourceManager.cppm` for public request API.
 - A `Resource*.cppm` request partition for submit flow.
 

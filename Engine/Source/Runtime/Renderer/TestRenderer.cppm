@@ -19,33 +19,6 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::Renderer {
 
-struct Vertex {
-    hlslpp::interop::float3 Position;
-    hlslpp::interop::float3 Color;
-    hlslpp::interop::float2 UV;
-};
-static_assert(sizeof(Vertex) == 32, "TestRenderer vertex layout: 2x float3(12) + float2(8) = 32");
-static_assert(offsetof(Vertex, Position) == 0, "TestRenderer vertex position offset changed");
-static_assert(offsetof(Vertex, Color) == 12, "TestRenderer vertex color offset changed");
-static_assert(offsetof(Vertex, UV) == 24, "TestRenderer vertex uv offset changed");
-
-const std::vector<Vertex> kQuadVertices = {
-    {.Position = hlslpp::float3(-0.5f, 0.0f, -0.5f),
-     .Color    = hlslpp::float3(1.0f, 0.0f, 0.0f),
-     .UV       = hlslpp::float2(0.0f, 1.0f)},
-    {.Position = hlslpp::float3(+0.5f, 0.0f, -0.5f),
-     .Color    = hlslpp::float3(0.0f, 1.0f, 0.0f),
-     .UV       = hlslpp::float2(1.0f, 1.0f)},
-    {.Position = hlslpp::float3(+0.5f, 0.0f, +0.5f),
-     .Color    = hlslpp::float3(0.0f, 0.0f, 1.0f),
-     .UV       = hlslpp::float2(1.0f, 0.0f)},
-    {.Position = hlslpp::float3(-0.5f, 0.0f, +0.5f),
-     .Color    = hlslpp::float3(1.0f, 1.0f, 1.0f),
-     .UV       = hlslpp::float2(0.0f, 0.0f)},
-};
-
-const std::vector<Uint32> kQuadIndices = {0, 1, 2, 2, 3, 0};
-
 /// @brief Constant buffer layout matching Common.slang FrameData.
 struct alignas(16) FrameConstants {
     alignas(16) float Time = 0.0f;
@@ -84,24 +57,38 @@ class TestRenderer final : public IRenderer {
                                          },
                                      .VertexInputLayout =
                                          RHI::VertexInputLayoutDesc{
-                                             .Binding = 0,
-                                             .Stride  = sizeof(Vertex),
+                                             .Bindings =
+                                                 {
+                                                     {.Binding = 0, .Stride = sizeof(hlslpp::interop::float3)},
+                                                     {.Binding = 1, .Stride = sizeof(hlslpp::interop::float3)},
+                                                     {.Binding = 2, .Stride = sizeof(hlslpp::interop::float4)},
+                                                     {.Binding = 3, .Stride = sizeof(hlslpp::interop::float2)},
+                                                 },
                                              .Attributes =
                                                  {
                                                      RHI::VertexInputAttributeDesc{
                                                          .Location = 0,
+                                                         .Binding  = 0,
                                                          .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                                         .Offset   = offsetof(Vertex, Position),
+                                                         .Offset   = 0,
                                                      },
                                                      RHI::VertexInputAttributeDesc{
                                                          .Location = 1,
+                                                         .Binding  = 1,
                                                          .Format   = RHI::Format::R32G32B32_SFLOAT,
-                                                         .Offset   = offsetof(Vertex, Color),
+                                                         .Offset   = 0,
                                                      },
                                                      RHI::VertexInputAttributeDesc{
                                                          .Location = 2,
+                                                         .Binding  = 2,
+                                                         .Format   = RHI::Format::R32G32B32A32_SFLOAT,
+                                                         .Offset   = 0,
+                                                     },
+                                                     RHI::VertexInputAttributeDesc{
+                                                         .Location = 3,
+                                                         .Binding  = 3,
                                                          .Format   = RHI::Format::R32G32_SFLOAT,
-                                                         .Offset   = offsetof(Vertex, UV),
+                                                         .Offset   = 0,
                                                      },
                                                  },
                                          },
@@ -109,18 +96,6 @@ class TestRenderer final : public IRenderer {
                                  });
         if (!m_Pipeline)
             return std::unexpected(ErrorMessage("Graphics pipeline request failed"));
-
-        m_VertexBuffer = Resource::Manager::Get().RequestVertexBufferRef(
-            "quad_verts",
-            RHI::VertexBufferDesc{
-                .Data = kQuadVertices.data(), .VertexCount = kQuadVertices.size(), .Stride = sizeof(Vertex)});
-        if (!m_VertexBuffer)
-            return std::unexpected(ErrorMessage("Vertex buffer request failed"));
-
-        m_IndexBuffer = Resource::Manager::Get().RequestIndexBufferRef(
-            "quad_indices", RHI::IndexBufferDesc{.Data = kQuadIndices.data(), .IndexCount = kQuadIndices.size()});
-        if (!m_IndexBuffer)
-            return std::unexpected(ErrorMessage("Index buffer request failed"));
 
         m_FrameConstants =
             Resource::Manager::Get().RequestConstantBufferRef("frame_constants", {.Size = sizeof(FrameConstants)});
@@ -150,9 +125,7 @@ class TestRenderer final : public IRenderer {
     }
 
     auto OnDetach() -> void override {
-        m_Pipeline     = {};
-        m_VertexBuffer = {};
-        m_IndexBuffer  = {};
+        m_Pipeline       = {};
         m_FrameConstants = {};
         m_LinearSampler  = {};
         m_AnisoSampler   = {};
@@ -173,7 +146,7 @@ class TestRenderer final : public IRenderer {
 
         const auto FrameData = BuildFrameConstants(Scene.Time);
         for (const auto& View : Scene.Views) {
-            if (auto R = RenderView(Result.CmdList, View, FrameCB, FrameData); !R)
+            if (auto R = RenderView(Result.CmdList, Scene, View, FrameCB, FrameData); !R)
                 return std::unexpected(R.error());
         }
 
@@ -182,6 +155,7 @@ class TestRenderer final : public IRenderer {
 
   private:
     [[nodiscard]] auto RenderView(RHI::CommandList&                    CmdList,
+                                  const Scene::SceneSnapshot&        Scene,
                                   const Scene::RenderViewSnapshot&    View,
                                   RHI::ConstantBuffer*                FrameCB,
                                   const FrameConstants&               FrameData)
@@ -225,13 +199,6 @@ class TestRenderer final : public IRenderer {
             return {};
         }
 
-        auto* VB = Resource::Manager::Get().TryGetReady(m_VertexBuffer);
-        auto* IB = Resource::Manager::Get().TryGetReady(m_IndexBuffer);
-        if (!VB || !IB) {
-            CmdList.Passes.push_back(std::move(Pass));
-            return {};
-        }
-
         if (!m_Textures) {
             CmdList.Passes.push_back(std::move(Pass));
             return {};
@@ -268,7 +235,20 @@ class TestRenderer final : public IRenderer {
         Pass.BindShaderParameters(Pipeline, Parameters);
         const Uint32 BaseColorTextureIndex = 0;
         Pass.PushConstants(Pipeline, 0, &BaseColorTextureIndex, sizeof(BaseColorTextureIndex));
-        Pass.DrawIndexed(Pipeline, VB, IB);
+        for (const auto& Packet : Scene.DrawPackets) {
+            auto* PositionVB = Resource::Manager::Get().TryGetReady(Packet.PositionVB);
+            auto* NormalVB   = Resource::Manager::Get().TryGetReady(Packet.NormalVB);
+            auto* TangentVB  = Resource::Manager::Get().TryGetReady(Packet.TangentVB);
+            auto* UVVB       = Resource::Manager::Get().TryGetReady(Packet.UVVB);
+            auto* IB         = Resource::Manager::Get().TryGetReady(Packet.IB);
+            if (!PositionVB || !NormalVB || !TangentVB || !UVVB || !IB)
+                continue;
+
+            Pass.DrawIndexed(
+                Pipeline,
+                std::array<RHI::VertexBuffer*, RHI::kMaxVertexBufferBindings>{PositionVB, NormalVB, TangentVB, UVVB},
+                IB);
+        }
 
         CmdList.Passes.push_back(std::move(Pass));
         return {};
@@ -298,8 +278,6 @@ class TestRenderer final : public IRenderer {
         return State.Parameters;
     }
 
-    Resource::ResourceRef<RHI::VertexBuffer>     m_VertexBuffer;
-    Resource::ResourceRef<RHI::IndexBuffer>      m_IndexBuffer;
     Resource::ResourceRef<RHI::GraphicsPipeline> m_Pipeline = {};
     Resource::ResourceRef<RHI::ConstantBuffer>   m_FrameConstants = {};
     Resource::ResourceRef<RHI::Sampler>          m_LinearSampler   = {};

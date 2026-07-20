@@ -1,3 +1,7 @@
+module;
+
+#include <hlsl++.h>
+
 export module Resource:Types;
 
 export import Core;
@@ -65,6 +69,8 @@ struct ResourceTraitInfo {
 template <typename T>
 struct ResourceTraits;
 
+class Mesh;
+
 template <>
 struct ResourceTraits<RHI::SampledTexture> {
     static constexpr ResourceTraitInfo Info{
@@ -128,6 +134,15 @@ struct ResourceTraits<RHI::Sampler> {
     };
 };
 
+template <>
+struct ResourceTraits<Mesh> {
+    static constexpr ResourceTraitInfo Info{
+        ResourceGpuPendingPolicy::None,
+        "mesh",
+        ResourceLifetimePolicy::CachedAsset,
+    };
+};
+
 /// @brief Central list of RHI payload families managed by Resource.
 ///
 /// A payload type must appear here and define `ResourceTraits<T>::Info` before
@@ -135,12 +150,18 @@ struct ResourceTraits<RHI::Sampler> {
 /// prevents a traits-only type from compiling without Context/FrameScope
 /// storage.
 using ManagedRHIResourceTypes = std::tuple<RHI::SampledTexture,
-                                          RHI::RenderTarget,
-                                          RHI::GraphicsPipeline,
-                                          RHI::VertexBuffer,
-                                          RHI::IndexBuffer,
-                                          RHI::ConstantBuffer,
-                                          RHI::Sampler>;
+                                           RHI::RenderTarget,
+                                           RHI::GraphicsPipeline,
+                                           RHI::VertexBuffer,
+                                           RHI::IndexBuffer,
+                                           RHI::ConstantBuffer,
+                                           RHI::Sampler>;
+
+/// @brief Central list of high-level asset families managed by Resource.
+using ManagedAssetResourceTypes = std::tuple<Mesh>;
+
+using ManagedResourceTypes =
+    decltype(std::tuple_cat(std::declval<ManagedRHIResourceTypes>(), std::declval<ManagedAssetResourceTypes>()));
 
 template <typename T, typename Tuple>
 struct TupleContains;
@@ -159,7 +180,19 @@ template <typename T>
 concept ListedManagedRHIResource = TupleContains<T, ManagedRHIResourceTypes>::Value;
 
 template <typename T>
+concept ListedManagedAssetResource = TupleContains<T, ManagedAssetResourceTypes>::Value;
+
+template <typename T>
+concept ListedManagedResource = TupleContains<T, ManagedResourceTypes>::Value;
+
+template <typename T>
 concept ManagedRHIResource = DefinedResourceTraits<T> && ListedManagedRHIResource<T>;
+
+template <typename T>
+concept ManagedAssetResource = DefinedResourceTraits<T> && ListedManagedAssetResource<T>;
+
+template <typename T>
+concept ManagedResource = DefinedResourceTraits<T> && ListedManagedResource<T>;
 
 template <typename T>
 concept GpuPendingManagedRHIResource = ManagedRHIResource<T> && ResourceTraits<T>::Info.HasGpuPending();
@@ -171,13 +204,16 @@ static_assert(ManagedRHIResource<RHI::VertexBuffer>);
 static_assert(ManagedRHIResource<RHI::IndexBuffer>);
 static_assert(ManagedRHIResource<RHI::ConstantBuffer>);
 static_assert(ManagedRHIResource<RHI::Sampler>);
+static_assert(ManagedAssetResource<Mesh>);
+static_assert(ManagedResource<Mesh>);
 
 /// @brief ResourceContext-owned RHI payload for supported resource types.
 ///
-/// The primary template is constrained through `ManagedRHIResource`, so trying
+/// The primary template is constrained through `ManagedResource`, so trying
 /// to instantiate Resource/Handle/Slot for an unsupported type fails at compile
 /// time instead of silently creating an unmanaged resource family.
-template <ManagedRHIResource T>
+/// Mesh extends this storage to imported non-RHI asset payloads.
+template <ManagedResource T>
 struct Resource {
     UPtr<T> Object = nullptr;
 };
@@ -205,7 +241,7 @@ struct GraphicsPipelineRequest {
 /// policy, cache eviction, request coalescing, and key lookup belong to
 /// `ResourceContext` entries. Keep new behavior on this type limited to the
 /// question "is this generation's payload ready, stale, or failed?"
-template <ManagedRHIResource T>
+template <ManagedResource T>
 class ResourceSlot {
   public:
     ResourceSlot() = default;
@@ -331,7 +367,7 @@ class ResourceContext;
 ///
 /// A handle is a stable ticket only: it carries key + generation and never keeps
 /// the resource slot or GPU payload alive.
-template <ManagedRHIResource T>
+template <ManagedResource T>
 class ResourceHandle {
   public:
     ResourceHandle() = default;
@@ -360,6 +396,61 @@ class ResourceHandle {
 
     String             m_Key        = {};
     ResourceGeneration m_Generation = 0;
+};
+
+/// @brief Single drawable submesh using structure-of-arrays vertex buffers.
+struct SubMesh {
+    std::vector<hlslpp::interop::float3> Positions = {};
+    std::vector<hlslpp::interop::float3> Normals   = {};
+    std::vector<hlslpp::interop::float4> Tangents  = {};
+    std::vector<hlslpp::interop::float2> UVs       = {};
+    std::vector<Uint32>                  Indices   = {};
+
+    ResourceHandle<RHI::VertexBuffer> PositionVB = {};
+    ResourceHandle<RHI::VertexBuffer> NormalVB   = {};
+    ResourceHandle<RHI::VertexBuffer> TangentVB  = {};
+    ResourceHandle<RHI::VertexBuffer> UVVB       = {};
+    ResourceHandle<RHI::IndexBuffer>  IB         = {};
+
+    Uint32 VertexCount  = 0;
+    Uint32 MaterialSlot = 0;
+};
+
+struct MeshGroup {
+    String               Name      = {};
+    std::vector<SubMesh> SubMeshes = {};
+};
+
+/// @brief Snapshot-safe references for one indexed mesh draw.
+struct DrawPacket {
+    ResourceHandle<RHI::VertexBuffer> PositionVB = {};
+    ResourceHandle<RHI::VertexBuffer> NormalVB   = {};
+    ResourceHandle<RHI::VertexBuffer> TangentVB  = {};
+    ResourceHandle<RHI::VertexBuffer> UVVB       = {};
+    ResourceHandle<RHI::IndexBuffer>  IB         = {};
+    Uint32                             IndexCount = 0;
+};
+
+/// @brief High-level imported mesh asset.
+class Mesh {
+  private:
+    friend auto ParseAssimpMeshes(StringView, Mesh&) -> std::expected<void, ErrorMessage>;
+
+    std::vector<MeshGroup> m_MeshGroups    = {};
+    std::vector<String>    m_MaterialNames = {};
+    String                 m_Name          = {};
+
+  public:
+    Mesh() = default;
+
+    [[nodiscard]] auto GetName() const -> const String& {
+        return m_Name;
+    }
+
+    auto PopulateDrawPackets(std::vector<DrawPacket>& Out) const -> void;
+
+    [[nodiscard]] auto GetMeshGroups() -> std::vector<MeshGroup>&;
+    [[nodiscard]] auto GetMeshGroups() const -> const std::vector<MeshGroup>&;
 };
 
 } // namespace SoulEngine::Resource
