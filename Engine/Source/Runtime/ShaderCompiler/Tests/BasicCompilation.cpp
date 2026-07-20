@@ -52,3 +52,28 @@ TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     EXPECT_EQ(Result->FragmentEntryPointName, "FragmentMain");
     EXPECT_FALSE(Result->Reflection.Bindings.empty());
 }
+
+[[nodiscard]] static auto HasBinding(const Reflection& InReflection, StringView BindingPath, ResourceType Type) -> bool {
+    return std::ranges::any_of(InReflection.Bindings, [&](const Binding& InBinding) {
+        return InBinding.ParameterPath == BindingPath && InBinding.Type == Type;
+    });
+}
+
+TEST_F(ShaderCompilerTest, CompileForwardPbrProgramWithExpectedBindings) {
+    auto ProjectDir = m_TestShaderPath;
+    for (Uint32 Index = 0; Index < 7; ++Index)
+        ProjectDir = ProjectDir.parent_path();
+
+    const auto ShaderDir  = ProjectDir / "Applications" / "Test" / "Shaders";
+    const auto ShaderPath = ShaderDir / "ForwardPbr.slang";
+    auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
+        .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = Backend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = Backend::Slang},
+    });
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.frame", ResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.view", ResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardMaterial.material", ResourceType::ConstantBuffer));
+    EXPECT_EQ(Result->Reflection.Bindings.size(), 3);
+}

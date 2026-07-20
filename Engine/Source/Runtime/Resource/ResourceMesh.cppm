@@ -28,7 +28,7 @@ export namespace SoulEngine::Resource {
     Assimp::Importer Importer;
 
     constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
-                             aiProcess_GenNormals | aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality |
+                             aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality |
                              aiProcess_OptimizeMeshes;
 
     const auto* Scene = Importer.ReadFile(String(MeshPath).c_str(), Flags);

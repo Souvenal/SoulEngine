@@ -21,9 +21,9 @@ class TestApplication final : public Application::Application {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         LogInfo("TestApplication: Attaching...");
 
-        m_Renderer = std::make_unique<Renderer::TestRenderer>();
+        m_Renderer = std::make_unique<Renderer::ForwardRenderer>();
         if (auto R = m_Renderer->OnAttach(); !R)
-            return std::unexpected(R.error().Append("TestRenderer OnAttach failed"));
+            return std::unexpected(R.error().Append("ForwardRenderer OnAttach failed"));
 
         m_Scene.m_Meshes.emplace_back(Resource::Manager::Get().RequestMeshRef(
             (ConfigManager::Get().CurrentApplicationDir() / "Assets" / "teapot.obj").string()));

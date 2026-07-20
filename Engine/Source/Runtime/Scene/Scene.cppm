@@ -134,10 +134,11 @@ struct Camera {
 
 /// @brief Immutable render data and resources for one camera/view.
 struct RenderViewSnapshot {
-    hlslpp::float4x4                               ViewProjection = hlslpp::float4x4::identity();
-    Resource::ResourceHandle<RHI::RenderTarget>    ColorRT        = {};
-    Resource::ResourceHandle<RHI::RenderTarget>    DepthRT        = {};
-    Resource::ResourceHandle<RHI::ConstantBuffer>  ViewCB         = {};
+    hlslpp::float4x4                              ViewProjection = hlslpp::float4x4::identity();
+    hlslpp::float3                                CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    Resource::ResourceHandle<RHI::RenderTarget>   ColorRT        = {};
+    Resource::ResourceHandle<RHI::RenderTarget>   DepthRT        = {};
+    Resource::ResourceHandle<RHI::ConstantBuffer> ViewCB         = {};
 
     [[nodiscard]] auto GetViewConstants() const -> ViewConstants {
         return ViewConstants{.ViewProjection = ViewProjection};
@@ -193,6 +194,7 @@ class Scene {
                 {
                     RenderViewSnapshot{
                         .ViewProjection = hlslpp::mul(View, Projection),
+                        .CameraPosition = m_Camera.Position,
                         .ColorRT        = m_Camera.ColorRT.GetHandle(),
                         .DepthRT        = m_Camera.DepthRT.GetHandle(),
                         .ViewCB         = m_Camera.ViewCB.GetHandle(),

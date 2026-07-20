@@ -37,6 +37,13 @@ Resource name, Resource key, asset path, or backend descriptor object name.
 **PushConstantRange**:
 Reflected push-constant byte range (offset, size).
 
+**Runtime constant-buffer ABI**:
+Runtime Slang constant-buffer structs use the default Vulkan `std140` layout.
+Declare only semantic fields in shader code; do not add named padding fields. Host
+mirrors use `alignas(16)` for members whose shader types require it and enforce
+reflected offsets through `sizeof` and `offsetof` assertions. Reflection or
+RenderDoc is authoritative if an assumed layout disagrees with observed SPIR-V.
+
 **VertexInputAttribute**:
 Reflected vertex attribute requirement (semantic name/index, location, value type). Describes what the shader consumes, not how CPU-side vertex buffers feed it.
 
