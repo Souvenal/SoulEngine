@@ -9,12 +9,22 @@ public struct ViewData {
     public float4   cameraPosition;
 };
 
+public struct ObjectData {
+    public float4x4 worldTransform;
+};
+
 public struct FrameViewResources {
     public ConstantBuffer<FrameData> frame;
     public ConstantBuffer<ViewData>  view;
 };
 
 public ParameterBlock<FrameViewResources> g_forwardFrameView;
+
+public struct ForwardObjectResources {
+    public ConstantBuffer<ObjectData> object;
+};
+
+public ParameterBlock<ForwardObjectResources> g_forwardObject;
 
 public struct MaterialData {
     public float4 baseColorFactor;
@@ -55,9 +65,7 @@ float geometrySchlickGGX(float nDotV, float roughness) {
     return nDotV / max(nDotV * (1.0 - k) + k, 0.0001);
 }
 
-float geometrySmith(float3 normal, float3 viewDirection, float3 lightDirection, float roughness) {
-    float nDotV = saturate(dot(normal, viewDirection));
-    float nDotL = saturate(dot(normal, lightDirection));
+float geometrySmith(float nDotV, float nDotL, float roughness) {
     return geometrySchlickGGX(nDotV, roughness) * geometrySchlickGGX(nDotL, roughness);
 }
 
@@ -68,9 +76,10 @@ float3 fresnelSchlick(float cosTheta, float3 f0) {
 [shader("vertex")]
 VSOutput vertMain(VSInput input) {
     VSOutput output;
-    output.worldPosition = input.inPosition;
-    output.normal        = input.inNormal;
-    output.position      = mul(float4(input.inPosition, 1.0), g_forwardFrameView.view.viewProjection);
+    float4 worldPosition = mul(float4(input.inPosition, 1.0), g_forwardObject.object.worldTransform);
+    output.worldPosition  = worldPosition.xyz;
+    output.normal         = input.inNormal;
+    output.position       = mul(worldPosition, g_forwardFrameView.view.viewProjection);
     return output;
 }
 
@@ -90,7 +99,7 @@ float4 fragMain(VSOutput input) : SV_TARGET {
     float nDotV = saturate(dot(normal, viewDirection));
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
     float distribution = distributionGGX(normal, halfVector, roughness);
-    float geometry = geometrySmith(normal, viewDirection, lightDirection, roughness);
+    float geometry = geometrySmith(nDotV, nDotL, roughness);
     float3 fresnel = fresnelSchlick(saturate(dot(halfVector, viewDirection)), f0);
     float3 specular = distribution * geometry * fresnel / max(4.0 * nDotV * nDotL, 0.0001);
     float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * baseColor / kPi;

@@ -151,6 +151,30 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
     EXPECT_EQ(Parameters.GetSets()[1].GetRevision(), SamplerSetRevision);
 }
 
+TEST(ShaderParametersTest, PerDrawConstantUsesTransientAllocation) {
+    auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+        .Bindings =
+            {
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_object.data",
+                    .Set           = 0,
+                    .BindingIndex  = 0,
+                    .Type          = SoulEngine::Shader::ResourceType::ConstantBuffer,
+                },
+            },
+    });
+    auto Parameters = ShaderParameters::Create(Layout);
+    ConstantBuffer Buffer{ConstantBufferDesc{.Size = 64}};
+    std::array<std::byte, 64> Data = {};
+
+    ASSERT_TRUE(Parameters.SetConstantBuffer("g_object.data", &Buffer, Data.data(), Data.size(), true));
+    const auto* Constant = std::get_if<ShaderParameterConstant>(&Parameters.GetSets()[0].GetValues()[0]);
+
+    ASSERT_NE(Constant, nullptr);
+    EXPECT_EQ(Constant->Buffer, &Buffer);
+    EXPECT_TRUE(Constant->bPerDraw);
+}
+
 TEST_F(UsageVisitorTest, DrawIndexedCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);

@@ -136,6 +136,12 @@ class RenderDevice final : public RHI::RenderDevice {
             return std::unexpected(ConstantArena.error().Append("UniformBufferArena creation failed"));
         m_ConstantArena = std::move(*ConstantArena);
 
+        auto DrawConstantArena =
+            TransientUniformBufferArena::Create(ConstantArenaCapacity, *m_Device, m_Allocator, m_FramesInFlight);
+        if (!DrawConstantArena)
+            return std::unexpected(DrawConstantArena.error().Append("TransientUniformBufferArena creation failed"));
+        m_DrawConstantArena = std::move(*DrawConstantArena);
+
         // ── Pre-register swapchain images in the committed state map ─────────
         RegisterSwapchainImages();
 
@@ -344,6 +350,7 @@ class RenderDevice final : public RHI::RenderDevice {
             LogError("{}", DeletionDrain.error().ToString());
         WaitIdle();
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
+        m_DrawConstantArena = {};
         m_ConstantArena = {};
         m_FrameContext.clear();
         if (m_Allocator)
@@ -764,6 +771,8 @@ class RenderDevice final : public RHI::RenderDevice {
 
         if (auto R = BeginFrame(); !R)
             return R;
+        if (auto R = m_DrawConstantArena.BeginFrame(m_CurrentFrame); !R)
+            return std::unexpected(R.error().Append("Execute: transient constant arena reset failed"));
         // Frame token for usage tracking — this frame's signal value on the timeline
         const Uint64                  FrameTokenValue = m_Timeline.NextValue();
         const RHI::GpuCompletionToken FrameToken{.Id = FrameTokenValue};
@@ -811,9 +820,10 @@ class RenderDevice final : public RHI::RenderDevice {
                 CommandVisitor Visitor{
                     .Buf           = SecBuf,
                     .LocalStates   = ImageStateCopy,
-                    .Descriptors   = m_DescriptorManager.get(),
-                    .ConstantArena = &m_ConstantArena,
-                    .FrameIndex    = m_CurrentFrame,
+                    .Descriptors        = m_DescriptorManager.get(),
+                    .ConstantArena      = &m_ConstantArena,
+                    .DrawConstantArena  = &m_DrawConstantArena,
+                    .FrameIndex         = m_CurrentFrame,
                 };
                 Visitor.BeginPass(Pass.Desc);
                 for (const auto& Cmd : Pass.Commands) {
@@ -912,8 +922,9 @@ class RenderDevice final : public RHI::RenderDevice {
 
     DeletionQueue m_DeletionQueue; // re-initialized after m_Timeline created
 
-    std::vector<FrameContext> m_FrameContext;
-    UniformBufferArena        m_ConstantArena = {};
+    std::vector<FrameContext>      m_FrameContext;
+    UniformBufferArena              m_ConstantArena     = {};
+    TransientUniformBufferArena     m_DrawConstantArena = {};
 
     // ── Global descriptor manager ─────────────────────────────────────────
     Core::UPtr<DescriptorManager> m_DescriptorManager = nullptr;

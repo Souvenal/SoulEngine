@@ -329,8 +329,9 @@ concept ShaderParameterArrayResource = requires {
 
 /// @brief CPU-side snapshot for one reflected constant-buffer binding.
 struct ShaderParameterConstant {
-    ConstantBuffer*        Buffer = nullptr;
-    std::vector<std::byte> Data   = {};
+    ConstantBuffer*        Buffer   = nullptr;
+    std::vector<std::byte> Data     = {};
+    bool                   bPerDraw = false;
 };
 
 /// @brief One value assigned to a reflected shader parameter binding.
@@ -452,7 +453,8 @@ class ShaderParameters {
     [[nodiscard]] auto SetConstantBuffer(StringView            ParameterPath,
                                          ConstantBuffer*       Buffer,
                                          const void*           Data,
-                                         Uint64                Size)
+                                         Uint64                Size,
+                                         bool                  bPerDraw = false)
         -> std::expected<void, ErrorMessage> {
         if (!Buffer)
             return std::unexpected(ErrorMessage("Shader parameter constant buffer is null"));
@@ -467,7 +469,8 @@ class ShaderParameters {
         }
 
         ShaderParameterConstant Constant{
-            .Buffer = Buffer,
+            .Buffer   = Buffer,
+            .bPerDraw = bPerDraw,
         };
         Constant.Data.resize(Size);
         std::memcpy(Constant.Data.data(), Data, Size);

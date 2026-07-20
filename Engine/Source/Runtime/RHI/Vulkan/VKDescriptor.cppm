@@ -14,12 +14,12 @@ using namespace SoulEngine::Core;
 namespace SoulEngine::RHI::Vulkan {
 
 auto WriteConstantArenaDescriptor(vk::raii::Device& Device,
-                                  UniformBufferArena& Arena,
+                                  vk::Buffer Buffer,
                                   vk::DescriptorSet Set,
                                   Uint32 Binding,
                                   Uint64 Range) -> void {
     vk::DescriptorBufferInfo BufInfo{
-        .buffer = Arena.GetVkBuffer(),
+        .buffer = Buffer,
         .offset = 0,
         .range  = Range,
     };
@@ -154,8 +154,8 @@ class DescriptorManager {
                                                         Uint32                  VariableDescriptorCount)
         -> std::expected<vk::raii::DescriptorSet, ErrorMessage>;
 
-    auto WriteConstantDescriptor(vk::DescriptorSet Set, Uint32 Binding, UniformBufferArena& Arena, Uint64 Range) -> void {
-        WriteConstantArenaDescriptor(*m_Device, Arena, Set, Binding, Range);
+    auto WriteConstantDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
+        WriteConstantArenaDescriptor(*m_Device, Buffer, Set, Binding, Range);
     }
 
     auto WriteSampledTextureDescriptor(vk::DescriptorSet Set,

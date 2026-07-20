@@ -91,24 +91,6 @@ export namespace SoulEngine::Resource {
     return {};
 }
 
-auto Mesh::PopulateDrawPackets(std::vector<DrawPacket>& Out) const -> void {
-    for (const auto& Group : m_MeshGroups) {
-        for (const auto& Sub : Group.SubMeshes) {
-            if (Sub.Indices.empty() || !Sub.IB.IsValid())
-                continue;
-
-            Out.push_back(DrawPacket{
-                .PositionVB = Sub.PositionVB,
-                .NormalVB   = Sub.NormalVB,
-                .TangentVB  = Sub.TangentVB,
-                .UVVB       = Sub.UVVB,
-                .IB         = Sub.IB,
-                .IndexCount = static_cast<Uint32>(Sub.Indices.size()),
-            });
-        }
-    }
-}
-
 [[nodiscard]] auto Mesh::GetMeshGroups() -> std::vector<MeshGroup>& {
     return m_MeshGroups;
 }

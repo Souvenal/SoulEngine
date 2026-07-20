@@ -143,18 +143,6 @@ class Manager : public Singleton<Manager> {
         return ResourceRef<Mesh>(m_Context, SubmitMeshRequest(m_Context, MeshPath));
     }
 
-    /// @brief Expand an imported mesh into snapshot-safe draw packets.
-    [[nodiscard]] auto PopulateMeshDrawPackets(const ResourceRef<Mesh>& MeshRef, std::vector<DrawPacket>& Out)
-        -> bool {
-        auto* MeshPtr = TryGetReady(MeshRef);
-        if (!MeshPtr)
-            return false;
-
-        const auto Count = Out.size();
-        MeshPtr->PopulateDrawPackets(Out);
-        return Out.size() != Count;
-    }
-
     template <ManagedResource T>
     [[nodiscard]] auto GetState(const ResourceHandle<T>& Handle) -> ResourceState {
         return m_Context.GetState(Handle);

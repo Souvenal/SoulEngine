@@ -58,9 +58,28 @@ static_assert(offsetof(ForwardMaterialConstants, MetallicFactor) == 16,
 static_assert(offsetof(ForwardMaterialConstants, RoughnessFactor) == 20,
               "ForwardMaterialConstants::RoughnessFactor must match MaterialData.roughnessFactor");
 
+/// @brief Constant buffer layout matching ForwardPbr.slang ObjectData.
+struct alignas(16) ForwardObjectConstants {
+    alignas(16) hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
+};
+static_assert(sizeof(ForwardObjectConstants) == 64,
+              "ForwardObjectConstants must match ForwardPbr.slang ObjectData std140 layout");
 struct ForwardViewParameterState {
     String                ViewConstantBufferKey = {};
     RHI::ShaderParameters Parameters            = {};
+};
+
+/// @brief One concrete indexed draw consumed by the forward raster pass.
+struct ForwardDrawInstance {
+    Resource::ResourceHandle<RHI::VertexBuffer> PositionVB     = {};
+    Resource::ResourceHandle<RHI::VertexBuffer> NormalVB       = {};
+    Resource::ResourceHandle<RHI::IndexBuffer>  IndexBuffer    = {};
+    hlslpp::float4x4                            WorldTransform = hlslpp::float4x4::identity();
+};
+
+struct ForwardMeshCacheEntry {
+    String                                Asset = {};
+    Resource::ResourceRef<Resource::Mesh> Mesh  = {};
 };
 
 /// @brief Single-material metallic-roughness forward renderer.
@@ -100,6 +119,10 @@ class ForwardRenderer final : public IRenderer {
         if (!m_ViewConstants)
             return std::unexpected(ErrorMessage("Forward PBR view constant buffer request failed"));
 
+        m_ObjectConstants = Resources.RequestConstantBufferRef("forward_pbr_object_constants", {.Size = sizeof(ForwardObjectConstants)});
+        if (!m_ObjectConstants)
+            return std::unexpected(ErrorMessage("Forward PBR object constant buffer request failed"));
+
         m_MaterialConstants = Resources.RequestConstantBufferRef(
             "forward_pbr_material_constants", {.Size = sizeof(ForwardMaterialConstants)});
         if (!m_MaterialConstants)
@@ -113,6 +136,8 @@ class ForwardRenderer final : public IRenderer {
         m_FrameConstants           = {};
         m_ViewConstants            = {};
         m_MaterialConstants        = {};
+        m_ObjectConstants          = {};
+        m_MeshCache.clear();
         m_ViewParameters.clear();
     }
 
@@ -125,9 +150,10 @@ class ForwardRenderer final : public IRenderer {
         if (!FrameCB)
             return Result;
 
+        const auto DrawInstances = BuildDrawInstances(Scene);
         const auto FrameData = BuildFrameConstants(Scene.Time);
         for (const auto& View : Scene.Views) {
-            if (auto R = RenderView(Result.CmdList, Scene, View, FrameCB, FrameData); !R)
+            if (auto R = RenderView(Result.CmdList, DrawInstances, View, FrameCB, FrameData); !R)
                 return std::unexpected(R.error().Append("Forward PBR view rendering failed"));
         }
 
@@ -148,11 +174,11 @@ class ForwardRenderer final : public IRenderer {
         };
     }
 
-    [[nodiscard]] auto RenderView(RHI::CommandList&                 CmdList,
-                                  const Scene::SceneSnapshot&     Scene,
-                                  const Scene::RenderViewSnapshot& View,
-                                  RHI::ConstantBuffer*             FrameCB,
-                                  const ForwardFrameConstants&     FrameData)
+    [[nodiscard]] auto RenderView(RHI::CommandList&                    CmdList,
+                                  std::span<const ForwardDrawInstance> DrawInstances,
+                                  const Scene::RenderViewSnapshot&    View,
+                                  RHI::ConstantBuffer*                FrameCB,
+                                  const ForwardFrameConstants&        FrameData)
         -> std::expected<void, ErrorMessage> {
         auto& Resources = Resource::Manager::Get();
 
@@ -161,7 +187,8 @@ class ForwardRenderer final : public IRenderer {
         auto* ViewCB  = Resources.TryGetReady(m_ViewConstants);
         auto* Pipeline = Resources.TryGetReady(m_Pipeline);
         auto* MaterialCB = Resources.TryGetReady(m_MaterialConstants);
-        if (!ColorRT || !DepthRT || !ViewCB || !Pipeline || !MaterialCB) {
+        auto* ObjectCB = Resources.TryGetReady(m_ObjectConstants);
+        if (!ColorRT || !DepthRT || !ViewCB || !Pipeline || !MaterialCB || !ObjectCB) {
             return {};
         }
 
@@ -197,14 +224,22 @@ class ForwardRenderer final : public IRenderer {
         Pass.SetFullViewport();
         Pass.SetFullScissorRect();
         Pass.SetGraphicsPipeline(Pipeline);
-        Pass.BindShaderParameters(Pipeline, Parameters);
-        for (const auto& Packet : Scene.DrawPackets) {
-            auto* PositionVB = Resources.TryGetReady(Packet.PositionVB);
-            auto* NormalVB   = Resources.TryGetReady(Packet.NormalVB);
-            auto* IB = Resources.TryGetReady(Packet.IB);
+        for (const auto& Instance : DrawInstances) {
+            auto* PositionVB = Resources.TryGetReady(Instance.PositionVB);
+            auto* NormalVB   = Resources.TryGetReady(Instance.NormalVB);
+            auto* IB         = Resources.TryGetReady(Instance.IndexBuffer);
             if (!PositionVB || !NormalVB || !IB)
                 continue;
 
+            auto ObjectParameters = Parameters;
+            const auto ObjectData = BuildObjectConstants(Instance);
+            if (auto R = ObjectParameters.SetConstantBuffer(
+                    "g_forwardObject.object", ObjectCB, &ObjectData, sizeof(ObjectData), true);
+                !R) {
+                return std::unexpected(R.error().Append("Forward PBR object parameter binding failed"));
+            }
+
+            Pass.BindShaderParameters(Pipeline, std::move(ObjectParameters));
             Pass.DrawIndexed(Pipeline,
                              std::array<RHI::VertexBuffer*, RHI::kMaxVertexBufferBindings>{PositionVB, NormalVB},
                              IB);
@@ -212,6 +247,57 @@ class ForwardRenderer final : public IRenderer {
 
         CmdList.Passes.push_back(std::move(Pass));
         return {};
+    }
+
+    [[nodiscard]] static auto ResolveMeshPath(StringView AssetPath) -> Path {
+        const Path Asset{String(AssetPath)};
+        if (Asset.is_absolute())
+            return Asset.lexically_normal();
+        return (ConfigManager::Get().EngineDirPath().parent_path() / Asset).lexically_normal();
+    }
+
+    [[nodiscard]] auto GetOrRequestMesh(StringView Asset) -> Resource::ResourceRef<Resource::Mesh>& {
+        for (auto& Entry : m_MeshCache) {
+            if (Entry.Asset == Asset)
+                return Entry.Mesh;
+        }
+
+        auto& Entry = m_MeshCache.emplace_back(ForwardMeshCacheEntry{
+            .Asset = String(Asset),
+            .Mesh  = Resource::Manager::Get().RequestMeshRef(ResolveMeshPath(Asset).string()),
+        });
+        return Entry.Mesh;
+    }
+
+    [[nodiscard]] auto BuildDrawInstances(const Scene::SceneSnapshot& Scene)
+        -> std::vector<ForwardDrawInstance> {
+        std::vector<ForwardDrawInstance> DrawInstances = {};
+        auto& Resources = Resource::Manager::Get();
+
+        for (const auto& Renderable : Scene.Renderables) {
+            if (Renderable.MeshAsset.empty())
+                continue;
+
+            const auto* Mesh = Resources.TryGetReady(GetOrRequestMesh(Renderable.MeshAsset));
+            if (!Mesh)
+                continue;
+
+            for (const auto& Group : Mesh->GetMeshGroups()) {
+                for (const auto& SubMesh : Group.SubMeshes) {
+                    if (!SubMesh.PositionVB.IsValid() || !SubMesh.NormalVB.IsValid() || !SubMesh.IB.IsValid())
+                        continue;
+
+                    DrawInstances.emplace_back(ForwardDrawInstance{
+                        .PositionVB     = SubMesh.PositionVB,
+                        .NormalVB       = SubMesh.NormalVB,
+                        .IndexBuffer    = SubMesh.IB,
+                        .WorldTransform = Renderable.WorldTransform,
+                    });
+                }
+            }
+        }
+
+        return DrawInstances;
     }
 
     [[nodiscard]] static auto BuildFrameConstants(float Time) -> ForwardFrameConstants {
@@ -225,6 +311,10 @@ class ForwardRenderer final : public IRenderer {
 
     [[nodiscard]] static auto BuildMaterialConstants() -> ForwardMaterialConstants {
         return {};
+    }
+
+    [[nodiscard]] static auto BuildObjectConstants(const ForwardDrawInstance& Instance) -> ForwardObjectConstants {
+        return ForwardObjectConstants{.WorldTransform = Instance.WorldTransform};
     }
 
     [[nodiscard]] static auto BuildViewConstants(const Scene::RenderViewSnapshot& View) -> ForwardViewConstants {
@@ -257,7 +347,9 @@ class ForwardRenderer final : public IRenderer {
     Resource::ResourceRef<RHI::ConstantBuffer>   m_FrameConstants           = {};
     Resource::ResourceRef<RHI::ConstantBuffer>   m_ViewConstants            = {};
     Resource::ResourceRef<RHI::ConstantBuffer>   m_MaterialConstants        = {};
-    std::vector<ForwardViewParameterState>               m_ViewParameters          = {};
+    Resource::ResourceRef<RHI::ConstantBuffer>   m_ObjectConstants          = {};
+    std::vector<ForwardMeshCacheEntry>             m_MeshCache                = {};
+    std::vector<ForwardViewParameterState>          m_ViewParameters           = {};
 };
 
 } // namespace SoulEngine::Renderer

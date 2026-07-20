@@ -554,4 +554,101 @@ class UniformBufferArena final {
     Uint64     m_NextLogicalOffset = 0;
 };
 
+
+/// Shared per-frame uniform-buffer arena for values that must remain distinct
+/// between individual draw commands.
+class TransientUniformBufferArena final {
+  public:
+    TransientUniformBufferArena() = default;
+
+    explicit TransientUniformBufferArena(HostBuffer&& Buffer, Uint64 FrameCapacity, Uint32 FramesInFlight)
+        : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_NextOffsets(FramesInFlight) {}
+
+    [[nodiscard]] static auto Create(Uint64 CapacityPerFrame, vk::Device Dev, VmaAllocator Alloc, Uint32 FramesInFlight)
+        -> std::expected<TransientUniformBufferArena, ErrorMessage> {
+        if (CapacityPerFrame == 0)
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena::Create: capacity must be greater than zero"));
+        if (FramesInFlight == 0)
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena::Create: frames-in-flight must be greater than zero"));
+        if (CapacityPerFrame > std::numeric_limits<Uint64>::max() / FramesInFlight)
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena::Create: total buffer size overflow"));
+
+        auto Buffer = HostBuffer::Create(CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
+        if (!Buffer)
+            return std::unexpected(Buffer.error().Append("TransientUniformBufferArena::Create: HostBuffer creation failed"));
+        return TransientUniformBufferArena(std::move(*Buffer), CapacityPerFrame, FramesInFlight);
+    }
+
+    TransientUniformBufferArena(const TransientUniformBufferArena&)                       = delete;
+    auto operator=(const TransientUniformBufferArena&) -> TransientUniformBufferArena&    = delete;
+    TransientUniformBufferArena(TransientUniformBufferArena&&) noexcept                   = default;
+    auto operator=(TransientUniformBufferArena&&) noexcept -> TransientUniformBufferArena& = default;
+
+    [[nodiscard]] auto BeginFrame(Uint32 FrameIndex) -> std::expected<void, ErrorMessage> {
+        if (FrameIndex >= m_NextOffsets.size())
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena::BeginFrame: frame index is out of range"));
+        m_NextOffsets[FrameIndex] = static_cast<Uint64>(FrameIndex) * m_FrameCapacity;
+        return {};
+    }
+
+    [[nodiscard]] auto Allocate(Uint32 FrameIndex, Uint64 Size) -> std::expected<Uint32, ErrorMessage> {
+        if (FrameIndex >= m_NextOffsets.size())
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena::Allocate: frame index is out of range"));
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena::Allocate: size must be greater than zero"));
+
+        const auto MaxRange =
+            static_cast<Uint64>(Capability::Get().GetProperties().limits.maxUniformBufferRange);
+        if (Size > MaxRange) {
+            return std::unexpected(ErrorMessage(Core::Format(
+                "TransientUniformBufferArena allocation exceeds maxUniformBufferRange ({} bytes > {})", Size, MaxRange)));
+        }
+
+        const auto Alignment =
+            static_cast<Uint64>(Capability::Get().GetProperties().limits.minUniformBufferOffsetAlignment);
+        auto Offset = AlignUp(m_NextOffsets[FrameIndex], Alignment);
+        if (!Offset)
+            return std::unexpected(Offset.error().Append("TransientUniformBufferArena::Allocate: offset alignment failed"));
+        if (*Offset > std::numeric_limits<Uint64>::max() - Size)
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena allocation size overflow"));
+
+        const auto FrameEnd = (static_cast<Uint64>(FrameIndex) + 1) * m_FrameCapacity;
+        if (*Offset + Size > FrameEnd) {
+            return std::unexpected(ErrorMessage(Core::Format(
+                "TransientUniformBufferArena allocation exceeds frame capacity (offset {} + size {} > frame end {})",
+                *Offset,
+                Size,
+                FrameEnd)));
+        }
+        if (*Offset > std::numeric_limits<Uint32>::max())
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena offset exceeds dynamic offset range"));
+
+        m_NextOffsets[FrameIndex] = *Offset + Size;
+        return static_cast<Uint32>(*Offset);
+    }
+
+    [[nodiscard]] auto Write(const void* Data, Uint64 Size, Uint32 Offset) -> std::expected<void, ErrorMessage> {
+        if (auto R = m_Buffer.Upload(Data, Size, Offset); !R)
+            return std::unexpected(R.error().Append("TransientUniformBufferArena::Write failed"));
+        return {};
+    }
+
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        return m_Buffer.Get();
+    }
+
+  private:
+    [[nodiscard]] static auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
+        if (Alignment == 0)
+            return Value;
+        if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1))
+            return std::unexpected(ErrorMessage("TransientUniformBufferArena alignment overflow"));
+        return ((Value + Alignment - 1) / Alignment) * Alignment;
+    }
+
+    HostBuffer          m_Buffer        = {};
+    Uint64              m_FrameCapacity = 0;
+    std::vector<Uint64> m_NextOffsets   = {};
+};
+
 } // namespace SoulEngine::RHI::Vulkan

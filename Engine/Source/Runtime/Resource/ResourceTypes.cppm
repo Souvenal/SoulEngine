@@ -421,16 +421,6 @@ struct MeshGroup {
     std::vector<SubMesh> SubMeshes = {};
 };
 
-/// @brief Snapshot-safe references for one indexed mesh draw.
-struct DrawPacket {
-    ResourceHandle<RHI::VertexBuffer> PositionVB = {};
-    ResourceHandle<RHI::VertexBuffer> NormalVB   = {};
-    ResourceHandle<RHI::VertexBuffer> TangentVB  = {};
-    ResourceHandle<RHI::VertexBuffer> UVVB       = {};
-    ResourceHandle<RHI::IndexBuffer>  IB         = {};
-    Uint32                             IndexCount = 0;
-};
-
 /// @brief High-level imported mesh asset.
 class Mesh {
   private:
@@ -446,8 +436,6 @@ class Mesh {
     [[nodiscard]] auto GetName() const -> const String& {
         return m_Name;
     }
-
-    auto PopulateDrawPackets(std::vector<DrawPacket>& Out) const -> void;
 
     [[nodiscard]] auto GetMeshGroups() -> std::vector<MeshGroup>&;
     [[nodiscard]] auto GetMeshGroups() const -> const std::vector<MeshGroup>&;

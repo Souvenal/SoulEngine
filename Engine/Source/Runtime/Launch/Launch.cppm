@@ -2,6 +2,10 @@ module;
 
 #include <tracy/Tracy.hpp>
 
+// Required while Scene exposes entt::registry in its object layout. EngineLoop owns
+// Application and can instantiate the Scene lifetime chain when replacing applications.
+#include <entt/entt.hpp>
+
 export module Launch;
 
 import Core;
@@ -207,7 +211,7 @@ class EngineLoop {
                 auto& Scene = m_Application->GetScene();
                 const auto Width  = static_cast<Uint32>(std::max(0, Resize->Width));
                 const auto Height = static_cast<Uint32>(std::max(0, Resize->Height));
-                Scene.m_Camera.AllocateRenderTargets(Width, Height);
+                Scene.AllocateCameraRenderTargets(Width, Height);
             }
 
             m_Application->OnTick(Delta, WindowDisplay);

@@ -1,0 +1,65 @@
+entities:
+  - name: Main Camera
+    transform:
+      translation: [1.25, 1.25, 2.0]
+      rotation_degrees: [-28.0, -122.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+    components:
+      camera:
+        fov_degrees: 60.0
+        near_plane: 0.1
+        far_plane: 100.0
+  - name: Teapot Cluster
+    transform:
+      translation: [0.0, 0.0, 0.0]
+      rotation_degrees: [0.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+    children:
+      - name: Teapot Center
+        transform:
+          translation: [0.0, 0.0, 0.0]
+          rotation_degrees: [0.0, 0.0, 0.0]
+          scale: [0.25, 0.25, 0.25]
+        components:
+          mesh:
+            asset: Applications/Test/Assets/teapot.obj
+      - name: Teapot Left
+        transform:
+          translation: [-1.25, 0.0, 0.0]
+          rotation_degrees: [0.0, 25.0, 0.0]
+          scale: [0.25, 0.25, 0.25]
+        components:
+          mesh:
+            asset: Applications/Test/Assets/teapot.obj
+      - name: Teapot Right
+        transform:
+          translation: [1.25, 0.0, 0.0]
+          rotation_degrees: [0.0, -25.0, 0.0]
+          scale: [0.25, 0.25, 0.25]
+        components:
+          mesh:
+            asset: Applications/Test/Assets/teapot.obj
+      - name: Teapot Back Left
+        transform:
+          translation: [-1.25, 0.0, -1.25]
+          rotation_degrees: [0.0, 45.0, 0.0]
+          scale: [0.25, 0.25, 0.25]
+        components:
+          mesh:
+            asset: Applications/Test/Assets/teapot.obj
+      - name: Teapot Back Center
+        transform:
+          translation: [0.0, 0.0, -1.25]
+          rotation_degrees: [0.0, 90.0, 0.0]
+          scale: [0.25, 0.25, 0.25]
+        components:
+          mesh:
+            asset: Applications/Test/Assets/teapot.obj
+      - name: Teapot Back Right
+        transform:
+          translation: [1.25, 0.0, -1.25]
+          rotation_degrees: [0.0, -45.0, 0.0]
+          scale: [0.25, 0.25, 0.25]
+        components:
+          mesh:
+            asset: Applications/Test/Assets/teapot.obj

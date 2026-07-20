@@ -23,6 +23,7 @@ struct CommandVisitor {
     std::unordered_map<vk::Image, ImageState>& LocalStates;
     DescriptorManager*                         Descriptors                = nullptr;
     UniformBufferArena*                        ConstantArena              = nullptr;
+    TransientUniformBufferArena*               DrawConstantArena          = nullptr;
     Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
     std::optional<ErrorMessage>                Error                      = std::nullopt;
@@ -148,7 +149,7 @@ struct CommandVisitor {
     auto operator()(const RHI::BindShaderParametersCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr)
             return;
-        if (!Descriptors || !ConstantArena) {
+        if (!Descriptors || !ConstantArena || !DrawConstantArena) {
             Error = ErrorMessage("CommandVisitor: descriptor manager or constant arena is missing");
             return;
         }
@@ -207,17 +208,36 @@ struct CommandVisitor {
                         return;
                     }
                     auto& VkBuffer = static_cast<const Vulkan::ConstantBuffer&>(*Constant->Buffer);
-                    const auto Offset = VkBuffer.GetArenaOffset(FrameIndex);
-                    if (auto R = ConstantArena->Write(Constant->Data.data(), Constant->Data.size(), Offset); !R) {
-                        Error = R.error().Append("Shader parameter constant arena write failed");
-                        return;
+                    Uint32 Offset = 0;
+                    vk::Buffer DescriptorBuffer = nullptr;
+                    const void* DescriptorSource = Constant->Buffer;
+                    if (Constant->bPerDraw) {
+                        auto DrawOffset = DrawConstantArena->Allocate(FrameIndex, Constant->Data.size());
+                        if (!DrawOffset) {
+                            Error = DrawOffset.error().Append("Shader parameter draw constant allocation failed");
+                            return;
+                        }
+                        Offset = *DrawOffset;
+                        if (auto R = DrawConstantArena->Write(Constant->Data.data(), Constant->Data.size(), Offset); !R) {
+                            Error = R.error().Append("Shader parameter draw constant arena write failed");
+                            return;
+                        }
+                        DescriptorBuffer = DrawConstantArena->GetVkBuffer();
+                        DescriptorSource = DrawConstantArena;
+                    } else {
+                        Offset = VkBuffer.GetArenaOffset(FrameIndex);
+                        if (auto R = ConstantArena->Write(Constant->Data.data(), Constant->Data.size(), Offset); !R) {
+                            Error = R.error().Append("Shader parameter constant arena write failed");
+                            return;
+                        }
+                        DescriptorBuffer = ConstantArena->GetVkBuffer();
                     }
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
                     if (!(*Instance)->Initialized ||
-                        ResourceBindings[Binding.Binding] != Constant->Buffer) {
+                        ResourceBindings[Binding.Binding] != DescriptorSource) {
                         Descriptors->WriteConstantDescriptor(
-                            *(*Instance)->Set, Binding.Binding, *ConstantArena, Constant->Buffer->GetSize());
-                        ResourceBindings[Binding.Binding] = Constant->Buffer;
+                            *(*Instance)->Set, Binding.Binding, DescriptorBuffer, Constant->Buffer->GetSize());
+                        ResourceBindings[Binding.Binding] = DescriptorSource;
                     }
                     DynamicOffsetWrites.push_back({Binding.Binding, Offset});
                     continue;
@@ -298,7 +318,8 @@ struct CommandVisitor {
                     continue;
                 }
 
-                LogWarning("Shader parameter '{}' is unset", Binding.ParameterPath);
+                Error = ErrorMessage(Core::Format("Shader parameter '{}' is unset", Binding.ParameterPath));
+                return;
             }
 
             if (bUpdateDescriptors) {

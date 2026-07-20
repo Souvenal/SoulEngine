@@ -18,8 +18,8 @@ The current model is:
 - Renderers resolve ready observer pointers through `Resource::Manager` and
   skip draws whose dependencies are not ready.
 - `Resource::Mesh` is a cached high-level asset. It publishes after CPU import
-  and child-buffer request submission; Renderer waits for each draw packet's
-  child buffers before recording an indexed draw.
+  and child-buffer request submission; Renderer waits for each required submesh
+  child buffer before recording an indexed draw.
 
 The authoritative current terminology, lifecycle rules, and extension guide
 are in [`Engine/Source/Runtime/Resource/CONTEXT.md`](../../Engine/Source/Runtime/Resource/CONTEXT.md).

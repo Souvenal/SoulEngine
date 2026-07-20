@@ -25,7 +25,6 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Buffer resource** | Resource-system identity for a buffer request; its ready payload is an RHI buffer. |
 | **Pipeline resource** | Resource-system identity for a graphics pipeline request; its ready payload is an RHI graphics pipeline. |
 | **Mesh resource** | Cached high-level asset imported through Assimp. It owns parsed submesh metadata, CPU vertex/index arrays, and passive handles for the requested SOA GPU buffers. |
-| **Draw packet** | Snapshot-safe indexed draw description expanded from a ready Mesh. It contains passive position, normal, tangent, UV, and index-buffer handles plus index count. |
 | **Async Resource v1** | Current asynchronous scope covering sampled textures, vertex/index buffers, graphics pipelines, samplers, render targets, constant buffers, and imported meshes. |
 | **Resource state** | Exported lifecycle enum returned by a resource handle. Consumers inspect this state directly to understand whether a resource is CPU-preparing, RHI-committing, GPU-pending, ready, failed, stale, or invalid. |
 | **CPU-preparing resource** | Resource whose non-thread-affine CPU work is still running, such as file IO, image decode, shader compilation, or request metadata preparation. |
@@ -38,7 +37,7 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Ready resource** | Resource whose required CPU work, RHI commitment, GPU transfer, and publication steps have completed so a frame may consume it without blocking. |
 | **Failed resource** | Resource whose preparation reached a terminal non-fatal error and will not become ready without a new request or reload. |
 | **Resource wait policy** | Rule chosen by a resource consumer for what to do when the requested resource is not ready. |
-| **Resource dependency** | Resource required by a pass, draw packet, material, or other consumer before coherent work can be emitted. |
+| **Resource dependency** | Resource required by a pass, draw instance, material, or other consumer before coherent work can be emitted. |
 | **Skip policy** | Resource wait policy that omits dependent rendering or runtime work for the current frame. |
 | **Fallback policy** | Resource wait policy that substitutes a known ready resource when the requested resource is not ready. |
 | **Block policy** | Resource wait policy that waits for the requested resource outside normal per-frame runtime execution. |
@@ -148,7 +147,7 @@ eventually require fewer central edits than it does today.
 
 | File | Role |
 |------|------|
-| `ResourceTypes.cppm` | Public typed resource primitives: state enums, lifetime policy, `ResourceTraitInfo`, `ResourceTraits<T>`, managed RHI/asset family lists, `Resource<T>`, `ResourceSlot<T>`, `ResourceHandle<T>`, Mesh structures, and draw packets. |
+| `ResourceTypes.cppm` | Public typed resource primitives: state enums, lifetime policy, `ResourceTraitInfo`, `ResourceTraits<T>`, managed RHI/asset family lists, `Resource<T>`, `ResourceSlot<T>`, `ResourceHandle<T>`, and Mesh structures. |
 | `ResourceContext.cppm` | Internal lifecycle owner: typed resource families, resource entries, request coalescing, logical ref counts, lifetime policy application, state publication, GPU-pending queues, clear, and released-transient collection. |
 | `ResourceManager.cppm` | Public facade over `ResourceContext`; owns the singleton context, defines `ResourceRef<T>`, creates valid refs after Context accepts logical demand, and exposes request/state/query APIs. |
 | `ResourceRequestCommon.cppm` | Internal request-flow helpers shared by resource request partitions: begin request work, publish ready/failed/GPU-pending results, mark RHI commit, and produce consistent stale/shutdown logging. |

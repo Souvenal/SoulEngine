@@ -10,6 +10,12 @@
 ///   2. `ApplicationFactory::AutoRegistrar<MyApp> Reg{"MyApp"};`
 ///   3. Done — zero changes to Application.cppm
 
+module;
+
+// Required while Scene exposes entt::registry in its object layout. Application owns Scene
+// and can instantiate its lifetime operations, so EnTT must be directly reachable here.
+#include <entt/entt.hpp>
+
 export module Application;
 
 import Core;

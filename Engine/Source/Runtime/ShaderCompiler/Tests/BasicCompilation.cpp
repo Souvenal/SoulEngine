@@ -75,5 +75,6 @@ TEST_F(ShaderCompilerTest, CompileForwardPbrProgramWithExpectedBindings) {
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.frame", ResourceType::ConstantBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.view", ResourceType::ConstantBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardMaterial.material", ResourceType::ConstantBuffer));
-    EXPECT_EQ(Result->Reflection.Bindings.size(), 3);
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardObject.object", ResourceType::ConstantBuffer));
+    EXPECT_EQ(Result->Reflection.Bindings.size(), 4);
 }
