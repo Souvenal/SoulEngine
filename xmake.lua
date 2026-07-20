@@ -4,11 +4,14 @@ set_version("0.1.0")
 set_languages("c++23")
 set_policy("build.c++.modules", true)
 
+if is_mode("debug") then
+    set_runtimes("MDd")
+else
+    set_runtimes("MD")
+end
+
 if is_plat("windows") then
-    -- msvc is buggy when using module
-    -- TODO: change to msvc
-    set_toolchains("clang")
-    add_cxxflags("-fno-exceptions", "-fno-rtti")
+    set_toolchains("msvc")
 else
     set_toolchains("clang")
     add_cxxflags("-fno-exceptions", "-fno-rtti")

@@ -83,7 +83,7 @@ struct Binding {
     /// Shader parameter access path, e.g. "g_frame.cb"; not a resource key or file path.
     String       ParameterPath = {};
     Uint32       Set           = 0;
-    Uint32       Binding       = 0;
+    Uint32       BindingIndex  = 0;
     ResourceType Type          = ResourceType::Unknown;
     Uint32       ArrayCount    = 1;
 };

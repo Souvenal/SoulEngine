@@ -10,6 +10,7 @@ module;
 
 export module Slang:Types;
 
+import std;
 import Core;
 import Shader;
 

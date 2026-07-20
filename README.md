@@ -43,7 +43,9 @@ Each runtime module has its own `xmake.lua` for module-specific build configurat
 ### Prerequisites
 
 - xmake (latest)
-- A C++23 modules-capable compiler (recommand latest clang)
+- A C++23 modules-capable compiler
+  - **Windows:** Microsoft Visual C++ (MSVC) from Visual Studio. This is the only currently supported Windows toolchain.
+  - **macOS/Linux:** Clang is the configured toolchain.
 - **Vulkan SDK** — Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home). Before building or running, source the environment setup script:
 
   ```bash
@@ -89,9 +91,11 @@ Early, exploratory, single-developer. Nothing is stable. Everything is subject t
 
 ## Known Issues
 
-### LLVM Clang Recommended (Windows)
+### Windows Toolchain: MSVC Required
 
-Slang dependency fails to compile with MSVC and GCC on Windows. Recommend using LLVM Clang (20+).
+Windows builds are currently supported and tested with **MSVC** only; the root `xmake.lua` selects it automatically.
+
+Do not override the Windows toolchain to LLVM Clang or `clang-cl`. The primary blocker is that the tested LLVM Clang **22.1.7** still triggers a compiler internal error while compiling SoulEngine's C++23 modules, even after the earlier Windows module/STL issues are addressed. The Clang path has also shown standard-library module integration failures (including missing concepts/type traits) and third-party Windows resource-compiler failures. Re-enable it only after the internal compiler error is fixed upstream or otherwise resolved, then validate the isolated `test_std/` project and a clean full-engine build.
 
 ## License
 

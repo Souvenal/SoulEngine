@@ -1,0 +1,4 @@
+interface:
+  display_name: "SoulEngine Build"
+  short_description: "Diagnose and document SoulEngine build failures"
+  default_prompt: "Use $soulengine-build to diagnose this SoulEngine build or test failure."

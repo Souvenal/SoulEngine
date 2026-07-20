@@ -182,20 +182,20 @@ TEST_F(ReflectionTest, ResourceBindings) {
     const auto& R = Result->Reflection;
 
     // ConstantBuffer<float4> [[vk::binding(0, 0)]]
-    auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.Binding == 0; });
+    auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.BindingIndex == 0; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_cb");
     EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
     EXPECT_EQ(It->ArrayCount, 1U);
 
     // Texture2D<float4> [[vk::binding(1, 0)]]
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.Binding == 1; });
+    It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.BindingIndex == 1; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_tex");
     EXPECT_EQ(It->Type, ResourceType::SampledTexture);
 
     // SamplerState [[vk::binding(2, 0)]]
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.Binding == 2; });
+    It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.BindingIndex == 2; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_sam");
 	EXPECT_EQ(It->Type, ResourceType::Sampler);
@@ -209,7 +209,7 @@ TEST_F(ReflectionTest, ExplicitDescriptorSet) {
 	auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.ParameterPath == "g_scene"; });
 	ASSERT_NE(It, R.Bindings.end());
 	EXPECT_EQ(It->Set, 2U);
-	EXPECT_EQ(It->Binding, 3U);
+	EXPECT_EQ(It->BindingIndex, 3U);
 	EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
 }
 
@@ -225,7 +225,7 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 0U);
-    EXPECT_EQ(It->Binding, 0U);
+    EXPECT_EQ(It->BindingIndex, 0U);
     EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
 
     It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
@@ -233,7 +233,7 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 0U);
-    EXPECT_EQ(It->Binding, 1U);
+    EXPECT_EQ(It->BindingIndex, 1U);
     EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
 
     It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
@@ -241,7 +241,7 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 1U);
-    EXPECT_EQ(It->Binding, 0U);
+    EXPECT_EQ(It->BindingIndex, 0U);
     EXPECT_EQ(It->Type, ResourceType::Sampler);
 
     It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
@@ -249,7 +249,7 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 1U);
-    EXPECT_EQ(It->Binding, 1U);
+    EXPECT_EQ(It->BindingIndex, 1U);
     EXPECT_EQ(It->Type, ResourceType::Sampler);
 
     It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
@@ -257,7 +257,7 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 2U);
-    EXPECT_EQ(It->Binding, 0U);
+    EXPECT_EQ(It->BindingIndex, 0U);
     EXPECT_EQ(It->Type, ResourceType::SampledTexture);
 	EXPECT_EQ(It->ArrayCount, std::numeric_limits<Uint32>::max());
 }

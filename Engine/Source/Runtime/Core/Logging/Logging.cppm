@@ -1,17 +1,18 @@
-module;
-
-#include <spdlog/common.h>
-#include <magic_enum/magic_enum.hpp>
-#include <spdlog/pattern_formatter.h>
-#include <spdlog/sinks/basic_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
-
 export module Core:Logging;
 
 export import :Util;
-
 export import std;
+
+// Keep spdlog out of this module interface.  On MSVC, including spdlog's
+// transitive standard-library headers in a module unit and then importing std
+// produces duplicate/conflicting standard-library declarations.  The logging
+// backend is therefore a conventional .cpp translation unit; these are its
+// private C ABI bridge functions, not part of Core:Logging's exported API.
+extern "C" auto SoulEngineLoggingBackendInit(const char* LogDirectory) -> void;
+extern "C" auto SoulEngineLoggingBackendSetThreadRole(int Role) -> void;
+extern "C" auto SoulEngineLoggingBackendWrite(int Level, const char* Message) -> void;
+extern "C" auto SoulEngineLoggingBackendSetSinkLevels(const char* FileLevel, const char* ConsoleLevel) -> void;
+extern "C" auto SoulEngineLoggingBackendWriteFile(const char* Filename, int Level, const char* Message) -> void;
 
 namespace SoulEngine::Core {
 export enum class LogLevel : Uint8 { Debug = 0, Info = 1, Warning = 2, Error = 3 };
@@ -31,82 +32,25 @@ thread_local LogThreadRole CurrentLogThreadRole = LogThreadRole::Main;
 
 export auto SetLogThreadRole(LogThreadRole Role) -> void {
     CurrentLogThreadRole = Role;
+    SoulEngineLoggingBackendSetThreadRole(static_cast<int>(Role));
 }
 
 export [[nodiscard]] auto GetLogThreadName() -> StringView {
-    return magic_enum::enum_name(CurrentLogThreadRole);
-}
-
-[[nodiscard]] auto GetLogThreadColor() -> StringView {
     switch (CurrentLogThreadRole) {
     case LogThreadRole::Main:
-        return "\033[97m";
+        return "Main";
     case LogThreadRole::Game:
-        return "\033[32m";
+        return "Game";
     case LogThreadRole::Render:
-        return "\033[36m";
+        return "Render";
     case LogThreadRole::RHI:
-        return "\033[35m";
+        return "RHI";
     case LogThreadRole::Worker:
-        return "\033[33m";
+        return "Worker";
     case LogThreadRole::Unknown:
-        return "\033[90m";
+        return "Unknown";
     }
-    return "\033[90m";
-}
-
-auto AppendLogText(StringView Text, spdlog::memory_buf_t& Dest) -> void {
-    Dest.append(Text.data(), Text.data() + Text.size());
-}
-
-[[nodiscard]] auto CenterLogText(StringView Text, std::size_t Width) -> String {
-    if (Text.size() >= Width)
-        return String{Text};
-
-    auto   Padding = Width - Text.size();
-    auto   Left    = Padding / 2;
-    auto   Right   = Padding - Left;
-    String Result(Left, ' ');
-    Result.append(Text);
-    Result.append(Right, ' ');
-    return Result;
-}
-
-[[nodiscard]] auto FormatLogThreadRole(bool Color) -> String {
-    constexpr std::size_t RoleWidth = 6;
-
-    auto RoleName = CenterLogText(GetLogThreadName(), RoleWidth);
-
-    if (!Color)
-        return Format("[{}]", RoleName);
-
-    return Format("{}[{}]\033[0m", GetLogThreadColor(), RoleName);
-}
-
-class ThreadRoleFormatter final : public spdlog::custom_flag_formatter {
-  public:
-    explicit ThreadRoleFormatter(bool Color) {
-        m_Color = Color;
-    }
-
-    auto format(const spdlog::details::log_msg&, const std::tm&, spdlog::memory_buf_t& Dest) -> void override {
-        auto RoleText = FormatLogThreadRole(m_Color);
-        AppendLogText(RoleText, Dest);
-    }
-
-    [[nodiscard]] auto clone() const -> std::unique_ptr<spdlog::custom_flag_formatter> override {
-        return std::make_unique<ThreadRoleFormatter>(m_Color);
-    }
-
-  private:
-    bool m_Color = false;
-};
-
-[[nodiscard]] auto CreateLogFormatter(String Pattern, bool ColorThreadRole) -> std::unique_ptr<spdlog::formatter> {
-    auto Formatter = std::make_unique<spdlog::pattern_formatter>();
-    Formatter->add_flag<ThreadRoleFormatter>('q', ColorThreadRole);
-    Formatter->set_pattern(std::move(Pattern));
-    return Formatter;
+    return "Unknown";
 }
 
 export class LogManager final : public Singleton<LogManager> {
@@ -129,27 +73,8 @@ export class LogManager final : public Singleton<LogManager> {
     ///          before any log output.
     /// @param LogDirPath Directory for the log file (e.g. Engine/Logs/).
     auto Init(const Path& LogDirPath) -> void {
-        std::filesystem::create_directories(LogDirPath);
-
-        // Create file sink — logger will hold its own shared_ptr copy.
-        auto FileSink =
-            std::make_shared<spdlog::sinks::basic_file_sink_mt>((LogDirPath / "SoulEngine.log").string(), true);
-        m_EditorSink = FileSink.get();
-
-        auto ConsoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        m_ConsoleSink    = ConsoleSink.get();
-
-        FileSink->set_formatter(CreateLogFormatter("[%m-%d %H:%M:%S.%e] [%=7l] %q %v", false));
-        ConsoleSink->set_formatter(CreateLogFormatter("[%H:%M:%S.%e] [%^%=7l%$] %q %v", true));
-
-        // Build the sink list with the shared_ptrs that spdlog's API requires.
-        std::vector<SPtr<spdlog::sinks::sink>> Sinks;
-        Sinks.emplace_back(FileSink);
-        Sinks.emplace_back(ConsoleSink);
-
-        Impl = std::make_unique<spdlog::logger>("SoulEngine", Sinks.begin(), Sinks.end());
-        Impl->set_level(spdlog::level::trace);
-        Impl->set_error_handler([](const String&) noexcept {});
+        const auto LogDirectory = LogDirPath.string();
+        SoulEngineLoggingBackendInit(LogDirectory.c_str());
     }
 
     LogManager(const LogManager&)            = delete;
@@ -158,23 +83,8 @@ export class LogManager final : public Singleton<LogManager> {
     LogManager& operator=(LogManager&&)      = delete;
 
     auto Log(LogLevel Level, StringView Message) -> void {
-        if (!Impl)
-            return;
-
-        switch (Level) {
-        case LogLevel::Debug:
-            Impl->debug(Message);
-            break;
-        case LogLevel::Info:
-            Impl->info(Message);
-            break;
-        case LogLevel::Warning:
-            Impl->warn(Message);
-            break;
-        case LogLevel::Error:
-            Impl->error(Message);
-            break;
-        }
+        const String OwnedMessage{Message};
+        SoulEngineLoggingBackendWrite(static_cast<int>(Level), OwnedMessage.c_str());
     }
 
     /// @brief Set minimum log level per sink type from config-level names.
@@ -184,53 +94,15 @@ export class LogManager final : public Singleton<LogManager> {
     /// @note The logger-level is kept at `trace` so that each sink's
     ///       individual level is the sole gate.
     auto SetSinkLevels(const std::optional<String>& FileLevel, const std::optional<String>& ConsoleLevel) -> void {
-        auto ParseLevel = [](StringView Name) -> std::optional<LogLevel> {
-            if (Name == "Debug")
-                return LogLevel::Debug;
-            if (Name == "Info")
-                return LogLevel::Info;
-            if (Name == "Warning")
-                return LogLevel::Warning;
-            if (Name == "Error")
-                return LogLevel::Error;
-            return std::nullopt;
-        };
-
-        auto ToSpdlog = [](LogLevel L) -> spdlog::level::level_enum {
-            switch (L) {
-            case LogLevel::Debug:
-                return spdlog::level::debug;
-            case LogLevel::Info:
-                return spdlog::level::info;
-            case LogLevel::Warning:
-                return spdlog::level::warn;
-            case LogLevel::Error:
-                return spdlog::level::err;
-            }
-            return spdlog::level::trace;
-        };
-
-        auto Apply = [&](spdlog::sinks::sink* Sink, const std::optional<String>& CfgName, LogLevel Default) -> void {
-            if (!Sink)
-                return;
-            LogLevel L = Default;
-            if (CfgName) {
-                if (auto Parsed = ParseLevel(*CfgName))
-                    L = *Parsed;
-                else
-                    Log(LogLevel::Warning, std::format("Unknown log level '{}', using default", *CfgName));
-            }
-            Sink->set_level(ToSpdlog(L));
-        };
-
-        Apply(m_EditorSink, FileLevel, LogLevel::Debug);
-        Apply(m_ConsoleSink, ConsoleLevel, LogLevel::Info);
+        SoulEngineLoggingBackendSetSinkLevels(FileLevel ? FileLevel->c_str() : nullptr,
+                                              ConsoleLevel ? ConsoleLevel->c_str() : nullptr);
     }
 
-  private:
-    spdlog::sinks::sink* m_EditorSink = nullptr;
-    spdlog::sinks::sink* m_ConsoleSink = nullptr;
-    UPtr<spdlog::logger> Impl;
+    auto LogToFile(LogLevel Level, StringView Filename, StringView Message) -> void {
+        const String OwnedFilename{Filename};
+        const String OwnedMessage{Message};
+        SoulEngineLoggingBackendWriteFile(OwnedFilename.c_str(), static_cast<int>(Level), OwnedMessage.c_str());
+    }
 };
 
 export template <typename... Args>
@@ -241,26 +113,8 @@ auto LogFormatted(LogLevel Level, StringView FormatStr, const Args&... InArgs) -
 
 export template <typename... Args>
 auto LogToFileFormatted(StringView Filename, LogLevel Level, StringView FormatStr, const Args&... InArgs) -> void {
-    String                     Msg         = std::vformat(FormatStr, std::make_format_args(InArgs...));
-    static std::atomic<Uint32> FileCounter = 0;
-    auto                       FileSink   = std::make_shared<spdlog::sinks::basic_file_sink_mt>(String(Filename), true);
-    auto                       TempLogger = std::make_shared<spdlog::logger>(
-        "file_" + std::to_string(FileCounter.fetch_add(1, std::memory_order_relaxed)), FileSink);
-    TempLogger->set_formatter(CreateLogFormatter("[%m-%d %H:%M:%S.%e] [%=7l] %q %v", false));
-    switch (Level) {
-    case LogLevel::Debug:
-        TempLogger->debug(Msg);
-        break;
-    case LogLevel::Info:
-        TempLogger->info(Msg);
-        break;
-    case LogLevel::Warning:
-        TempLogger->warn(Msg);
-        break;
-    case LogLevel::Error:
-        TempLogger->error(Msg);
-        break;
-    }
+    String Msg = std::vformat(FormatStr, std::make_format_args(InArgs...));
+    LogManager::Get().LogToFile(Level, Filename, Msg);
 }
 } // namespace SoulEngine::Core
 

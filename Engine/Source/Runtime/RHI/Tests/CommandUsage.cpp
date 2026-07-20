@@ -71,7 +71,7 @@ TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
                 SoulEngine::Shader::Binding{
                     .ParameterPath = "g_textures.uTextures",
                     .Set           = 0,
-                    .Binding       = 0,
+                    .BindingIndex  = 0,
                     .Type          = SoulEngine::Shader::ResourceType::SampledTexture,
                     .ArrayCount    = std::numeric_limits<Uint32>::max(),
                 },
@@ -109,19 +109,19 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
                 SoulEngine::Shader::Binding{
                     .ParameterPath = "g_frame.cb",
                     .Set           = 0,
-                    .Binding       = 0,
+                    .BindingIndex  = 0,
                     .Type          = SoulEngine::Shader::ResourceType::ConstantBuffer,
                 },
                 SoulEngine::Shader::Binding{
                     .ParameterPath = "g_samplers.uLinear",
                     .Set           = 1,
-                    .Binding       = 0,
+                    .BindingIndex  = 0,
                     .Type          = SoulEngine::Shader::ResourceType::Sampler,
                 },
                 SoulEngine::Shader::Binding{
                     .ParameterPath = "g_textures.uTextures",
                     .Set           = 1,
-                    .Binding       = 1,
+                    .BindingIndex  = 1,
                     .Type          = SoulEngine::Shader::ResourceType::SampledTexture,
                     .ArrayCount    = std::numeric_limits<Uint32>::max(),
                 },

@@ -7,6 +7,8 @@
 /// initialization order fiasco — the singleton ensures the registry map
 /// is constructed on first use, before any registrar touches it.
 
+module;
+
 export module Core:Util.Factory;
 
 import std;

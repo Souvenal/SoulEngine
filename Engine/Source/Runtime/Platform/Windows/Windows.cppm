@@ -7,6 +7,7 @@ module;
 
 export module Platform:Windows;
 
+import std;
 import Core;
 
 namespace Platform {

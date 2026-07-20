@@ -69,7 +69,7 @@ namespace SoulEngine::RHI::Vulkan {
                 ErrorMessage(Core::Format("Reflected binding '{}' has zero descriptor count", Binding.ParameterPath)));
 
         VkBindings.push_back(vk::DescriptorSetLayoutBinding{
-            .binding            = Binding.Binding,
+            .binding            = Binding.BindingIndex,
             .descriptorType     = *DescriptorType,
             .descriptorCount    = DescriptorCount,
             .stageFlags         = vk::ShaderStageFlagBits::eAllGraphics,
@@ -134,7 +134,7 @@ namespace SoulEngine::RHI::Vulkan {
     for (const auto& Binding : Reflection.Bindings)
         BindingsBySet[Binding.Set].push_back(Binding);
     for (auto& SetBindings : BindingsBySet) {
-        std::ranges::sort(SetBindings, {}, &Shader::Binding::Binding);
+        std::ranges::sort(SetBindings, {}, &Shader::Binding::BindingIndex);
     }
 
     std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
@@ -210,7 +210,7 @@ struct PipelineParameterSetInstances {
     std::ranges::sort(Sorted, [](const Shader::Binding& Lhs, const Shader::Binding& Rhs) {
         if (Lhs.Set != Rhs.Set)
             return Lhs.Set < Rhs.Set;
-        return Lhs.Binding < Rhs.Binding;
+        return Lhs.BindingIndex < Rhs.BindingIndex;
     });
 
     std::vector<ReflectedDescriptorBinding> Result;
@@ -220,7 +220,7 @@ struct PipelineParameterSetInstances {
         auto& Out          = Result.emplace_back();
         Out.ParameterPath  = Binding.ParameterPath;
         Out.Set            = Binding.Set;
-        Out.Binding        = Binding.Binding;
+        Out.Binding        = Binding.BindingIndex;
         Out.Type           = Binding.Type;
         Out.ArrayCount     = Binding.ArrayCount;
         if (Binding.Type == Shader::ResourceType::ConstantBuffer)

@@ -10,7 +10,6 @@ function test_module(module_name, opt)
     local packages = opt.packages or opt.additional_packages or {}
     table.insert(packages, "gtest")
     local tests_dir = path.absolute(path.join(os.scriptdir(), "Tests"))
-
     for _, testfile in ipairs(os.files("Tests/**.cpp")) do
         local test_target_name = "TestsFor" .. module_name .. "_" .. path.basename(testfile)
         target(test_target_name)
@@ -18,6 +17,11 @@ function test_module(module_name, opt)
             set_default(false)
             add_deps(table.unpack(deps))
             add_packages(table.unpack(packages))
+            -- gtest[main] supplies gmock_main. Xmake places static libraries before
+            -- test objects on MSVC, so force-link that archive instead of adding a project-local main.
+            if is_plat("windows") then
+                add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+            end
             add_files(testfile)
             add_tests("default", {
                 group = module_name,

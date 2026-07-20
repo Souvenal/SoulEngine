@@ -1,3 +1,5 @@
+module;
+
 export module RHI:UsageVisitor;
 
 export import :Command;

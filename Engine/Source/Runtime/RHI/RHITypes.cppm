@@ -1,3 +1,5 @@
+module;
+
 export module RHI:Types;
 
 export import Core;
@@ -197,7 +199,7 @@ class ShaderParameterLayout {
         for (const auto& Binding : Reflection.Bindings) {
             Result.m_Sets[Binding.Set].m_Bindings.push_back(ShaderParameterBindingLayout{
                 .ParameterPath = Binding.ParameterPath,
-                .Binding       = Binding.Binding,
+                .Binding       = Binding.BindingIndex,
                 .Type          = Binding.Type,
                 .ArrayCount    = Binding.ArrayCount,
             });

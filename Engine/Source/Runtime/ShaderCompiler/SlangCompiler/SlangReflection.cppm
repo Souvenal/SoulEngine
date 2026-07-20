@@ -127,7 +127,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         Bindings.emplace_back(Shader::Binding{
             .ParameterPath = Format("{}.{}", ParameterName, Field->getName() ? Field->getName() : "<unnamed>"),
             .Set           = static_cast<Uint32>(Set),
-            .Binding       = static_cast<Uint32>(BindingIndex),
+            .BindingIndex  = static_cast<Uint32>(BindingIndex),
             .Type          = *ResourceType,
             .ArrayCount    = *ArrayCount,
         });
@@ -235,7 +235,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
                 Bindings.emplace_back(Shader::Binding{
                     .ParameterPath = std::move(ParameterPath),
                     .Set           = static_cast<Uint32>(Set),
-                    .Binding       = BindingIndex,
+                    .BindingIndex  = BindingIndex,
                     .Type          = *ResourceType,
                     .ArrayCount    = OutputArrayCount,
                 });
