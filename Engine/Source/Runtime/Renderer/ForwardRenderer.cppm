@@ -352,4 +352,6 @@ class ForwardRenderer final : public IRenderer {
     std::vector<ForwardViewParameterState>          m_ViewParameters           = {};
 };
 
+RendererFactory::AutoRegistrar<ForwardRenderer> RegForwardRenderer{"Forward"};
+
 } // namespace SoulEngine::Renderer

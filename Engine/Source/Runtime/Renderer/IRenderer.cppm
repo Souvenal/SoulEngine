@@ -49,4 +49,10 @@ class IRenderer {
     [[nodiscard]] virtual auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
 };
 
+/// @brief Factory type for renderer creation.
+///
+/// Each renderer implementation auto-registers from its own module partition,
+/// so adding a renderer does not require changes to application code.
+using RendererFactory = Core::Factory<IRenderer>;
+
 } // namespace SoulEngine::Renderer

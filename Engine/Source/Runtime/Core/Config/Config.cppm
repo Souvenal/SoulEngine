@@ -56,8 +56,9 @@ struct WindowConfig {
 /// Pure mirror of the `[Render]` TOML table.  All fields are optional;
 /// RHI backends provide the actual defaults.
 struct RenderConfig {
-    std::optional<String> RHI;            ///< Backend name
-    std::optional<Int32>  FramesInFlight; ///< Number of frames in flight
+    std::optional<String> RHI;             ///< Backend name
+    std::optional<Int32>  FramesInFlight;  ///< Number of frames in flight
+    std::optional<String> DefaultRenderer; ///< Application renderer name
 };
 
 /// @brief Log-level configuration.
@@ -225,8 +226,9 @@ class ConfigManager final : public Singleton<ConfigManager> {
         Cfg.Window.ResolutionY = Table["Window"]["ResolutionY"].value<Int32>();
 
         // --- Render config ---
-        Cfg.Render.RHI            = Table["Render"]["RHI"].value<String>();
-        Cfg.Render.FramesInFlight = Table["Render"]["FramesInFlight"].value<Int32>();
+        Cfg.Render.RHI             = Table["Render"]["RHI"].value<String>();
+        Cfg.Render.FramesInFlight  = Table["Render"]["FramesInFlight"].value<Int32>();
+        Cfg.Render.DefaultRenderer = Table["Render"]["DefaultRenderer"].value<String>();
 
         // --- Log config ---
         Cfg.Log.ConsoleLevel = Table["Log"]["ConsoleLevel"].value<String>();

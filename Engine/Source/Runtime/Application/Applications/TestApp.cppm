@@ -27,9 +27,12 @@ class TestApplication final : public Application::Application {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         LogInfo("TestApplication: Attaching...");
 
-        m_Renderer = std::make_unique<Renderer::RayTracingRenderer>();
+        auto CreatedRenderer = Renderer::CreateDefault();
+        if (!CreatedRenderer)
+            return std::unexpected(CreatedRenderer.error().Append("TestApplication renderer creation failed"));
+        m_Renderer = std::move(*CreatedRenderer);
         if (auto R = m_Renderer->OnAttach(); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer OnAttach failed"));
+            return std::unexpected(R.error().Append("Configured renderer OnAttach failed"));
 
         const auto ScenePath = ConfigManager::Get().CurrentApplicationDir() / "Assets" / "TestScene.yaml";
         auto Loaded = m_Scene.LoadFromFile(ScenePath);

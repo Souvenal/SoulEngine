@@ -5,6 +5,9 @@ ResolutionY = 1080
 [Render]
 RHI = "Vulkan"
 FramesInFlight = 2
+# Renderer selected by applications that support the shared default.
+# Supported values: "Forward", "RayTracing". When omitted: "Forward".
+DefaultRenderer = "RayTracing"
 
 [Log]
 ConsoleLevel = "Info"

@@ -193,4 +193,6 @@ class RayTracingRenderer final : public IRenderer {
     bool m_LoggedFirstTrace = false;
 };
 
+RendererFactory::AutoRegistrar<RayTracingRenderer> RegRayTracingRenderer{"RayTracing"};
+
 } // namespace SoulEngine::Renderer
