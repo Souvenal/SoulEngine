@@ -9,9 +9,11 @@ import :Types;
 import :Swapchain;
 import :Buffer;
 import :Pipeline;
+import :RayTracingPipeline;
 import :Sampler;
 import :Texture;
 import :Descriptor;
+import :AccelerationStructure;
 
 using namespace SoulEngine::Core;
 
@@ -26,7 +28,15 @@ struct CommandVisitor {
     TransientUniformBufferArena*               DrawConstantArena          = nullptr;
     Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
+    enum class BoundPipelineType : Uint8 {
+        Unknown = 0,
+        Graphics,
+        RayTracing,
+    };
+
     std::optional<ErrorMessage>                Error                      = std::nullopt;
+    RHI::Pipeline*                             m_BoundPipeline            = nullptr;
+    BoundPipelineType                          m_BoundPipelineType        = BoundPipelineType::Unknown;
 
     /// Begin rendering scope from Pass desc.
     auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
@@ -118,55 +128,11 @@ struct CommandVisitor {
         Buf.endRendering();
     }
 
-    auto operator()(const RHI::SetGraphicsPipelineCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr)
-            return;
-
-        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
-        Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
-    }
-
-    auto operator()(const RHI::SetRayTracingPipelineCmd&) -> void {
-        Error = ErrorMessage("Ray tracing command recording is not implemented");
-    }
-
-    auto operator()(const RHI::BuildOrUpdateTopLevelAccelerationStructureCmd&) -> void {
-        Error = ErrorMessage("Ray tracing command recording is not implemented");
-    }
-
-    auto operator()(const RHI::TraceRaysCmd&) -> void {
-        Error = ErrorMessage("Ray tracing command recording is not implemented");
-    }
-
-    auto operator()(const RHI::PushConstantsCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr || Cmd.Data.empty())
-            return;
-
-        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
-        if (Cmd.Offset + Cmd.Data.size() > Pipeline.GetPushConstantSize()) {
-            Error = ErrorMessage(Core::Format("PushConstants range exceeds reflected pipeline push-constant size ({} + {} > {})",
-                                              Cmd.Offset,
-                                              Cmd.Data.size(),
-                                              Pipeline.GetPushConstantSize()));
-            return;
-        }
-
-        Buf.pushConstants(Pipeline.GetPipelineLayout(),
-                          vk::ShaderStageFlagBits::eAllGraphics,
-                          Cmd.Offset,
-                          static_cast<Uint32>(Cmd.Data.size()),
-                          Cmd.Data.data());
-    }
-
-    auto operator()(const RHI::BindShaderParametersCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr)
-            return;
-        if (!Descriptors || !ConstantArena || !DrawConstantArena) {
-            Error = ErrorMessage("CommandVisitor: descriptor manager or constant arena is missing");
-            return;
-        }
-
-        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+    template <typename PipelineType>
+    auto BindShaderParameters(const RHI::BindShaderParametersCmd& Cmd,
+                              PipelineType&                       Pipeline,
+                              vk::PipelineBindPoint                BindPoint,
+                              vk::PipelineStageFlags2              ShaderStage) -> void {
         if (Cmd.Parameters.GetLayoutId() != Pipeline.GetShaderParameterLayout().GetId()) {
             Error = ErrorMessage("Shader parameters were created from a different pipeline layout");
             return;
@@ -245,13 +211,38 @@ struct CommandVisitor {
                         DescriptorBuffer = ConstantArena->GetVkBuffer();
                     }
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized ||
-                        ResourceBindings[Binding.Binding] != DescriptorSource) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != DescriptorSource) {
                         Descriptors->WriteConstantDescriptor(
                             *(*Instance)->Set, Binding.Binding, DescriptorBuffer, Constant->Buffer->GetSize());
                         ResourceBindings[Binding.Binding] = DescriptorSource;
                     }
                     DynamicOffsetWrites.push_back({Binding.Binding, Offset});
+                    continue;
+                }
+
+                if (const auto* Target = std::get_if<RHI::RenderTarget*>(&Value)) {
+                    if (!*Target) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null storage render target", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkTarget = static_cast<const Vulkan::RenderTarget&>(**Target);
+                    TransitionImage(Buf,
+                                    LocalStates,
+                                    VkTarget.GetVkImage(),
+                                    ShaderStage,
+                                    vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
+                                    vk::ImageLayout::eGeneral,
+                                    false,
+                                    vk::ImageAspectFlagBits::eColor);
+                    if (bUpdateDescriptors) {
+                        auto& ResourceBindings = (*Instance)->ResourceBindings;
+                        if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Target) {
+                            Descriptors->WriteStorageImageDescriptor(
+                                *(*Instance)->Set, Binding.Binding, VkTarget.GetVkImageView());
+                            ResourceBindings[Binding.Binding] = *Target;
+                        }
+                    }
                     continue;
                 }
 
@@ -314,6 +305,22 @@ struct CommandVisitor {
                     continue;
                 }
 
+                if (const auto* AccelerationStructure = std::get_if<RHI::TopLevelAccelerationStructure*>(&Value)) {
+                    if (!*AccelerationStructure) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null top-level acceleration structure", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkTlas = static_cast<const Vulkan::TopLevelAccelerationStructure&>(**AccelerationStructure);
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *AccelerationStructure) {
+                        Descriptors->WriteAccelerationStructureDescriptor(
+                            *(*Instance)->Set, Binding.Binding, VkTlas.GetAccelerationStructure());
+                        ResourceBindings[Binding.Binding] = *AccelerationStructure;
+                    }
+                    continue;
+                }
+
                 if (const auto* Sampler = std::get_if<RHI::Sampler*>(&Value)) {
                     if (!*Sampler) {
                         Error = ErrorMessage(Core::Format(
@@ -345,11 +352,154 @@ struct CommandVisitor {
             for (const auto& [Binding, Offset] : DynamicOffsetWrites)
                 DynamicOffsets.push_back(Offset);
 
-            Buf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+            Buf.bindDescriptorSets(BindPoint,
                                    Pipeline.GetPipelineLayout(),
                                    SetIndex,
                                    std::array{*(*Instance)->Set},
                                    DynamicOffsets);
+        }
+    }
+
+    auto operator()(const RHI::SetGraphicsPipelineCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr)
+            return;
+
+        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
+        m_BoundPipeline     = Cmd.PipelinePtr;
+        m_BoundPipelineType = BoundPipelineType::Graphics;
+    }
+
+    auto operator()(const RHI::SetRayTracingPipelineCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr)
+            return;
+        auto& Pipeline = static_cast<Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr);
+        Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
+        m_BoundPipeline     = Cmd.PipelinePtr;
+        m_BoundPipelineType = BoundPipelineType::RayTracing;
+    }
+
+    auto operator()(const RHI::BuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
+        if (!Cmd.TargetPtr)
+            return;
+        auto& Tlas = static_cast<Vulkan::TopLevelAccelerationStructure&>(*Cmd.TargetPtr);
+        if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode); !R) {
+            Error = R.error().Append("Failed to record TLAS build");
+            return;
+        }
+
+        const vk::MemoryBarrier2 BuildBarrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
+            .dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR,
+        };
+        const vk::DependencyInfo Dependency{
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers    = &BuildBarrier,
+        };
+        Buf.pipelineBarrier2(Dependency);
+    }
+
+    auto operator()(const RHI::TraceRaysCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr)
+            return;
+        auto& Pipeline = static_cast<Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr);
+        Buf.traceRaysKHR(Pipeline.GetRayGenerationRegion(),
+                         Pipeline.GetMissRegion(),
+                         Pipeline.GetHitRegion(),
+                         Pipeline.GetCallableRegion(),
+                         Cmd.Width,
+                         Cmd.Height,
+                         Cmd.Depth);
+
+        const vk::MemoryBarrier2 TraceBarrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
+            .srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
+        };
+        const vk::DependencyInfo Dependency{
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers    = &TraceBarrier,
+        };
+        Buf.pipelineBarrier2(Dependency);
+    }
+
+    auto operator()(const RHI::PushConstantsCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr || Cmd.Data.empty())
+            return;
+        if (m_BoundPipeline != Cmd.PipelinePtr) {
+            Error = ErrorMessage("PushConstants pipeline is not currently bound");
+            return;
+        }
+
+        vk::PipelineLayout PipelineLayout = nullptr;
+        vk::ShaderStageFlags Stages = {};
+        Uint32 PushConstantSize = 0;
+        switch (m_BoundPipelineType) {
+        case BoundPipelineType::Graphics: {
+            const auto& Pipeline = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+            PipelineLayout = Pipeline.GetPipelineLayout();
+            Stages = vk::ShaderStageFlagBits::eAllGraphics;
+            PushConstantSize = Pipeline.GetPushConstantSize();
+            break;
+        }
+        case BoundPipelineType::RayTracing: {
+            const auto& Pipeline = static_cast<const Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr);
+            PipelineLayout = Pipeline.GetPipelineLayout();
+            Stages = Pipeline.GetPushConstantStages();
+            PushConstantSize = Pipeline.GetPushConstantSize();
+            break;
+        }
+        case BoundPipelineType::Unknown:
+            Error = ErrorMessage("PushConstants has no bound pipeline type");
+            return;
+        }
+
+        if (Cmd.Offset + Cmd.Data.size() > PushConstantSize) {
+            Error = ErrorMessage(Core::Format("PushConstants range exceeds reflected pipeline push-constant size ({} + {} > {})",
+                                              Cmd.Offset,
+                                              Cmd.Data.size(),
+                                              PushConstantSize));
+            return;
+        }
+
+        Buf.pushConstants(PipelineLayout,
+                          Stages,
+                          Cmd.Offset,
+                          static_cast<Uint32>(Cmd.Data.size()),
+                          Cmd.Data.data());
+    }
+
+    auto operator()(const RHI::BindShaderParametersCmd& Cmd) -> void {
+        if (!Cmd.PipelinePtr)
+            return;
+        if (!Descriptors || !ConstantArena || !DrawConstantArena) {
+            Error = ErrorMessage("CommandVisitor: descriptor manager or constant arena is missing");
+            return;
+        }
+        if (m_BoundPipeline != Cmd.PipelinePtr) {
+            Error = ErrorMessage("BindShaderParameters pipeline is not currently bound");
+            return;
+        }
+
+        switch (m_BoundPipelineType) {
+        case BoundPipelineType::Graphics:
+            BindShaderParameters(Cmd,
+                                 static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr),
+                                 vk::PipelineBindPoint::eGraphics,
+                                 vk::PipelineStageFlagBits2::eAllGraphics);
+            return;
+        case BoundPipelineType::RayTracing:
+            BindShaderParameters(Cmd,
+                                 static_cast<Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr),
+                                 vk::PipelineBindPoint::eRayTracingKHR,
+                                 vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
+            return;
+        case BoundPipelineType::Unknown:
+            Error = ErrorMessage("BindShaderParameters has no bound pipeline type");
+            return;
         }
     }
 

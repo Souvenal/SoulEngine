@@ -358,11 +358,12 @@ TEST_F(UsageVisitorTest, NonResourceCommandsDoNotUpdateAnyToken) {
 
 TEST_F(UsageVisitorTest, VisitEntireCommandList) {
     CommandList CmdList;
-    auto&       Pass = CmdList.Passes.emplace_back();
+    auto& Scope     = CmdList.Scopes.emplace_back(Pass{});
+    auto& PassValue = std::get<SoulEngine::RHI::Pass>(Scope);
 
-    Pass.SetViewport(0, 0, 800, 600);
-    Pass.SetGraphicsPipeline(m_Pipeline.get());
-    Pass.DrawIndexed(m_Pipeline.get(), m_VB.get(), m_IB.get());
+    PassValue.SetViewport(0, 0, 800, 600);
+    PassValue.SetGraphicsPipeline(m_Pipeline.get());
+    PassValue.DrawIndexed(m_Pipeline.get(), m_VB.get(), m_IB.get());
 
     // Token starts at 0 for all resources
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
@@ -370,11 +371,38 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
 
     // Visit all commands with a single UsageVisitor
-    for (const auto& Cmd : Pass.Commands)
+    for (const auto& Cmd : PassValue.Commands)
         std::visit(UsageVisitor{GpuCompletionToken{.Id = 99}}, Cmd);
 
     // Resource commands updated
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 99);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 99);
     EXPECT_EQ(m_IB->GetLastUsageToken().Id, 99);
+}
+
+
+TEST_F(UsageVisitorTest, NonRenderingScopeRecordsRayTracingCommands) {
+    NonRenderingPass Scope;
+    Scope.SetRayTracingPipeline(m_RayPipeline.get());
+    Scope.TraceRays(m_RayPipeline.get(), 1280, 720);
+
+    ASSERT_EQ(Scope.Commands.size(), 2);
+    EXPECT_TRUE(std::holds_alternative<SetRayTracingPipelineCmd>(Scope.Commands[0]));
+    EXPECT_TRUE(std::holds_alternative<TraceRaysCmd>(Scope.Commands[1]));
+
+    for (const auto& Cmd : Scope.Commands)
+        std::visit(m_Visitor, Cmd);
+    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
+}
+
+TEST_F(UsageVisitorTest, CommandListPreservesRenderingAndNonRenderingScopeOrder) {
+    CommandList CmdList;
+    auto& RayScope = CmdList.Scopes.emplace_back(NonRenderingPass{});
+    std::get<NonRenderingPass>(RayScope).SetRayTracingPipeline(m_RayPipeline.get());
+    auto& RenderingScope = CmdList.Scopes.emplace_back(Pass{});
+    std::get<Pass>(RenderingScope).SetGraphicsPipeline(m_Pipeline.get());
+
+    ASSERT_EQ(CmdList.Scopes.size(), 2);
+    EXPECT_TRUE(std::holds_alternative<NonRenderingPass>(CmdList.Scopes[0]));
+    EXPECT_TRUE(std::holds_alternative<Pass>(CmdList.Scopes[1]));
 }

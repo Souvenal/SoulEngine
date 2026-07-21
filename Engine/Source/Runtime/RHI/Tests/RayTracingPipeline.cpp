@@ -88,6 +88,46 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
         glfwTerminate();
     };
 
+    const std::array<Float32, 9> TriangleVertices{
+        -0.5f, -0.5f, 0.0f,
+         0.5f, -0.5f, 0.0f,
+         0.0f,  0.5f, 0.0f,
+    };
+    const std::array<Uint32, 3> TriangleIndices{0, 1, 2};
+    auto VertexBuffer = RenderDevice::Get().CreateVertexBuffer(VertexBufferDesc{
+        .Data        = TriangleVertices.data(),
+        .VertexCount = 3,
+        .Stride      = sizeof(Float32) * 3,
+    });
+    auto IndexBuffer = RenderDevice::Get().CreateIndexBuffer(IndexBufferDesc{
+        .Data       = TriangleIndices.data(),
+        .IndexCount = 3,
+    });
+    if (!VertexBuffer || !IndexBuffer) {
+        const auto Error = !VertexBuffer ? VertexBuffer.error().ToString() : IndexBuffer.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+    auto Blas = RenderDevice::Get().CreateBottomLevelAccelerationStructure(BottomLevelAccelerationStructureDesc{
+        .Geometries = {
+            TriangleAccelerationStructureGeometryDesc{
+                .VertexBufferPtr = VertexBuffer->Buffer.get(),
+                .VertexCount     = 3,
+                .VertexStride    = sizeof(Float32) * 3,
+                .VertexFormat    = Format::R32G32B32_SFLOAT,
+                .IndexBufferPtr  = IndexBuffer->Buffer.get(),
+                .IndexCount      = 3,
+            },
+        },
+    });
+    if (!Blas) {
+        const auto Error = Blas.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+
     const Path ShaderPath = EngineDir / "Source" / "Runtime" / "ShaderCompiler" / "Tests" / "Slang" / "RayTracing.slang";
     auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
         .RayGeneration = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
@@ -114,6 +154,106 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
     }
     EXPECT_NE(Pipeline->get(), nullptr);
 
+    auto Tlas = RenderDevice::Get().CreateTopLevelAccelerationStructure(TopLevelAccelerationStructureDesc{
+        .InitialInstanceCapacity = 1,
+        .BuildFlags = AccelerationStructureBuildFlags::AllowUpdate,
+    });
+    if (!Tlas) {
+        const auto Error = Tlas.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+    auto Output = RenderDevice::Get().CreateRenderTarget(RenderTargetDesc{
+        .Width  = 1,
+        .Height = 1,
+        .Format = Format::B8G8R8A8_UNORM,
+        .Usage  = TextureUsage::RenderTarget | TextureUsage::ShaderStorage | TextureUsage::FrameOutput,
+    });
+    if (!Output) {
+        const auto Error = Output.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+
+    auto Parameters = ShaderParameters::Create(**Pipeline);
+    if (auto R = Parameters.SetTopLevelAccelerationStructure("g_tlas", Tlas->get()); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+    if (auto R = Parameters.SetStorageRenderTarget("g_output", Output->Texture.get()); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+
+    const std::array<AccelerationStructureInstance, 2> Instances{
+        AccelerationStructureInstance{
+            .BottomLevelPtr = Blas->get(),
+        },
+        AccelerationStructureInstance{
+            .BottomLevelPtr = Blas->get(),
+            .Transform = RowMajorTransform3x4{
+                .M03 = 0.1f,
+            },
+        },
+    };
+    CommandList Commands;
+    auto& ScopeValue = Commands.Scopes.emplace_back(NonRenderingPass{});
+    auto& Scope = std::get<NonRenderingPass>(ScopeValue);
+    Scope.BuildOrUpdateTopLevelAccelerationStructure(Tlas->get(), Instances);
+    Scope.SetRayTracingPipeline(Pipeline->get());
+    Scope.BindShaderParameters(Pipeline->get(), std::move(Parameters));
+    Scope.TraceRays(Pipeline->get(), 1, 1);
+    Commands.PresentSource = Output->Texture.get();
+
+    if (auto R = RenderDevice::Get().Execute(Commands); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+
+    auto UpdateParameters = ShaderParameters::Create(**Pipeline);
+    if (auto R = UpdateParameters.SetTopLevelAccelerationStructure("g_tlas", Tlas->get()); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+    if (auto R = UpdateParameters.SetStorageRenderTarget("g_output", Output->Texture.get()); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+
+    CommandList UpdateCommands;
+    auto& UpdateScopeValue = UpdateCommands.Scopes.emplace_back(NonRenderingPass{});
+    auto& UpdateScope = std::get<NonRenderingPass>(UpdateScopeValue);
+    UpdateScope.BuildOrUpdateTopLevelAccelerationStructure(
+        Tlas->get(), Instances, TopLevelAccelerationStructureBuildMode::Update);
+    UpdateScope.SetRayTracingPipeline(Pipeline->get());
+    UpdateScope.BindShaderParameters(Pipeline->get(), std::move(UpdateParameters));
+    UpdateScope.TraceRays(Pipeline->get(), 1, 1);
+    UpdateCommands.PresentSource = Output->Texture.get();
+
+    if (auto R = RenderDevice::Get().Execute(UpdateCommands); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+
+    Output->Texture.reset();
+    (*Tlas).reset();
     (*Pipeline).reset();
+    (*Blas).reset();
+    VertexBuffer->Buffer.reset();
+    IndexBuffer->Buffer.reset();
     Cleanup();
 }

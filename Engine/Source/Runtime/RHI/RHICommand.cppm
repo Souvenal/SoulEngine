@@ -204,12 +204,64 @@ struct Pass {
     }
 };
 
+/// @brief One non-rendering command scope recorded outside dynamic rendering.
+///
+/// Acceleration-structure builds and ray dispatch are not legal between
+/// vkCmdBeginRendering and vkCmdEndRendering, so callers place them here.
+struct NonRenderingPass {
+    std::vector<Command> Commands = {};
+
+    auto SetRayTracingPipeline(RayTracingPipeline* PipelinePtr) -> void {
+        Commands.emplace_back(SetRayTracingPipelineCmd{.PipelinePtr = PipelinePtr});
+    }
+    auto PushConstants(Pipeline* PipelinePtr, Uint32 Offset, const void* Data, Uint64 Size) -> void {
+        if (Size == 0)
+            return;
+
+        PushConstantsCmd Cmd{
+            .PipelinePtr = PipelinePtr,
+            .Offset      = Offset,
+        };
+        Cmd.Data.resize(Size);
+        std::memcpy(Cmd.Data.data(), Data, Size);
+        Commands.emplace_back(std::move(Cmd));
+    }
+    auto BindShaderParameters(Pipeline* PipelinePtr, ShaderParameters Parameters) -> void {
+        Commands.emplace_back(BindShaderParametersCmd{
+            .PipelinePtr = PipelinePtr,
+            .Parameters  = std::move(Parameters),
+        });
+    }
+    auto BuildOrUpdateTopLevelAccelerationStructure(TopLevelAccelerationStructure*               TargetPtr,
+                                                     std::span<const AccelerationStructureInstance> Instances,
+                                                     TopLevelAccelerationStructureBuildMode        Mode =
+                                                         TopLevelAccelerationStructureBuildMode::Auto) -> void {
+        Commands.emplace_back(BuildOrUpdateTopLevelAccelerationStructureCmd{
+            .TargetPtr = TargetPtr,
+            .Instances = std::vector<AccelerationStructureInstance>{Instances.begin(), Instances.end()},
+            .Mode      = Mode,
+        });
+    }
+    auto TraceRays(RayTracingPipeline* PipelinePtr, Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
+        Commands.emplace_back(TraceRaysCmd{
+            .PipelinePtr = PipelinePtr,
+            .Width       = Width,
+            .Height      = Height,
+            .Depth       = Depth,
+        });
+    }
+};
+
+/// Ordered command-list scope. Rendering and non-rendering work must retain
+/// submission order because trace output can subsequently be rendered or presented.
+using CommandScope = std::variant<Pass, NonRenderingPass>;
+
 /// @brief Complete frame's worth of GPU commands, produced by RenderLoop,
 /// consumed by RenderDevice::Execute().
 struct CommandList {
-    std::vector<Pass> Passes;
+    std::vector<CommandScope> Scopes = {};
     /// Final frame output. Backend presents this engine-owned RT to swapchain.
-    RenderTarget*     PresentSource = nullptr;
+    RenderTarget*             PresentSource = nullptr;
 };
 
 } // namespace SoulEngine::RHI

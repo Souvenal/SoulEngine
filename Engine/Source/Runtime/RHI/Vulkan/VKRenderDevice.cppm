@@ -28,6 +28,7 @@ import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
 import :RayTracingPipeline;
+import :AccelerationStructure;
 import :Sampler;
 import :Texture;
 import :DeletionQueue;
@@ -99,6 +100,12 @@ class RenderDevice final : public RHI::RenderDevice {
         if (!ImmCtx)
             return std::unexpected(ImmCtx.error().Append("ImmediateContext creation failed"));
         m_ImmediateContext = std::move(*ImmCtx);
+
+        auto GraphicsImmCtx =
+            ImmediateContext::Create(m_Device, m_GraphicsQueue, m_GraphicsFamily, m_TransferCompletionQueue);
+        if (!GraphicsImmCtx)
+            return std::unexpected(GraphicsImmCtx.error().Append("Graphics ImmediateContext creation failed"));
+        m_GraphicsImmediateContext = std::move(*GraphicsImmCtx);
 
         // ── Swapchain ─────────────────────────────────────────────────────
         auto Swapchain = Swapchain::Create(m_Device, m_PhysicalDevice, m_Surface, Window);
@@ -335,6 +342,17 @@ class RenderDevice final : public RHI::RenderDevice {
     [[nodiscard]] auto CreateRayTracingPipeline(const RayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<RHI::RayTracingPipeline>, ErrorMessage> override {
         return RayTracingPipeline::Create(m_Device, m_Allocator, Desc, m_MaxTextures, m_DeletionQueue);
+    }
+
+    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(const BottomLevelAccelerationStructureDesc& Desc)
+        -> std::expected<UPtr<RHI::BottomLevelAccelerationStructure>, ErrorMessage> override {
+        return BottomLevelAccelerationStructure::Create(
+            m_Device, m_Allocator, m_GraphicsImmediateContext, m_TransferCompletionQueue, m_DeletionQueue, Desc);
+    }
+
+    [[nodiscard]] auto CreateTopLevelAccelerationStructure(const TopLevelAccelerationStructureDesc& Desc)
+        -> std::expected<UPtr<RHI::TopLevelAccelerationStructure>, ErrorMessage> override {
+        return TopLevelAccelerationStructure::Create(m_Device, m_Allocator, m_DeletionQueue, Desc);
     }
 
     [[nodiscard]] auto IsGpuComplete(GpuCompletionToken Token) -> bool override {
@@ -636,62 +654,97 @@ class RenderDevice final : public RHI::RenderDevice {
     }
 
     [[nodiscard]] auto ValidateCommandList(const RHI::CommandList& CmdList) const -> std::expected<void, ErrorMessage> {
-        if (CmdList.Passes.empty() && !CmdList.PresentSource)
+        if (CmdList.Scopes.empty() && !CmdList.PresentSource)
             return {};
 
         if (!CmdList.PresentSource)
-            return std::unexpected(ErrorMessage("Execute: command list with passes must specify PresentSource"));
+            return std::unexpected(ErrorMessage("Execute: command list with scopes must specify PresentSource"));
 
-        for (const auto& Pass : CmdList.Passes) {
-            if (!Pass.Desc.ColorAttachment.TexturePtr)
-                return std::unexpected(
-                    ErrorMessage("Execute: pass color attachment must be an explicit render target"));
-
-            const RHI::GraphicsPipeline* BoundPipeline = nullptr;
-            for (const auto& Cmd : Pass.Commands) {
-                auto ValidateCommand = [&BoundPipeline](const auto& DrawCmd) -> std::expected<void, ErrorMessage> {
-                    using CommandType = std::decay_t<decltype(DrawCmd)>;
+        const auto ValidateCommands = [](std::span<const RHI::Command> Commands, bool bRenderingScope)
+            -> std::expected<void, ErrorMessage> {
+            RHI::Pipeline* BoundPipeline = nullptr;
+            for (const auto& Cmd : Commands) {
+                const auto ValidateCommand = [&BoundPipeline, bRenderingScope](const auto& TypedCmd)
+                    -> std::expected<void, ErrorMessage> {
+                    using CommandType = std::decay_t<decltype(TypedCmd)>;
 
                     if constexpr (std::is_same_v<CommandType, RHI::SetGraphicsPipelineCmd>) {
-                        if (!DrawCmd.PipelinePtr)
-                            return std::unexpected(
-                                ErrorMessage("Execute: SetGraphicsPipeline is missing graphics pipeline"));
-                        BoundPipeline = DrawCmd.PipelinePtr;
+                        if (!bRenderingScope)
+                            return std::unexpected(ErrorMessage("Execute: graphics pipelines require a rendering scope"));
+                        if (!TypedCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: SetGraphicsPipeline is missing graphics pipeline"));
+                        BoundPipeline = TypedCmd.PipelinePtr;
+                    } else if constexpr (std::is_same_v<CommandType, RHI::SetRayTracingPipelineCmd>) {
+                        if (bRenderingScope)
+                            return std::unexpected(ErrorMessage("Execute: ray-tracing pipelines require a non-rendering scope"));
+                        if (!TypedCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: SetRayTracingPipeline is missing ray-tracing pipeline"));
+                        BoundPipeline = TypedCmd.PipelinePtr;
                     } else if constexpr (std::is_same_v<CommandType, RHI::PushConstantsCmd>) {
-                        if (!DrawCmd.PipelinePtr)
-                            return std::unexpected(ErrorMessage("Execute: PushConstants is missing graphics pipeline"));
-                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                        if (!TypedCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: PushConstants is missing pipeline"));
+                        if (BoundPipeline != TypedCmd.PipelinePtr)
                             return std::unexpected(ErrorMessage(
-                                "Execute: PushConstants pipeline does not match the currently bound graphics pipeline"));
-                        if (DrawCmd.Data.empty())
+                                "Execute: PushConstants pipeline does not match the currently bound pipeline"));
+                        if (TypedCmd.Data.empty())
                             return std::unexpected(ErrorMessage("Execute: PushConstants data is empty"));
                     } else if constexpr (std::is_same_v<CommandType, RHI::BindShaderParametersCmd>) {
-                        if (!DrawCmd.PipelinePtr)
-                            return std::unexpected(
-                                ErrorMessage("Execute: BindShaderParameters is missing graphics pipeline"));
-                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                        if (!TypedCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: BindShaderParameters is missing pipeline"));
+                        if (BoundPipeline != TypedCmd.PipelinePtr) {
                             return std::unexpected(ErrorMessage(
-                                "Execute: BindShaderParameters pipeline does not match the currently bound graphics pipeline"));
-                        if (DrawCmd.Parameters.GetSets().empty())
+                                "Execute: BindShaderParameters pipeline does not match the currently bound pipeline"));
+                        }
+                        if (TypedCmd.Parameters.GetSets().empty())
                             return std::unexpected(ErrorMessage("Execute: BindShaderParameters has no parameter sets"));
                     } else if constexpr (std::is_same_v<CommandType, RHI::DrawIndexedCmd>) {
-                        if (!DrawCmd.PipelinePtr)
+                        if (!bRenderingScope)
+                            return std::unexpected(ErrorMessage("Execute: draw commands require a rendering scope"));
+                        if (!TypedCmd.PipelinePtr)
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing graphics pipeline"));
-                        if (BoundPipeline != DrawCmd.PipelinePtr)
+                        if (BoundPipeline != TypedCmd.PipelinePtr) {
                             return std::unexpected(ErrorMessage(
                                 "Execute: indexed draw pipeline does not match the currently bound graphics pipeline"));
-                        if (!DrawCmd.VertexBuffers[0])
+                        }
+                        if (!TypedCmd.VertexBuffers[0])
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing vertex buffer"));
-                        if (!DrawCmd.IndexBufferPtr)
+                        if (!TypedCmd.IndexBufferPtr)
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing index buffer"));
                     } else if constexpr (std::is_same_v<CommandType, RHI::DrawCmd>) {
-                        if (!DrawCmd.PipelinePtr)
+                        if (!bRenderingScope)
+                            return std::unexpected(ErrorMessage("Execute: draw commands require a rendering scope"));
+                        if (!TypedCmd.PipelinePtr)
                             return std::unexpected(ErrorMessage("Execute: draw is missing graphics pipeline"));
-                        if (BoundPipeline != DrawCmd.PipelinePtr)
-                            return std::unexpected(
-                                ErrorMessage("Execute: draw pipeline does not match the currently bound graphics pipeline"));
-                        if (!DrawCmd.VertexBuffers[0])
+                        if (BoundPipeline != TypedCmd.PipelinePtr) {
+                            return std::unexpected(ErrorMessage(
+                                "Execute: draw pipeline does not match the currently bound graphics pipeline"));
+                        }
+                        if (!TypedCmd.VertexBuffers[0])
                             return std::unexpected(ErrorMessage("Execute: draw is missing vertex buffer"));
+                    } else if constexpr (std::is_same_v<CommandType, RHI::BuildOrUpdateTopLevelAccelerationStructureCmd>) {
+                        if (bRenderingScope) {
+                            return std::unexpected(ErrorMessage(
+                                "Execute: acceleration-structure builds require a non-rendering scope"));
+                        }
+                        if (!TypedCmd.TargetPtr)
+                            return std::unexpected(ErrorMessage("Execute: TLAS build is missing its target"));
+                    } else if constexpr (std::is_same_v<CommandType, RHI::TraceRaysCmd>) {
+                        if (bRenderingScope)
+                            return std::unexpected(ErrorMessage("Execute: TraceRays requires a non-rendering scope"));
+                        if (!TypedCmd.PipelinePtr)
+                            return std::unexpected(ErrorMessage("Execute: TraceRays is missing ray-tracing pipeline"));
+                        if (BoundPipeline != TypedCmd.PipelinePtr) {
+                            return std::unexpected(ErrorMessage(
+                                "Execute: TraceRays pipeline does not match the currently bound ray-tracing pipeline"));
+                        }
+                        if (TypedCmd.Width == 0 || TypedCmd.Height == 0 || TypedCmd.Depth == 0)
+                            return std::unexpected(ErrorMessage("Execute: TraceRays dimensions must be non-zero"));
+                    } else if constexpr (std::is_same_v<CommandType, RHI::SetViewportCmd> ||
+                                         std::is_same_v<CommandType, RHI::SetFullViewportCmd> ||
+                                         std::is_same_v<CommandType, RHI::SetScissorCmd> ||
+                                         std::is_same_v<CommandType, RHI::SetFullScissorRectCmd>) {
+                        if (!bRenderingScope)
+                            return std::unexpected(ErrorMessage("Execute: viewport and scissor commands require a rendering scope"));
                     }
 
                     return {};
@@ -700,6 +753,24 @@ class RenderDevice final : public RHI::RenderDevice {
                 if (auto R = std::visit(ValidateCommand, Cmd); !R)
                     return std::unexpected(R.error());
             }
+            return {};
+        };
+
+        for (const auto& Scope : CmdList.Scopes) {
+            const auto ValidateScope = [&ValidateCommands](const auto& TypedScope) -> std::expected<void, ErrorMessage> {
+                using ScopeType = std::decay_t<decltype(TypedScope)>;
+                if constexpr (std::is_same_v<ScopeType, RHI::Pass>) {
+                    if (!TypedScope.Desc.ColorAttachment.TexturePtr) {
+                        return std::unexpected(
+                            ErrorMessage("Execute: pass color attachment must be an explicit render target"));
+                    }
+                    return ValidateCommands(TypedScope.Commands, true);
+                } else {
+                    return ValidateCommands(TypedScope.Commands, false);
+                }
+            };
+            if (auto R = std::visit(ValidateScope, Scope); !R)
+                return std::unexpected(R.error());
         }
 
         return {};
@@ -779,7 +850,7 @@ class RenderDevice final : public RHI::RenderDevice {
     [[nodiscard]] auto Execute(const RHI::CommandList& CmdList) -> std::expected<void, ErrorMessage> override {
         if (auto R = ValidateCommandList(CmdList); !R)
             return std::unexpected(R.error());
-        if (CmdList.Passes.empty() && !CmdList.PresentSource)
+        if (CmdList.Scopes.empty() && !CmdList.PresentSource)
             return {};
 
         if (auto R = BeginFrame(); !R)
@@ -793,15 +864,19 @@ class RenderDevice final : public RHI::RenderDevice {
         UsageTracker.StampPresentSource(CmdList.PresentSource);
 
         std::vector<vk::CommandBuffer> Secondaries;
-        Secondaries.reserve(CmdList.Passes.size());
+        Secondaries.reserve(CmdList.Scopes.size());
 
-        for (const auto& Pass : CmdList.Passes) {
-            // ── Update usage tokens on all resources referenced by this pass ──
-            UsageTracker.StampPassAttachments(Pass.Desc);
-            for (const auto& Cmd : Pass.Commands)
-                std::visit(UsageTracker, Cmd);
+        for (const auto& Scope : CmdList.Scopes) {
+            const auto StampScopeUsage = [&UsageTracker](const auto& TypedScope) -> void {
+                using ScopeType = std::decay_t<decltype(TypedScope)>;
+                if constexpr (std::is_same_v<ScopeType, RHI::Pass>)
+                    UsageTracker.StampPassAttachments(TypedScope.Desc);
+                for (const auto& Cmd : TypedScope.Commands)
+                    std::visit(UsageTracker, Cmd);
+            };
+            std::visit(StampScopeUsage, Scope);
 
-            // Allocate per-pass secondary from the frame's sub-pool
+            // Allocate one secondary for this ordered rendering or non-rendering scope.
             vk::CommandBufferAllocateInfo Alloc{
                 .commandPool        = *m_FrameContext[m_CurrentFrame].SubPool,
                 .level              = vk::CommandBufferLevel::eSecondary,
@@ -827,24 +902,31 @@ class RenderDevice final : public RHI::RenderDevice {
                 return std::unexpected(
                     ErrorMessage(Core::Format("Execute: secondary CB begin failed: {}", vk::to_string(R))));
 
-            // Begin rendering scope from Pass desc
             {
                 auto           ImageStateCopy = m_CommittedImageStates;
                 CommandVisitor Visitor{
-                    .Buf           = SecBuf,
-                    .LocalStates   = ImageStateCopy,
-                    .Descriptors        = m_DescriptorManager.get(),
-                    .ConstantArena      = &m_ConstantArena,
-                    .DrawConstantArena  = &m_DrawConstantArena,
-                    .FrameIndex         = m_CurrentFrame,
+                    .Buf              = SecBuf,
+                    .LocalStates      = ImageStateCopy,
+                    .Descriptors      = m_DescriptorManager.get(),
+                    .ConstantArena    = &m_ConstantArena,
+                    .DrawConstantArena = &m_DrawConstantArena,
+                    .FrameIndex       = m_CurrentFrame,
                 };
-                Visitor.BeginPass(Pass.Desc);
-                for (const auto& Cmd : Pass.Commands) {
-                    std::visit(Visitor, Cmd);
-                    if (Visitor.Error)
-                        return std::unexpected(*Visitor.Error);
-                }
-                Visitor.EndPass();
+                const auto RecordScope = [&Visitor](const auto& TypedScope) -> std::expected<void, ErrorMessage> {
+                    using ScopeType = std::decay_t<decltype(TypedScope)>;
+                    if constexpr (std::is_same_v<ScopeType, RHI::Pass>)
+                        Visitor.BeginPass(TypedScope.Desc);
+                    for (const auto& Cmd : TypedScope.Commands) {
+                        std::visit(Visitor, Cmd);
+                        if (Visitor.Error)
+                            return std::unexpected(*Visitor.Error);
+                    }
+                    if constexpr (std::is_same_v<ScopeType, RHI::Pass>)
+                        Visitor.EndPass();
+                    return {};
+                };
+                if (auto R = std::visit(RecordScope, Scope); !R)
+                    return std::unexpected(R.error());
                 m_CommittedImageStates = std::move(ImageStateCopy);
             }
             if (auto R = SecBuf.end(); R != vk::Result::eSuccess)
@@ -921,6 +1003,7 @@ class RenderDevice final : public RHI::RenderDevice {
     vk::raii::Queue m_TransferQueue = nullptr;
 
     ImmediateContext        m_ImmediateContext;
+    ImmediateContext        m_GraphicsImmediateContext;
     TransferCompletionQueue m_TransferCompletionQueue;
 
     uint32_t m_FramesInFlight = 2;

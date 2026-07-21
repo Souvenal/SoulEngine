@@ -49,6 +49,10 @@ class RenderDevice {
         -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateRayTracingPipeline(const RayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<RayTracingPipeline>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const BottomLevelAccelerationStructureDesc& Desc)
+        -> std::expected<UPtr<BottomLevelAccelerationStructure>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const TopLevelAccelerationStructureDesc& Desc)
+        -> std::expected<UPtr<TopLevelAccelerationStructure>, ErrorMessage> = 0;
 
     // ── Command execution ────────────────────────────────────
 

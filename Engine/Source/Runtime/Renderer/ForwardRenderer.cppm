@@ -245,7 +245,7 @@ class ForwardRenderer final : public IRenderer {
                              IB);
         }
 
-        CmdList.Passes.push_back(std::move(Pass));
+        CmdList.Scopes.push_back(std::move(Pass));
         return {};
     }
 

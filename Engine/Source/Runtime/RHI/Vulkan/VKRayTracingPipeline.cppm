@@ -467,6 +467,13 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         Result->m_SetLayouts =
             std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));
         Result->m_PipelineLayout = std::make_shared<vk::raii::PipelineLayout>(std::move(LayoutObjects->second));
+        Result->m_RawSetLayouts.reserve(Result->m_SetLayouts->size());
+        for (const auto& SetLayout : *Result->m_SetLayouts)
+            Result->m_RawSetLayouts.push_back(*SetLayout);
+        Result->m_DescriptorSetCount = static_cast<Uint32>(Result->m_RawSetLayouts.size());
+        Result->m_Bindings = BuildReflectedBindings(Desc.Program.Reflection);
+        Result->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
+        Result->m_PushConstantSize = MaxPushConstantSize(Desc.Program.Reflection);
         Result->m_ShaderBindingTable = std::make_shared<HostBuffer>(std::move(*SbtBuffer));
         Result->m_RayGenerationRegion = MakeRegion(SbtAddress, SbtLayout->RayGeneration);
         Result->m_MissRegion = MakeRegion(SbtAddress, SbtLayout->Miss);
@@ -483,6 +490,43 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
 
     [[nodiscard]] auto GetPipelineLayout() const -> vk::PipelineLayout {
         return *(*m_PipelineLayout);
+    }
+
+    [[nodiscard]] auto GetPushConstantSize() const -> Uint32 {
+        return m_PushConstantSize;
+    }
+
+    [[nodiscard]] auto GetPushConstantStages() const -> vk::ShaderStageFlags {
+        return GetRayTracingShaderStageFlags();
+    }
+
+    [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
+                                                         Uint32             SetIndex,
+                                                         Uint32             VariableDescriptorCount,
+                                                         DescriptorManager& Descriptors)
+        -> std::expected<DescriptorSetInstance*, ErrorMessage> {
+        if (SetIndex >= m_RawSetLayouts.size())
+            return std::unexpected(ErrorMessage(Core::Format("Parameter set uses missing descriptor set {}", SetIndex)));
+
+        auto& Instances = m_ParameterSets->ByParameterId[ParameterId];
+        if (Instances.size() < m_RawSetLayouts.size())
+            Instances.resize(m_RawSetLayouts.size());
+
+        auto& Versions = Instances[SetIndex];
+        for (auto& Instance : Versions) {
+            if (Instance.VariableDescriptorCount == VariableDescriptorCount)
+                return &Instance;
+        }
+
+        auto Set = Descriptors.AllocatePersistentDescriptorSet(m_RawSetLayouts[SetIndex], VariableDescriptorCount);
+        if (!Set)
+            return std::unexpected(Set.error());
+
+        Versions.push_back(DescriptorSetInstance{
+            .Set                     = std::move(*Set),
+            .VariableDescriptorCount = VariableDescriptorCount,
+        });
+        return &Versions.back();
     }
 
     [[nodiscard]] auto GetRayGenerationRegion() const -> const vk::StridedDeviceAddressRegionKHR& {
@@ -505,12 +549,17 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
     SPtr<vk::raii::Pipeline>                         m_Pipeline = nullptr;
     SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout = nullptr;
     SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts = nullptr;
+    std::vector<vk::DescriptorSetLayout>             m_RawSetLayouts = {};
+    std::vector<ReflectedDescriptorBinding>          m_Bindings = {};
     SPtr<HostBuffer>                                 m_ShaderBindingTable = nullptr;
     vk::StridedDeviceAddressRegionKHR                m_RayGenerationRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_MissRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_HitRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_CallableRegion = {};
     SPtr<PipelineParameterSetInstances>              m_ParameterSets = std::make_shared<PipelineParameterSetInstances>();
+    Uint32                                           m_DescriptorSetCount = 0;
+    Uint32                                           m_DynamicOffsetCount = 0;
+    Uint32                                           m_PushConstantSize = 0;
     DeletionQueue*                                   m_DeletionQueue = nullptr;
 };
 
