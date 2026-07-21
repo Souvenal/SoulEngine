@@ -31,13 +31,22 @@ using FeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                          vk::PhysicalDeviceVulkan11Features,
                                          vk::PhysicalDeviceVulkan12Features,
                                          vk::PhysicalDeviceVulkan13Features,
-                                         vk::PhysicalDeviceVulkan14Features>;
+                                         vk::PhysicalDeviceVulkan14Features,
+                                         vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+                                         vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>;
 
 using PropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
                                            vk::PhysicalDeviceVulkan11Properties,
                                            vk::PhysicalDeviceVulkan12Properties,
                                            vk::PhysicalDeviceVulkan13Properties,
-                                           vk::PhysicalDeviceVulkan14Properties>;
+                                           vk::PhysicalDeviceVulkan14Properties,
+                                           vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
+                                           vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>;
+
+struct RayTracingSupport {
+    bool   Available         = false;
+    String UnavailableReason = {};
+};
 
 class Capability : public Singleton<Capability> {
     friend class Singleton<Capability>;
@@ -96,12 +105,25 @@ class Capability : public Singleton<Capability> {
             return std::unexpected(Result.error());
         m_EnabledDeviceNames = std::move(*Result);
 
-        // Query supported features from physical device
+        // Query supported features from physical device.
         m_SupportedFeatures = PD.getFeatures2<vk::PhysicalDeviceFeatures2,
                                               vk::PhysicalDeviceVulkan11Features,
                                               vk::PhysicalDeviceVulkan12Features,
                                               vk::PhysicalDeviceVulkan13Features,
-                                              vk::PhysicalDeviceVulkan14Features>();
+                                              vk::PhysicalDeviceVulkan14Features,
+                                              vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+                                              vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
+
+        ResolveRayTracingSupport(ExtProps, PD.getProperties().apiVersion);
+        if (m_RayTracingSupport.Available) {
+            for (const auto& Ext : m_RayTracingExts)
+                m_EnabledDeviceNames.emplace_back(Ext.Name);
+        } else {
+            // These extension feature structs are included in the common query chain.
+            // Do not request them from a device unless the full extension/feature bundle is enabled.
+            m_SupportedFeatures.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure = false;
+            m_SupportedFeatures.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline = false;
+        }
 
         return std::tuple<std::vector<const char*>, const FeaturesChain&>{m_EnabledDeviceNames, m_SupportedFeatures};
     }
@@ -117,7 +139,9 @@ class Capability : public Singleton<Capability> {
                                          vk::PhysicalDeviceVulkan11Properties,
                                          vk::PhysicalDeviceVulkan12Properties,
                                          vk::PhysicalDeviceVulkan13Properties,
-                                         vk::PhysicalDeviceVulkan14Properties>();
+                                         vk::PhysicalDeviceVulkan14Properties,
+                                         vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
+                                         vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
     }
 
     // ── Queries ──────────────────────────────────────────────────────────
@@ -151,9 +175,16 @@ class Capability : public Singleton<Capability> {
     }
 
     [[nodiscard]] auto IsDeviceExtensionEnabled(const char* Name) -> bool {
-        auto It =
-            std::ranges::find_if(m_DeviceExts, [&](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
-        return It != m_DeviceExts.end() && It->Enabled;
+        const auto IsEnabled = [Name](const std::vector<ExtensionRequest>& Extensions) -> bool {
+            auto It = std::ranges::find_if(
+                Extensions, [Name](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
+            return It != Extensions.end() && It->Enabled;
+        };
+        return IsEnabled(m_DeviceExts) || (m_RayTracingSupport.Available && IsEnabled(m_RayTracingExts));
+    }
+
+    [[nodiscard]] auto GetRayTracingSupport() const -> const RayTracingSupport& {
+        return m_RayTracingSupport;
     }
 
   private:
@@ -216,13 +247,62 @@ class Capability : public Singleton<Capability> {
         m_DeviceExts.push_back({vk::KHRPortabilitySubsetExtensionName, false});
         // VK_EXT_memory_budget — used by VMA
         m_DeviceExts.push_back({vk::EXTMemoryBudgetExtensionName, false});
+
+        // Hardware ray tracing is an optional all-or-nothing device capability.
+        // These extensions are appended only after ResolveRayTracingSupport validates
+        // the entire extension and feature bundle for the selected physical device.
+        m_RayTracingExts.push_back({vk::KHRAccelerationStructureExtensionName, false});
+        m_RayTracingExts.push_back({vk::KHRRayTracingPipelineExtensionName, false});
+        m_RayTracingExts.push_back({vk::KHRDeferredHostOperationsExtensionName, false});
+    }
+
+    auto ResolveRayTracingSupport(std::span<const vk::ExtensionProperties> AvailableExtensions, Uint32 ApiVersion) -> void {
+        m_RayTracingSupport = {};
+        const auto HasExtension = [AvailableExtensions](const char* Name) -> bool {
+            return std::ranges::any_of(
+                AvailableExtensions, [Name](const auto& Property) { return std::strcmp(Property.extensionName, Name) == 0; });
+        };
+        for (auto& Ext : m_RayTracingExts) {
+            Ext.Enabled = HasExtension(Ext.Name);
+            if (!Ext.Enabled) {
+                m_RayTracingSupport.UnavailableReason = Format("Missing required ray-tracing device extension '{}'", Ext.Name);
+                return;
+            }
+        }
+
+        if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRSpirv14ExtensionName)) {
+            m_RayTracingSupport.UnavailableReason = "VK_KHR_spirv_1_4 is required before Vulkan 1.2";
+            return;
+        }
+        if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRShaderFloatControlsExtensionName)) {
+            m_RayTracingSupport.UnavailableReason = "VK_KHR_shader_float_controls is required before Vulkan 1.2";
+            return;
+        }
+
+        const auto& V12 = m_SupportedFeatures.get<vk::PhysicalDeviceVulkan12Features>();
+        if (!V12.bufferDeviceAddress) {
+            m_RayTracingSupport.UnavailableReason = "bufferDeviceAddress feature is not supported";
+            return;
+        }
+        if (!m_SupportedFeatures.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure) {
+            m_RayTracingSupport.UnavailableReason = "accelerationStructure feature is not supported";
+            return;
+        }
+        if (!m_SupportedFeatures.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline) {
+            m_RayTracingSupport.UnavailableReason = "rayTracingPipeline feature is not supported";
+            return;
+        }
+
+        m_RayTracingSupport.Available = true;
     }
 
     // ── Members ─────────────────────────────────────────────────────────
 
     std::vector<ExtensionRequest> m_InstanceExts;
     std::vector<ExtensionRequest> m_DeviceExts;
+    std::vector<ExtensionRequest> m_RayTracingExts;
     std::vector<const char*>      m_EnabledDeviceNames;
+    RayTracingSupport             m_RayTracingSupport = {};
 
     FeaturesChain   m_SupportedFeatures; ///< Queried from physical device
     PropertiesChain m_Properties;        ///< Queried from physical device

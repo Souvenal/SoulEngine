@@ -164,6 +164,9 @@ class DeviceBuffer {
         Buf.m_Device    = Dev;
         Buf.m_Size      = Size;
 
+        if (Capability::Get().GetRayTracingSupport().Available)
+            Usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
+
         vk::BufferCreateInfo BufCI{
             .size        = Size,
             .usage       = Usage,
@@ -224,6 +227,9 @@ class DeviceBuffer {
     }
     [[nodiscard]] auto GetSize() const -> Uint64 {
         return m_Size;
+    }
+    [[nodiscard]] auto GetDeviceAddress() const -> vk::DeviceAddress {
+        return m_Device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = m_Buffer});
     }
 
     /// Copy full contents from a HostBuffer staging source via ImmediateContext.
@@ -305,8 +311,10 @@ class VertexBuffer final : public RHI::VertexBuffer {
 
         // ── Device buffer ────────────────────────────────────────────────
         DeviceBuffer DevBuf;
-        auto         DevRes = DeviceBuffer::Create(
-            Size, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, Dev, Alloc);
+        auto Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        if (Capability::Get().GetRayTracingSupport().Available)
+            Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+        auto DevRes = DeviceBuffer::Create(Size, Usage, Dev, Alloc);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("VertexBuffer::Create: device buffer creation failed"));
         DevBuf = std::move(*DevRes);
@@ -396,8 +404,10 @@ class IndexBuffer final : public RHI::IndexBuffer {
             return std::unexpected(R.error().Append("IndexBuffer::Create: staging upload failed"));
 
         DeviceBuffer DevBuf;
-        auto         DevRes = DeviceBuffer::Create(
-            Size, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, Dev, Alloc);
+        auto Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        if (Capability::Get().GetRayTracingSupport().Available)
+            Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+        auto DevRes = DeviceBuffer::Create(Size, Usage, Dev, Alloc);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("IndexBuffer::Create: device buffer creation failed"));
         DevBuf = std::move(*DevRes);

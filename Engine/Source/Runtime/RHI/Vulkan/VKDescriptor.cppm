@@ -69,14 +69,16 @@ class DescriptorManager {
 
         // ── Descriptor pool ─────────────────────────────────────────────
         constexpr Uint32 ScratchDescriptorCount = 4096;
-        std::array PoolSizes = {
+        std::vector<vk::DescriptorPoolSize> PoolSizes{
             vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, ScratchDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, ScratchDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eSampler, ScratchDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, ScratchDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, ScratchDescriptorCount},
         };
-        Uint32                       MaxSets = ScratchDescriptorCount + 1;
+        if (Capability::Get().GetRayTracingSupport().Available)
+            PoolSizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, ScratchDescriptorCount);
+        Uint32 MaxSets = ScratchDescriptorCount + 1;
         vk::DescriptorPoolCreateInfo PoolCI{
             // eFreeDescriptorSet is required because scratch sets are
             // vk::raii::DescriptorSet, whose destructors call vkFreeDescriptorSets.
@@ -177,6 +179,37 @@ class DescriptorManager {
             .pImageInfo      = &ImageInfo,
         };
         m_Device->updateDescriptorSets(Write, {});
+    }
+
+    auto WriteStorageImageDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::ImageView ImageView) -> void {
+        vk::DescriptorImageInfo ImageInfo{
+            .sampler     = nullptr,
+            .imageView   = ImageView,
+            .imageLayout = vk::ImageLayout::eGeneral,
+        };
+        vk::WriteDescriptorSet Write{
+            .dstSet          = Set,
+            .dstBinding      = Binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType  = vk::DescriptorType::eStorageImage,
+            .pImageInfo      = &ImageInfo,
+        };
+        m_Device->updateDescriptorSets(Write, {});
+    }
+
+    auto WriteAccelerationStructureDescriptor(vk::DescriptorSet Set,
+                                              Uint32            Binding,
+                                              vk::AccelerationStructureKHR AccelerationStructure) -> void {
+        vk::StructureChain<vk::WriteDescriptorSet, vk::WriteDescriptorSetAccelerationStructureKHR> WriteChain = {
+            {.dstSet          = Set,
+             .dstBinding      = Binding,
+             .dstArrayElement = 0,
+             .descriptorCount = 1,
+             .descriptorType  = vk::DescriptorType::eAccelerationStructureKHR},
+            {.accelerationStructureCount = 1, .pAccelerationStructures = &AccelerationStructure},
+        };
+        m_Device->updateDescriptorSets(WriteChain.get<vk::WriteDescriptorSet>(), {});
     }
 
     auto WriteSamplerDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Sampler Sampler) -> void {

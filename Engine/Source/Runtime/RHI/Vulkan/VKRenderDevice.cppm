@@ -499,6 +499,11 @@ class RenderDevice final : public RHI::RenderDevice {
         m_TransferQueue = m_Device.getQueue(m_TransferFamily, 0);
 
         Capability::Get().ResolveDeviceProperties(m_PhysicalDevice);
+        const auto& RayTracing = Capability::Get().GetRayTracingSupport();
+        if (RayTracing.Available)
+            LogInfo("Hardware ray tracing capability is available on the selected GPU");
+        else
+            LogInfo("Hardware ray tracing capability is unavailable: {}", RayTracing.UnavailableReason);
 
         return {};
     }
@@ -520,6 +525,8 @@ class RenderDevice final : public RHI::RenderDevice {
         };
         if (Capability::Get().IsDeviceExtensionEnabled(vk::EXTMemoryBudgetExtensionName))
             VmaInfo.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+        if (Capability::Get().GetRayTracingSupport().Available)
+            VmaInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
         VkResult Result = vmaCreateAllocator(&VmaInfo, &m_Allocator);
         if (Result != VK_SUCCESS)
             return std::unexpected(ErrorMessage(

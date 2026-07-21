@@ -312,6 +312,10 @@ class RenderTarget final : public RHI::RenderTarget {
         const bool IsColor = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::RenderTarget)) != 0;
         const bool IsFrameOutput =
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::FrameOutput)) != 0;
+        const bool IsStorage =
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::ShaderStorage)) != 0;
+        if (IsStorage && IsDepth)
+            return std::unexpected(ErrorMessage("RenderTarget::Create: storage usage is not supported for depth targets"));
         if (!IsDepth && !IsColor)
             return std::unexpected(ErrorMessage("RenderTarget::Create: missing attachment usage"));
 
@@ -322,6 +326,8 @@ class RenderTarget final : public RHI::RenderTarget {
             Usage |= vk::ImageUsageFlagBits::eColorAttachment;
         if (IsFrameOutput)
             Usage |= vk::ImageUsageFlagBits::eTransferSrc;
+        if (IsStorage)
+            Usage |= vk::ImageUsageFlagBits::eStorage;
 
         const auto VkFmt = SoulEngine::RHI::Vulkan::ToVkFormat(Desc.Format);
         vk::ImageCreateInfo ImageCI{

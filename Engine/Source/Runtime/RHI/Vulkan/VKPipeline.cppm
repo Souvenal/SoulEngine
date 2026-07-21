@@ -31,6 +31,7 @@ namespace SoulEngine::RHI::Vulkan {
     case Shader::ResourceType::Sampler:
         return vk::DescriptorType::eSampler;
     case Shader::ResourceType::AccelerationStructure:
+        return vk::DescriptorType::eAccelerationStructureKHR;
     case Shader::ResourceType::Unknown:
         break;
     }

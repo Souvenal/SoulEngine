@@ -67,6 +67,46 @@ struct BufferState {
     bool                    isWrite     = false;
 };
 
+auto TransitionBuffer(vk::raii::CommandBuffer&                Buf,
+                      std::unordered_map<vk::Buffer, BufferState>& States,
+                      vk::Buffer                                   Buffer,
+                      vk::PipelineStageFlags2                     DstStage,
+                      vk::AccessFlags2                            DstAccess,
+                      bool                                         IsWrite,
+                      vk::DeviceSize                               Offset = 0,
+                      vk::DeviceSize                               Size   = vk::WholeSize) -> void {
+    auto It      = States.find(Buffer);
+    auto Current = (It != States.end()) ? It->second : BufferState{};
+
+    const bool NeedsBarrier = (Current.stage != DstStage) || (Current.access != DstAccess) || Current.isWrite;
+    if (NeedsBarrier) {
+        vk::BufferMemoryBarrier2 Barrier{
+            .srcStageMask        = Current.stage,
+            .srcAccessMask       = Current.access,
+            .dstStageMask        = DstStage,
+            .dstAccessMask       = DstAccess,
+            .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+            .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+            .buffer              = Buffer,
+            .offset              = Offset,
+            .size                = Size,
+        };
+        vk::DependencyInfo Dep{
+            .dependencyFlags          = vk::DependencyFlagBits::eByRegion,
+            .bufferMemoryBarrierCount = 1,
+            .pBufferMemoryBarriers    = &Barrier,
+        };
+        Buf.pipelineBarrier2(Dep);
+    }
+
+    States[Buffer] = BufferState{
+        .stage       = DstStage,
+        .access      = DstAccess,
+        .queueFamily = vk::QueueFamilyIgnored,
+        .isWrite     = IsWrite,
+    };
+}
+
 /// Per-image GPU state for automatic barrier generation.
 /// Default layout = eUndefined so first-use transitions derive the correct
 /// srcLayout without special-case init logic.
