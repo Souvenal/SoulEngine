@@ -103,6 +103,12 @@ struct UsageVisitor {
                                 if (Resource)
                                     Resource->UpdateLastUsageToken(CurrentToken);
                             }
+                        } else if constexpr (std::same_as<ValueType, VertexBuffer*>) {
+                            if (TypedValue)
+                                TypedValue->UpdateLastUsageToken(CurrentToken);
+                        } else if constexpr (std::same_as<ValueType, IndexBuffer*>) {
+                            if (TypedValue)
+                                TypedValue->UpdateLastUsageToken(CurrentToken);
                         } else if constexpr (std::same_as<ValueType, Sampler*>) {
                             if (TypedValue)
                                 TypedValue->UpdateLastUsageToken(CurrentToken);

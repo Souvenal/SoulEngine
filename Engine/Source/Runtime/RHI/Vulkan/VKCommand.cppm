@@ -249,6 +249,41 @@ struct CommandVisitor {
                 if (!bUpdateDescriptors)
                     continue;
 
+                if (const auto* VertexBuffer = std::get_if<RHI::VertexBuffer*>(&Value)) {
+                    if (!*VertexBuffer) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null storage vertex buffer", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkBuffer = static_cast<const Vulkan::VertexBuffer&>(**VertexBuffer);
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *VertexBuffer) {
+                        Descriptors->WriteStorageBufferDescriptor(
+                            *(*Instance)->Set,
+                            Binding.Binding,
+                            VkBuffer.GetVkBuffer(),
+                            VkBuffer.GetStride() * VkBuffer.GetVertexCount());
+                        ResourceBindings[Binding.Binding] = *VertexBuffer;
+                    }
+                    continue;
+                }
+
+                if (const auto* IndexBuffer = std::get_if<RHI::IndexBuffer*>(&Value)) {
+                    if (!*IndexBuffer) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null storage index buffer", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkBuffer = static_cast<const Vulkan::IndexBuffer&>(**IndexBuffer);
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *IndexBuffer) {
+                        Descriptors->WriteStorageBufferDescriptor(
+                            *(*Instance)->Set, Binding.Binding, VkBuffer.GetVkBuffer(), VkBuffer.GetIndexCount() * sizeof(Uint32));
+                        ResourceBindings[Binding.Binding] = *IndexBuffer;
+                    }
+                    continue;
+                }
+
                 if (const auto* Texture = std::get_if<RHI::SampledTexture*>(&Value)) {
                     if (!*Texture) {
                         Error = ErrorMessage(Core::Format(

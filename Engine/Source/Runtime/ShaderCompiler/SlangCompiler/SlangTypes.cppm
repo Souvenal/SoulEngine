@@ -56,8 +56,15 @@ namespace {
         return Shader::ResourceType::ConstantBuffer;
     case slang::TypeReflection::Kind::SamplerState:
         return Shader::ResourceType::Sampler;
-    case slang::TypeReflection::Kind::Resource:
+    case slang::TypeReflection::Kind::Resource: {
+        const auto BaseResourceShape = static_cast<SlangResourceShapeIntegral>(TypeLayout->getResourceShape()) &
+            static_cast<SlangResourceShapeIntegral>(SLANG_RESOURCE_BASE_SHAPE_MASK);
+        if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_STRUCTURED_BUFFER) ||
+            BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_BYTE_ADDRESS_BUFFER)) {
+            return Shader::ResourceType::StorageBuffer;
+        }
         return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
+    }
     default:
         return std::unexpected(ErrorMessage(Format("Unsupported leaf type kind {} in reflection",
                                                    static_cast<int>(TypeLayout->getKind()))));

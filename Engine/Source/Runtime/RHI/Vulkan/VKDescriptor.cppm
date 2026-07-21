@@ -160,6 +160,14 @@ class DescriptorManager {
         WriteConstantArenaDescriptor(*m_Device, Buffer, Set, Binding, Range);
     }
 
+    auto WriteStorageBufferDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
+        vk::DescriptorBufferInfo BufferInfo{.buffer = Buffer, .offset = 0, .range = Range};
+        vk::WriteDescriptorSet Write{
+            .dstSet = Set, .dstBinding = Binding, .dstArrayElement = 0, .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &BufferInfo};
+        m_Device->updateDescriptorSets(Write, {});
+    }
+
     auto WriteSampledTextureDescriptor(vk::DescriptorSet Set,
                                        Uint32            Binding,
                                        Uint32            ArrayElement,

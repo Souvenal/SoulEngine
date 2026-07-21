@@ -360,6 +360,8 @@ struct ShaderParameterConstant {
 /// @brief One value assigned to a reflected shader parameter binding.
 using ShaderParameterValue = std::variant<std::monostate,
                                           SampledTexture*,
+                                          VertexBuffer*,
+                                          IndexBuffer*,
                                           ResourceArray<SampledTexture>,
                                           Sampler*,
                                           TopLevelAccelerationStructure*,
@@ -472,6 +474,16 @@ class ShaderParameters {
         return Set(ParameterPath, Shader::ResourceType::SampledTexture, false, Texture);
     }
 
+    [[nodiscard]] auto SetStorageVertexBuffer(StringView ParameterPath, VertexBuffer* Buffer)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::StorageBuffer, false, Buffer);
+    }
+
+    [[nodiscard]] auto SetStorageIndexBuffer(StringView ParameterPath, IndexBuffer* Buffer)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::StorageBuffer, false, Buffer);
+    }
+
     [[nodiscard]] auto SetTopLevelAccelerationStructure(StringView                         ParameterPath,
                                                          TopLevelAccelerationStructure* AccelerationStructure)
         -> std::expected<void, ErrorMessage> {
@@ -537,7 +549,10 @@ class ShaderParameters {
             const auto& Binding = Set.m_Layout.GetBindings()[*Index];
             if (Binding.Type != ExpectedType) {
                 return std::unexpected(ErrorMessage(
-                    Format("Shader parameter '{}' has incompatible reflected resource type", ParameterPath)));
+                    Format("Shader parameter '{}' has incompatible reflected resource type (expected {}, reflected {})",
+                           ParameterPath,
+                           static_cast<Uint32>(ExpectedType),
+                           static_cast<Uint32>(Binding.Type))));
             }
             if (!bExpectArray && Binding.ArrayCount != 1) {
                 return std::unexpected(ErrorMessage(

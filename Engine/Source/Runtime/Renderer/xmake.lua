@@ -5,3 +5,5 @@ target("Renderer")
     add_deps("Core", "RHI", "RHIVulkan", "Scene", "Resource")
 
     add_files("*.cppm")
+
+test_module("Renderer", {additional_packages = {"entt", "glfw"}})

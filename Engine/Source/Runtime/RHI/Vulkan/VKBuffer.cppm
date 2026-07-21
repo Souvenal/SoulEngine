@@ -311,7 +311,8 @@ class VertexBuffer final : public RHI::VertexBuffer {
 
         // ── Device buffer ────────────────────────────────────────────────
         DeviceBuffer DevBuf;
-        auto Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        auto Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
+                     vk::BufferUsageFlagBits::eTransferDst;
         if (Capability::Get().GetRayTracingSupport().Available)
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         auto DevRes = DeviceBuffer::Create(Size, Usage, Dev, Alloc);
@@ -404,7 +405,8 @@ class IndexBuffer final : public RHI::IndexBuffer {
             return std::unexpected(R.error().Append("IndexBuffer::Create: staging upload failed"));
 
         DeviceBuffer DevBuf;
-        auto Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        auto Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
+                     vk::BufferUsageFlagBits::eTransferDst;
         if (Capability::Get().GetRayTracingSupport().Available)
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         auto DevRes = DeviceBuffer::Create(Size, Usage, Dev, Alloc);
