@@ -61,7 +61,7 @@ class RayTracingRenderer final : public IRenderer {
     ~RayTracingRenderer() override { OnDetach(); }
 
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
-        const auto ShaderPath = ConfigManager::Get().CurrentApplicationDir() / "Shaders" / "RayTracing.slang";
+        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "RayTracing.slang";
         auto& Resources = Resource::Manager::Get();
         m_Pipeline = Resources.RequestRayTracingPipelineRef(Resource::RayTracingPipelineRequest{
             .RayGeneration = {.SourcePath = ShaderPath, .EntryPoint = "rayGenMain"},
@@ -132,9 +132,9 @@ class RayTracingRenderer final : public IRenderer {
 
         if (m_Parameters.GetLayoutId() != Pipeline->GetShaderParameterLayout().GetId())
             m_Parameters = RHI::ShaderParameters::Create(*Pipeline);
-        if (auto R = m_Parameters.SetTopLevelAccelerationStructure("g_tlas", Tlas->GetRhiPayload()); !R)
+        if (auto R = m_Parameters.SetTopLevelAccelerationStructure("g_rayTracingResources.tlas", Tlas->GetRhiPayload()); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer TLAS parameter binding failed"));
-        if (auto R = m_Parameters.SetStorageRenderTarget("g_output", Output); !R)
+        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracingResources.output", Output); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer output parameter binding failed"));
         if (auto R = m_Parameters.SetStorageVertexBuffer("g_rayTracingGeometry.positions", Geometry->Position); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer position buffer binding failed"));
@@ -215,7 +215,7 @@ class RayTracingRenderer final : public IRenderer {
         const Path Candidate{String(AssetPath)};
         if (Candidate.is_absolute())
             return Candidate;
-        return ConfigManager::Get().EngineDirPath().parent_path() / Candidate;
+        return (ConfigManager::Get().CurrentApplicationDir() / "Assets" / Candidate).lexically_normal();
     }
 
     [[nodiscard]] static auto BuildViewConstants(const Scene::RenderViewSnapshot& View) -> RayTracingViewConstants {

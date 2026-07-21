@@ -8,11 +8,14 @@ Application logic lifecycle. Owns the mutable scene and renderer.
 
 | Term | Definition |
 |------|------------|
-| **Application** | Top-level object created by `EngineLoop`. Owns `Scene::Scene m_Scene` and `UPtr<Renderer::IRenderer> m_Renderer`. Lifecycle: `Create(Name)` → `OnAttach()` → `OnTick(dt, window)` / `OnRender()` → `OnDetach()`. |
+| **Application** | Project-level engine unit created through `ApplicationFactory`. Owns the mutable Scene and configured default Renderer, including their attach/detach lifecycle. |
+| **Default Scene Document** | Mandatory `Scene.yaml` at `Applications/<ApplicationName>/`. Every Application automatically loads it as its initial Scene during attachment; a missing document or Structural Error prevents startup, while Component Warnings are logged and allow startup. |
+| **Application Key** | Factory key that identifies one project-level Application and selects its `Applications/<ApplicationName>/` directory. |
 | **SceneSnapshot** | Immutable render-facing copy of `Scene` built at the end of `OnTick()` and published to the frame slot. |
-| **OnAttach** | Pure virtual. Derived class constructs the scene and renderer. Called by EngineLoop after RHI singleton is ready. |
-| **OnDetach** | Pure virtual. Derived class destroys the renderer and releases owned resources. Called by EngineLoop before RHI singleton shutdown. |
-| **OnTick** | Pure virtual. Per-frame application update for simulation, state changes, and main-thread Window input consumption. |
+| **OnAttach** | Non-virtual lifecycle method. Loads and validates the Default Scene Document before it initializes the configured default Renderer. Called by EngineLoop after the RHI singleton is ready. |
+| **OnDetach** | Non-virtual lifecycle method. Detaches and releases the configured default Renderer before engine shutdown. |
+| **Attach Rollback** | If default Renderer creation or attachment fails, `OnAttach()` detaches and releases any partially initialized Renderer before it returns the failure. |
+| **OnTick** | The temporary sole virtual Application extension point for project-specific per-frame behavior and main-thread Window input consumption. It remains until an explicit systems/controllers mechanism replaces it. |
 | **OnRender** | Non-virtual. Fixed pipeline: calls `m_Renderer->Render(SceneSnapshot)`. |
 | **Create** | Static factory: looks up `Name` in `ApplicationFactory`, constructs the application. Does NOT call `OnAttach()` — EngineLoop controls attach/detach timing. |
 

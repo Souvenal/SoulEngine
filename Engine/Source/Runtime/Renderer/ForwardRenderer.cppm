@@ -91,7 +91,7 @@ class ForwardRenderer final : public IRenderer {
     }
 
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
-        const auto ShaderPath = ConfigManager::Get().CurrentApplicationDir() / "Shaders" / "ForwardPbr.slang";
+        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "ForwardPbr.slang";
 
         m_Pipeline = Resource::Manager::Get().RequestGraphicsPipelineRef(Resource::GraphicsPipelineRequest{
             .VertEntry = {
@@ -253,7 +253,7 @@ class ForwardRenderer final : public IRenderer {
         const Path Asset{String(AssetPath)};
         if (Asset.is_absolute())
             return Asset.lexically_normal();
-        return (ConfigManager::Get().EngineDirPath().parent_path() / Asset).lexically_normal();
+        return (ConfigManager::Get().CurrentApplicationDir() / "Assets" / Asset).lexically_normal();
     }
 
     [[nodiscard]] auto GetOrRequestMesh(StringView Asset) -> Resource::ResourceRef<Resource::Mesh>& {

@@ -64,7 +64,7 @@ TEST_F(ShaderCompilerTest, CompileForwardPbrProgramWithExpectedBindings) {
     for (Uint32 Index = 0; Index < 7; ++Index)
         ProjectDir = ProjectDir.parent_path();
 
-    const auto ShaderDir  = ProjectDir / "Applications" / "Test" / "Shaders";
+    const auto ShaderDir  = ProjectDir / "Engine" / "Shaders";
     const auto ShaderPath = ShaderDir / "ForwardPbr.slang";
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
         .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = Backend::Slang},

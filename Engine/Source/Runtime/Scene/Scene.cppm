@@ -69,7 +69,8 @@ struct CameraComponent {
 
 /// @brief Scene-authored mesh asset reference.
 ///
-/// Renderer-specific mesh resources, uploads, and draw representations are
+/// Paths are relative to the current application Assets directory. Renderer-specific
+/// mesh resources, uploads, and draw representations are
 /// owned by each renderer rather than this component.
 struct MeshComponent {
     String Asset = {};

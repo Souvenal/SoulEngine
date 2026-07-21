@@ -22,7 +22,7 @@ entities:
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
-            asset: Applications/Test/Assets/teapot.obj
+            asset: teapot.obj
       - name: Teapot Left
         transform:
           translation: [-1.25, 0.0, 0.0]
@@ -30,7 +30,7 @@ entities:
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
-            asset: Applications/Test/Assets/teapot.obj
+            asset: teapot.obj
       - name: Teapot Right
         transform:
           translation: [1.25, 0.0, 0.0]
@@ -38,7 +38,7 @@ entities:
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
-            asset: Applications/Test/Assets/teapot.obj
+            asset: teapot.obj
       - name: Teapot Back Left
         transform:
           translation: [-1.25, 0.0, -1.25]
@@ -46,7 +46,7 @@ entities:
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
-            asset: Applications/Test/Assets/teapot.obj
+            asset: teapot.obj
       - name: Teapot Back Center
         transform:
           translation: [0.0, 0.0, -1.25]
@@ -54,7 +54,7 @@ entities:
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
-            asset: Applications/Test/Assets/teapot.obj
+            asset: teapot.obj
       - name: Teapot Back Right
         transform:
           translation: [1.25, 0.0, -1.25]
@@ -62,4 +62,4 @@ entities:
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
-            asset: Applications/Test/Assets/teapot.obj
+            asset: teapot.obj

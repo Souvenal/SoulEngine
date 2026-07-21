@@ -58,11 +58,13 @@ class Application {
 
     /// @brief Called when this application is attached to the engine loop.
     /// Derived classes construct the scene and renderer here.
-    [[nodiscard]] virtual auto OnAttach() -> std::expected<void, ErrorMessage> = 0;
+    /// The base class owns the default scene and renderer lifecycle.
+    [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage>;
 
     /// @brief Called when this application is detached from the engine loop.
     /// Derived classes destroy the renderer and release owned resources here.
-    virtual auto OnDetach() -> void = 0;
+    /// The base class detaches and releases the default renderer.
+    auto OnDetach() -> void;
 
     /// @brief Per-frame application update (game logic, simulation).
     virtual auto OnTick(float DeltaTime, WindowDisplay& Window) -> void = 0;
@@ -127,7 +129,37 @@ using ApplicationFactory = Core::Factory<Application>;
     return App;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// Application::OnAttach / OnDetach — default lifecycle
+// ═════════════════════════════════════════════════════════════════
+
+inline auto Application::OnAttach() -> std::expected<void, ErrorMessage> {
+    const auto ScenePath = ConfigManager::Get().CurrentApplicationDir() / "Scene.yaml";
+    auto Loaded = m_Scene.LoadFromFile(ScenePath);
+    if (!Loaded)
+        return std::unexpected(Loaded.error().Append("Default Scene document load failed"));
+    for (const auto& Warning : Loaded->Warnings)
+        LogWarning("Default Scene warning at '{}': {}", Warning.Path, Warning.Message);
+
+    auto CreatedRenderer = Renderer::CreateDefault();
+    if (!CreatedRenderer)
+        return std::unexpected(CreatedRenderer.error().Append("Default renderer creation failed"));
+    m_Renderer = std::move(*CreatedRenderer);
+    if (auto R = m_Renderer->OnAttach(); !R) {
+        OnDetach();
+        return std::unexpected(R.error().Append("Default renderer OnAttach failed"));
+    }
+
+    return {};
+}
+
+inline auto Application::OnDetach() -> void {
+    if (!m_Renderer)
+        return;
+    m_Renderer->OnDetach();
+    m_Renderer.reset();
+}
+
 // Application::OnRender — non-virtual render pipeline
 // ═════════════════════════════════════════════════════════════════════════════
 

@@ -81,7 +81,7 @@ template <typename T>
         return false;
     }
     if (Path(Mesh->Asset).is_absolute()) {
-        Error = "asset must be project-relative";
+        Error = "asset must be relative to the current application Assets directory";
         return false;
     }
     return true;

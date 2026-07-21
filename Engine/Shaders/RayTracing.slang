@@ -1,5 +1,8 @@
-[[vk::binding(0, 0)]] RaytracingAccelerationStructure g_tlas;
-[[vk::binding(1, 0)]] RWTexture2D<float4> g_output;
+public struct RayTracingResources {
+    public RaytracingAccelerationStructure tlas;
+    public RWTexture2D<float4> output;
+};
+public ParameterBlock<RayTracingResources> g_rayTracingResources;
 
 public struct RayTracingViewData {
     public float4x4 viewProjectionInverse;
@@ -37,8 +40,8 @@ void rayGenMain() {
     ray.TMin = 0.001;
     ray.TMax = 100.0;
     Payload payload = { float3(0.03, 0.05, 0.10) };
-    TraceRay(g_tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
-    g_output[pixel] = float4(payload.Color, 1.0);
+    TraceRay(g_rayTracingResources.tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    g_rayTracingResources.output[pixel] = float4(payload.Color, 1.0);
 }
 
 [shader("miss")]

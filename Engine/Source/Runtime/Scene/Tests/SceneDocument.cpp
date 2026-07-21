@@ -62,7 +62,7 @@ entities:
         near_plane: 0.1
         far_plane: 100.0
       mesh:
-        asset: Applications/Test/Assets/teapot.obj
+        asset: teapot.obj
 )");
 
     Scene Scene = {};
@@ -72,7 +72,7 @@ entities:
 
     const auto Snapshot = Scene.BuildSnapshot();
     ASSERT_EQ(Snapshot.Renderables.size(), 1u);
-    EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, "Applications/Test/Assets/teapot.obj");
+    EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, "teapot.obj");
 
     std::filesystem::remove(FilePath);
 }
