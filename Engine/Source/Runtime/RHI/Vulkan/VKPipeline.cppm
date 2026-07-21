@@ -41,7 +41,8 @@ namespace SoulEngine::RHI::Vulkan {
 
 [[nodiscard]] auto CreateDescriptorSetLayout(vk::raii::Device&                Device,
                                              std::span<const Shader::Binding> Bindings,
-                                             Uint32                            MaxTextures)
+                                             Uint32                            MaxTextures,
+                                             vk::ShaderStageFlags              ShaderStages)
     -> std::expected<vk::raii::DescriptorSetLayout, ErrorMessage> {
     // Pipeline layouts are generated from linked shader reflection. The reflected
     // set/binding numbers are consumed only inside Vulkan; renderer code binds by
@@ -74,7 +75,7 @@ namespace SoulEngine::RHI::Vulkan {
             .binding            = Binding.BindingIndex,
             .descriptorType     = *DescriptorType,
             .descriptorCount    = DescriptorCount,
-            .stageFlags         = vk::ShaderStageFlagBits::eAllGraphics,
+            .stageFlags         = ShaderStages,
             .pImmutableSamplers = nullptr,
         });
 
@@ -122,7 +123,8 @@ namespace SoulEngine::RHI::Vulkan {
 
 [[nodiscard]] auto CreatePipelineLayout(vk::raii::Device&             Device,
                                         const Shader::Reflection&     Reflection,
-                                        Uint32                        MaxTextures)
+                                        Uint32                        MaxTextures,
+                                        vk::ShaderStageFlags          ShaderStages = vk::ShaderStageFlagBits::eAllGraphics)
     -> std::expected<std::pair<std::vector<vk::raii::DescriptorSetLayout>, vk::raii::PipelineLayout>, ErrorMessage> {
     Uint32 MaxSet = 0;
     for (const auto& Binding : Reflection.Bindings) {
@@ -142,7 +144,7 @@ namespace SoulEngine::RHI::Vulkan {
     std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
     SetLayouts.reserve(BindingsBySet.size());
     for (const auto& SetBindings : BindingsBySet) {
-        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, MaxTextures);
+        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, MaxTextures, ShaderStages);
         if (!SetLayout)
             return std::unexpected(SetLayout.error());
         SetLayouts.push_back(std::move(*SetLayout));
@@ -157,7 +159,7 @@ namespace SoulEngine::RHI::Vulkan {
     PushConstants.reserve(Reflection.PushConstants.size());
     for (const auto& Range : Reflection.PushConstants) {
         PushConstants.push_back(vk::PushConstantRange{
-            .stageFlags = vk::ShaderStageFlagBits::eAllGraphics,
+            .stageFlags = ShaderStages,
             .offset     = Range.Offset,
             .size       = Range.Size,
         });

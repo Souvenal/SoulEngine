@@ -6,6 +6,7 @@ export module RHI:RenderDevice;
 
 import std;
 import :Types;
+import :RayTracing;
 import :Command; // CommandList
 
 using namespace SoulEngine::Core;
@@ -46,6 +47,8 @@ class RenderDevice {
         -> std::expected<RenderTargetCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RayTracingPipelineDesc& Desc)
+        -> std::expected<UPtr<RayTracingPipeline>, ErrorMessage> = 0;
 
     // ── Command execution ────────────────────────────────────
 

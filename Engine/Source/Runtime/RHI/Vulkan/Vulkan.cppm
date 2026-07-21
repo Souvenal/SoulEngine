@@ -12,6 +12,7 @@ export module Vulkan;
 // A little trick here:
 // we use factory for RHI backend, thus no need for exporting symbols.
 import :RenderDevice;
+export import :RayTracingPipeline;
 
 import RHI;
 

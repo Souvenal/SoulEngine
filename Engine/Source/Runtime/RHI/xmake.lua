@@ -20,6 +20,6 @@ target("RHIVulkan")
     add_files("Vulkan/*.cppm")
 
 test_module("RHI", {
-    additional_deps     = {"RHIVulkan"},
+    additional_deps     = {"RHIVulkan", "ShaderCompiler"},
     additional_packages = {"glfw", "vulkan-headers"},
 })

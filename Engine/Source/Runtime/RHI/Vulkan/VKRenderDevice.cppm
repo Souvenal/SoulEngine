@@ -27,6 +27,7 @@ import :ImmediateContext;
 import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
+import :RayTracingPipeline;
 import :Sampler;
 import :Texture;
 import :DeletionQueue;
@@ -329,6 +330,11 @@ class RenderDevice final : public RHI::RenderDevice {
     [[nodiscard]] auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<RHI::GraphicsPipeline>, ErrorMessage> override {
         return GraphicsPipeline::Create(m_Device, Desc, m_MaxTextures, m_DeletionQueue);
+    }
+
+    [[nodiscard]] auto CreateRayTracingPipeline(const RayTracingPipelineDesc& Desc)
+        -> std::expected<UPtr<RHI::RayTracingPipeline>, ErrorMessage> override {
+        return RayTracingPipeline::Create(m_Device, m_Allocator, Desc, m_MaxTextures, m_DeletionQueue);
     }
 
     [[nodiscard]] auto IsGpuComplete(GpuCompletionToken Token) -> bool override {
