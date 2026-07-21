@@ -2,7 +2,7 @@ entities:
   - name: Main Camera
     transform:
       translation: [1.25, 1.25, 2.0]
-      rotation_degrees: [-28.0, -122.0, 0.0]
+      rotation_degrees: [28.0, -32.0, 0.0]
       scale: [1.0, 1.0, 1.0]
     components:
       camera:

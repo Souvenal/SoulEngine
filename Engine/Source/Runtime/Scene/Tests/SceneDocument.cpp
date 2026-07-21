@@ -3,6 +3,7 @@
 // Required while Scene exposes entt::registry in its object layout. These tests create
 // Scene values and therefore instantiate Scene lifetime operations.
 #include <entt/entt.hpp>
+#include <hlsl++.h>
 
 import Scene;
 
@@ -72,6 +73,45 @@ entities:
     const auto Snapshot = Scene.BuildSnapshot();
     ASSERT_EQ(Snapshot.Renderables.size(), 1u);
     EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, "Applications/Test/Assets/teapot.obj");
+
+    std::filesystem::remove(FilePath);
+}
+TEST(SceneDocument, DefaultCameraFacesTeapotCluster) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - name: Main Camera
+    transform:
+      translation: [1.25, 1.25, 2.0]
+      rotation_degrees: [28.0, -32.0, 0.0]
+    components:
+      camera: {}
+  - name: Teapot Cluster
+    transform:
+      translation: [0.0, 0.0, 0.0]
+)");
+
+    Scene Scene = {};
+    ASSERT_TRUE(Scene.LoadFromFile(FilePath).has_value());
+    ASSERT_EQ(Scene.GetRoots().size(), 2u);
+    static_cast<void>(Scene.BuildSnapshot());
+
+    const auto* CameraNode = Scene.TryGetSceneNode(Scene.GetRoots()[0]);
+    const auto* ClusterNode = Scene.TryGetSceneNode(Scene.GetRoots()[1]);
+    ASSERT_NE(CameraNode, nullptr);
+    ASSERT_NE(ClusterNode, nullptr);
+
+    const auto WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f),
+                                           CameraNode->Transform.WorldTransform);
+    const auto Forward = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+    const auto CameraPosition = hlslpp::float3(CameraNode->Transform.WorldTransform[3].x,
+                                                 CameraNode->Transform.WorldTransform[3].y,
+                                                 CameraNode->Transform.WorldTransform[3].z);
+    const auto ClusterPosition = hlslpp::float3(ClusterNode->Transform.WorldTransform[3].x,
+                                                  ClusterNode->Transform.WorldTransform[3].y,
+                                                  ClusterNode->Transform.WorldTransform[3].z);
+    const auto ToCluster = hlslpp::normalize(ClusterPosition - CameraPosition);
+
+    EXPECT_GT(static_cast<float>(hlslpp::dot(Forward, ToCluster)), 0.99f);
 
     std::filesystem::remove(FilePath);
 }
