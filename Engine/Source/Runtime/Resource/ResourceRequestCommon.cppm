@@ -98,7 +98,7 @@ auto PublishResourceGpuPending(ResourceContext& Context,
         LogDebug("Async {} GPU pending '{}'", ResourceTraits<T>::Info.Label, Key);
 }
 
-template <ManagedRHIResource T>
+template <ManagedResource T>
 [[nodiscard]] auto MarkResourceRhiCommitting(ResourceContext& Context,
                                              const String& Key,
                                              ResourceGeneration Generation) -> bool {

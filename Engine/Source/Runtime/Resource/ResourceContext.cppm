@@ -191,7 +191,7 @@ class ResourceContext {
             Locked.Entry->Slot.RequestRelease();
     }
 
-    template <ManagedRHIResource T>
+    template <ManagedResource T>
     [[nodiscard]] auto MarkRhiCommitting(const String& Key, ResourceGeneration Generation) -> bool {
         auto Locked = LockEntry<T>(Key);
         if (!Locked)
@@ -254,11 +254,23 @@ class ResourceContext {
         return true;
     }
 
+    /// Queue a resource-family dependency waiter for RHI-thread polling.
+    /// Returning true removes the waiter; returning false retains it for the next RHI tick.
+    auto EnqueueRhiDependencyWaiter(std::function<bool()> Waiter) -> void {
+        if (IsShutdownRequested())
+            return;
+
+        std::lock_guard Lock(m_RhiDependencyMutex);
+        if (!IsShutdownRequested())
+            m_RhiDependencyWaiters.push_back(std::move(Waiter));
+    }
+
     auto TickGpuPending() -> void {
         {
             std::lock_guard Lock(m_PublishMutex);
             if (IsShutdownRequested()) {
                 ClearGpuPendingQueues();
+                ClearRhiDependencyWaiters();
                 return;
             }
 
@@ -266,7 +278,7 @@ class ResourceContext {
                 TickGpuPendingFamily<T>();
             });
         }
-
+        TickRhiDependencyWaiters();
     }
 
     auto Clear() -> void {
@@ -279,6 +291,7 @@ class ResourceContext {
             std::lock_guard Lock(m_PublishMutex);
             ClearGpuPendingQueues();
         }
+        ClearRhiDependencyWaiters();
     }
 
     auto CollectReleasedResources() -> void {
@@ -364,6 +377,40 @@ class ResourceContext {
         }
     }
 
+    auto ClearRhiDependencyWaiters() -> void {
+        std::lock_guard Lock(m_RhiDependencyMutex);
+        m_RhiDependencyWaiters.clear();
+    }
+
+    auto TickRhiDependencyWaiters() -> void {
+        std::vector<std::function<bool()>> Waiters;
+        {
+            std::lock_guard Lock(m_RhiDependencyMutex);
+            if (IsShutdownRequested()) {
+                m_RhiDependencyWaiters.clear();
+                return;
+            }
+            Waiters = std::move(m_RhiDependencyWaiters);
+        }
+
+        std::vector<std::function<bool()>> Remaining;
+        Remaining.reserve(Waiters.size());
+        for (auto& Waiter : Waiters) {
+            if (!Waiter())
+                Remaining.push_back(std::move(Waiter));
+        }
+
+        if (Remaining.empty())
+            return;
+
+        std::lock_guard Lock(m_RhiDependencyMutex);
+        if (!IsShutdownRequested()) {
+            m_RhiDependencyWaiters.insert(m_RhiDependencyWaiters.end(),
+                                          std::make_move_iterator(Remaining.begin()),
+                                          std::make_move_iterator(Remaining.end()));
+        }
+    }
+
     template <GpuPendingManagedRHIResource T>
     auto TickGpuPendingFamily() -> void {
         auto& Family = GetFamily<T>();
@@ -404,10 +451,25 @@ class ResourceContext {
         Family.GpuPending = std::move(Next);
     }
 
-    ResourceFamilies      m_Families          = {};
-    TaskGraph*            m_TaskGraph         = nullptr;
-    std::atomic<bool>     m_ShutdownRequested = false;
-    std::mutex            m_PublishMutex;
+    ResourceFamilies                       m_Families = {};
+    TaskGraph*                             m_TaskGraph = nullptr;
+    std::atomic<bool>                      m_ShutdownRequested = false;
+    std::mutex                             m_PublishMutex;
+    std::mutex                             m_RhiDependencyMutex;
+    std::vector<std::function<bool()>>     m_RhiDependencyWaiters = {};
 };
+
+template <ManagedResource T>
+[[nodiscard]] auto AcquireResourceRef(ResourceContext& Context, const ResourceHandle<T>& Handle) -> ResourceRef<T> {
+    if (!Context.AddRef(Handle))
+        return {};
+
+    return ResourceRef<T>::Create(
+        &Context,
+        Handle,
+        [](void* ContextPtr, const ResourceHandle<T>& ReleaseHandle) -> void {
+            static_cast<ResourceContext*>(ContextPtr)->ReleaseRef(ReleaseHandle);
+        });
+}
 
 } // namespace SoulEngine::Resource

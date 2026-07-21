@@ -70,6 +70,8 @@ template <typename T>
 struct ResourceTraits;
 
 class Mesh;
+class BottomLevelAccelerationStructure;
+class TopLevelAccelerationStructure;
 
 template <>
 struct ResourceTraits<RHI::SampledTexture> {
@@ -143,6 +145,24 @@ struct ResourceTraits<Mesh> {
     };
 };
 
+template <>
+struct ResourceTraits<BottomLevelAccelerationStructure> {
+    static constexpr ResourceTraitInfo Info{
+        ResourceGpuPendingPolicy::None,
+        "bottom-level acceleration structure",
+        ResourceLifetimePolicy::CachedAsset,
+    };
+};
+
+template <>
+struct ResourceTraits<TopLevelAccelerationStructure> {
+    static constexpr ResourceTraitInfo Info{
+        ResourceGpuPendingPolicy::None,
+        "top-level acceleration structure",
+        ResourceLifetimePolicy::Transient,
+    };
+};
+
 /// @brief Central list of RHI payload families managed by Resource.
 ///
 /// A payload type must appear here and define `ResourceTraits<T>::Info` before
@@ -158,7 +178,7 @@ using ManagedRHIResourceTypes = std::tuple<RHI::SampledTexture,
                                            RHI::Sampler>;
 
 /// @brief Central list of high-level asset families managed by Resource.
-using ManagedAssetResourceTypes = std::tuple<Mesh>;
+using ManagedAssetResourceTypes = std::tuple<Mesh, BottomLevelAccelerationStructure, TopLevelAccelerationStructure>;
 
 using ManagedResourceTypes =
     decltype(std::tuple_cat(std::declval<ManagedRHIResourceTypes>(), std::declval<ManagedAssetResourceTypes>()));
@@ -398,6 +418,84 @@ class ResourceHandle {
     ResourceGeneration m_Generation = 0;
 };
 
+/// @brief Move-only logical owner for a resource request.
+///
+/// `ResourceRef` expresses that a runtime system still wants the resource.
+/// Ready payload observer pointers are resolved through `Resource::Manager`;
+/// this type owns logical demand only.
+/// The type stores an opaque release callback so resource payload types can own
+/// dependency refs without importing ResourceContext and creating a module cycle.
+template <ManagedResource T>
+class ResourceRef {
+  public:
+    ResourceRef() = default;
+
+    ResourceRef(const ResourceRef&)                    = delete;
+    auto operator=(const ResourceRef&) -> ResourceRef& = delete;
+
+    ResourceRef(ResourceRef&& Other) noexcept {
+        m_Context = std::exchange(Other.m_Context, nullptr);
+        m_Handle = std::exchange(Other.m_Handle, {});
+        m_Release = std::exchange(Other.m_Release, nullptr);
+    }
+
+    auto operator=(ResourceRef&& Other) noexcept -> ResourceRef& {
+        if (this != &Other) {
+            Reset();
+            m_Context = std::exchange(Other.m_Context, nullptr);
+            m_Handle = std::exchange(Other.m_Handle, {});
+            m_Release = std::exchange(Other.m_Release, nullptr);
+        }
+        return *this;
+    }
+
+    ~ResourceRef() {
+        Reset();
+    }
+
+    [[nodiscard]] explicit operator bool() const {
+        return m_Handle.IsValid();
+    }
+
+    [[nodiscard]] auto GetHandle() const -> const ResourceHandle<T>& {
+        return m_Handle;
+    }
+
+    auto Reset() -> void {
+        if (!m_Context || !m_Handle.IsValid() || !m_Release)
+            return;
+
+        m_Release(m_Context, m_Handle);
+        m_Context = nullptr;
+        m_Handle = {};
+        m_Release = nullptr;
+    }
+
+  private:
+    using ReleaseFn = void (*)(void*, const ResourceHandle<T>&);
+
+    template <ManagedResource U>
+    friend auto AcquireResourceRef(ResourceContext&, const ResourceHandle<U>&) -> ResourceRef<U>;
+
+    // Private construction retains logical demand; if the context rejects the
+    // handle, the ref stays empty.
+    [[nodiscard]] static auto Create(void* Context, ResourceHandle<T> Handle, ReleaseFn Release) -> ResourceRef {
+        ResourceRef Ref;
+        Ref.m_Context = Context;
+        Ref.m_Handle = std::move(Handle);
+        Ref.m_Release = Release;
+        return Ref;
+    }
+
+    // Non-owning ResourceContext observer; ResourceRef owns logical demand only.
+    void*             m_Context = nullptr;
+    ResourceHandle<T> m_Handle = {};
+    ReleaseFn         m_Release = nullptr;
+};
+
+template <ManagedResource T>
+[[nodiscard]] auto AcquireResourceRef(ResourceContext& Context, const ResourceHandle<T>& Handle) -> ResourceRef<T>;
+
 /// @brief Single drawable submesh using structure-of-arrays vertex buffers.
 struct SubMesh {
     std::vector<hlslpp::interop::float3> Positions = {};
@@ -439,6 +537,71 @@ class Mesh {
 
     [[nodiscard]] auto GetMeshGroups() -> std::vector<MeshGroup>&;
     [[nodiscard]] auto GetMeshGroups() const -> const std::vector<MeshGroup>&;
+};
+
+/// Policy for lowering a mesh asset into one reusable BLAS payload.
+enum class BottomLevelAccelerationStructureGeometryPolicy : Uint8 {
+    Unknown = 0,
+    AllMeshSubMeshes,
+};
+
+/// Request options contributing to a reusable BLAS identity.
+struct BottomLevelAccelerationStructureRequest {
+    RHI::AccelerationStructureBuildFlags                     BuildFlags = RHI::AccelerationStructureBuildFlags::None;
+    BottomLevelAccelerationStructureGeometryPolicy           GeometryPolicy =
+        BottomLevelAccelerationStructureGeometryPolicy::AllMeshSubMeshes;
+};
+
+/// Independent resource payload for reusable object-space acceleration geometry.
+class BottomLevelAccelerationStructure {
+  public:
+    BottomLevelAccelerationStructure() = default;
+
+    BottomLevelAccelerationStructure(std::vector<ResourceRef<RHI::VertexBuffer>> PositionBuffers,
+                                     std::vector<ResourceRef<RHI::IndexBuffer>> IndexBuffers,
+                                     UPtr<RHI::BottomLevelAccelerationStructure> Payload) {
+        m_PositionBuffers = std::move(PositionBuffers);
+        m_IndexBuffers = std::move(IndexBuffers);
+        m_Payload = std::move(Payload);
+    }
+
+    BottomLevelAccelerationStructure(const BottomLevelAccelerationStructure&) = delete;
+    auto operator=(const BottomLevelAccelerationStructure&) -> BottomLevelAccelerationStructure& = delete;
+    BottomLevelAccelerationStructure(BottomLevelAccelerationStructure&&) = delete;
+    auto operator=(BottomLevelAccelerationStructure&&) -> BottomLevelAccelerationStructure& = delete;
+    ~BottomLevelAccelerationStructure() = default;
+
+    [[nodiscard]] auto GetRhiPayload() const -> RHI::BottomLevelAccelerationStructure* {
+        return m_Payload.get();
+    }
+
+  private:
+    std::vector<ResourceRef<RHI::VertexBuffer>> m_PositionBuffers = {};
+    std::vector<ResourceRef<RHI::IndexBuffer>>  m_IndexBuffers = {};
+    UPtr<RHI::BottomLevelAccelerationStructure> m_Payload = nullptr;
+};
+
+/// Persistent renderer-scoped TLAS allocation. Per-frame instances remain command-driven.
+class TopLevelAccelerationStructure {
+  public:
+    TopLevelAccelerationStructure() = default;
+
+    explicit TopLevelAccelerationStructure(UPtr<RHI::TopLevelAccelerationStructure> Payload) {
+        m_Payload = std::move(Payload);
+    }
+
+    TopLevelAccelerationStructure(const TopLevelAccelerationStructure&) = delete;
+    auto operator=(const TopLevelAccelerationStructure&) -> TopLevelAccelerationStructure& = delete;
+    TopLevelAccelerationStructure(TopLevelAccelerationStructure&&) = delete;
+    auto operator=(TopLevelAccelerationStructure&&) -> TopLevelAccelerationStructure& = delete;
+    ~TopLevelAccelerationStructure() = default;
+
+    [[nodiscard]] auto GetRhiPayload() const -> RHI::TopLevelAccelerationStructure* {
+        return m_Payload.get();
+    }
+
+  private:
+    UPtr<RHI::TopLevelAccelerationStructure> m_Payload = nullptr;
 };
 
 } // namespace SoulEngine::Resource

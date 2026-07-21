@@ -3,13 +3,17 @@
 
 #include <gtest/gtest.h>
 
+#include <GLFW/glfw3.h>
+
 import Resource;
 import TaskGraph;
+import Vulkan;
 import std;
 
 using namespace SoulEngine::Core;
 using namespace SoulEngine;
 using namespace SoulEngine::Resource;
+using namespace SoulEngine::RHI;
 
 namespace {
 
@@ -176,6 +180,140 @@ TEST(ResourceRefTest, RequestRefCreatesLogicalOwnerHandle) {
 
     Graph.Shutdown();
     Manager::Get().Clear();
+}
+
+TEST(ResourceAccelerationStructureRequestTest, EquivalentMeshBlasRequestsDeduplicateBeforeDependenciesAreReady) {
+    ResetManagerForTest();
+    TaskGraph Graph;
+    Manager::Get().Init(Graph);
+
+    auto MeshRef = Manager::Get().RequestMeshRef("NotYetLoadedMesh.obj");
+    ASSERT_TRUE(MeshRef);
+    auto FirstRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    auto SecondRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    ASSERT_TRUE(FirstRef);
+    ASSERT_TRUE(SecondRef);
+
+    const auto& First = FirstRef.GetHandle();
+    const auto& Second = SecondRef.GetHandle();
+    EXPECT_EQ(First.GetKey(), Second.GetKey());
+    EXPECT_EQ(First.GetGeneration(), Second.GetGeneration());
+    EXPECT_EQ(Manager::Get().GetState(First), ResourceState::CpuPreparing);
+
+    Graph.Shutdown();
+    Manager::Get().Clear();
+}
+
+TEST(ResourceAccelerationStructureRequestTest, RendererScopedTlasRequestsDeduplicateAndReleaseAsTransient) {
+    ResetManagerForTest();
+    TaskGraph Graph;
+    Manager::Get().Init(Graph);
+
+    const RHI::TopLevelAccelerationStructureDesc Desc{
+        .InitialInstanceCapacity = 4,
+        .BuildFlags = RHI::AccelerationStructureBuildFlags::AllowUpdate,
+    };
+    auto FirstRef = Manager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
+    auto SecondRef = Manager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
+    auto OtherScopeRef = Manager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererReflection", Desc);
+    ASSERT_TRUE(FirstRef);
+    ASSERT_TRUE(SecondRef);
+    ASSERT_TRUE(OtherScopeRef);
+
+    const auto First = FirstRef.GetHandle();
+    EXPECT_EQ(First.GetKey(), SecondRef.GetHandle().GetKey());
+    EXPECT_EQ(First.GetGeneration(), SecondRef.GetHandle().GetGeneration());
+    EXPECT_NE(First.GetKey(), OtherScopeRef.GetHandle().GetKey());
+
+    FirstRef.Reset();
+    EXPECT_EQ(Manager::Get().GetState(First), ResourceState::CpuPreparing);
+    SecondRef.Reset();
+    EXPECT_EQ(Manager::Get().GetState(First), ResourceState::Stale);
+
+    Graph.Shutdown();
+    Manager::Get().Clear();
+}
+
+TEST(ResourceAccelerationStructureRequestTest, EmptyRendererScopePublishesFailure) {
+    ResetManagerForTest();
+    TaskGraph Graph;
+    Manager::Get().Init(Graph);
+
+    auto Ref = Manager::Get().RequestTopLevelAccelerationStructureRef(
+        "", RHI::TopLevelAccelerationStructureDesc{.InitialInstanceCapacity = 1});
+    ASSERT_TRUE(Ref);
+    EXPECT_EQ(Manager::Get().GetState(Ref.GetHandle()), ResourceState::Failed);
+
+    Graph.Shutdown();
+    Manager::Get().Clear();
+}
+
+TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesSharedBlasPayload) {
+    const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
+    ASSERT_NE(TestSourceDir, nullptr) << "Missing SOUL_ENGINE_TEST_SOURCE_DIR";
+
+    const Path EngineDir = Path(TestSourceDir).parent_path().parent_path().parent_path().parent_path();
+    ConfigManager::Get().Init(EngineDir);
+    ASSERT_TRUE(ConfigManager::Get().LoadConfig().has_value());
+
+    ASSERT_TRUE(glfwInit()) << "glfwInit failed";
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    GLFWwindow* Window = glfwCreateWindow(1, 1, "SoulEngine BLAS resource test", nullptr, nullptr);
+    ASSERT_NE(Window, nullptr) << "glfwCreateWindow failed";
+
+    auto DeviceResult = RenderDevice::Create(Window);
+    if (!DeviceResult) {
+        glfwDestroyWindow(Window);
+        glfwTerminate();
+        GTEST_SKIP() << DeviceResult.error().ToString();
+    }
+
+    const auto Cleanup = [Window]() -> void {
+        Manager::Get().BeginShutdown();
+        Manager::Get().Clear();
+        RenderDevice::Destroy();
+        glfwDestroyWindow(Window);
+        glfwTerminate();
+    };
+
+    ResetManagerForTest();
+    TaskGraph Graph;
+    Graph.Init(1);
+    Manager::Get().Init(Graph);
+
+    const Path MeshPath = EngineDir.parent_path() / "Applications" / "Test" / "Assets" / "teapot.obj";
+    auto MeshRef = Manager::Get().RequestMeshRef(MeshPath.string());
+    ASSERT_TRUE(MeshRef);
+    auto FirstBlasRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    auto SecondBlasRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    ASSERT_TRUE(FirstBlasRef);
+    ASSERT_TRUE(SecondBlasRef);
+    EXPECT_EQ(FirstBlasRef.GetHandle().GetKey(), SecondBlasRef.GetHandle().GetKey());
+
+    const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (IsPending(Manager::Get().GetState(FirstBlasRef.GetHandle())) &&
+           std::chrono::steady_clock::now() < Deadline) {
+        for (std::size_t TaskIndex = 0; TaskIndex < TaskGraph::kMaxTasksPerPoll; ++TaskIndex) {
+            auto Task = Graph.TryDequeue(ThreadQueue::RHI);
+            if (!Task)
+                break;
+            (*Task)();
+        }
+        Manager::Get().TickGpuPending();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    EXPECT_EQ(Manager::Get().GetState(FirstBlasRef.GetHandle()), ResourceState::Ready);
+    auto* BlasResource = Manager::Get().TryGetReady(FirstBlasRef);
+    ASSERT_NE(BlasResource, nullptr);
+    EXPECT_NE(BlasResource->GetRhiPayload(), nullptr);
+
+    FirstBlasRef.Reset();
+    SecondBlasRef.Reset();
+    MeshRef.Reset();
+    Graph.Shutdown();
+    Cleanup();
 }
 
 TEST(ResourceRefLifetimeTest, CachedAssetLastRefReleaseDoesNotMakeEntryStale) {
