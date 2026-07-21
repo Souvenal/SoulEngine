@@ -27,3 +27,6 @@ vsxmake2026
 # Engine related
 Engine/Configs/SoulEngine.toml
 Engine/Logs/
+
+# Local ray-tracing phase acceptance plans (intentionally not versioned)
+Docs/Phase/
