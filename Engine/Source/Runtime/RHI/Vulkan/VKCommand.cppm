@@ -126,6 +126,18 @@ struct CommandVisitor {
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
     }
 
+    auto operator()(const RHI::SetRayTracingPipelineCmd&) -> void {
+        Error = ErrorMessage("Ray tracing command recording is not implemented");
+    }
+
+    auto operator()(const RHI::BuildOrUpdateTopLevelAccelerationStructureCmd&) -> void {
+        Error = ErrorMessage("Ray tracing command recording is not implemented");
+    }
+
+    auto operator()(const RHI::TraceRaysCmd&) -> void {
+        Error = ErrorMessage("Ray tracing command recording is not implemented");
+    }
+
     auto operator()(const RHI::PushConstantsCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr || Cmd.Data.empty())
             return;

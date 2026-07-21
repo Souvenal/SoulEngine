@@ -1,6 +1,7 @@
 export module RHI:Command;
 
 export import :Types;
+export import :RayTracing;
 
 export import std;
 
@@ -41,11 +42,18 @@ struct SetGraphicsPipelineCmd {
     GraphicsPipeline* PipelinePtr = nullptr;
 };
 
+/// @brief Bind the ray-tracing pipeline used by subsequent ray-tracing commands.
+struct SetRayTracingPipelineCmd {
+    /// Non-owning observer. Producer must keep the pipeline alive until Execute() completes.
+    RayTracingPipeline* PipelinePtr = nullptr;
+};
+
 /// @brief Push a CPU-side byte snapshot into the active graphics pipeline's push-constant range.
 struct PushConstantsCmd {
     /// Pipeline expected to be bound when the push happens. Backends use this for
     /// validation and pipeline-layout lookup.
-    GraphicsPipeline*        PipelinePtr = nullptr;
+    /// The common Pipeline base permits the same reflected push-constant contract for ray tracing.
+    Pipeline*                PipelinePtr = nullptr;
     Uint32                   Offset      = 0;
     std::vector<std::byte>   Data        = {};
 };
@@ -53,7 +61,8 @@ struct PushConstantsCmd {
 /// @brief Bind a reflection-derived shader parameter snapshot to the active pipeline.
 struct BindShaderParametersCmd {
     /// Pipeline expected to be bound when the parameter snapshot is bound.
-    GraphicsPipeline* PipelinePtr = nullptr;
+    /// The common Pipeline base permits the same reflected parameter contract for ray tracing.
+    Pipeline* PipelinePtr = nullptr;
     /// Value snapshot keeps per-frame constant data stable until the RHI thread consumes it.
     ShaderParameters  Parameters  = {};
 };
@@ -77,16 +86,34 @@ struct DrawCmd {
     std::array<VertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
 };
 
+/// @brief Build or update a persistent TLAS from renderer-provided logical instances.
+struct BuildOrUpdateTopLevelAccelerationStructureCmd {
+    TopLevelAccelerationStructure*          TargetPtr = nullptr;
+    std::vector<AccelerationStructureInstance> Instances = {};
+    TopLevelAccelerationStructureBuildMode   Mode      = TopLevelAccelerationStructureBuildMode::Auto;
+};
+
+/// @brief Dispatch hardware rays through the pipeline-owned shader binding table.
+struct TraceRaysCmd {
+    RayTracingPipeline* PipelinePtr = nullptr;
+    Uint32              Width       = 0;
+    Uint32              Height      = 0;
+    Uint32              Depth       = 1;
+};
+
 /// @brief All command types dispatched via std::visit.
 using Command = std::variant<SetViewportCmd,
                              SetFullViewportCmd,
                              SetScissorCmd,
                              SetFullScissorRectCmd,
                              SetGraphicsPipelineCmd,
+                             SetRayTracingPipelineCmd,
                              PushConstantsCmd,
                              BindShaderParametersCmd,
                              DrawIndexedCmd,
-                             DrawCmd>;
+                             DrawCmd,
+                             BuildOrUpdateTopLevelAccelerationStructureCmd,
+                             TraceRaysCmd>;
 
 /// @brief One rendering pass with attachments and commands inside.
 /// Backend automatically wraps each pass with begin/end rendering.
@@ -112,7 +139,10 @@ struct Pass {
     auto SetGraphicsPipeline(GraphicsPipeline* PipelinePtr) -> void {
         Commands.emplace_back(SetGraphicsPipelineCmd{.PipelinePtr = PipelinePtr});
     }
-    auto PushConstants(GraphicsPipeline* PipelinePtr, Uint32 Offset, const void* Data, Uint64 Size) -> void {
+    auto SetRayTracingPipeline(RayTracingPipeline* PipelinePtr) -> void {
+        Commands.emplace_back(SetRayTracingPipelineCmd{.PipelinePtr = PipelinePtr});
+    }
+    auto PushConstants(Pipeline* PipelinePtr, Uint32 Offset, const void* Data, Uint64 Size) -> void {
         if (Size == 0)
             return;
 
@@ -124,10 +154,28 @@ struct Pass {
         std::memcpy(Cmd.Data.data(), Data, Size);
         Commands.emplace_back(std::move(Cmd));
     }
-    auto BindShaderParameters(GraphicsPipeline* PipelinePtr, ShaderParameters Parameters) -> void {
+    auto BindShaderParameters(Pipeline* PipelinePtr, ShaderParameters Parameters) -> void {
         Commands.emplace_back(BindShaderParametersCmd{
             .PipelinePtr = PipelinePtr,
             .Parameters  = std::move(Parameters),
+        });
+    }
+    auto BuildOrUpdateTopLevelAccelerationStructure(TopLevelAccelerationStructure*               TargetPtr,
+                                                     std::span<const AccelerationStructureInstance> Instances,
+                                                     TopLevelAccelerationStructureBuildMode        Mode =
+                                                         TopLevelAccelerationStructureBuildMode::Auto) -> void {
+        Commands.emplace_back(BuildOrUpdateTopLevelAccelerationStructureCmd{
+            .TargetPtr = TargetPtr,
+            .Instances = std::vector<AccelerationStructureInstance>{Instances.begin(), Instances.end()},
+            .Mode      = Mode,
+        });
+    }
+    auto TraceRays(RayTracingPipeline* PipelinePtr, Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
+        Commands.emplace_back(TraceRaysCmd{
+            .PipelinePtr = PipelinePtr,
+            .Width       = Width,
+            .Height      = Height,
+            .Depth       = Depth,
         });
     }
     auto DrawIndexed(GraphicsPipeline* PipelinePtr,

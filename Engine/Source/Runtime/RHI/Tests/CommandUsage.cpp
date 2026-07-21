@@ -25,15 +25,44 @@ class MockSampledTexture final : public SampledTexture {
     }
 };
 
+/// Concrete RenderTarget for testing storage-image shader parameters.
+class MockRenderTarget final : public RenderTarget {
+  public:
+    [[nodiscard]] auto GetWidth() const -> Uint32 override {
+        return 256;
+    }
+    [[nodiscard]] auto GetHeight() const -> Uint32 override {
+        return 256;
+    }
+    [[nodiscard]] auto GetFormat() const -> SoulEngine::RHI::Format override {
+        return SoulEngine::RHI::Format::R16G16B16A16_SFLOAT;
+    }
+    [[nodiscard]] auto GetUsage() const -> TextureUsage override {
+        return TextureUsage::RenderTarget | TextureUsage::ShaderStorage;
+    }
+};
+
+/// Concrete RT pipeline exposing the protected reflection-layout setup for testing.
+class MockRayTracingPipeline final : public RayTracingPipeline {
+  public:
+    auto ConfigureShaderParameterLayout(ShaderParameterLayout Layout) -> void {
+        SetShaderParameterLayout(std::move(Layout));
+    }
+};
+
 // ── Fixtures ─────────────────────────────────────────────────────────────
 
 class UsageVisitorTest : public ::testing::Test {
   protected:
-    SPtr<GraphicsPipeline>   m_Pipeline = std::make_shared<GraphicsPipeline>();
-    SPtr<VertexBuffer>       m_VB       = std::make_shared<VertexBuffer>();
-    SPtr<VertexBuffer>       m_SecondVB = std::make_shared<VertexBuffer>();
-    SPtr<IndexBuffer>        m_IB       = std::make_shared<IndexBuffer>();
-    SPtr<MockSampledTexture> m_Texture  = std::make_shared<MockSampledTexture>();
+    SPtr<GraphicsPipeline>                      m_Pipeline   = std::make_shared<GraphicsPipeline>();
+    SPtr<MockRayTracingPipeline>                 m_RayPipeline = std::make_shared<MockRayTracingPipeline>();
+    SPtr<BottomLevelAccelerationStructure>       m_BLAS       = std::make_shared<BottomLevelAccelerationStructure>();
+    SPtr<TopLevelAccelerationStructure>          m_TLAS       = std::make_shared<TopLevelAccelerationStructure>();
+    SPtr<VertexBuffer>                           m_VB         = std::make_shared<VertexBuffer>();
+    SPtr<VertexBuffer>                           m_SecondVB   = std::make_shared<VertexBuffer>();
+    SPtr<IndexBuffer>                            m_IB         = std::make_shared<IndexBuffer>();
+    SPtr<MockSampledTexture>                     m_Texture    = std::make_shared<MockSampledTexture>();
+    SPtr<MockRenderTarget>                       m_Output     = std::make_shared<MockRenderTarget>();
 
     GpuCompletionToken m_Token{42};
     UsageVisitor       m_Visitor{m_Token};
@@ -49,6 +78,14 @@ TEST_F(UsageVisitorTest, SetGraphicsPipelineCmdUpdatesToken) {
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
 }
 
+TEST_F(UsageVisitorTest, SetRayTracingPipelineCmdUpdatesToken) {
+    ASSERT_EQ(m_RayPipeline->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor, Command{SetRayTracingPipelineCmd{.PipelinePtr = m_RayPipeline.get()}});
+
+    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
+}
+
 TEST_F(UsageVisitorTest, PushConstantsCmdUpdatesPipelineToken) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
 
@@ -59,6 +96,18 @@ TEST_F(UsageVisitorTest, PushConstantsCmdUpdatesPipelineToken) {
                }});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
+}
+
+TEST_F(UsageVisitorTest, PushConstantsCmdSupportsRayTracingPipeline) {
+    ASSERT_EQ(m_RayPipeline->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{PushConstantsCmd{
+                   .PipelinePtr = m_RayPipeline.get(),
+                   .Data        = {std::byte{0}},
+               }});
+
+    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
@@ -90,6 +139,87 @@ TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
+}
+
+TEST_F(UsageVisitorTest, BuildTopLevelAccelerationStructureCmdUpdatesTargetAndBlasTokens) {
+    ASSERT_EQ(m_TLAS->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_BLAS->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{BuildOrUpdateTopLevelAccelerationStructureCmd{
+                   .TargetPtr = m_TLAS.get(),
+                   .Instances = {{.BottomLevelPtr = m_BLAS.get()}},
+               }});
+
+    EXPECT_EQ(m_TLAS->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_BLAS->GetLastUsageToken().Id, 42);
+}
+
+TEST_F(UsageVisitorTest, TraceRaysCmdUpdatesRayTracingPipelineToken) {
+    ASSERT_EQ(m_RayPipeline->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{TraceRaysCmd{
+                   .PipelinePtr = m_RayPipeline.get(),
+                   .Width       = 640,
+                   .Height      = 480,
+               }});
+
+    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
+}
+
+TEST(RayTracingCommandTest, PassCopiesTopLevelAccelerationStructureInstances) {
+    BottomLevelAccelerationStructure BLAS;
+    TopLevelAccelerationStructure    TLAS;
+    std::vector<AccelerationStructureInstance> Instances{{.BottomLevelPtr = &BLAS}};
+    Pass PassValue{};
+
+    PassValue.BuildOrUpdateTopLevelAccelerationStructure(&TLAS, Instances);
+    Instances.clear();
+
+    ASSERT_EQ(PassValue.Commands.size(), 1);
+    const auto* CommandPtr = std::get_if<BuildOrUpdateTopLevelAccelerationStructureCmd>(&PassValue.Commands.front());
+    ASSERT_NE(CommandPtr, nullptr);
+    ASSERT_EQ(CommandPtr->Instances.size(), 1);
+    EXPECT_EQ(CommandPtr->TargetPtr, &TLAS);
+    EXPECT_EQ(CommandPtr->Instances.front().BottomLevelPtr, &BLAS);
+}
+
+TEST_F(UsageVisitorTest, RayTracingShaderParametersUpdateTlasAndStorageOutputTokens) {
+    const auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+        .Bindings =
+            {
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_scene.tlas",
+                    .Set           = 0,
+                    .BindingIndex  = 0,
+                    .Type          = SoulEngine::Shader::ResourceType::AccelerationStructure,
+                },
+                SoulEngine::Shader::Binding{
+                    .ParameterPath = "g_frame.output",
+                    .Set           = 0,
+                    .BindingIndex  = 1,
+                    .Type          = SoulEngine::Shader::ResourceType::StorageTexture,
+                },
+            },
+    });
+    m_RayPipeline->ConfigureShaderParameterLayout(Layout);
+    auto Parameters = ShaderParameters::Create(*m_RayPipeline);
+
+    ASSERT_TRUE(Parameters.SetTopLevelAccelerationStructure("g_scene.tlas", m_TLAS.get()));
+    ASSERT_TRUE(Parameters.SetStorageRenderTarget("g_frame.output", m_Output.get()));
+    ASSERT_EQ(m_TLAS->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_Output->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{BindShaderParametersCmd{
+                   .PipelinePtr = m_RayPipeline.get(),
+                   .Parameters  = std::move(Parameters),
+               }});
+
+    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_TLAS->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_Output->GetLastUsageToken().Id, 42);
 }
 
 TEST(ResourceArrayTest, SupportsMultipleResourceTypes) {

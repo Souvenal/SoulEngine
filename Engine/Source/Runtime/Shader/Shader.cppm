@@ -67,8 +67,10 @@ enum class ResourceType : Uint8 {
     /// target attachment (DX: RTV/DSV).  Attachments usually use
     /// attachment-optimal layouts and may get hardware compression/tile-local
     /// paths; storage images commonly use general layouts for random access.
-    StorageTexture = 4,
-    Sampler        = 5,
+    StorageTexture          = 4,
+    Sampler                 = 5,
+    /// Top-level acceleration structure used for hardware ray traversal.
+    AccelerationStructure   = 6,
 };
 
 /// @brief Reflected scalar/vector/matrix shape for a shader-visible value.

@@ -3,6 +3,7 @@ module;
 export module RHI:UsageVisitor;
 
 export import :Command;
+export import :RayTracing;
 export import :Types;
 
 using namespace SoulEngine::Core;
@@ -19,6 +20,10 @@ struct UsageVisitor {
     GpuCompletionToken CurrentToken = {};
 
     auto operator()(const SetGraphicsPipelineCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
+    }
+    auto operator()(const SetRayTracingPipelineCmd& Cmd) -> void {
         if (Cmd.PipelinePtr)
             Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
     }
@@ -48,6 +53,18 @@ struct UsageVisitor {
             if (VertexBufferPtr)
                 VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
         }
+    }
+    auto operator()(const BuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
+        if (Cmd.TargetPtr)
+            Cmd.TargetPtr->UpdateLastUsageToken(CurrentToken);
+        for (const auto& Instance : Cmd.Instances) {
+            if (Instance.BottomLevelPtr)
+                Instance.BottomLevelPtr->UpdateLastUsageToken(CurrentToken);
+        }
+    }
+    auto operator()(const TraceRaysCmd& Cmd) -> void {
+        if (Cmd.PipelinePtr)
+            Cmd.PipelinePtr->UpdateLastUsageToken(CurrentToken);
     }
 
     // Commands that don't reference GPU resources — explicit empty overloads
@@ -87,6 +104,12 @@ struct UsageVisitor {
                                     Resource->UpdateLastUsageToken(CurrentToken);
                             }
                         } else if constexpr (std::same_as<ValueType, Sampler*>) {
+                            if (TypedValue)
+                                TypedValue->UpdateLastUsageToken(CurrentToken);
+                        } else if constexpr (std::same_as<ValueType, TopLevelAccelerationStructure*>) {
+                            if (TypedValue)
+                                TypedValue->UpdateLastUsageToken(CurrentToken);
+                        } else if constexpr (std::same_as<ValueType, RenderTarget*>) {
                             if (TypedValue)
                                 TypedValue->UpdateLastUsageToken(CurrentToken);
                         }

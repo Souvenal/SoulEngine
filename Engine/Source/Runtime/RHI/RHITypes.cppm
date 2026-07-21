@@ -11,6 +11,9 @@ using namespace SoulEngine::Core;
 
 export namespace SoulEngine::RHI {
 
+class RenderTarget;
+class TopLevelAccelerationStructure;
+
 // ── Buffer descriptor types ────────────────────────────────────────────────
 
 struct VertexBufferDesc {
@@ -235,17 +238,15 @@ class ShaderParameterLayout {
     std::vector<ShaderParameterSetLayout> m_Sets = {};
 };
 
-/// Empty polymorphic base for graphics pipeline resources.
-/// Backend concrete class (e.g. Vulkan::GraphicsPipeline) owns the native
-/// pipeline. Resource::Manager owns GraphicsPipeline instances.
-class GraphicsPipeline : public GpuResource {
+/// Common polymorphic base for pipelines that consume reflection-derived shader parameters.
+class Pipeline : public GpuResource {
   public:
-    GraphicsPipeline()                                           = default;
-    GraphicsPipeline(const GraphicsPipeline&)                    = delete;
-    auto operator=(const GraphicsPipeline&) -> GraphicsPipeline& = delete;
-    GraphicsPipeline(GraphicsPipeline&&)                         = delete;
-    auto operator=(GraphicsPipeline&&) -> GraphicsPipeline&      = delete;
-    virtual ~GraphicsPipeline()                                  = default;
+    Pipeline()                                  = default;
+    Pipeline(const Pipeline&)                    = delete;
+    auto operator=(const Pipeline&) -> Pipeline& = delete;
+    Pipeline(Pipeline&&)                         = delete;
+    auto operator=(Pipeline&&) -> Pipeline&      = delete;
+    virtual ~Pipeline()                          = default;
 
     [[nodiscard]] auto GetShaderParameterLayout() const -> const ShaderParameterLayout& {
         return m_ShaderParameterLayout;
@@ -258,6 +259,28 @@ class GraphicsPipeline : public GpuResource {
 
   private:
     ShaderParameterLayout m_ShaderParameterLayout = {};
+};
+
+/// Empty polymorphic base for graphics pipeline resources.
+/// Backend concrete class (e.g. Vulkan::GraphicsPipeline) owns the native
+/// pipeline. Resource::Manager owns GraphicsPipeline instances.
+class GraphicsPipeline : public Pipeline {
+  public:
+    GraphicsPipeline()                                           = default;
+    GraphicsPipeline(const GraphicsPipeline&)                    = delete;
+    auto operator=(const GraphicsPipeline&) -> GraphicsPipeline& = delete;
+    GraphicsPipeline(GraphicsPipeline&&)                         = delete;
+    auto operator=(GraphicsPipeline&&) -> GraphicsPipeline&      = delete;
+    virtual ~GraphicsPipeline()                                  = default;
+
+    [[nodiscard]] auto GetShaderParameterLayout() const -> const ShaderParameterLayout& {
+        return Pipeline::GetShaderParameterLayout();
+    }
+
+  protected:
+    auto SetShaderParameterLayout(ShaderParameterLayout Layout) -> void {
+        Pipeline::SetShaderParameterLayout(std::move(Layout));
+    }
 };
 
 // ── Opaque handle types ───────────────────────────────────────────────────
@@ -335,8 +358,13 @@ struct ShaderParameterConstant {
 };
 
 /// @brief One value assigned to a reflected shader parameter binding.
-using ShaderParameterValue =
-    std::variant<std::monostate, SampledTexture*, ResourceArray<SampledTexture>, Sampler*, ShaderParameterConstant>;
+using ShaderParameterValue = std::variant<std::monostate,
+                                          SampledTexture*,
+                                          ResourceArray<SampledTexture>,
+                                          Sampler*,
+                                          TopLevelAccelerationStructure*,
+                                          RenderTarget*,
+                                          ShaderParameterConstant>;
 
 /// @brief Runtime values for one reflected shader descriptor set.
 class ShaderParameterSet {
@@ -410,8 +438,12 @@ class ShaderParameters {
   public:
     ShaderParameters() = default;
 
-    [[nodiscard]] static auto Create(const GraphicsPipeline& Pipeline) -> ShaderParameters {
-        return Create(Pipeline.GetShaderParameterLayout());
+    [[nodiscard]] static auto Create(const Pipeline& PipelineValue) -> ShaderParameters {
+        return Create(PipelineValue.GetShaderParameterLayout());
+    }
+
+    [[nodiscard]] static auto Create(const GraphicsPipeline& PipelineValue) -> ShaderParameters {
+        return Create(static_cast<const Pipeline&>(PipelineValue));
     }
 
     [[nodiscard]] static auto Create(const ShaderParameterLayout& Layout) -> ShaderParameters {
@@ -438,6 +470,17 @@ class ShaderParameters {
     [[nodiscard]] auto SetSampledTexture(StringView ParameterPath, SampledTexture* Texture)
         -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, Shader::ResourceType::SampledTexture, false, Texture);
+    }
+
+    [[nodiscard]] auto SetTopLevelAccelerationStructure(StringView                         ParameterPath,
+                                                         TopLevelAccelerationStructure* AccelerationStructure)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::AccelerationStructure, false, AccelerationStructure);
+    }
+
+    [[nodiscard]] auto SetStorageRenderTarget(StringView ParameterPath, RenderTarget* Target)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::StorageTexture, false, Target);
     }
 
     template <ShaderParameterArrayResource T>
@@ -560,6 +603,7 @@ enum class TextureUsage : Uint32 {
     DepthStencil   = 1u << 1,
     ShaderResource = 1u << 2,
     FrameOutput    = 1u << 3,
+    ShaderStorage  = 1u << 4,
 };
 
 [[nodiscard]] inline auto operator|(TextureUsage a, TextureUsage b) -> TextureUsage {
