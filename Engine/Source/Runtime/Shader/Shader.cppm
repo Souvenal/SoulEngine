@@ -39,6 +39,12 @@ enum class Stage : Uint8 {
     Geometry      = 6,
     Mesh          = 7,
     Amplification = 8,
+    RayGeneration = 9,
+    Intersection  = 10,
+    AnyHit        = 11,
+    ClosestHit    = 12,
+    Miss          = 13,
+    Callable      = 14,
 };
 
 /// @brief Minimal scalar-type vocabulary needed by normalized reflection.
@@ -127,6 +133,32 @@ struct GraphicsProgram {
     String              VertexEntryPointName   = {};
     String              FragmentEntryPointName = {};
     Reflection          Reflection             = {};
+};
+
+/// @brief Logical category of one ray-tracing hit group.
+enum class RayTracingHitGroupType : Uint8 {
+    Unknown    = 0,
+    Triangles  = 1,
+    Procedural = 2,
+};
+
+/// @brief Canonical entry-point names that form one linked ray-tracing hit group.
+struct RayTracingHitGroup {
+    RayTracingHitGroupType    Type                       = RayTracingHitGroupType::Triangles;
+    std::optional<String>     ClosestHitEntryPointName   = std::nullopt;
+    std::optional<String>     AnyHitEntryPointName       = std::nullopt;
+    std::optional<String>     IntersectionEntryPointName = std::nullopt;
+};
+
+/// @brief Compiled shader artifact for one linked ray-tracing pipeline program.
+struct RayTracingProgram {
+    /// SPIR-V binary containing all selected ray-tracing entry points.
+    std::vector<Uint32>                Code                     = {};
+    String                             RayGenerationEntryPointName = {};
+    std::vector<String>                MissEntryPointNames      = {};
+    std::vector<RayTracingHitGroup>    HitGroups                = {};
+    std::vector<String>                CallableEntryPointNames  = {};
+    Reflection                         Reflection               = {};
 };
 
 } // namespace SoulEngine::Shader

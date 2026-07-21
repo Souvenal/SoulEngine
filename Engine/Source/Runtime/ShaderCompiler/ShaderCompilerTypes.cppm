@@ -48,6 +48,25 @@ struct GraphicsCompileDesc {
     std::span<const Path> IncludeDirs = {};
 };
 
+/// @brief One logical ray-tracing hit group compile request.
+struct RayTracingHitGroupCompileDesc {
+    Shader::RayTracingHitGroupType Type         = Shader::RayTracingHitGroupType::Triangles;
+    std::optional<ShaderEntry>     ClosestHit   = std::nullopt;
+    std::optional<ShaderEntry>     AnyHit       = std::nullopt;
+    std::optional<ShaderEntry>     Intersection = std::nullopt;
+};
+
+/// @brief Compile request for one linked hardware ray-tracing shader program.
+struct RayTracingCompileDesc {
+    ShaderEntry                                RayGeneration = {};
+    std::vector<ShaderEntry>                   MissEntries   = {};
+    std::vector<RayTracingHitGroupCompileDesc> HitGroups     = {};
+    std::vector<ShaderEntry>                   CallableEntries = {};
+
+    /// Additional include search directories.
+    std::span<const Path> IncludeDirs = {};
+};
+
 /// @brief Abstract backend for shading-language compilation.
 ///
 /// Each supported shading language gets its own implementation.
@@ -65,6 +84,10 @@ class IBackend {
     /// @brief Compile and reflect a graphics pipeline shader combination.
     [[nodiscard]] virtual auto CompileGraphics(const GraphicsCompileDesc& Desc)
         -> std::expected<Shader::GraphicsProgram, ErrorMessage> = 0;
+
+    /// @brief Compile and reflect one linked ray-tracing shader program.
+    [[nodiscard]] virtual auto CompileRayTracing(const RayTracingCompileDesc& Desc)
+        -> std::expected<Shader::RayTracingProgram, ErrorMessage> = 0;
 };
 
 /// @brief Factory type for compiler backends.

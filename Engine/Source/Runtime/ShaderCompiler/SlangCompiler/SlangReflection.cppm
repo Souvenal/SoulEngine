@@ -430,4 +430,43 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     };
 }
 
+[[nodiscard]] auto BuildRayTracingShaderReflection(
+    slang::ShaderReflection* ProgramLayout, std::span<slang::EntryPointReflection* const> EntryPoints)
+    -> std::expected<Shader::Reflection, ErrorMessage> {
+    if (!ProgramLayout || EntryPoints.empty())
+        return std::unexpected(ErrorMessage("Ray-tracing shader reflection is incomplete for a compiled entry point"));
+
+    auto Bindings = ExtractShaderBindings(ProgramLayout);
+    if (!Bindings)
+        return std::unexpected(Bindings.error());
+
+    std::vector<Shader::PushConstantRange> PushConstants = {};
+    for (unsigned Index = 0; Index < ProgramLayout->getParameterCount(); ++Index) {
+        if (auto R = AppendPushConstantRange(PushConstants,
+                                             ProgramLayout->getParameterByIndex(Index),
+                                             slang::ParameterCategory::PushConstantBuffer);
+            !R) {
+            return std::unexpected(std::move(R.error()));
+        }
+    }
+    for (auto* EntryPoint : EntryPoints) {
+        if (!EntryPoint)
+            return std::unexpected(ErrorMessage("Ray-tracing reflection contains a null entry point"));
+        for (unsigned Index = 0; Index < EntryPoint->getParameterCount(); ++Index) {
+            if (auto R = AppendPushConstantRange(PushConstants,
+                                                 EntryPoint->getParameterByIndex(Index),
+                                                 slang::ParameterCategory::Uniform);
+                !R) {
+                return std::unexpected(std::move(R.error()));
+            }
+        }
+    }
+
+    return Shader::Reflection{
+        .Bindings      = std::move(*Bindings),
+        .PushConstants = MergePushConstantRanges(std::move(PushConstants)),
+        .VertexInputs  = {},
+    };
+}
+
 } // namespace SoulEngine::ShaderCompiler::SlangCompiler

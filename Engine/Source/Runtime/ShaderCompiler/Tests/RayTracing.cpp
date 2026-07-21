@@ -1,0 +1,113 @@
+/// @file   RayTracing.cpp
+/// @brief  Tests for Slang ray-tracing program compilation and reflection.
+
+#include <gtest/gtest.h>
+
+import Core;
+import Shader;
+import ShaderCompiler;
+import std;
+
+using namespace SoulEngine::Core;
+using namespace SoulEngine::Shader;
+using namespace SoulEngine::ShaderCompiler;
+
+namespace {
+
+[[nodiscard]] auto MakeCompileDesc(const Path& SourcePath) -> RayTracingCompileDesc {
+    return RayTracingCompileDesc{
+        .RayGeneration = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
+        .MissEntries   = {ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "missMain", .Backend = Backend::Slang}},
+        .HitGroups = {
+            RayTracingHitGroupCompileDesc{
+                .Type       = RayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "closestHitMain", .Backend = Backend::Slang},
+            },
+        },
+    };
+}
+
+[[nodiscard]] auto FindBinding(const Reflection& ReflectionValue, StringView ParameterPath) -> const Binding* {
+    const auto It = std::ranges::find_if(ReflectionValue.Bindings, [ParameterPath](const Binding& Candidate) {
+        return Candidate.ParameterPath == ParameterPath;
+    });
+    return It == ReflectionValue.Bindings.end() ? nullptr : &*It;
+}
+
+class RayTracingCompilerTest : public ::testing::Test {
+  protected:
+    static inline Path m_ShaderPath = {};
+
+    static auto SetUpTestSuite() -> void {
+        const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
+        ASSERT_NE(TestSourceDir, nullptr) << "Missing SOUL_ENGINE_TEST_SOURCE_DIR";
+        m_ShaderPath = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
+        auto Source = ReadFile(m_ShaderPath);
+        ASSERT_TRUE(Source.has_value()) << Source.error().ToString();
+    }
+};
+
+TEST_F(RayTracingCompilerTest, CompilesLinkedRayTracingProgram) {
+    auto Result = ShaderCompiler::Get().CompileRayTracing(MakeCompileDesc(m_ShaderPath));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    EXPECT_FALSE(Result->Code.empty());
+    EXPECT_EQ(Result->RayGenerationEntryPointName, "rayGenMain");
+    ASSERT_EQ(Result->MissEntryPointNames.size(), 1);
+    EXPECT_EQ(Result->MissEntryPointNames[0], "missMain");
+    ASSERT_EQ(Result->HitGroups.size(), 1);
+    EXPECT_EQ(Result->HitGroups[0].Type, RayTracingHitGroupType::Triangles);
+    ASSERT_TRUE(Result->HitGroups[0].ClosestHitEntryPointName.has_value());
+    EXPECT_EQ(*Result->HitGroups[0].ClosestHitEntryPointName, "closestHitMain");
+    EXPECT_FALSE(Result->HitGroups[0].AnyHitEntryPointName.has_value());
+    EXPECT_FALSE(Result->HitGroups[0].IntersectionEntryPointName.has_value());
+    EXPECT_TRUE(Result->Reflection.VertexInputs.empty());
+}
+
+TEST_F(RayTracingCompilerTest, ReflectsTopLevelAccelerationStructureAndStorageOutput) {
+    auto Result = ShaderCompiler::Get().CompileRayTracing(MakeCompileDesc(m_ShaderPath));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    const auto* Tlas = FindBinding(Result->Reflection, "g_tlas");
+    ASSERT_NE(Tlas, nullptr);
+    EXPECT_EQ(Tlas->Set, 0U);
+    EXPECT_EQ(Tlas->BindingIndex, 0U);
+    EXPECT_EQ(Tlas->Type, ResourceType::AccelerationStructure);
+
+    const auto* Output = FindBinding(Result->Reflection, "g_output");
+    ASSERT_NE(Output, nullptr);
+    EXPECT_EQ(Output->Set, 0U);
+    EXPECT_EQ(Output->BindingIndex, 1U);
+    EXPECT_EQ(Output->Type, ResourceType::StorageTexture);
+}
+
+TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
+    auto Desc = MakeCompileDesc(m_ShaderPath);
+    Desc.RayGeneration.EntryPoint = "doesNotExist";
+
+    auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
+    ASSERT_FALSE(Result.has_value());
+    EXPECT_NE(Result.error().ToString().find("Ray-generation entry point 'doesNotExist' not found"), String::npos)
+        << Result.error().ToString();
+}
+
+TEST_F(RayTracingCompilerTest, StageMismatchReportsContext) {
+    auto Desc = MakeCompileDesc(m_ShaderPath);
+    Desc.RayGeneration.EntryPoint = "missMain";
+
+    auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
+    ASSERT_FALSE(Result.has_value());
+    EXPECT_NE(Result.error().ToString().find("not a Ray-generation shader"), String::npos) << Result.error().ToString();
+}
+
+TEST_F(RayTracingCompilerTest, TriangleHitGroupRequiresClosestHitEntry) {
+    auto Desc = MakeCompileDesc(m_ShaderPath);
+    Desc.HitGroups[0].ClosestHit = std::nullopt;
+
+    auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
+    ASSERT_FALSE(Result.has_value());
+    EXPECT_NE(Result.error().ToString().find("requires a closest-hit entry point"), String::npos)
+        << Result.error().ToString();
+}
+
+} // namespace

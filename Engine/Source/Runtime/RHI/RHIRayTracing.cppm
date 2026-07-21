@@ -5,6 +5,8 @@ export module RHI:RayTracing;
 
 export import :Types;
 
+import Shader;
+
 export import std;
 
 using namespace SoulEngine::Core;
@@ -154,6 +156,7 @@ struct RayTracingShaderGroupDesc {
 
 /// Backend-agnostic RT pipeline policy. Shader program ownership is added by Phase 2.
 struct RayTracingPipelineDesc {
+    Shader::RayTracingProgram              Program           = {};
     std::vector<RayTracingShaderGroupDesc> ShaderGroups      = {};
     Uint32                                 MaxRecursionDepth = 1;
 };

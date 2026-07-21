@@ -81,6 +81,51 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
         return Slot.Instance->CompileGraphics(Desc);
     }
 
+    [[nodiscard]] auto CompileRayTracing(const RayTracingCompileDesc& Desc)
+        -> std::expected<Shader::RayTracingProgram, ErrorMessage> {
+        if (Desc.RayGeneration.EntryPoint.empty())
+            return std::unexpected(ErrorMessage("Ray-tracing shader compile requires a ray-generation entry point"));
+
+        const auto Backend = Desc.RayGeneration.Backend;
+        auto ValidateBackend = [this, Backend](const ShaderEntry& Entry) -> std::expected<void, ErrorMessage> {
+            ValidateEntryBackendConsistency(Entry);
+            if (Entry.Backend != Backend)
+                return std::unexpected(ErrorMessage("Ray-tracing shader compile requires matching entry-point backends"));
+            return {};
+        };
+
+        if (auto R = ValidateBackend(Desc.RayGeneration); !R)
+            return std::unexpected(std::move(R.error()));
+        for (const auto& Entry : Desc.MissEntries)
+            if (auto R = ValidateBackend(Entry); !R)
+                return std::unexpected(std::move(R.error()));
+        for (const auto& Group : Desc.HitGroups) {
+            if (Group.ClosestHit.has_value())
+                if (auto R = ValidateBackend(*Group.ClosestHit); !R)
+                    return std::unexpected(std::move(R.error()));
+            if (Group.AnyHit.has_value())
+                if (auto R = ValidateBackend(*Group.AnyHit); !R)
+                    return std::unexpected(std::move(R.error()));
+            if (Group.Intersection.has_value())
+                if (auto R = ValidateBackend(*Group.Intersection); !R)
+                    return std::unexpected(std::move(R.error()));
+        }
+        for (const auto& Entry : Desc.CallableEntries)
+            if (auto R = ValidateBackend(Entry); !R)
+                return std::unexpected(std::move(R.error()));
+
+        auto&           Slot = m_Backends[static_cast<std::size_t>(Backend)];
+        std::lock_guard Lock(Slot.Mutex);
+        if (!Slot.Instance) {
+            auto Inst = CreateBackend(Backend);
+            if (!Inst)
+                return std::unexpected(std::move(Inst.error()));
+            Slot.Instance = std::move(*Inst);
+        }
+
+        return Slot.Instance->CompileRayTracing(Desc);
+    }
+
   private:
     ShaderCompiler()  = default;
     ~ShaderCompiler() = default;

@@ -42,15 +42,30 @@ using namespace SoulEngine::Core;
 
 namespace {
 
-[[nodiscard]] auto CreateSession(slang::IGlobalSession*                              GlobalSession,
-                                 std::span<const slang::CompilerOptionEntry>        CompilerOptions,
-                                 std::span<const Path>                              IncludeDirs)
+[[nodiscard]] auto CreateSession(slang::IGlobalSession*                       GlobalSession,
+                                 std::span<const slang::CompilerOptionEntry> CompilerOptions,
+                                 std::span<const Path>                       IncludeDirs,
+                                 bool                                         bEnableRayTracing)
     -> std::expected<Slang::ComPtr<slang::ISession>, ErrorMessage> {
     // Session concept: https://docs.shader-slang.org/en/latest/compilation-api.html#about-sessions
     // My understanding: a session holds caches and states for modules.
     slang::TargetDesc TargetDesc{.format  = SLANG_SPIRV,
                                  // target SPIR-V 1.6 (Vulkan 1.3 feature set)
                                  .profile = GlobalSession->findProfile("spirv_1_6")};
+
+    std::array<slang::CompilerOptionEntry, 1> TargetOptions = {};
+    if (bEnableRayTracing) {
+        const auto Capability = GlobalSession->findCapability("spvRayTracingKHR");
+        if (Capability == SLANG_CAPABILITY_UNKNOWN)
+            return std::unexpected(ErrorMessage("Slang does not expose the spvRayTracingKHR capability"));
+
+        TargetOptions[0] = slang::CompilerOptionEntry{
+            .name  = slang::CompilerOptionName::Capability,
+            .value = {.intValue0 = Capability},
+        };
+        TargetDesc.compilerOptionEntries    = TargetOptions.data();
+        TargetDesc.compilerOptionEntryCount = static_cast<Uint32>(TargetOptions.size());
+    }
 
     // Compiler options (EmitSpirvDirectly, DebugInformation, etc.) are
     // pre-resolved during Init() by ResolveCompilerOptions().
@@ -224,7 +239,7 @@ class Backend final : public IBackend {
             return std::unexpected(ErrorMessage("Graphics shader compile requires non-empty vertex and fragment entry points"));
         }
 
-        auto Session = CreateSession(m_GlobalSession.get(), m_CompilerOptions, Desc.IncludeDirs);
+        auto Session = CreateSession(m_GlobalSession.get(), m_CompilerOptions, Desc.IncludeDirs, false);
         if (!Session)
             return std::unexpected(std::move(Session.error()));
 
@@ -306,6 +321,235 @@ class Backend final : public IBackend {
             .VertexEntryPointName   = std::move(VertexEntryPointName),
             .FragmentEntryPointName = std::move(FragmentEntryPointName),
             .Reflection             = std::move(*PipelineReflection),
+        };
+    }
+
+    [[nodiscard]] auto CompileRayTracing(const RayTracingCompileDesc& Desc)
+        -> std::expected<Shader::RayTracingProgram, ErrorMessage> override {
+        if (!m_bInitialized)
+            if (auto R = Init(); !R)
+                return std::unexpected(std::move(R.error()));
+
+        if (Desc.RayGeneration.EntryPoint.empty())
+            return std::unexpected(ErrorMessage("Ray-tracing shader compile requires a ray-generation entry point"));
+        if (Desc.MissEntries.empty())
+            return std::unexpected(ErrorMessage("Ray-tracing shader compile requires at least one miss entry point"));
+        if (Desc.HitGroups.empty())
+            return std::unexpected(ErrorMessage("Ray-tracing shader compile requires at least one hit group"));
+
+        for (Uint32 GroupIndex = 0; GroupIndex < Desc.HitGroups.size(); ++GroupIndex) {
+            const auto& Group = Desc.HitGroups[GroupIndex];
+            if (!Group.ClosestHit.has_value() || Group.ClosestHit->EntryPoint.empty()) {
+                return std::unexpected(
+                    ErrorMessage(Format("Ray-tracing hit group {} requires a closest-hit entry point", GroupIndex)));
+            }
+            if (Group.Type == Shader::RayTracingHitGroupType::Triangles && Group.Intersection.has_value()) {
+                return std::unexpected(ErrorMessage(
+                    Format("Triangle ray-tracing hit group {} must not declare an intersection entry point", GroupIndex)));
+            }
+            if (Group.Type == Shader::RayTracingHitGroupType::Procedural && !Group.Intersection.has_value()) {
+                return std::unexpected(ErrorMessage(
+                    Format("Procedural ray-tracing hit group {} requires an intersection entry point", GroupIndex)));
+            }
+        }
+
+        auto Session = CreateSession(m_GlobalSession.get(), m_CompilerOptions, Desc.IncludeDirs, true);
+        if (!Session)
+            return std::unexpected(std::move(Session.error()));
+
+        struct LoadedModule {
+            Path            SourcePath = {};
+            slang::IModule* Module     = nullptr;
+        };
+        struct LoadedEntry {
+            const ShaderEntry*                  Request      = nullptr;
+            Shader::Stage                       ExpectedStage = Shader::Stage::Unknown;
+            StringView                          StageName    = {};
+            Slang::ComPtr<slang::IEntryPoint>   EntryPoint   = {};
+        };
+        struct LoadedHitGroup {
+            Shader::RayTracingHitGroupType Type         = Shader::RayTracingHitGroupType::Unknown;
+            std::optional<Uint32>          ClosestHit   = std::nullopt;
+            std::optional<Uint32>          AnyHit       = std::nullopt;
+            std::optional<Uint32>          Intersection = std::nullopt;
+        };
+
+        Slang::ComPtr<slang::IBlob> DiagBlob;
+        std::vector<String>         SourceStorage = {};
+        std::vector<LoadedModule>   Modules       = {};
+        std::vector<LoadedEntry>    Entries       = {};
+
+        auto LoadEntry = [&](const ShaderEntry& Entry, Shader::Stage ExpectedStage, StringView StageName)
+            -> std::expected<Uint32, ErrorMessage> {
+            const Path NormalizedPath = Entry.SourcePath.lexically_normal();
+            slang::IModule* Module = nullptr;
+            for (const auto& Loaded : Modules) {
+                if (Loaded.SourcePath == NormalizedPath) {
+                    Module = Loaded.Module;
+                    break;
+                }
+            }
+            if (!Module) {
+                auto LoadedModuleResult = LoadModuleFromSource(Session->get(), Entry, SourceStorage, DiagBlob);
+                if (!LoadedModuleResult)
+                    return std::unexpected(LoadedModuleResult.error().Append(
+                        Format("Ray-tracing {} shader '{}'/'{}'", StageName, Entry.SourcePath.string(), Entry.EntryPoint)));
+                Module = *LoadedModuleResult;
+                Modules.emplace_back(LoadedModule{.SourcePath = NormalizedPath, .Module = Module});
+            }
+
+            auto EntryPoint = FindEntryPoint(Module, Entry, StageName);
+            if (!EntryPoint)
+                return std::unexpected(std::move(EntryPoint.error()));
+
+            Entries.emplace_back(LoadedEntry{
+                .Request       = &Entry,
+                .ExpectedStage = ExpectedStage,
+                .StageName     = StageName,
+                .EntryPoint    = std::move(*EntryPoint),
+            });
+            return static_cast<Uint32>(Entries.size() - 1);
+        };
+
+        auto RayGeneration = LoadEntry(Desc.RayGeneration, Shader::Stage::RayGeneration, "Ray-generation");
+        if (!RayGeneration)
+            return std::unexpected(std::move(RayGeneration.error()));
+
+        std::vector<Uint32> MissEntries = {};
+        MissEntries.reserve(Desc.MissEntries.size());
+        for (const auto& Entry : Desc.MissEntries) {
+            auto Miss = LoadEntry(Entry, Shader::Stage::Miss, "Miss");
+            if (!Miss)
+                return std::unexpected(std::move(Miss.error()));
+            MissEntries.push_back(*Miss);
+        }
+
+        std::vector<LoadedHitGroup> HitGroups = {};
+        HitGroups.reserve(Desc.HitGroups.size());
+        for (const auto& Group : Desc.HitGroups) {
+            LoadedHitGroup LoadedGroup{.Type = Group.Type};
+            auto ClosestHit = LoadEntry(*Group.ClosestHit, Shader::Stage::ClosestHit, "Closest-hit");
+            if (!ClosestHit)
+                return std::unexpected(std::move(ClosestHit.error()));
+            LoadedGroup.ClosestHit = *ClosestHit;
+
+            if (Group.AnyHit.has_value()) {
+                auto AnyHit = LoadEntry(*Group.AnyHit, Shader::Stage::AnyHit, "Any-hit");
+                if (!AnyHit)
+                    return std::unexpected(std::move(AnyHit.error()));
+                LoadedGroup.AnyHit = *AnyHit;
+            }
+            if (Group.Intersection.has_value()) {
+                auto Intersection = LoadEntry(*Group.Intersection, Shader::Stage::Intersection, "Intersection");
+                if (!Intersection)
+                    return std::unexpected(std::move(Intersection.error()));
+                LoadedGroup.Intersection = *Intersection;
+            }
+            HitGroups.emplace_back(std::move(LoadedGroup));
+        }
+
+        std::vector<Uint32> CallableEntries = {};
+        CallableEntries.reserve(Desc.CallableEntries.size());
+        for (const auto& Entry : Desc.CallableEntries) {
+            auto Callable = LoadEntry(Entry, Shader::Stage::Callable, "Callable");
+            if (!Callable)
+                return std::unexpected(std::move(Callable.error()));
+            CallableEntries.push_back(*Callable);
+        }
+
+        std::vector<slang::IComponentType*> Components = {};
+        Components.reserve(Modules.size() + Entries.size());
+        for (const auto& Module : Modules)
+            Components.push_back(Module.Module);
+        for (const auto& Entry : Entries)
+            Components.push_back(Entry.EntryPoint.get());
+
+        auto Linked = ComposeAndLink(Session->get(), Components, "ray-tracing shader program", DiagBlob);
+        if (!Linked)
+            return std::unexpected(std::move(Linked.error()));
+
+        auto Code = GetTargetCode(Linked->get(), "ray-tracing SPIR-V", DiagBlob);
+        if (!Code)
+            return std::unexpected(std::move(Code.error()));
+
+        auto* Layout = (*Linked)->getLayout(0);
+        if (!Layout)
+            return std::unexpected(ErrorMessage("Compiled ray-tracing shader is missing linked reflection layout"));
+
+        std::vector<slang::EntryPointReflection*> EntryPointInfos(Entries.size(), nullptr);
+        auto ResolveEntry = [&](Uint32 EntryIndex) -> std::expected<String, ErrorMessage> {
+            const auto& Entry = Entries[EntryIndex];
+            auto* EntryInfo = Layout->findEntryPointByName(Entry.Request->EntryPoint.c_str());
+            if (!EntryInfo) {
+                return std::unexpected(ErrorMessage(Format("Linked ray-tracing reflection is missing {} entry point '{}'",
+                                                           Entry.StageName,
+                                                           Entry.Request->EntryPoint)));
+            }
+            if (ToShaderStage(EntryInfo->getStage()) != Entry.ExpectedStage) {
+                return std::unexpected(ErrorMessage(Format("Entry point '{}' is not a {} shader",
+                                                           EntryInfo->getName(),
+                                                           Entry.StageName)));
+            }
+            EntryPointInfos[EntryIndex] = EntryInfo;
+            return String(EntryInfo->getName());
+        };
+
+        auto RayGenerationName = ResolveEntry(*RayGeneration);
+        if (!RayGenerationName)
+            return std::unexpected(std::move(RayGenerationName.error()));
+
+        std::vector<String> MissNames = {};
+        MissNames.reserve(MissEntries.size());
+        for (const auto EntryIndex : MissEntries) {
+            auto Name = ResolveEntry(EntryIndex);
+            if (!Name)
+                return std::unexpected(std::move(Name.error()));
+            MissNames.emplace_back(std::move(*Name));
+        }
+
+        std::vector<Shader::RayTracingHitGroup> ProgramHitGroups = {};
+        ProgramHitGroups.reserve(HitGroups.size());
+        for (const auto& Group : HitGroups) {
+            Shader::RayTracingHitGroup ProgramGroup{.Type = Group.Type};
+            auto ClosestName = ResolveEntry(*Group.ClosestHit);
+            if (!ClosestName)
+                return std::unexpected(std::move(ClosestName.error()));
+            ProgramGroup.ClosestHitEntryPointName = std::move(*ClosestName);
+            if (Group.AnyHit.has_value()) {
+                auto AnyName = ResolveEntry(*Group.AnyHit);
+                if (!AnyName)
+                    return std::unexpected(std::move(AnyName.error()));
+                ProgramGroup.AnyHitEntryPointName = std::move(*AnyName);
+            }
+            if (Group.Intersection.has_value()) {
+                auto IntersectionName = ResolveEntry(*Group.Intersection);
+                if (!IntersectionName)
+                    return std::unexpected(std::move(IntersectionName.error()));
+                ProgramGroup.IntersectionEntryPointName = std::move(*IntersectionName);
+            }
+            ProgramHitGroups.emplace_back(std::move(ProgramGroup));
+        }
+
+        std::vector<String> CallableNames = {};
+        CallableNames.reserve(CallableEntries.size());
+        for (const auto EntryIndex : CallableEntries) {
+            auto Name = ResolveEntry(EntryIndex);
+            if (!Name)
+                return std::unexpected(std::move(Name.error()));
+            CallableNames.emplace_back(std::move(*Name));
+        }
+
+        auto PipelineReflection = BuildRayTracingShaderReflection(Layout, EntryPointInfos);
+        if (!PipelineReflection)
+            return std::unexpected(PipelineReflection.error().Append("Failed to build ray-tracing pipeline reflection"));
+
+        return Shader::RayTracingProgram{
+            .Code                        = std::move(*Code),
+            .RayGenerationEntryPointName = std::move(*RayGenerationName),
+            .MissEntryPointNames          = std::move(MissNames),
+            .HitGroups                    = std::move(ProgramHitGroups),
+            .CallableEntryPointNames      = std::move(CallableNames),
+            .Reflection                   = std::move(*PipelineReflection),
         };
     }
 

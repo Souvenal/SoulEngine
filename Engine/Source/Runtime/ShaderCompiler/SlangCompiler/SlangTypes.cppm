@@ -85,6 +85,18 @@ namespace {
         return Shader::Stage::Mesh;
     case SLANG_STAGE_AMPLIFICATION:
         return Shader::Stage::Amplification;
+    case SLANG_STAGE_RAY_GENERATION:
+        return Shader::Stage::RayGeneration;
+    case SLANG_STAGE_INTERSECTION:
+        return Shader::Stage::Intersection;
+    case SLANG_STAGE_ANY_HIT:
+        return Shader::Stage::AnyHit;
+    case SLANG_STAGE_CLOSEST_HIT:
+        return Shader::Stage::ClosestHit;
+    case SLANG_STAGE_MISS:
+        return Shader::Stage::Miss;
+    case SLANG_STAGE_CALLABLE:
+        return Shader::Stage::Callable;
     default:
         return Shader::Stage::Unknown;
     }
@@ -95,7 +107,10 @@ namespace {
 /// field kind and texture access mode (sampled vs storage).
 [[nodiscard]] auto ToShaderResourceType(slang::BindingType BindingType, slang::TypeLayoutReflection* TypeLayout)
     -> std::expected<Shader::ResourceType, ErrorMessage> {
-    switch (BindingType) {
+    const auto BaseBindingType = static_cast<slang::BindingType>(
+        static_cast<SlangBindingTypeIntegral>(BindingType) &
+        static_cast<SlangBindingTypeIntegral>(slang::BindingType::BaseMask));
+    switch (BaseBindingType) {
     case slang::BindingType::ConstantBuffer:
         return Shader::ResourceType::ConstantBuffer;
     case slang::BindingType::ParameterBlock:
@@ -112,6 +127,8 @@ namespace {
     case slang::BindingType::TypedBuffer:
     case slang::BindingType::RawBuffer:
         return Shader::ResourceType::StorageBuffer;
+    case slang::BindingType::RayTracingAccelerationStructure:
+        return Shader::ResourceType::AccelerationStructure;
     default:
         return std::unexpected(ErrorMessage(
             Format("Unsupported Slang binding type {} in normalized reflection", static_cast<int>(BindingType))));
