@@ -101,6 +101,15 @@ struct ResourceTraits<RHI::GraphicsPipeline> {
 };
 
 template <>
+struct ResourceTraits<RHI::RayTracingPipeline> {
+    static constexpr ResourceTraitInfo Info{
+        ResourceGpuPendingPolicy::None,
+        "ray tracing pipeline",
+        ResourceLifetimePolicy::CachedAsset,
+    };
+};
+
+template <>
 struct ResourceTraits<RHI::VertexBuffer> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::WaitForCompletion,
@@ -172,6 +181,7 @@ struct ResourceTraits<TopLevelAccelerationStructure> {
 using ManagedRHIResourceTypes = std::tuple<RHI::SampledTexture,
                                            RHI::RenderTarget,
                                            RHI::GraphicsPipeline,
+                                           RHI::RayTracingPipeline,
                                            RHI::VertexBuffer,
                                            RHI::IndexBuffer,
                                            RHI::ConstantBuffer,
@@ -220,6 +230,7 @@ concept GpuPendingManagedRHIResource = ManagedRHIResource<T> && ResourceTraits<T
 static_assert(ManagedRHIResource<RHI::SampledTexture>);
 static_assert(ManagedRHIResource<RHI::RenderTarget>);
 static_assert(ManagedRHIResource<RHI::GraphicsPipeline>);
+static_assert(ManagedRHIResource<RHI::RayTracingPipeline>);
 static_assert(ManagedRHIResource<RHI::VertexBuffer>);
 static_assert(ManagedRHIResource<RHI::IndexBuffer>);
 static_assert(ManagedRHIResource<RHI::ConstantBuffer>);
@@ -249,6 +260,14 @@ struct GraphicsPipelineRequest {
     RHI::DepthStencilState      DepthStencil      = {};
     RHI::Format                 ColorFormat       = RHI::Format::B8G8R8A8_UNORM;
     RHI::Format                 DepthFormat       = RHI::Format::Unknown;
+};
+
+/// @brief Async hardware ray-tracing pipeline request descriptor.
+struct RayTracingPipelineRequest {
+    ShaderCompiler::ShaderEntry RayGeneration = {};
+    std::vector<ShaderCompiler::ShaderEntry> MissEntries = {};
+    std::vector<ShaderCompiler::RayTracingHitGroupCompileDesc> HitGroups = {};
+    Uint32 MaxRecursionDepth = 1;
 };
 
 /// @brief Payload state machine for one ResourceContext entry generation.

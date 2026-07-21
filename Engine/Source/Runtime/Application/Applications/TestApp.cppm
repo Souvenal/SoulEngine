@@ -27,9 +27,9 @@ class TestApplication final : public Application::Application {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         LogInfo("TestApplication: Attaching...");
 
-        m_Renderer = std::make_unique<Renderer::ForwardRenderer>();
+        m_Renderer = std::make_unique<Renderer::RayTracingRenderer>();
         if (auto R = m_Renderer->OnAttach(); !R)
-            return std::unexpected(R.error().Append("ForwardRenderer OnAttach failed"));
+            return std::unexpected(R.error().Append("RayTracingRenderer OnAttach failed"));
 
         const auto ScenePath = ConfigManager::Get().CurrentApplicationDir() / "Assets" / "TestScene.yaml";
         auto Loaded = m_Scene.LoadFromFile(ScenePath);

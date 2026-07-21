@@ -46,6 +46,12 @@ class Manager : public Singleton<Manager> {
         return AcquireResourceRef(m_Context, SubmitGraphicsPipelineRequest(m_Context, Req));
     }
 
+    /// @brief Request ray-tracing pipeline and retain an owner ref.
+    [[nodiscard]] auto RequestRayTracingPipelineRef(const RayTracingPipelineRequest& Req)
+        -> ResourceRef<RHI::RayTracingPipeline> {
+        return AcquireResourceRef(m_Context, SubmitRayTracingPipelineRequest(m_Context, Req));
+    }
+
     /// @brief Request vertex buffer and retain an owner ref.
     [[nodiscard]] auto RequestVertexBufferRef(String Key, const RHI::VertexBufferDesc& Desc) -> ResourceRef<RHI::VertexBuffer> {
         return AcquireResourceRef(m_Context, SubmitVertexBufferRequest(m_Context, std::move(Key), Desc));
