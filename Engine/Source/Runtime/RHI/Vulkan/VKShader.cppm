@@ -10,6 +10,8 @@
 
 module;
 
+#include <magic_enum/magic_enum.hpp>
+
 export module Vulkan:Shader;
 
 import vulkan;
@@ -101,7 +103,7 @@ namespace SoulEngine::RHI::Vulkan {
 
     return std::unexpected(
         ErrorMessage(Core::Format("Unsupported reflected vertex input type: scalar={}, rows={}, cols={}",
-                                  static_cast<int>(ValueType.ScalarType),
+                                  magic_enum::enum_name(ValueType.ScalarType),
                                   ValueType.RowCount,
                                   ValueType.ColumnCount)));
 }
@@ -118,7 +120,7 @@ namespace SoulEngine::RHI::Vulkan {
         return vk::Format::eR32G32B32A32Sfloat;
     default:
         return std::unexpected(
-            ErrorMessage(Core::Format("Unsupported explicit vertex input format: {}", static_cast<int>(Format))));
+            ErrorMessage(Core::Format("Unsupported explicit vertex input format: {}", magic_enum::enum_name(Format))));
     }
 }
 

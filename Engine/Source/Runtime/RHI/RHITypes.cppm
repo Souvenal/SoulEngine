@@ -1,5 +1,7 @@
 module;
 
+#include <magic_enum/magic_enum.hpp>
+
 export module RHI:Types;
 
 export import Core;
@@ -551,8 +553,8 @@ class ShaderParameters {
                 return std::unexpected(ErrorMessage(
                     Format("Shader parameter '{}' has incompatible reflected resource type (expected {}, reflected {})",
                            ParameterPath,
-                           static_cast<Uint32>(ExpectedType),
-                           static_cast<Uint32>(Binding.Type))));
+                           magic_enum::enum_name(ExpectedType),
+                           magic_enum::enum_name(Binding.Type))));
             }
             if (!bExpectArray && Binding.ArrayCount != 1) {
                 return std::unexpected(ErrorMessage(

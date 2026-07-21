@@ -2,7 +2,7 @@ target("RHI")
     set_kind("moduleonly")
 
     add_deps("Core", "Shader")
-    add_packages("glfw")
+    add_packages("glfw", "magic_enum")
 
     add_files("*.cppm")      -- RHI primary module + partitions
 
@@ -15,7 +15,7 @@ target("VMA")
 target("RHIVulkan")
     set_kind("moduleonly")
 
-    add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw")
+    add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw", "magic_enum")
     add_deps("RHI", "VMA")
     add_files("Vulkan/*.cppm")
 

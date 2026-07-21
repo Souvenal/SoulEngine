@@ -6,6 +6,7 @@
 
 module;
 
+#include <magic_enum/magic_enum.hpp>
 #include <slang.h>
 
 export module Slang:Types;
@@ -59,6 +60,8 @@ namespace {
     case slang::TypeReflection::Kind::Resource: {
         const auto BaseResourceShape = static_cast<SlangResourceShapeIntegral>(TypeLayout->getResourceShape()) &
             static_cast<SlangResourceShapeIntegral>(SLANG_RESOURCE_BASE_SHAPE_MASK);
+        if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_ACCELERATION_STRUCTURE))
+            return Shader::ResourceType::AccelerationStructure;
         if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_STRUCTURED_BUFFER) ||
             BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_BYTE_ADDRESS_BUFFER)) {
             return Shader::ResourceType::StorageBuffer;
@@ -67,7 +70,7 @@ namespace {
     }
     default:
         return std::unexpected(ErrorMessage(Format("Unsupported leaf type kind {} in reflection",
-                                                   static_cast<int>(TypeLayout->getKind()))));
+                                                   magic_enum::enum_name(TypeLayout->getKind()))));
     }
 }
 
@@ -138,7 +141,7 @@ namespace {
         return Shader::ResourceType::AccelerationStructure;
     default:
         return std::unexpected(ErrorMessage(
-            Format("Unsupported Slang binding type {} in normalized reflection", static_cast<int>(BindingType))));
+            Format("Unsupported Slang binding type {} in normalized reflection", magic_enum::enum_name(BindingType))));
     }
 }
 [[nodiscard]] auto ToShaderScalarType(slang::TypeReflection::ScalarType ScalarType) -> Shader::ScalarType {

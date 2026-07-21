@@ -37,13 +37,17 @@ namespace {
 class RayTracingCompilerTest : public ::testing::Test {
   protected:
     static inline Path m_ShaderPath = {};
+    static inline Path m_ParameterBlockShaderPath = {};
 
     static auto SetUpTestSuite() -> void {
         const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
         ASSERT_NE(TestSourceDir, nullptr) << "Missing SOUL_ENGINE_TEST_SOURCE_DIR";
         m_ShaderPath = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
+        m_ParameterBlockShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingParameterBlock.slang";
         auto Source = ReadFile(m_ShaderPath);
         ASSERT_TRUE(Source.has_value()) << Source.error().ToString();
+        auto ParameterBlockSource = ReadFile(m_ParameterBlockShaderPath);
+        ASSERT_TRUE(ParameterBlockSource.has_value()) << ParameterBlockSource.error().ToString();
     }
 };
 
@@ -78,6 +82,19 @@ TEST_F(RayTracingCompilerTest, ReflectsTopLevelAccelerationStructureAndStorageOu
     ASSERT_NE(Output, nullptr);
     EXPECT_EQ(Output->Set, 0U);
     EXPECT_EQ(Output->BindingIndex, 1U);
+    EXPECT_EQ(Output->Type, ResourceType::StorageTexture);
+}
+
+TEST_F(RayTracingCompilerTest, ReflectsParameterBlockTopLevelAccelerationStructure) {
+    auto Result = ShaderCompiler::Get().CompileRayTracing(MakeCompileDesc(m_ParameterBlockShaderPath));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    const auto* Tlas = FindBinding(Result->Reflection, "g_rayTracingResources.tlas");
+    ASSERT_NE(Tlas, nullptr);
+    EXPECT_EQ(Tlas->Type, ResourceType::AccelerationStructure);
+
+    const auto* Output = FindBinding(Result->Reflection, "g_rayTracingResources.output");
+    ASSERT_NE(Output, nullptr);
     EXPECT_EQ(Output->Type, ResourceType::StorageTexture);
 }
 

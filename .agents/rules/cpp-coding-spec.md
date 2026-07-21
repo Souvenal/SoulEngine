@@ -31,6 +31,7 @@ Program semantics or compiler diagnostics rules.
     // Terminal:
     LogError("{}", R.error().ToString());
     ```
+- In human-readable errors and logs, stringify enum values with `magic_enum::enum_name()` instead of casting them to numbers.
 - RTTI disabled (`-fno-rtti`). Use `std::variant`, `std::visit`, or virtual dispatch for type-erased polymorphism.
 - No raw `new` or `delete` expressions. Use `UPtr<T>` (`std::make_unique`) for sole ownership and `SPtr<T>` (`std::make_shared`) for shared ownership. Raw pointers are permitted only as non-owning observers (borrowed references). Interop with C APIs that require raw allocation (e.g., `malloc`/`free` callbacks, Vulkan allocation callbacks) is allowed but must be encapsulated in a RAII wrapper with a `// NOLINT-RAW-MEM` comment explaining why it cannot use standard smart pointers.
 - Use project type aliases defined in `Engine/Source/Runtime/Core/Util/Types.cppm` instead of their underlying standard types. Currently enforced: `UPtr<T>` over `std::unique_ptr<T>`, `SPtr<T>` over `std::shared_ptr<T>`. Others (`Int32`, `String`, `StringView`, `ErrorMessage`, etc.) are also available and preferred. `ErrorMessage` lives in `Core:Util.Error` (re-exported via `Core:Util` and `Core`). Core types are available under `using namespace SoulEngine::Core;`.
