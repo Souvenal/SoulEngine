@@ -6,6 +6,7 @@ module;
 export module Scene;
 
 export import Core;
+export import Material;
 export import Resource;
 // export import std;
 
@@ -74,6 +75,8 @@ struct CameraComponent {
 /// owned by each renderer rather than this component.
 struct MeshComponent {
     String Asset = {};
+    /// Scene-local PBR material instance ID. Empty uses the built-in material defaults.
+    String Material = {};
 };
 
 struct LightComponent {};
@@ -96,8 +99,9 @@ struct RenderViewSnapshot {
 /// It intentionally carries only renderer-neutral asset identity and instance
 /// state. Each renderer resolves it to its own GPU representation.
 struct RenderableInstance {
-    String           MeshAsset      = {};
-    hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
+    String                        MeshAsset      = {};
+    Material::PbrMetallicRoughnessMaterial  Material       = {};
+    hlslpp::float4x4              WorldTransform = hlslpp::float4x4::identity();
 };
 
 struct SceneSnapshot {
@@ -125,10 +129,11 @@ class Scene {
     // TODO(SoulEngine): Hide EnTT behind a Scene implementation boundary. This should remove
     // both the downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
-    UPtr<entt::registry>                   m_Registry = nullptr;
-    std::vector<SceneEntity>               m_Roots = {};
-    std::vector<String>                    m_TexturePaths = {};
-    float                                  m_Time = 0.0f;
+    UPtr<entt::registry>                                         m_Registry = nullptr;
+    std::vector<SceneEntity>                                      m_Roots = {};
+    std::map<String, Material::PbrMetallicRoughnessMaterial, std::less<>>   m_MaterialInstances = {};
+    std::vector<String>                                           m_TexturePaths = {};
+    float                                                         m_Time = 0.0f;
 
   public:
     Scene();
@@ -156,6 +161,12 @@ class Scene {
     [[nodiscard]] auto GetTexturePaths() const -> const std::vector<String>& {
         return m_TexturePaths;
     }
+
+    /// @brief Add or replace a scene-local PBR material instance.
+    auto SetMaterialInstance(String Id, Material::PbrMetallicRoughnessMaterial Material) -> void;
+    [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const Material::PbrMetallicRoughnessMaterial*;
+    [[nodiscard]] auto GetMaterialInstances() const
+        -> const std::map<String, Material::PbrMetallicRoughnessMaterial, std::less<>>&;
 
     [[nodiscard]] auto GetRegistry() -> entt::registry&;
     [[nodiscard]] auto GetRegistry() const -> const entt::registry&;
@@ -191,6 +202,22 @@ inline Scene::Scene() : m_Registry(std::make_unique<entt::registry>()) {}
 inline Scene::~Scene() = default;
 inline Scene::Scene(Scene&&) = default;
 inline auto Scene::operator=(Scene&&) -> Scene& = default;
+
+auto Scene::SetMaterialInstance(String Id, Material::PbrMetallicRoughnessMaterial Material) -> void {
+    m_MaterialInstances.insert_or_assign(std::move(Id), Material);
+}
+
+[[nodiscard]] auto Scene::FindMaterialInstance(StringView Id) const -> const Material::PbrMetallicRoughnessMaterial* {
+    const auto It = m_MaterialInstances.find(String(Id));
+    if (It == m_MaterialInstances.end())
+        return nullptr;
+    return &It->second;
+}
+
+[[nodiscard]] auto Scene::GetMaterialInstances() const
+    -> const std::map<String, Material::PbrMetallicRoughnessMaterial, std::less<>>& {
+    return m_MaterialInstances;
+}
 
 [[nodiscard]] auto Scene::GetRegistry() -> entt::registry& {
     return *m_Registry;
@@ -385,9 +412,18 @@ auto Scene::UpdateWorldTransforms() -> void {
         if (Mesh.Asset.empty())
             continue;
 
+        Material::PbrMetallicRoughnessMaterial Material = {};
+        if (!Mesh.Material.empty()) {
+            const auto* MaterialInstance = FindMaterialInstance(Mesh.Material);
+            if (!MaterialInstance)
+                continue;
+            Material = *MaterialInstance;
+        }
+
         const auto& Node = Meshes.get<SceneNode>(Entity);
         Snapshot.Renderables.emplace_back(RenderableInstance{
             .MeshAsset      = Mesh.Asset,
+            .Material       = Material,
             .WorldTransform = Node.Transform.WorldTransform,
         });
     }

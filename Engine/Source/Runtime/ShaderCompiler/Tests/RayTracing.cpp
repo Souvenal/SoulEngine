@@ -118,19 +118,34 @@ TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadat
     EXPECT_EQ(Metadata->ArrayCount, 1U);
 }
 
-TEST_F(RayTracingCompilerTest, RuntimeShaderUsesOneFixedBdaMetadataBinding) {
-    auto Result = ShaderCompiler::Get().CompileRayTracing(MakeCompileDesc(m_RuntimeBdaShaderPath));
+TEST_F(RayTracingCompilerTest, CompilesRuntimePathTracingShaderWithFixedBdaMetadata) {
+    auto Result = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
+        .RayGeneration = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
+        .MissEntries = {
+            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "missMain", .Backend = Backend::Slang},
+            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowMissMain", .Backend = Backend::Slang},
+        },
+        .HitGroups = {
+            RayTracingHitGroupCompileDesc{
+                .Type = RayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "closestHitMain", .Backend = Backend::Slang},
+            },
+            RayTracingHitGroupCompileDesc{
+                .Type = RayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowClosestHitMain", .Backend = Backend::Slang},
+            },
+        },
+    });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
     const auto* Metadata = FindBinding(Result->Reflection, "g_rayTracingGeometryMetadata.metadata");
     ASSERT_NE(Metadata, nullptr);
     EXPECT_EQ(Metadata->Type, ResourceType::StorageBuffer);
     EXPECT_EQ(Metadata->ArrayCount, 1U);
-    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracingGeometry.positions"), nullptr);
-    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracingGeometry.normals"), nullptr);
-    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracingGeometry.indices"), nullptr);
+    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracing.geometry"), nullptr);
+    EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.materials"), nullptr);
+    EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.accumulation"), nullptr);
 }
-
 TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
     auto Desc = MakeCompileDesc(m_ShaderPath);
     Desc.RayGeneration.EntryPoint = "doesNotExist";

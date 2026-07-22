@@ -313,6 +313,8 @@ class BottomLevelAccelerationStructure final : public RHI::BottomLevelAccelerati
         if (!BuildToken)
             return std::unexpected(BuildToken.error().Append("Failed to submit BLAS build"));
         CompletionQueue.EnqueueCallback(*BuildToken, [ScratchBuffer = *Scratch]() {});
+        if (auto R = CompletionQueue.Drain(); !R)
+            return std::unexpected(R.error().Append("Failed to wait for BLAS build completion"));
 
         auto Result = std::make_unique<BottomLevelAccelerationStructure>();
         Result->m_Native = std::move(*Native);

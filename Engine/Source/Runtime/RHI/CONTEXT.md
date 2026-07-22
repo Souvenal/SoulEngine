@@ -112,7 +112,7 @@ RHI resources are not thread-safe by default. Callers must serialize access:
 | `RenderDevice::Execute()` | Called from `RHILoop` only |
 | `CreateVertexBuffer` / `CreateIndexBuffer` / `CreateSampler` etc. | RHI-thread owned for backend-native object creation; historical `OnAttach` synchronous calls migrated to async Resource::Manager requests |
 | `DrawParameter::WriteConstantBuffer` | Called by render code before `Execute()`; backend consumes the copied draw-scope writes on `RHILoop` through dynamic uniform-buffer descriptor binding. |
-| `ImmediateContext` | Not thread-safe (caller must serialize) |
+| `ImmediateContext` | Not thread-safe (caller must serialize). Its completion queue and timeline must be owned by the same Vulkan queue on which it submits. The transfer immediate context uses the transfer completion queue; one-shot graphics work such as BLAS builds uses a separate graphics completion queue and signals completion at `eAccelerationStructureBuildKHR`. |
 
 Backend-native RHI object creation, descriptor writes, GPU upload submission, and GPU completion publication belong to the RHI thread. Game, Render, and background worker threads may prepare CPU-side request data or observe published handles/status, but must not directly mutate backend-native RHI state.
 

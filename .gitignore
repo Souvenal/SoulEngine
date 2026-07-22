@@ -20,6 +20,7 @@ vsxmake2026
 
 # RenderDoc
 *.cap
+*.rdc
 
 # macOS
 .DS_Store

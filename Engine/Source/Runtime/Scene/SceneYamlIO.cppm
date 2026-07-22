@@ -24,7 +24,7 @@ struct SceneComponentSchema {
     void (*Remove)(entt::registry&, SceneEntity);
     [[nodiscard]] auto (*Has)(const entt::registry&, SceneEntity) -> bool;
     [[nodiscard]] entt::meta_any (*Get)(entt::registry&, SceneEntity);
-    [[nodiscard]] auto (*Validate)(const entt::meta_any&, String&) -> bool;
+    [[nodiscard]] auto (*Validate)(const Scene&, const entt::meta_any&, String&) -> bool;
     StringView Name = {};
     std::span<const SceneFieldSchema> Fields = {};
 };
@@ -49,7 +49,7 @@ template <typename T>
     return entt::forward_as_meta(Registry.get<T>(Entity));
 }
 
-[[nodiscard]] auto ValidateCamera(const entt::meta_any& Value, String& Error) -> bool {
+[[nodiscard]] auto ValidateCamera(const Scene&, const entt::meta_any& Value, String& Error) -> bool {
     const auto* Camera = Value.try_cast<CameraComponent>();
     if (!Camera) {
         Error = "Camera component metadata does not contain CameraComponent";
@@ -70,7 +70,7 @@ template <typename T>
     return true;
 }
 
-[[nodiscard]] auto ValidateMesh(const entt::meta_any& Value, String& Error) -> bool {
+[[nodiscard]] auto ValidateMesh(const Scene& Scene, const entt::meta_any& Value, String& Error) -> bool {
     const auto* Mesh = Value.try_cast<MeshComponent>();
     if (!Mesh) {
         Error = "Mesh component metadata does not contain MeshComponent";
@@ -82,6 +82,10 @@ template <typename T>
     }
     if (Path(Mesh->Asset).is_absolute()) {
         Error = "asset must be relative to the current application Assets directory";
+        return false;
+    }
+    if (!Mesh->Material.empty() && !Scene.FindMaterialInstance(Mesh->Material)) {
+        Error = Format("material instance '{}' does not exist", Mesh->Material);
         return false;
     }
     return true;
@@ -99,6 +103,7 @@ auto RegisterBuiltInComponentSchemas() -> void {
     };
     static const std::array MeshFields{
         SceneFieldSchema{.Name = "asset", .Id = entt::hashed_string{"asset"}.value()},
+        SceneFieldSchema{.Name = "material", .Id = entt::hashed_string{"material"}.value()},
     };
 
     entt::meta_factory<CameraComponent>{}
@@ -119,7 +124,8 @@ auto RegisterBuiltInComponentSchemas() -> void {
             .Has = &HasComponent<MeshComponent>, .Get = &GetComponent<MeshComponent>,
             .Validate = &ValidateMesh, .Name = "mesh", .Fields = MeshFields,
         })
-        .data<&MeshComponent::Asset>(MeshFields[0].Id);
+        .data<&MeshComponent::Asset>(MeshFields[0].Id)
+        .data<&MeshComponent::Material>(MeshFields[1].Id);
 
     Registered = true;
 }
@@ -142,6 +148,76 @@ auto RegisterBuiltInComponentSchemas() -> void {
     } catch (const YAML::Exception& Error) {
         return MakeStructuralError(Path, Error.what());
     }
+}
+
+[[nodiscard]] auto ReadMaterialInstance(const YAML::Node& Node, StringView Path)
+    -> std::expected<Material::PbrMetallicRoughnessMaterial, ErrorMessage> {
+    if (!Node.IsMap())
+        return MakeStructuralError(Path, "must be a mapping");
+
+    Material::PbrMetallicRoughnessMaterial Result = {};
+    for (const auto& Entry : Node) {
+        if (!Entry.first.IsScalar())
+            return MakeStructuralError(Path, "contains a non-scalar key");
+        const auto Key = Entry.first.as<String>();
+        const auto FieldPath = MakeYamlPath(Path, Key);
+        try {
+            if (Key == "base_color") {
+                auto Value = ReadFloat3(Entry.second, FieldPath);
+                if (!Value)
+                    return std::unexpected(Value.error());
+                Result.BaseColor = Value.value();
+            } else if (Key == "metallic") {
+                if (!Entry.second.IsScalar())
+                    return MakeStructuralError(FieldPath, "must be a scalar number");
+                Result.Metallic = Entry.second.as<float>();
+            } else if (Key == "roughness") {
+                if (!Entry.second.IsScalar())
+                    return MakeStructuralError(FieldPath, "must be a scalar number");
+                Result.Roughness = Entry.second.as<float>();
+            } else {
+                return MakeStructuralError(FieldPath, "is not a recognized PBR material field");
+            }
+        } catch (const YAML::Exception& Error) {
+            return MakeStructuralError(FieldPath, Error.what());
+        }
+    }
+
+    if (!std::isfinite(Result.BaseColor.x) || !std::isfinite(Result.BaseColor.y) || !std::isfinite(Result.BaseColor.z) ||
+        !std::isfinite(Result.Metallic) || !std::isfinite(Result.Roughness)) {
+        return MakeStructuralError(Path, "contains a non-finite value");
+    }
+    if (Result.BaseColor.x < 0.0f || Result.BaseColor.x > 1.0f || Result.BaseColor.y < 0.0f ||
+        Result.BaseColor.y > 1.0f || Result.BaseColor.z < 0.0f || Result.BaseColor.z > 1.0f) {
+        return MakeStructuralError(MakeYamlPath(Path, "base_color"), "components must be in the range [0, 1]");
+    }
+    if (Result.Metallic < 0.0f || Result.Metallic > 1.0f)
+        return MakeStructuralError(MakeYamlPath(Path, "metallic"), "must be in the range [0, 1]");
+    if (Result.Roughness < 0.0f || Result.Roughness > 1.0f)
+        return MakeStructuralError(MakeYamlPath(Path, "roughness"), "must be in the range [0, 1]");
+    return Result;
+}
+
+[[nodiscard]] auto LoadMaterialInstances(Scene& Scene, const YAML::Node& Node, StringView Path)
+    -> std::expected<void, ErrorMessage> {
+    if (!Node.IsDefined() || Node.IsNull())
+        return {};
+    if (!Node.IsMap())
+        return MakeStructuralError(Path, "must be a mapping");
+
+    for (const auto& Entry : Node) {
+        if (!Entry.first.IsScalar())
+            return MakeStructuralError(Path, "material instance ID must be a scalar");
+        const auto Id = Entry.first.as<String>();
+        const auto MaterialPath = MakeYamlPath(Path, Id);
+        if (Id.empty())
+            return MakeStructuralError(MaterialPath, "material instance ID must not be empty");
+        auto Material = ReadMaterialInstance(Entry.second, MaterialPath);
+        if (!Material)
+            return std::unexpected(Material.error());
+        Scene.SetMaterialInstance(Id, Material.value());
+    }
+    return {};
 }
 
 [[nodiscard]] auto ReadTransform(const YAML::Node& Node, StringView Path) -> std::expected<Transform, ErrorMessage> {
@@ -275,7 +351,7 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
         }
 
         String Error;
-        if (Valid && !Schema->Validate(Component, Error)) {
+        if (Valid && !Schema->Validate(Scene, Component, Error)) {
             AppendComponentWarning(Report, ComponentPath, std::move(Error));
             Valid = false;
         }
@@ -418,19 +494,27 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
     if (!Document.IsMap())
         return MakeStructuralError(FilePath.string(), "document root must be a mapping");
 
+    YAML::Node MaterialInstances = {};
     YAML::Node Entities = {};
     for (const auto& Entry : Document) {
         if (!Entry.first.IsScalar())
             return MakeStructuralError(FilePath.string(), "document contains a non-scalar key");
         const auto Key = Entry.first.as<String>();
-        if (Key != "entities")
+        if (Key == "material_instances") {
+            MaterialInstances = Entry.second;
+        } else if (Key == "entities") {
+            Entities = Entry.second;
+        } else {
             return MakeStructuralError(MakeYamlPath(FilePath.string(), Key), "is not a recognized Scene File field");
-        Entities = Entry.second;
+        }
     }
     if (!Entities || !Entities.IsSequence())
         return MakeStructuralError(MakeYamlPath(FilePath.string(), "entities"), "must be a sequence");
 
     Scene Temporary = {};
+    if (auto Result = LoadMaterialInstances(Temporary, MaterialInstances, "material_instances"); !Result)
+        return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
+
     SceneLoadReport Report = {};
     for (std::size_t Index = 0; Index < Entities.size(); ++Index) {
         if (auto Result = LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report); !Result)
@@ -445,6 +529,18 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
     RegisterBuiltInComponentSchemas();
 
     YAML::Node Document{YAML::NodeType::Map};
+    if (!m_MaterialInstances.empty()) {
+        YAML::Node MaterialInstances{YAML::NodeType::Map};
+        for (const auto& [Id, Material] : GetMaterialInstances()) {
+            YAML::Node MaterialNode{YAML::NodeType::Map};
+            MaterialNode["base_color"] = SaveFloat3(Material.BaseColor);
+            MaterialNode["metallic"] = Material.Metallic;
+            MaterialNode["roughness"] = Material.Roughness;
+            MaterialInstances[Id] = MaterialNode;
+        }
+        Document["material_instances"] = MaterialInstances;
+    }
+
     YAML::Node Entities{YAML::NodeType::Sequence};
     for (const auto Root : m_Roots) {
         auto SavedRoot = SaveEntity(*this, Root);

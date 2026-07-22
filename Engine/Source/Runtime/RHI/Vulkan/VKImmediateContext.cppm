@@ -28,20 +28,21 @@ class ImmediateContext {
     ImmediateContext() = default;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device,
-                                      vk::raii::Queue& TransferQueue,
-                                      Uint32 TransferQueueFamily,
+                                      vk::raii::Queue& SubmitQueue,
+                                      Uint32 SubmitQueueFamily,
+                                      vk::PipelineStageFlagBits2 CompletionStage,
                                       TransferCompletionQueue& CompletionQueue)
         -> std::expected<ImmediateContext, ErrorMessage> {
         vk::CommandPoolCreateInfo PoolCI{
             // Transient: hint driver that cmdbufs recorded and re-recorded often
             .flags = vk::CommandPoolCreateFlagBits::eTransient,
-            .queueFamilyIndex = TransferQueueFamily,
+            .queueFamilyIndex = SubmitQueueFamily,
         };
         auto PoolRes = Device.createCommandPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create immediate command pool"));
 
-        return ImmediateContext(Device, TransferQueue, std::move(PoolRes.value), CompletionQueue);
+        return ImmediateContext(Device, SubmitQueue, std::move(PoolRes.value), CompletionStage, CompletionQueue);
     }
 
     /// Allocate one-shot cmdbuf, record via RecordFn, submit to transfer
@@ -72,9 +73,9 @@ class ImmediateContext {
 
         vk::CommandBufferSubmitInfo CmdBufInfo{.commandBuffer = CmdBuf};
         auto [Token, SignalSema] =
-            m_CompletionQueue->AllocateSignalSubmitInfo(vk::PipelineStageFlagBits2::eTransfer);
+            m_CompletionQueue->AllocateSignalSubmitInfo(m_CompletionStage);
         vk::SemaphoreSubmitInfo     SignalSemas[] = {SignalSema};
-        if (auto R = m_TransferQueue->submit2(
+        if (auto R = m_SubmitQueue->submit2(
                 vk::SubmitInfo2{
                     .commandBufferInfoCount   = 1,
                     .pCommandBufferInfos      = &CmdBufInfo,
@@ -101,18 +102,21 @@ class ImmediateContext {
 
   private:
     ImmediateContext(vk::raii::Device& Device,
-                      vk::raii::Queue& TransferQueue,
+                      vk::raii::Queue& SubmitQueue,
                       vk::raii::CommandPool&& Pool,
+                      vk::PipelineStageFlagBits2 CompletionStage,
                       TransferCompletionQueue& CompletionQueue)
         : m_Device(&Device)
-        , m_TransferQueue(&TransferQueue)
+        , m_SubmitQueue(&SubmitQueue)
         , m_Pool(std::move(Pool))
+        , m_CompletionStage(CompletionStage)
         , m_CompletionQueue(&CompletionQueue) {}
 
-    vk::raii::Device*          m_Device           = nullptr;
-    vk::raii::Queue*           m_TransferQueue    = nullptr;
-    vk::raii::CommandPool      m_Pool             = nullptr;
-    TransferCompletionQueue*   m_CompletionQueue  = nullptr;
+    vk::raii::Device*            m_Device           = nullptr;
+    vk::raii::Queue*             m_SubmitQueue      = nullptr;
+    vk::raii::CommandPool        m_Pool             = nullptr;
+    vk::PipelineStageFlagBits2   m_CompletionStage  = vk::PipelineStageFlagBits2::eAllCommands;
+    TransferCompletionQueue*     m_CompletionQueue  = nullptr;
 };
 
 } // namespace SoulEngine::RHI::Vulkan
