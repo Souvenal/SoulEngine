@@ -55,6 +55,11 @@ entities:
 
 TEST(SceneDocument, LoadsBuiltInCameraAndMeshComponents) {
     const auto FilePath = WriteSceneFile(R"(
+material_instances:
+  gold:
+    base_color: [1.0, 0.71, 0.22]
+    metallic: 1.0
+    roughness: 0.18
 entities:
   - components:
       camera:
@@ -63,6 +68,7 @@ entities:
         far_plane: 100.0
       mesh:
         asset: teapot.obj
+        material: gold
 )");
 
     Scene Scene = {};
@@ -73,6 +79,29 @@ entities:
     const auto Snapshot = Scene.BuildSnapshot();
     ASSERT_EQ(Snapshot.Renderables.size(), 1u);
     EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, "teapot.obj");
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.x), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.y), 0.71f);
+    EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Metallic, 1.0f);
+    EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Roughness, 0.18f);
+
+    std::filesystem::remove(FilePath);
+}
+
+TEST(SceneDocument, SkipsMeshWithUnknownMaterialInstance) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - components:
+      mesh:
+        asset: teapot.obj
+        material: missing
+)");
+
+    Scene Scene = {};
+    const auto Loaded = Scene.LoadFromFile(FilePath);
+    ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
+    ASSERT_EQ(Loaded->Warnings.size(), 1u);
+    EXPECT_EQ(Loaded->Warnings.front().Path, "entities[0].components.mesh");
+    EXPECT_TRUE(Scene.BuildSnapshot().Renderables.empty());
 
     std::filesystem::remove(FilePath);
 }

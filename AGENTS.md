@@ -18,6 +18,7 @@ Guidance for AI agents on this repo.
 - `Engine/Source/Runtime/Window/` — SDL/GLFW windowing abstraction.
 - `Engine/Source/Runtime/RHI/` — Vulkan rendering hardware interface.
 - `Engine/Source/Runtime/Shader/` — Shader type system (descriptor bindings, resource types).
+- `Engine/Source/Runtime/Material/` — Renderer-neutral material data model.
 - `Engine/Source/Runtime/ShaderCompiler/` — Slang-based shader offline compiler + test suite (gtest).
 - `Engine/Source/Runtime/Application/` — Application framework integrating RHI + shader compilation.
 - `Engine/Source/Runtime/Launch/` — Engine bootstrap, main loop. Top-level runtime module.

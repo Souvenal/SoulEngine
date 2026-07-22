@@ -1,3 +1,17 @@
+material_instances:
+  copper:
+    base_color: [0.62, 0.28, 0.10]
+    metallic: 0.0
+    roughness: 0.42
+  brushed_gold:
+    base_color: [1.0, 0.71, 0.22]
+    metallic: 1.0
+    roughness: 0.28
+  matte_red:
+    base_color: [0.78, 0.04, 0.03]
+    metallic: 0.0
+    roughness: 0.75
+
 entities:
   - name: Main Camera
     transform:
@@ -23,6 +37,7 @@ entities:
         components:
           mesh:
             asset: teapot.obj
+            material: copper
       - name: Teapot Left
         transform:
           translation: [-1.25, 0.0, 0.0]
@@ -31,6 +46,7 @@ entities:
         components:
           mesh:
             asset: teapot.obj
+            material: brushed_gold
       - name: Teapot Right
         transform:
           translation: [1.25, 0.0, 0.0]
@@ -39,6 +55,7 @@ entities:
         components:
           mesh:
             asset: teapot.obj
+            material: matte_red
       - name: Teapot Back Left
         transform:
           translation: [-1.25, 0.0, -1.25]
@@ -47,6 +64,7 @@ entities:
         components:
           mesh:
             asset: teapot.obj
+            material: copper
       - name: Teapot Back Center
         transform:
           translation: [0.0, 0.0, -1.25]
@@ -55,6 +73,7 @@ entities:
         components:
           mesh:
             asset: teapot.obj
+            material: brushed_gold
       - name: Teapot Back Right
         transform:
           translation: [1.25, 0.0, -1.25]
@@ -63,3 +82,4 @@ entities:
         components:
           mesh:
             asset: teapot.obj
+            material: matte_red

@@ -97,13 +97,25 @@ class RenderDevice final : public RHI::RenderDevice {
         m_TransferCompletionQueue = std::move(*CompletionQueue);
 
         // ── Immediate Context ──────────────────────────────────────────────
-        auto ImmCtx = ImmediateContext::Create(m_Device, m_TransferQueue, m_TransferFamily, m_TransferCompletionQueue);
+        auto ImmCtx = ImmediateContext::Create(m_Device,
+                                               m_TransferQueue,
+                                               m_TransferFamily,
+                                               vk::PipelineStageFlagBits2::eTransfer,
+                                               m_TransferCompletionQueue);
         if (!ImmCtx)
             return std::unexpected(ImmCtx.error().Append("ImmediateContext creation failed"));
         m_ImmediateContext = std::move(*ImmCtx);
 
-        auto GraphicsImmCtx =
-            ImmediateContext::Create(m_Device, m_GraphicsQueue, m_GraphicsFamily, m_TransferCompletionQueue);
+        auto GraphicsCompletionQueue = TransferCompletionQueue::Create(m_Device);
+        if (!GraphicsCompletionQueue)
+            return std::unexpected(GraphicsCompletionQueue.error().Append("Graphics completion queue creation failed"));
+        m_GraphicsCompletionQueue = std::move(*GraphicsCompletionQueue);
+
+        auto GraphicsImmCtx = ImmediateContext::Create(m_Device,
+                                                        m_GraphicsQueue,
+                                                        m_GraphicsFamily,
+                                                        vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+                                                        m_GraphicsCompletionQueue);
         if (!GraphicsImmCtx)
             return std::unexpected(GraphicsImmCtx.error().Append("Graphics ImmediateContext creation failed"));
         m_GraphicsImmediateContext = std::move(*GraphicsImmCtx);
@@ -382,6 +394,9 @@ class RenderDevice final : public RHI::RenderDevice {
         auto TransferDrain = m_TransferCompletionQueue.Drain();
         if (!TransferDrain)
             LogError("{}", TransferDrain.error().ToString());
+        auto GraphicsDrain = m_GraphicsCompletionQueue.Drain();
+        if (!GraphicsDrain)
+            LogError("{}", GraphicsDrain.error().ToString());
         auto DeletionDrain = m_DeletionQueue.Drain();
         if (!DeletionDrain)
             LogError("{}", DeletionDrain.error().ToString());
@@ -1029,6 +1044,7 @@ class RenderDevice final : public RHI::RenderDevice {
     ImmediateContext        m_ImmediateContext;
     ImmediateContext        m_GraphicsImmediateContext;
     TransferCompletionQueue m_TransferCompletionQueue;
+    TransferCompletionQueue m_GraphicsCompletionQueue;
 
     uint32_t m_FramesInFlight = 2;
     uint32_t m_CurrentFrame   = 0;

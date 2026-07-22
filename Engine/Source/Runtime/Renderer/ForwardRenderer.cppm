@@ -7,6 +7,7 @@ module;
 export module Renderer:ForwardRenderer;
 
 import Core;
+import Material;
 import RHI;
 import Resource;
 import Scene;
@@ -74,6 +75,7 @@ struct ForwardDrawInstance {
     Resource::ResourceHandle<RHI::VertexBuffer> PositionVB     = {};
     Resource::ResourceHandle<RHI::VertexBuffer> NormalVB       = {};
     Resource::ResourceHandle<RHI::IndexBuffer>  IndexBuffer    = {};
+    Material::PbrMetallicRoughnessMaterial          Material       = {};
     hlslpp::float4x4                            WorldTransform = hlslpp::float4x4::identity();
 };
 
@@ -200,12 +202,6 @@ class ForwardRenderer final : public IRenderer {
         if (auto R = Parameters.SetConstantBuffer("g_forwardFrameView.view", ViewCB, &ViewData, sizeof(ViewData)); !R)
             return std::unexpected(R.error().Append("Forward PBR view parameter binding failed"));
 
-        const auto MaterialData = BuildMaterialConstants();
-        if (auto R = Parameters.SetConstantBuffer(
-                "g_forwardMaterial.material", MaterialCB, &MaterialData, sizeof(MaterialData));
-            !R) {
-            return std::unexpected(R.error().Append("Forward PBR material parameter binding failed"));
-        }
         RHI::Pass Pass{
             .Desc = RHI::RenderingDesc{
                 .ColorAttachment = {
@@ -231,15 +227,22 @@ class ForwardRenderer final : public IRenderer {
             if (!PositionVB || !NormalVB || !IB)
                 continue;
 
-            auto ObjectParameters = Parameters;
+            auto DrawParameters = Parameters;
+            const auto MaterialData = BuildMaterialConstants(Instance.Material);
+            if (auto R = DrawParameters.SetConstantBuffer(
+                    "g_forwardMaterial.material", MaterialCB, &MaterialData, sizeof(MaterialData), true);
+                !R) {
+                return std::unexpected(R.error().Append("Forward PBR material parameter binding failed"));
+            }
+
             const auto ObjectData = BuildObjectConstants(Instance);
-            if (auto R = ObjectParameters.SetConstantBuffer(
+            if (auto R = DrawParameters.SetConstantBuffer(
                     "g_forwardObject.object", ObjectCB, &ObjectData, sizeof(ObjectData), true);
                 !R) {
                 return std::unexpected(R.error().Append("Forward PBR object parameter binding failed"));
             }
 
-            Pass.BindShaderParameters(Pipeline, std::move(ObjectParameters));
+            Pass.BindShaderParameters(Pipeline, std::move(DrawParameters));
             Pass.DrawIndexed(Pipeline,
                              std::array<RHI::VertexBuffer*, RHI::kMaxVertexBufferBindings>{PositionVB, NormalVB},
                              IB);
@@ -291,6 +294,7 @@ class ForwardRenderer final : public IRenderer {
                         .PositionVB     = SubMesh.PositionVB,
                         .NormalVB       = SubMesh.NormalVB,
                         .IndexBuffer    = SubMesh.IB,
+                        .Material       = Renderable.Material,
                         .WorldTransform = Renderable.WorldTransform,
                     });
                 }
@@ -309,8 +313,14 @@ class ForwardRenderer final : public IRenderer {
         };
     }
 
-    [[nodiscard]] static auto BuildMaterialConstants() -> ForwardMaterialConstants {
-        return {};
+    [[nodiscard]] static auto BuildMaterialConstants(const Material::PbrMetallicRoughnessMaterial& Material)
+        -> ForwardMaterialConstants {
+        return ForwardMaterialConstants{
+            .BaseColorFactor = hlslpp::interop::float4{
+                hlslpp::float4{Material.BaseColor.x, Material.BaseColor.y, Material.BaseColor.z, 1.0f}},
+            .MetallicFactor  = Material.Metallic,
+            .RoughnessFactor = Material.Roughness,
+        };
     }
 
     [[nodiscard]] static auto BuildObjectConstants(const ForwardDrawInstance& Instance) -> ForwardObjectConstants {
