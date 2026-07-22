@@ -38,16 +38,25 @@ class RayTracingCompilerTest : public ::testing::Test {
   protected:
     static inline Path m_ShaderPath = {};
     static inline Path m_ParameterBlockShaderPath = {};
+    static inline Path m_BdaShaderPath = {};
+    static inline Path m_RuntimeBdaShaderPath = {};
 
     static auto SetUpTestSuite() -> void {
         const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
         ASSERT_NE(TestSourceDir, nullptr) << "Missing SOUL_ENGINE_TEST_SOURCE_DIR";
         m_ShaderPath = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
         m_ParameterBlockShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingParameterBlock.slang";
+        m_BdaShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingBda.slang";
+        const Path EngineDir = Path(TestSourceDir).parent_path().parent_path().parent_path().parent_path();
+        m_RuntimeBdaShaderPath = EngineDir / "Shaders" / "RayTracing.slang";
         auto Source = ReadFile(m_ShaderPath);
         ASSERT_TRUE(Source.has_value()) << Source.error().ToString();
         auto ParameterBlockSource = ReadFile(m_ParameterBlockShaderPath);
         ASSERT_TRUE(ParameterBlockSource.has_value()) << ParameterBlockSource.error().ToString();
+        auto BdaSource = ReadFile(m_BdaShaderPath);
+        ASSERT_TRUE(BdaSource.has_value()) << BdaSource.error().ToString();
+        auto RuntimeBdaSource = ReadFile(m_RuntimeBdaShaderPath);
+        ASSERT_TRUE(RuntimeBdaSource.has_value()) << RuntimeBdaSource.error().ToString();
     }
 };
 
@@ -96,6 +105,30 @@ TEST_F(RayTracingCompilerTest, ReflectsParameterBlockTopLevelAccelerationStructu
     const auto* Output = FindBinding(Result->Reflection, "g_rayTracingResources.output");
     ASSERT_NE(Output, nullptr);
     EXPECT_EQ(Output->Type, ResourceType::StorageTexture);
+}
+
+TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadataBinding) {
+    auto Result = ShaderCompiler::Get().CompileRayTracing(MakeCompileDesc(m_BdaShaderPath));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+    EXPECT_FALSE(Result->Code.empty());
+
+    const auto* Metadata = FindBinding(Result->Reflection, "g_bdaMetadata.metadata");
+    ASSERT_NE(Metadata, nullptr);
+    EXPECT_EQ(Metadata->Type, ResourceType::StorageBuffer);
+    EXPECT_EQ(Metadata->ArrayCount, 1U);
+}
+
+TEST_F(RayTracingCompilerTest, RuntimeShaderUsesOneFixedBdaMetadataBinding) {
+    auto Result = ShaderCompiler::Get().CompileRayTracing(MakeCompileDesc(m_RuntimeBdaShaderPath));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    const auto* Metadata = FindBinding(Result->Reflection, "g_rayTracingGeometryMetadata.metadata");
+    ASSERT_NE(Metadata, nullptr);
+    EXPECT_EQ(Metadata->Type, ResourceType::StorageBuffer);
+    EXPECT_EQ(Metadata->ArrayCount, 1U);
+    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracingGeometry.positions"), nullptr);
+    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracingGeometry.normals"), nullptr);
+    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracingGeometry.indices"), nullptr);
 }
 
 TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {

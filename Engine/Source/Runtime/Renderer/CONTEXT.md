@@ -42,3 +42,11 @@ IRenderer
 - Bindless texture selection is **Draw material data**, not a shader entry-point identity or pipeline compile-time interface. Texture tables are assigned as shader parameter values; material/object data selects entries by integer texture indices.
 - SceneSnapshot carries renderer-neutral `RenderableInstance` values, not Resource-level draw representations. Each renderer owns a mesh-resource cache keyed by mesh asset identity, requests meshes incrementally, expands ready mesh submeshes into renderer-local draw instances, and skips work whose dependencies are not yet ready.
 - ForwardRenderer currently binds position and generated normal streams only. It uses an explicit directional-light frame block, per-view camera block, and constant material block. Its shader and C++ constant-buffer mirrors follow the project runtime `std140` ABI: no named padding fields, `alignas(16)` only where the shader type requires it, and `sizeof`/`offsetof` assertions for every reflected field offset.
+
+## Ray-tracing BDA geometry
+
+`RayTracingRenderer` builds a per-dispatch logical geometry-table update from
+the ready Resource Mesh submeshes. Each TLAS instance custom index addresses
+its matching table instance record. Renderer binds only the reflected fixed
+`g_rayTracingGeometryMetadata.metadata` parameter path and never handles
+Vulkan device addresses or descriptor indices.

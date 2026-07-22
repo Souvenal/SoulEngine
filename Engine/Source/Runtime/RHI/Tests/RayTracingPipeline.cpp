@@ -61,7 +61,7 @@ TEST(ShaderBindingTableLayoutTest, RejectsRecordStrideBeyondDeviceLimit) {
     EXPECT_NE(Layout.error().ToString().find("maxShaderGroupStride"), String::npos);
 }
 
-TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
+TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlangFixture) {
     const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
     ASSERT_NE(TestSourceDir, nullptr) << "Missing SOUL_ENGINE_TEST_SOURCE_DIR";
 
@@ -128,7 +128,7 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
         return;
     }
 
-    const Path ShaderPath = EngineDir / "Source" / "Runtime" / "ShaderCompiler" / "Tests" / "Slang" / "RayTracing.slang";
+    const Path ShaderPath = EngineDir / "Source" / "Runtime" / "ShaderCompiler" / "Tests" / "Slang" / "RayTracingBda.slang";
     auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
         .RayGeneration = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
         .MissEntries   = {ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "missMain", .Backend = Backend::Slang}},
@@ -177,14 +177,26 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
         return;
     }
 
+    auto* GeometryTable = RenderDevice::Get().GetRayTracingGeometryTable();
+    if (!GeometryTable) {
+        Cleanup();
+        GTEST_SKIP() << "BDA geometry table is unavailable";
+    }
+
     auto Parameters = ShaderParameters::Create(**Pipeline);
-    if (auto R = Parameters.SetTopLevelAccelerationStructure("g_tlas", Tlas->get()); !R) {
+    if (auto R = Parameters.SetTopLevelAccelerationStructure("g_resources.tlas", Tlas->get()); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
         return;
     }
-    if (auto R = Parameters.SetStorageRenderTarget("g_output", Output->Texture.get()); !R) {
+    if (auto R = Parameters.SetStorageRenderTarget("g_resources.output", Output->Texture.get()); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+    if (auto R = Parameters.SetRayTracingGeometryTable("g_bdaMetadata.metadata", GeometryTable); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
@@ -194,17 +206,39 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
     const std::array<AccelerationStructureInstance, 2> Instances{
         AccelerationStructureInstance{
             .BottomLevelPtr = Blas->get(),
+            .CustomIndex = 0,
         },
         AccelerationStructureInstance{
             .BottomLevelPtr = Blas->get(),
             .Transform = RowMajorTransform3x4{
                 .M03 = 0.1f,
             },
+            .CustomIndex = 1,
         },
+    };
+    const RayTracingGeometryTableUpdate GeometryUpdate{
+        .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}, {.FirstGeometry = 1, .GeometryCount = 1}},
+        .Geometries = {{.PositionBuffer = VertexBuffer->Buffer.get(),
+                        .NormalBuffer = VertexBuffer->Buffer.get(),
+                        .IndexBuffer = IndexBuffer->Buffer.get(),
+                        .PositionStride = sizeof(Float32) * 3,
+                        .NormalStride = sizeof(Float32) * 3,
+                        .IndexStride = sizeof(Uint32),
+                        .VertexCount = 3,
+                        .IndexCount = 3},
+                       {.PositionBuffer = VertexBuffer->Buffer.get(),
+                        .NormalBuffer = VertexBuffer->Buffer.get(),
+                        .IndexBuffer = IndexBuffer->Buffer.get(),
+                        .PositionStride = sizeof(Float32) * 3,
+                        .NormalStride = sizeof(Float32) * 3,
+                        .IndexStride = sizeof(Uint32),
+                        .VertexCount = 3,
+                        .IndexCount = 3}},
     };
     CommandList Commands;
     auto& ScopeValue = Commands.Scopes.emplace_back(NonRenderingPass{});
     auto& Scope = std::get<NonRenderingPass>(ScopeValue);
+    Scope.UpdateRayTracingGeometryTable(GeometryTable, GeometryUpdate);
     Scope.BuildOrUpdateTopLevelAccelerationStructure(Tlas->get(), Instances);
     Scope.SetRayTracingPipeline(Pipeline->get());
     Scope.BindShaderParameters(Pipeline->get(), std::move(Parameters));
@@ -219,13 +253,19 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
     }
 
     auto UpdateParameters = ShaderParameters::Create(**Pipeline);
-    if (auto R = UpdateParameters.SetTopLevelAccelerationStructure("g_tlas", Tlas->get()); !R) {
+    if (auto R = UpdateParameters.SetTopLevelAccelerationStructure("g_resources.tlas", Tlas->get()); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
         return;
     }
-    if (auto R = UpdateParameters.SetStorageRenderTarget("g_output", Output->Texture.get()); !R) {
+    if (auto R = UpdateParameters.SetStorageRenderTarget("g_resources.output", Output->Texture.get()); !R) {
+        const auto Error = R.error().ToString();
+        Cleanup();
+        ADD_FAILURE() << Error;
+        return;
+    }
+    if (auto R = UpdateParameters.SetRayTracingGeometryTable("g_bdaMetadata.metadata", GeometryTable); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
@@ -235,6 +275,7 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesPipelineFromSlangFixture) {
     CommandList UpdateCommands;
     auto& UpdateScopeValue = UpdateCommands.Scopes.emplace_back(NonRenderingPass{});
     auto& UpdateScope = std::get<NonRenderingPass>(UpdateScopeValue);
+    UpdateScope.UpdateRayTracingGeometryTable(GeometryTable, GeometryUpdate);
     UpdateScope.BuildOrUpdateTopLevelAccelerationStructure(
         Tlas->get(), Instances, TopLevelAccelerationStructureBuildMode::Update);
     UpdateScope.SetRayTracingPipeline(Pipeline->get());

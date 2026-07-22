@@ -54,6 +54,16 @@ struct UsageVisitor {
                 VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
         }
     }
+    auto operator()(const UpdateRayTracingGeometryTableCmd& Cmd) -> void {
+        for (const auto& Geometry : Cmd.Update.Geometries) {
+            if (Geometry.PositionBuffer)
+                Geometry.PositionBuffer->UpdateLastUsageToken(CurrentToken);
+            if (Geometry.NormalBuffer)
+                Geometry.NormalBuffer->UpdateLastUsageToken(CurrentToken);
+            if (Geometry.IndexBuffer)
+                Geometry.IndexBuffer->UpdateLastUsageToken(CurrentToken);
+        }
+    }
     auto operator()(const BuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
         if (Cmd.TargetPtr)
             Cmd.TargetPtr->UpdateLastUsageToken(CurrentToken);
@@ -115,6 +125,9 @@ struct UsageVisitor {
                         } else if constexpr (std::same_as<ValueType, TopLevelAccelerationStructure*>) {
                             if (TypedValue)
                                 TypedValue->UpdateLastUsageToken(CurrentToken);
+                        } else if constexpr (std::same_as<ValueType, RayTracingGeometryTable*>) {
+                            // Metadata buffers are host-written immediately before trace recording.
+                            // Vulkan stamps their token only after the graphics submission succeeds.
                         } else if constexpr (std::same_as<ValueType, RenderTarget*>) {
                             if (TypedValue)
                                 TypedValue->UpdateLastUsageToken(CurrentToken);

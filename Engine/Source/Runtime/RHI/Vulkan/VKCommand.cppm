@@ -10,6 +10,7 @@ import :Swapchain;
 import :Buffer;
 import :Pipeline;
 import :RayTracingPipeline;
+import :RayTracingGeometryTable;
 import :Sampler;
 import :Texture;
 import :Descriptor;
@@ -249,6 +250,27 @@ struct CommandVisitor {
                 if (!bUpdateDescriptors)
                     continue;
 
+                if (const auto* GeometryTable = std::get_if<RHI::RayTracingGeometryTable*>(&Value)) {
+                    if (!*GeometryTable) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' has a null BDA geometry table", Binding.ParameterPath));
+                        return;
+                    }
+                    const auto& VkTable = static_cast<const Vulkan::BdaRayTracingGeometryTable&>(**GeometryTable);
+                    if (VkTable.GetByteSize() == 0) {
+                        Error = ErrorMessage(Core::Format(
+                            "Shader parameter '{}' references an empty BDA geometry table", Binding.ParameterPath));
+                        return;
+                    }
+                    auto& ResourceBindings = (*Instance)->ResourceBindings;
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *GeometryTable) {
+                        Descriptors->WriteStorageBufferDescriptor(
+                            *(*Instance)->Set, Binding.Binding, VkTable.GetVkBuffer(), VkTable.GetCapacity());
+                        ResourceBindings[Binding.Binding] = *GeometryTable;
+                    }
+                    continue;
+                }
+
                 if (const auto* VertexBuffer = std::get_if<RHI::VertexBuffer*>(&Value)) {
                     if (!*VertexBuffer) {
                         Error = ErrorMessage(Core::Format(
@@ -412,6 +434,26 @@ struct CommandVisitor {
         Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
         m_BoundPipeline     = Cmd.PipelinePtr;
         m_BoundPipelineType = BoundPipelineType::RayTracing;
+    }
+
+    auto operator()(const RHI::UpdateRayTracingGeometryTableCmd& Cmd) -> void {
+        if (!Cmd.TablePtr) {
+            Error = ErrorMessage("BDA geometry table update has no target table");
+            return;
+        }
+        auto& Table = static_cast<Vulkan::BdaRayTracingGeometryTable&>(*Cmd.TablePtr);
+        if (auto Result = Table.Update(Cmd.Update); !Result) {
+            Error = Result.error().Append("BDA geometry table update failed");
+            return;
+        }
+        const vk::MemoryBarrier2 Barrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
+            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        };
+        const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
+        Buf.pipelineBarrier2(Dependency);
     }
 
     auto operator()(const RHI::BuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {

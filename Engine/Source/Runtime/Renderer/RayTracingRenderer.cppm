@@ -28,12 +28,6 @@ struct alignas(16) RayTracingViewConstants {
         hlslpp::interop::float4{hlslpp::float4{1.0f, 0.98f, 0.92f, 1.0f}};
 };
 
-struct RayTracingGeometryBuffers {
-    RHI::VertexBuffer* Position = nullptr;
-    RHI::VertexBuffer* Normal = nullptr;
-    RHI::IndexBuffer* Index = nullptr;
-};
-
 struct RayTracingMeshCacheEntry {
     String                                                   Asset = {};
     Resource::ResourceRef<Resource::Mesh>                   Mesh = {};
@@ -76,6 +70,9 @@ class RayTracingRenderer final : public IRenderer {
             "ray_tracing_renderer_view_constants", {.Size = sizeof(RayTracingViewConstants)});
         if (!m_Pipeline || !m_Tlas || !m_ViewConstants)
             return std::unexpected(ErrorMessage("RayTracingRenderer resource request failed"));
+        m_GeometryTable = RHI::RenderDevice::Get().GetRayTracingGeometryTable();
+        if (!m_GeometryTable)
+            return std::unexpected(ErrorMessage("RayTracingRenderer requires Vulkan BDA geometry-table support"));
         return {};
     }
 
@@ -83,6 +80,7 @@ class RayTracingRenderer final : public IRenderer {
         m_Pipeline = {};
         m_Tlas = {};
         m_ViewConstants = {};
+        m_GeometryTable = nullptr;
         m_Output = {};
         m_OutputKey = {};
         m_LoggedFirstTrace = false;
@@ -101,17 +99,62 @@ class RayTracingRenderer final : public IRenderer {
         if (!Pipeline || !Tlas)
             return Result;
 
+        if (!m_GeometryTable)
+            return std::unexpected(ErrorMessage("RayTracingRenderer BDA geometry table is unavailable"));
+
         std::vector<RHI::AccelerationStructureInstance> Instances;
         Instances.reserve(Scene.Renderables.size());
+        RHI::RayTracingGeometryTableUpdate GeometryUpdate = {};
+        GeometryUpdate.Instances.reserve(Scene.Renderables.size());
         for (const auto& Renderable : Scene.Renderables) {
             if (Renderable.MeshAsset.empty())
                 continue;
-            auto* Blas = Resources.TryGetReady(GetOrRequestBlas(Renderable.MeshAsset));
-            if (!Blas || !Blas->GetRhiPayload())
+
+            auto& Entry = GetOrRequestMeshEntry(Renderable.MeshAsset);
+            auto* Blas = Resources.TryGetReady(Entry.Blas);
+            auto* Mesh = Resources.TryGetReady(Entry.Mesh);
+            if (!Blas || !Blas->GetRhiPayload() || !Mesh)
                 continue;
+
+            std::vector<RHI::RayTracingGeometryDesc> MeshGeometries;
+            for (const auto& Group : Mesh->GetMeshGroups()) {
+                for (const auto& SubMesh : Group.SubMeshes) {
+                    auto* Position = Resources.TryGetReady(SubMesh.PositionVB);
+                    auto* Normal = Resources.TryGetReady(SubMesh.NormalVB);
+                    auto* Index = Resources.TryGetReady(SubMesh.IB);
+                    if (!Position || !Normal || !Index || SubMesh.VertexCount == 0 || SubMesh.Indices.empty()) {
+                        MeshGeometries.clear();
+                        break;
+                    }
+                    MeshGeometries.push_back(RHI::RayTracingGeometryDesc{
+                        .PositionBuffer = Position,
+                        .NormalBuffer = Normal,
+                        .IndexBuffer = Index,
+                        .PositionStride = sizeof(hlslpp::interop::float3),
+                        .NormalStride = sizeof(hlslpp::interop::float3),
+                        .IndexStride = sizeof(Uint32),
+                        .VertexCount = SubMesh.VertexCount,
+                        .IndexCount = static_cast<Uint32>(SubMesh.Indices.size()),
+                    });
+                }
+                if (MeshGeometries.empty())
+                    break;
+            }
+            if (MeshGeometries.empty())
+                continue;
+
+            const auto FirstGeometry = static_cast<Uint32>(GeometryUpdate.Geometries.size());
+            GeometryUpdate.Geometries.insert(
+                GeometryUpdate.Geometries.end(), MeshGeometries.begin(), MeshGeometries.end());
+            const auto InstanceIndex = static_cast<Uint32>(GeometryUpdate.Instances.size());
+            GeometryUpdate.Instances.push_back(RHI::RayTracingGeometryInstanceDesc{
+                .FirstGeometry = FirstGeometry,
+                .GeometryCount = static_cast<Uint32>(MeshGeometries.size()),
+            });
             Instances.push_back(RHI::AccelerationStructureInstance{
                 .BottomLevelPtr = Blas->GetRhiPayload(),
                 .Transform = ToAccelerationStructureInstanceTransform(Renderable.WorldTransform),
+                .CustomIndex = InstanceIndex,
             });
         }
         if (Instances.empty())
@@ -126,9 +169,6 @@ class RayTracingRenderer final : public IRenderer {
         auto* ViewCB = Resources.TryGetReady(m_ViewConstants);
         if (!Output || !ViewCB)
             return Result;
-        const auto Geometry = GetReadyGeometry(Resources);
-        if (!Geometry)
-            return Result;
 
         if (m_Parameters.GetLayoutId() != Pipeline->GetShaderParameterLayout().GetId())
             m_Parameters = RHI::ShaderParameters::Create(*Pipeline);
@@ -136,17 +176,14 @@ class RayTracingRenderer final : public IRenderer {
             return std::unexpected(R.error().Append("RayTracingRenderer TLAS parameter binding failed"));
         if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracingResources.output", Output); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer output parameter binding failed"));
-        if (auto R = m_Parameters.SetStorageVertexBuffer("g_rayTracingGeometry.positions", Geometry->Position); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer position buffer binding failed"));
-        if (auto R = m_Parameters.SetStorageVertexBuffer("g_rayTracingGeometry.normals", Geometry->Normal); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer normal buffer binding failed"));
-        if (auto R = m_Parameters.SetStorageIndexBuffer("g_rayTracingGeometry.indices", Geometry->Index); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer index buffer binding failed"));
+        if (auto R = m_Parameters.SetRayTracingGeometryTable("g_rayTracingGeometryMetadata.metadata", m_GeometryTable); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer BDA geometry-table parameter binding failed"));
         const auto ViewData = BuildViewConstants(View);
         if (auto R = m_Parameters.SetConstantBuffer("g_rayTracingView.view", ViewCB, &ViewData, sizeof(ViewData)); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer view parameter binding failed"));
 
         RHI::NonRenderingPass Pass = {};
+        Pass.UpdateRayTracingGeometryTable(m_GeometryTable, std::move(GeometryUpdate));
         Pass.BuildOrUpdateTopLevelAccelerationStructure(Tlas->GetRhiPayload(), Instances);
         Pass.SetRayTracingPipeline(Pipeline);
         Pass.BindShaderParameters(Pipeline, m_Parameters);
@@ -162,10 +199,10 @@ class RayTracingRenderer final : public IRenderer {
     }
 
   private:
-    [[nodiscard]] auto GetOrRequestBlas(StringView Asset) -> Resource::ResourceRef<Resource::BottomLevelAccelerationStructure>& {
+    [[nodiscard]] auto GetOrRequestMeshEntry(StringView Asset) -> RayTracingMeshCacheEntry& {
         for (auto& Entry : m_MeshCache) {
             if (Entry.Asset == Asset)
-                return Entry.Blas;
+                return Entry;
         }
 
         auto& Entry = m_MeshCache.emplace_back(RayTracingMeshCacheEntry{
@@ -173,25 +210,7 @@ class RayTracingRenderer final : public IRenderer {
             .Mesh = Resource::Manager::Get().RequestMeshRef(ResolveMeshPath(Asset).string()),
         });
         Entry.Blas = Resource::Manager::Get().RequestBottomLevelAccelerationStructureRef(Entry.Mesh);
-        return Entry.Blas;
-    }
-
-    [[nodiscard]] auto GetReadyGeometry(Resource::Manager& Resources) const -> std::optional<RayTracingGeometryBuffers> {
-        for (const auto& Entry : m_MeshCache) {
-            auto* Mesh = Resources.TryGetReady(Entry.Mesh);
-            if (!Mesh)
-                continue;
-            for (const auto& Group : Mesh->GetMeshGroups()) {
-                for (const auto& SubMesh : Group.SubMeshes) {
-                    auto* Position = Resources.TryGetReady(SubMesh.PositionVB);
-                    auto* Normal = Resources.TryGetReady(SubMesh.NormalVB);
-                    auto* Index = Resources.TryGetReady(SubMesh.IB);
-                    if (Position && Normal && Index)
-                        return RayTracingGeometryBuffers{.Position = Position, .Normal = Normal, .Index = Index};
-                }
-            }
-        }
-        return std::nullopt;
+        return Entry;
     }
 
     auto EnsureOutputTarget(Uint32 Width, Uint32 Height) -> void {
@@ -229,6 +248,7 @@ class RayTracingRenderer final : public IRenderer {
     Resource::ResourceRef<RHI::RayTracingPipeline> m_Pipeline = {};
     Resource::ResourceRef<Resource::TopLevelAccelerationStructure> m_Tlas = {};
     Resource::ResourceRef<RHI::ConstantBuffer> m_ViewConstants = {};
+    RHI::RayTracingGeometryTable* m_GeometryTable = nullptr;
     Resource::ResourceRef<RHI::RenderTarget> m_Output = {};
     String m_OutputKey = {};
     std::vector<RayTracingMeshCacheEntry> m_MeshCache = {};

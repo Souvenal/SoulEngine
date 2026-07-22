@@ -247,6 +247,10 @@ class Capability : public Singleton<Capability> {
         m_DeviceExts.push_back({vk::KHRPortabilitySubsetExtensionName, false});
         // VK_EXT_memory_budget — used by VMA
         m_DeviceExts.push_back({vk::EXTMemoryBudgetExtensionName, false});
+        // VK_KHR_buffer_device_address is promoted to core Vulkan 1.2. Keep
+        // the extension enabled when a pre-1.2 RT device exposes it so the
+        // Vulkan-Hpp dispatcher can resolve vkGetBufferDeviceAddress.
+        m_DeviceExts.push_back({vk::KHRBufferDeviceAddressExtensionName, false});
 
         // Hardware ray tracing is an optional all-or-nothing device capability.
         // These extensions are appended only after ResolveRayTracingSupport validates
@@ -270,6 +274,10 @@ class Capability : public Singleton<Capability> {
             }
         }
 
+        if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRBufferDeviceAddressExtensionName)) {
+            m_RayTracingSupport.UnavailableReason = "VK_KHR_buffer_device_address is required before Vulkan 1.2";
+            return;
+        }
         if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRSpirv14ExtensionName)) {
             m_RayTracingSupport.UnavailableReason = "VK_KHR_spirv_1_4 is required before Vulkan 1.2";
             return;

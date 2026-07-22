@@ -53,15 +53,22 @@ namespace {
                                  // target SPIR-V 1.6 (Vulkan 1.3 feature set)
                                  .profile = GlobalSession->findProfile("spirv_1_6")};
 
-    std::array<slang::CompilerOptionEntry, 1> TargetOptions = {};
+    std::array<slang::CompilerOptionEntry, 2> TargetOptions = {};
     if (bEnableRayTracing) {
-        const auto Capability = GlobalSession->findCapability("spvRayTracingKHR");
-        if (Capability == SLANG_CAPABILITY_UNKNOWN)
+        const auto RayTracingCapability = GlobalSession->findCapability("spvRayTracingKHR");
+        if (RayTracingCapability == SLANG_CAPABILITY_UNKNOWN)
             return std::unexpected(ErrorMessage("Slang does not expose the spvRayTracingKHR capability"));
+        const auto PhysicalStorageCapability = GlobalSession->findCapability("SPV_EXT_physical_storage_buffer");
+        if (PhysicalStorageCapability == SLANG_CAPABILITY_UNKNOWN)
+            return std::unexpected(ErrorMessage("Slang does not expose the SPV_EXT_physical_storage_buffer capability"));
 
         TargetOptions[0] = slang::CompilerOptionEntry{
             .name  = slang::CompilerOptionName::Capability,
-            .value = {.intValue0 = Capability},
+            .value = {.intValue0 = RayTracingCapability},
+        };
+        TargetOptions[1] = slang::CompilerOptionEntry{
+            .name  = slang::CompilerOptionName::Capability,
+            .value = {.intValue0 = PhysicalStorageCapability},
         };
         TargetDesc.compilerOptionEntries    = TargetOptions.data();
         TargetDesc.compilerOptionEntryCount = static_cast<Uint32>(TargetOptions.size());

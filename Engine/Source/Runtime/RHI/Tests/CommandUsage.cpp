@@ -43,6 +43,8 @@ class MockRenderTarget final : public RenderTarget {
 };
 
 /// Concrete RT pipeline exposing the protected reflection-layout setup for testing.
+class MockRayTracingGeometryTable final : public RayTracingGeometryTable {};
+
 class MockRayTracingPipeline final : public RayTracingPipeline {
   public:
     auto ConfigureShaderParameterLayout(ShaderParameterLayout Layout) -> void {
@@ -56,6 +58,7 @@ class UsageVisitorTest : public ::testing::Test {
   protected:
     SPtr<GraphicsPipeline>                      m_Pipeline   = std::make_shared<GraphicsPipeline>();
     SPtr<MockRayTracingPipeline>                 m_RayPipeline = std::make_shared<MockRayTracingPipeline>();
+    SPtr<MockRayTracingGeometryTable>             m_GeometryTable = std::make_shared<MockRayTracingGeometryTable>();
     SPtr<BottomLevelAccelerationStructure>       m_BLAS       = std::make_shared<BottomLevelAccelerationStructure>();
     SPtr<TopLevelAccelerationStructure>          m_TLAS       = std::make_shared<TopLevelAccelerationStructure>();
     SPtr<VertexBuffer>                           m_VB         = std::make_shared<VertexBuffer>();
@@ -141,6 +144,79 @@ TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
     EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
 }
 
+TEST(RayTracingCommandTest, NonRenderingPassCopiesBdaGeometryTableUpdate) {
+    RayTracingGeometryTable Table;
+    VertexBuffer Position;
+    VertexBuffer Normal;
+    IndexBuffer Index;
+    VertexBuffer SecondPosition;
+    VertexBuffer SecondNormal;
+    IndexBuffer SecondIndex;
+    RayTracingGeometryTableUpdate Update{
+        .Instances = {{.FirstGeometry = 0, .GeometryCount = 1, .MaterialIndex = 9},
+                      {.FirstGeometry = 1, .GeometryCount = 1, .MaterialIndex = 17}},
+        .Geometries = {{.PositionBuffer = &Position,
+                        .NormalBuffer = &Normal,
+                        .IndexBuffer = &Index,
+                        .VertexCount = 3,
+                        .IndexCount = 3},
+                       {.PositionBuffer = &SecondPosition,
+                        .NormalBuffer = &SecondNormal,
+                        .IndexBuffer = &SecondIndex,
+                        .VertexCount = 4,
+                        .IndexCount = 6}},
+    };
+    NonRenderingPass Pass;
+
+    Pass.UpdateRayTracingGeometryTable(&Table, Update);
+    Update.Instances.clear();
+    Update.Geometries.clear();
+
+    ASSERT_EQ(Pass.Commands.size(), 1);
+    const auto* CommandPtr = std::get_if<UpdateRayTracingGeometryTableCmd>(&Pass.Commands.front());
+    ASSERT_NE(CommandPtr, nullptr);
+    ASSERT_EQ(CommandPtr->Update.Instances.size(), 2);
+    ASSERT_EQ(CommandPtr->Update.Geometries.size(), 2);
+    EXPECT_EQ(CommandPtr->TablePtr, &Table);
+    EXPECT_EQ(CommandPtr->Update.Instances[0].MaterialIndex, 9U);
+    EXPECT_EQ(CommandPtr->Update.Instances[1].FirstGeometry, 1U);
+    EXPECT_EQ(CommandPtr->Update.Instances[1].MaterialIndex, 17U);
+    EXPECT_EQ(CommandPtr->Update.Geometries[0].PositionBuffer, &Position);
+    EXPECT_EQ(CommandPtr->Update.Geometries[0].NormalBuffer, &Normal);
+    EXPECT_EQ(CommandPtr->Update.Geometries[0].IndexBuffer, &Index);
+    EXPECT_EQ(CommandPtr->Update.Geometries[1].PositionBuffer, &SecondPosition);
+    EXPECT_EQ(CommandPtr->Update.Geometries[1].NormalBuffer, &SecondNormal);
+    EXPECT_EQ(CommandPtr->Update.Geometries[1].IndexBuffer, &SecondIndex);
+    EXPECT_EQ(CommandPtr->Update.Geometries[1].IndexCount, 6U);
+}
+
+TEST_F(UsageVisitorTest, UpdateBdaGeometryTableCmdUpdatesSourceBufferTokens) {
+    ASSERT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_SecondVB->GetLastUsageToken().Id, 0);
+    ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
+
+    std::visit(m_Visitor,
+               Command{UpdateRayTracingGeometryTableCmd{
+                   .TablePtr = m_GeometryTable.get(),
+                   .Update = RayTracingGeometryTableUpdate{
+                       .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}},
+                       .Geometries = {{.PositionBuffer = m_VB.get(),
+                                       .NormalBuffer = m_SecondVB.get(),
+                                       .IndexBuffer = m_IB.get(),
+                                       .VertexCount = 3,
+                                       .IndexCount = 3}},
+                   },
+               }});
+
+    // Vulkan stamps the table only after a graphics submit succeeds. The
+    // generic visitor still protects all source buffers immediately.
+    EXPECT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
+    EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_SecondVB->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_IB->GetLastUsageToken().Id, 42);
+}
+
 TEST_F(UsageVisitorTest, BuildTopLevelAccelerationStructureCmdUpdatesTargetAndBlasTokens) {
     ASSERT_EQ(m_TLAS->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_BLAS->GetLastUsageToken().Id, 0);
@@ -183,6 +259,21 @@ TEST(RayTracingCommandTest, PassCopiesTopLevelAccelerationStructureInstances) {
     ASSERT_EQ(CommandPtr->Instances.size(), 1);
     EXPECT_EQ(CommandPtr->TargetPtr, &TLAS);
     EXPECT_EQ(CommandPtr->Instances.front().BottomLevelPtr, &BLAS);
+}
+
+TEST_F(UsageVisitorTest, RayTracingGeometryTableShaderParameterDefersTokenToVulkanSubmit) {
+    const auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+        .Bindings = {{.ParameterPath = "g_rt.metadata", .Set = 0, .BindingIndex = 0,
+                      .Type = SoulEngine::Shader::ResourceType::StorageBuffer}},
+    });
+    auto Parameters = ShaderParameters::Create(Layout);
+    ASSERT_TRUE(Parameters.SetRayTracingGeometryTable("g_rt.metadata", m_GeometryTable.get()));
+
+    std::visit(m_Visitor,
+               Command{BindShaderParametersCmd{.PipelinePtr = m_RayPipeline.get(), .Parameters = std::move(Parameters)}});
+
+    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
+    EXPECT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
 }
 
 TEST_F(UsageVisitorTest, RayTracingShaderParametersUpdateTlasAndStorageOutputTokens) {

@@ -28,6 +28,7 @@ import :TransferCompletionQueue;
 import :Descriptor;
 import :Pipeline;
 import :RayTracingPipeline;
+import :RayTracingGeometryTable;
 import :AccelerationStructure;
 import :Sampler;
 import :Texture;
@@ -121,6 +122,14 @@ class RenderDevice final : public RHI::RenderDevice {
 
         // ── Deletion Queue ───────────────────────────────────────────────
         m_DeletionQueue = DeletionQueue{m_Timeline};
+
+        // ── BDA geometry table ─────────────────────────────────────────────
+        if (Capability::Get().GetRayTracingSupport().Available) {
+            auto GeometryTable = BdaRayTracingGeometryTable::Create(m_Allocator, m_Device, m_Timeline);
+            if (!GeometryTable)
+                return std::unexpected(GeometryTable.error().Append("BDA geometry table creation failed"));
+            m_RayTracingGeometryTable = std::move(*GeometryTable);
+        }
 
         // ── FrameContext ───────────────────────────────────────────────────
         // Each frame slot gets its own Pool, PrimaryBuffer, and SubPool.
@@ -344,6 +353,10 @@ class RenderDevice final : public RHI::RenderDevice {
         return RayTracingPipeline::Create(m_Device, m_Allocator, Desc, m_MaxTextures, m_DeletionQueue);
     }
 
+    [[nodiscard]] auto GetRayTracingGeometryTable() -> RHI::RayTracingGeometryTable* override {
+        return m_RayTracingGeometryTable.get();
+    }
+
     [[nodiscard]] auto CreateBottomLevelAccelerationStructure(const BottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<RHI::BottomLevelAccelerationStructure>, ErrorMessage> override {
         return BottomLevelAccelerationStructure::Create(
@@ -374,9 +387,11 @@ class RenderDevice final : public RHI::RenderDevice {
             LogError("{}", DeletionDrain.error().ToString());
         WaitIdle();
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
+        m_RayTracingGeometryTable.reset();
         m_DrawConstantArena = {};
         m_ConstantArena = {};
         m_FrameContext.clear();
+        m_DescriptorManager.reset();
         if (m_Allocator)
             vmaDestroyAllocator(m_Allocator);
     }
@@ -865,14 +880,21 @@ class RenderDevice final : public RHI::RenderDevice {
 
         std::vector<vk::CommandBuffer> Secondaries;
         Secondaries.reserve(CmdList.Scopes.size());
+        std::vector<RHI::RayTracingGeometryTable*> GeometryTables;
 
         for (const auto& Scope : CmdList.Scopes) {
-            const auto StampScopeUsage = [&UsageTracker](const auto& TypedScope) -> void {
+            const auto StampScopeUsage = [&UsageTracker, &GeometryTables](const auto& TypedScope) -> void {
                 using ScopeType = std::decay_t<decltype(TypedScope)>;
                 if constexpr (std::is_same_v<ScopeType, RHI::Pass>)
                     UsageTracker.StampPassAttachments(TypedScope.Desc);
-                for (const auto& Cmd : TypedScope.Commands)
+                for (const auto& Cmd : TypedScope.Commands) {
                     std::visit(UsageTracker, Cmd);
+                    if (const auto* TableUpdate = std::get_if<RHI::UpdateRayTracingGeometryTableCmd>(&Cmd);
+                        TableUpdate && TableUpdate->TablePtr &&
+                        std::ranges::find(GeometryTables, TableUpdate->TablePtr) == GeometryTables.end()) {
+                        GeometryTables.push_back(TableUpdate->TablePtr);
+                    }
+                }
             };
             std::visit(StampScopeUsage, Scope);
 
@@ -972,6 +994,8 @@ class RenderDevice final : public RHI::RenderDevice {
         if (auto R = m_GraphicsQueue.submit2({SubmitInfo2}); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Core::Format("Queue submit failed: {}", vk::to_string(R))));
 
+        for (auto* Table : GeometryTables)
+            Table->UpdateLastUsageToken(FrameToken);
         m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = FrameTokenValue;
 
         auto PresentRes = m_Swapchain.Present(m_GraphicsQueue);
@@ -1021,6 +1045,7 @@ class RenderDevice final : public RHI::RenderDevice {
     std::vector<FrameContext>      m_FrameContext;
     UniformBufferArena              m_ConstantArena     = {};
     TransientUniformBufferArena     m_DrawConstantArena = {};
+    UPtr<BdaRayTracingGeometryTable> m_RayTracingGeometryTable = nullptr;
 
     // ── Global descriptor manager ─────────────────────────────────────────
     Core::UPtr<DescriptorManager> m_DescriptorManager = nullptr;

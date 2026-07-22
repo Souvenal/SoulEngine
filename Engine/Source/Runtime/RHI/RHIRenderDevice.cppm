@@ -54,6 +54,9 @@ class RenderDevice {
     [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const TopLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<TopLevelAccelerationStructure>, ErrorMessage> = 0;
 
+    /// Return the RenderDevice-owned BDA metadata table, or null when hardware ray tracing is unavailable.
+    [[nodiscard]] virtual auto GetRayTracingGeometryTable() -> RayTracingGeometryTable* = 0;
+
     // ── Command execution ────────────────────────────────────
 
     /// @brief Execute a frame's worth of RHI commands.

@@ -123,3 +123,12 @@ The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::
 - `Core` — logging, config, `Singleton`, `Factory`
 - `Shader` — `Shader::GraphicsProgram` and compiled shader artifact types (consumes)
 - Third-party: vulkansdk, VMA
+
+## BDA ray-tracing geometry
+
+`RayTracingGeometryTable` is a RenderDevice-owned logical metadata table for
+ray-tracing source attributes. Renderer records `RayTracingGeometryDesc`
+observers and instance-relative geometry ranges through
+`UpdateRayTracingGeometryTableCmd`; it must not resolve device addresses.
+`UsageVisitor` stamps the table and every referenced source buffer so the
+normal GPU-completion deletion contract covers BDA reads.

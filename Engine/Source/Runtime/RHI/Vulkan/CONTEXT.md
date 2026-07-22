@@ -76,3 +76,13 @@ backend transfer-source layout, the acquired swapchain image is transitioned to
 a backend transfer-destination layout, and the source is blitted into the
 swapchain image before presentation. Public RHI callers express this intent
 with `TextureUsage::FrameOutput`; they do not request native transfer usage.
+
+### BDA ray-tracing geometry table
+
+`BdaRayTracingGeometryTable` is the Vulkan implementation of the
+RenderDevice-owned RHI table. It resolves source `VertexBuffer` and
+`IndexBuffer` device addresses only inside Vulkan, uploads fixed metadata, and
+uses a host-write to ray-tracing-shader-read barrier before `TraceRays`. Before
+reusing its shared host-visible allocation, it waits for the prior submitted
+consumer token; its descriptor range remains the fixed table capacity. It is
+one reflected storage-buffer descriptor, not a bindless descriptor array.

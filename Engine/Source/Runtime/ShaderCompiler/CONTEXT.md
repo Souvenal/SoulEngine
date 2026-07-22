@@ -34,3 +34,11 @@ describes the final pipeline shader interface.
 - `ShaderCompiler::CompileGraphics()` is the production path for graphics pipeline shader requests. It asks the backend to compose/link the requested stages and return one `Shader::GraphicsProgram` with pipeline-level reflection.
 - Pipeline compile results take canonical entry-point names and stages from Slang reflection metadata.
 - Slang compilation failure, missing modules, invalid entry points, and linked reflection failures are distinct failure cases.
+
+## Ray-tracing BDA target capability
+
+Ray-tracing Slang sessions enable both `spvRayTracingKHR` and
+`SPV_EXT_physical_storage_buffer`. Physical pointer syntax is confined to the
+small ray-tracing metadata lookup abstraction; ordinary runtime shaders retain
+backend-neutral reflected resource declarations. The fixed metadata
+`ByteAddressBuffer` must remain reflectable as a normal storage-buffer binding.

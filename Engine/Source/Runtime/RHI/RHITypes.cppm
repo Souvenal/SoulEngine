@@ -15,6 +15,7 @@ export namespace SoulEngine::RHI {
 
 class RenderTarget;
 class TopLevelAccelerationStructure;
+class RayTracingGeometryTable;
 
 // ── Buffer descriptor types ────────────────────────────────────────────────
 
@@ -367,6 +368,7 @@ using ShaderParameterValue = std::variant<std::monostate,
                                           ResourceArray<SampledTexture>,
                                           Sampler*,
                                           TopLevelAccelerationStructure*,
+                                          RayTracingGeometryTable*,
                                           RenderTarget*,
                                           ShaderParameterConstant>;
 
@@ -490,6 +492,11 @@ class ShaderParameters {
                                                          TopLevelAccelerationStructure* AccelerationStructure)
         -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, Shader::ResourceType::AccelerationStructure, false, AccelerationStructure);
+    }
+
+    [[nodiscard]] auto SetRayTracingGeometryTable(StringView ParameterPath, RayTracingGeometryTable* Table)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, Shader::ResourceType::StorageBuffer, false, Table);
     }
 
     [[nodiscard]] auto SetStorageRenderTarget(StringView ParameterPath, RenderTarget* Target)

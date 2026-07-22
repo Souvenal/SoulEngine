@@ -86,6 +86,12 @@ struct DrawCmd {
     std::array<VertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
 };
 
+/// Update the RenderDevice-owned BDA geometry metadata table before a ray dispatch.
+struct UpdateRayTracingGeometryTableCmd {
+    RayTracingGeometryTable*    TablePtr = nullptr;
+    RayTracingGeometryTableUpdate Update  = {};
+};
+
 /// @brief Build or update a persistent TLAS from renderer-provided logical instances.
 struct BuildOrUpdateTopLevelAccelerationStructureCmd {
     TopLevelAccelerationStructure*          TargetPtr = nullptr;
@@ -112,6 +118,7 @@ using Command = std::variant<SetViewportCmd,
                              BindShaderParametersCmd,
                              DrawIndexedCmd,
                              DrawCmd,
+                             UpdateRayTracingGeometryTableCmd,
                              BuildOrUpdateTopLevelAccelerationStructureCmd,
                              TraceRaysCmd>;
 
@@ -159,6 +166,9 @@ struct Pass {
             .PipelinePtr = PipelinePtr,
             .Parameters  = std::move(Parameters),
         });
+    }
+    auto UpdateRayTracingGeometryTable(RayTracingGeometryTable* TablePtr, RayTracingGeometryTableUpdate Update) -> void {
+        Commands.emplace_back(UpdateRayTracingGeometryTableCmd{.TablePtr = TablePtr, .Update = std::move(Update)});
     }
     auto BuildOrUpdateTopLevelAccelerationStructure(TopLevelAccelerationStructure*               TargetPtr,
                                                      std::span<const AccelerationStructureInstance> Instances,
@@ -231,6 +241,9 @@ struct NonRenderingPass {
             .PipelinePtr = PipelinePtr,
             .Parameters  = std::move(Parameters),
         });
+    }
+    auto UpdateRayTracingGeometryTable(RayTracingGeometryTable* TablePtr, RayTracingGeometryTableUpdate Update) -> void {
+        Commands.emplace_back(UpdateRayTracingGeometryTableCmd{.TablePtr = TablePtr, .Update = std::move(Update)});
     }
     auto BuildOrUpdateTopLevelAccelerationStructure(TopLevelAccelerationStructure*               TargetPtr,
                                                      std::span<const AccelerationStructureInstance> Instances,

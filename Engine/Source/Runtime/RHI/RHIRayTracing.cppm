@@ -117,6 +117,51 @@ class TopLevelAccelerationStructure : public AccelerationStructure {
     virtual ~TopLevelAccelerationStructure()                                               = default;
 };
 
+/// One logical source geometry consumed by the device-owned BDA metadata table.
+///
+/// This record intentionally contains RHI resource observers and layout intent only.
+/// The backend resolves native device addresses while recording the command list.
+struct RayTracingGeometryDesc {
+    VertexBuffer* PositionBuffer    = nullptr;
+    VertexBuffer* NormalBuffer      = nullptr;
+    IndexBuffer*  IndexBuffer       = nullptr;
+    Uint32        PositionByteOffset = 0;
+    Uint32        NormalByteOffset   = 0;
+    Uint32        IndexByteOffset    = 0;
+    Uint32        PositionStride     = sizeof(Float32) * 3;
+    Uint32        NormalStride       = sizeof(Float32) * 3;
+    Uint32        IndexStride        = sizeof(Uint32);
+    Uint32        VertexCount        = 0;
+    Uint32        IndexCount         = 0;
+};
+
+/// Logical per-instance lookup range into a RayTracingGeometryTableUpdate.
+struct RayTracingGeometryInstanceDesc {
+    Uint32 FirstGeometry = 0;
+    Uint32 GeometryCount = 0;
+    Uint32 MaterialIndex = 0;
+};
+
+/// Complete metadata snapshot consumed by one trace dispatch.
+struct RayTracingGeometryTableUpdate {
+    std::vector<RayTracingGeometryInstanceDesc> Instances = {};
+    std::vector<RayTracingGeometryDesc>         Geometries = {};
+};
+
+/// Device-owned shader-visible metadata table for BDA ray-tracing geometry lookup.
+///
+/// Renderer only records logical source-buffer observers and table layout through
+/// UpdateRayTracingGeometryTableCmd. Vulkan resolves and owns device addresses.
+class RayTracingGeometryTable : public GpuResource {
+  public:
+    RayTracingGeometryTable()                                                  = default;
+    RayTracingGeometryTable(const RayTracingGeometryTable&)                    = delete;
+    auto operator=(const RayTracingGeometryTable&) -> RayTracingGeometryTable& = delete;
+    RayTracingGeometryTable(RayTracingGeometryTable&&)                         = delete;
+    auto operator=(RayTracingGeometryTable&&) -> RayTracingGeometryTable&      = delete;
+    virtual ~RayTracingGeometryTable()                                         = default;
+};
+
 /// Backend-neutral instance flags for TLAS population.
 enum class AccelerationStructureInstanceFlags : Uint8 {
     None = 0,
