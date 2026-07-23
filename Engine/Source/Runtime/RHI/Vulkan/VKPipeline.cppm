@@ -10,6 +10,7 @@ import std;
 
 import :Types;
 import :Shader;
+import :Capability;
 import :Descriptor;
 import :DeletionQueue;
 
@@ -126,11 +127,15 @@ namespace SoulEngine::RHI::Vulkan {
                                         Uint32                        MaxTextures,
                                         vk::ShaderStageFlags          ShaderStages = vk::ShaderStageFlagBits::eAllGraphics)
     -> std::expected<std::pair<std::vector<vk::raii::DescriptorSetLayout>, vk::raii::PipelineLayout>, ErrorMessage> {
+    const Uint32 MaxBoundDescriptorSets = Capability::Get().GetProperties().limits.maxBoundDescriptorSets;
     Uint32 MaxSet = 0;
     for (const auto& Binding : Reflection.Bindings) {
-        if (Binding.Set > 2)
-            return std::unexpected(ErrorMessage(
-                Core::Format("Reflected binding '{}' uses unsupported set {}", Binding.ParameterPath, Binding.Set)));
+        if (Binding.Set >= MaxBoundDescriptorSets)
+            return std::unexpected(ErrorMessage(Core::Format(
+                "Reflected binding '{}' uses set {} which exceeds the device limit of {} bound descriptor sets",
+                Binding.ParameterPath,
+                Binding.Set,
+                MaxBoundDescriptorSets)));
         MaxSet = (std::max)(MaxSet, Binding.Set);
     }
 

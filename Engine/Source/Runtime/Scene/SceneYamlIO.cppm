@@ -88,6 +88,10 @@ template <typename T>
         Error = Format("material instance '{}' does not exist", Mesh->Material);
         return false;
     }
+    if (!Mesh->Texture.empty() && Path(Mesh->Texture).is_absolute()) {
+        Error = "texture must be relative to the current application Assets directory";
+        return false;
+    }
     return true;
 }
 
@@ -104,6 +108,7 @@ auto RegisterBuiltInComponentSchemas() -> void {
     static const std::array MeshFields{
         SceneFieldSchema{.Name = "asset", .Id = entt::hashed_string{"asset"}.value()},
         SceneFieldSchema{.Name = "material", .Id = entt::hashed_string{"material"}.value()},
+        SceneFieldSchema{.Name = "texture", .Id = entt::hashed_string{"texture"}.value()},
     };
 
     entt::meta_factory<CameraComponent>{}
@@ -125,7 +130,8 @@ auto RegisterBuiltInComponentSchemas() -> void {
             .Validate = &ValidateMesh, .Name = "mesh", .Fields = MeshFields,
         })
         .data<&MeshComponent::Asset>(MeshFields[0].Id)
-        .data<&MeshComponent::Material>(MeshFields[1].Id);
+        .data<&MeshComponent::Material>(MeshFields[1].Id)
+        .data<&MeshComponent::Texture>(MeshFields[2].Id);
 
     Registered = true;
 }
@@ -565,11 +571,3 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
 }
 
 } // namespace SoulEngine::Scene
-
-
-
-
-
-
-
-

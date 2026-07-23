@@ -69,6 +69,7 @@ entities:
       mesh:
         asset: teapot.obj
         material: gold
+        texture: wood.png
 )");
 
     Scene Scene = {};
@@ -79,6 +80,7 @@ entities:
     const auto Snapshot = Scene.BuildSnapshot();
     ASSERT_EQ(Snapshot.Renderables.size(), 1u);
     EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, "teapot.obj");
+    EXPECT_EQ(Snapshot.Renderables.front().TextureAsset, "wood.png");
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.x), 1.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.y), 0.71f);
     EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Metallic, 1.0f);
@@ -178,13 +180,3 @@ TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
 }
 
 } // namespace
-
-
-
-
-
-
-
-
-
-
