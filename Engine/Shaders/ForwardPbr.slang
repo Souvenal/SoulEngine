@@ -1,12 +1,13 @@
+import Bindless;
 import Pbr;
 
-public struct FrameData {
+public struct ForwardFrameData {
     public float  time;
     public float4 directionalLightDirectionIntensity;
     public float4 directionalLightColor;
 };
 
-public struct ViewData {
+public struct ForwardViewData {
     public float4x4 viewProjection;
     public float4   cameraPosition;
 };
@@ -15,12 +16,12 @@ public struct ObjectData {
     public float4x4 worldTransform;
 };
 
-public struct FrameViewResources {
-    public ConstantBuffer<FrameData> frame;
-    public ConstantBuffer<ViewData>  view;
+public struct ForwardFrameViewResources {
+    public ConstantBuffer<ForwardFrameData> frame;
+    public ConstantBuffer<ForwardViewData>  view;
 };
 
-public ParameterBlock<FrameViewResources> g_forwardFrameView;
+public ParameterBlock<ForwardFrameViewResources> g_forwardFrameView;
 
 public struct ForwardObjectResources {
     public ConstantBuffer<ObjectData> object;
@@ -32,6 +33,8 @@ public struct MaterialData {
     public float4 baseColorFactor;
     public float  metallicFactor;
     public float  roughnessFactor;
+    // Index into g_textures.uTextures; negative disables base-color texture sampling.
+    public int    baseColorTextureIndex;
 };
 
 public struct ForwardMaterialResources {
@@ -43,12 +46,14 @@ public ParameterBlock<ForwardMaterialResources> g_forwardMaterial;
 struct VSInput {
     float3 inPosition;
     float3 inNormal;
+    float2 inUV;
 };
 
 struct VSOutput {
     float4 position : SV_Position;
     float3 worldPosition;
     float3 normal;
+    float2 uv;
 };
 
 [shader("vertex")]
@@ -57,13 +62,22 @@ VSOutput vertMain(VSInput input) {
     float4 worldPosition = mul(float4(input.inPosition, 1.0), g_forwardObject.object.worldTransform);
     output.worldPosition  = worldPosition.xyz;
     output.normal         = input.inNormal;
+    output.uv             = input.inUV;
     output.position       = mul(worldPosition, g_forwardFrameView.view.viewProjection);
     return output;
 }
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_TARGET {
-    PbrMaterial material = makePbrMaterial(g_forwardMaterial.material.baseColorFactor.rgb,
+    float3 baseColor = g_forwardMaterial.material.baseColorFactor.rgb;
+    if (g_forwardMaterial.material.baseColorTextureIndex >= 0) {
+        float3 sampled = g_textures.uTextures[g_forwardMaterial.material.baseColorTextureIndex]
+                             .Sample(g_samplers.uSamplerLinear, input.uv)
+                             .rgb;
+        // Sampled textures are stored UNORM without hardware sRGB decode; convert to linear.
+        baseColor *= pow(sampled, 2.2);
+    }
+    PbrMaterial material = makePbrMaterial(baseColor,
                                            g_forwardMaterial.material.metallicFactor,
                                            g_forwardMaterial.material.roughnessFactor);
     float3 normal = normalize(input.normal);

@@ -28,12 +28,12 @@ struct alignas(16) ForwardFrameConstants {
     alignas(16) hlslpp::interop::float4 DirectionalLightColor =
         hlslpp::interop::float4{hlslpp::float4{1.0f, 0.98f, 0.92f, 1.0f}};
 };
-static_assert(sizeof(ForwardFrameConstants) == 48, "ForwardFrameConstants must match ForwardPbr.slang FrameData std140 layout");
-static_assert(offsetof(ForwardFrameConstants, Time) == 0, "ForwardFrameConstants::Time must match FrameData.time");
+static_assert(sizeof(ForwardFrameConstants) == 48, "ForwardFrameConstants must match ForwardPbr.slang ForwardFrameData std140 layout");
+static_assert(offsetof(ForwardFrameConstants, Time) == 0, "ForwardFrameConstants::Time must match ForwardFrameData.time");
 static_assert(offsetof(ForwardFrameConstants, DirectionalLightDirectionIntensity) == 16,
-              "ForwardFrameConstants::DirectionalLightDirectionIntensity must match FrameData");
+              "ForwardFrameConstants::DirectionalLightDirectionIntensity must match ForwardFrameData");
 static_assert(offsetof(ForwardFrameConstants, DirectionalLightColor) == 32,
-              "ForwardFrameConstants::DirectionalLightColor must match FrameData");
+              "ForwardFrameConstants::DirectionalLightColor must match ForwardFrameData");
 
 /// @brief Constant buffer layout matching ForwardPbr.slang ViewData.
 struct alignas(16) ForwardViewConstants {
@@ -41,7 +41,7 @@ struct alignas(16) ForwardViewConstants {
     alignas(16) hlslpp::interop::float4 CameraPosition =
         hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 1.0f}};
 };
-static_assert(sizeof(ForwardViewConstants) == 80, "ForwardViewConstants must match ForwardPbr.slang ViewData std140 layout");
+static_assert(sizeof(ForwardViewConstants) == 80, "ForwardViewConstants must match ForwardPbr.slang ForwardViewData std140 layout");
 
 /// @brief Constant buffer layout matching ForwardPbr.slang MaterialData.
 struct alignas(16) ForwardMaterialConstants {
@@ -49,6 +49,8 @@ struct alignas(16) ForwardMaterialConstants {
         hlslpp::interop::float4{hlslpp::float4{0.62f, 0.28f, 0.10f, 1.0f}};
     Float32 MetallicFactor  = 0.0f;
     Float32 RoughnessFactor = 0.42f;
+    /// Index into the g_textures.uTextures shader array; negative disables sampling.
+    Int32   BaseColorTextureIndex = -1;
 };
 static_assert(sizeof(ForwardMaterialConstants) == 32,
               "ForwardMaterialConstants must match ForwardPbr.slang MaterialData std140 layout");
@@ -58,6 +60,8 @@ static_assert(offsetof(ForwardMaterialConstants, MetallicFactor) == 16,
               "ForwardMaterialConstants::MetallicFactor must match MaterialData.metallicFactor");
 static_assert(offsetof(ForwardMaterialConstants, RoughnessFactor) == 20,
               "ForwardMaterialConstants::RoughnessFactor must match MaterialData.roughnessFactor");
+static_assert(offsetof(ForwardMaterialConstants, BaseColorTextureIndex) == 24,
+              "ForwardMaterialConstants::BaseColorTextureIndex must match MaterialData.baseColorTextureIndex");
 
 /// @brief Constant buffer layout matching ForwardPbr.slang ObjectData.
 struct alignas(16) ForwardObjectConstants {
@@ -72,16 +76,23 @@ struct ForwardViewParameterState {
 
 /// @brief One concrete indexed draw consumed by the forward raster pass.
 struct ForwardDrawInstance {
-    Resource::ResourceHandle<RHI::VertexBuffer> PositionVB     = {};
-    Resource::ResourceHandle<RHI::VertexBuffer> NormalVB       = {};
-    Resource::ResourceHandle<RHI::IndexBuffer>  IndexBuffer    = {};
-    Material::PbrMetallicRoughnessMaterial          Material       = {};
-    hlslpp::float4x4                            WorldTransform = hlslpp::float4x4::identity();
+    Resource::ResourceHandle<RHI::VertexBuffer>   PositionVB       = {};
+    Resource::ResourceHandle<RHI::VertexBuffer>   NormalVB         = {};
+    Resource::ResourceHandle<RHI::VertexBuffer>   UVVB             = {};
+    Resource::ResourceHandle<RHI::IndexBuffer>    IndexBuffer      = {};
+    Resource::ResourceHandle<RHI::SampledTexture> BaseColorTexture = {};
+    Material::PbrMetallicRoughnessMaterial        Material         = {};
+    hlslpp::float4x4                              WorldTransform   = hlslpp::float4x4::identity();
 };
 
 struct ForwardMeshCacheEntry {
     String                                Asset = {};
     Resource::ResourceRef<Resource::Mesh> Mesh  = {};
+};
+
+struct ForwardTextureCacheEntry {
+    String                                     Asset   = {};
+    Resource::ResourceRef<RHI::SampledTexture> Texture = {};
 };
 
 /// @brief Single-material metallic-roughness forward renderer.
@@ -130,6 +141,14 @@ class ForwardRenderer final : public IRenderer {
         if (!m_MaterialConstants)
             return std::unexpected(ErrorMessage("Forward PBR material constant buffer request failed"));
 
+        m_SamplerLinear = Resources.RequestSamplerRef({.Profile = RHI::SamplerProfile::LinearRepeat});
+        if (!m_SamplerLinear)
+            return std::unexpected(ErrorMessage("Forward PBR linear sampler request failed"));
+
+        m_SamplerAniso = Resources.RequestSamplerRef({.Profile = RHI::SamplerProfile::AnisotropicRepeat});
+        if (!m_SamplerAniso)
+            return std::unexpected(ErrorMessage("Forward PBR anisotropic sampler request failed"));
+
         return {};
     }
 
@@ -139,7 +158,10 @@ class ForwardRenderer final : public IRenderer {
         m_ViewConstants            = {};
         m_MaterialConstants        = {};
         m_ObjectConstants          = {};
+        m_SamplerLinear            = {};
+        m_SamplerAniso             = {};
         m_MeshCache.clear();
+        m_TextureCache.clear();
         m_ViewParameters.clear();
     }
 
@@ -168,10 +190,12 @@ class ForwardRenderer final : public IRenderer {
             .Bindings = {
                 {.Binding = 0, .Stride = sizeof(hlslpp::interop::float3)},
                 {.Binding = 1, .Stride = sizeof(hlslpp::interop::float3)},
+                {.Binding = 2, .Stride = sizeof(hlslpp::interop::float2)},
             },
             .Attributes = {
                 {.Location = 0, .Binding = 0, .Format = RHI::Format::R32G32B32_SFLOAT, .Offset = 0},
                 {.Location = 1, .Binding = 1, .Format = RHI::Format::R32G32B32_SFLOAT, .Offset = 0},
+                {.Location = 2, .Binding = 2, .Format = RHI::Format::R32G32_SFLOAT, .Offset = 0},
             },
         };
     }
@@ -190,7 +214,9 @@ class ForwardRenderer final : public IRenderer {
         auto* Pipeline = Resources.TryGetReady(m_Pipeline);
         auto* MaterialCB = Resources.TryGetReady(m_MaterialConstants);
         auto* ObjectCB = Resources.TryGetReady(m_ObjectConstants);
-        if (!ColorRT || !DepthRT || !ViewCB || !Pipeline || !MaterialCB || !ObjectCB) {
+        auto* SamplerLinear = Resources.TryGetReady(m_SamplerLinear);
+        auto* SamplerAniso = Resources.TryGetReady(m_SamplerAniso);
+        if (!ColorRT || !DepthRT || !ViewCB || !Pipeline || !MaterialCB || !ObjectCB || !SamplerLinear || !SamplerAniso) {
             return {};
         }
 
@@ -201,6 +227,17 @@ class ForwardRenderer final : public IRenderer {
         const auto ViewData = BuildViewConstants(View);
         if (auto R = Parameters.SetConstantBuffer("g_forwardFrameView.view", ViewCB, &ViewData, sizeof(ViewData)); !R)
             return std::unexpected(R.error().Append("Forward PBR view parameter binding failed"));
+
+        // The backend requires every reflected binding to carry a value. Bindless sampling
+        // defaults live at view level; textured draws override the texture array per draw.
+        if (auto R = Parameters.SetSampler("g_samplers.uSamplerLinear", SamplerLinear); !R)
+            return std::unexpected(R.error().Append("Forward PBR sampler parameter binding failed"));
+        if (auto R = Parameters.SetSampler("g_samplers.uSamplerAniso", SamplerAniso); !R)
+            return std::unexpected(R.error().Append("Forward PBR sampler parameter binding failed"));
+        RHI::ResourceArray<RHI::SampledTexture> NoTextures = {};
+        NoTextures.Set(0, nullptr);
+        if (auto R = Parameters.SetResourceArray("g_textures.uTextures", NoTextures); !R)
+            return std::unexpected(R.error().Append("Forward PBR texture parameter binding failed"));
 
         RHI::Pass Pass{
             .Desc = RHI::RenderingDesc{
@@ -227,12 +264,33 @@ class ForwardRenderer final : public IRenderer {
             if (!PositionVB || !NormalVB || !IB)
                 continue;
 
+            // Meshes without UVs reuse the position stream as a placeholder binding;
+            // the shader only reads UVs when a base-color texture is bound.
+            auto* UVVB = Instance.UVVB.IsValid() ? Resources.TryGetReady(Instance.UVVB) : nullptr;
+            if (!UVVB)
+                UVVB = PositionVB;
+
+            RHI::SampledTexture* BaseColorTexture = nullptr;
+            if (Instance.BaseColorTexture.IsValid()) {
+                BaseColorTexture = Resources.TryGetReady(Instance.BaseColorTexture);
+                if (!BaseColorTexture)
+                    continue;
+            }
+
             auto DrawParameters = Parameters;
-            const auto MaterialData = BuildMaterialConstants(Instance.Material);
+            const auto MaterialData = BuildMaterialConstants(Instance.Material, BaseColorTexture ? 0 : -1);
             if (auto R = DrawParameters.SetConstantBuffer(
                     "g_forwardMaterial.material", MaterialCB, &MaterialData, sizeof(MaterialData), true);
                 !R) {
                 return std::unexpected(R.error().Append("Forward PBR material parameter binding failed"));
+            }
+
+            if (BaseColorTexture) {
+                RHI::ResourceArray<RHI::SampledTexture> Textures = {};
+                Textures.Set(0, BaseColorTexture);
+                if (auto R = DrawParameters.SetResourceArray("g_textures.uTextures", Textures); !R) {
+                    return std::unexpected(R.error().Append("Forward PBR texture parameter binding failed"));
+                }
             }
 
             const auto ObjectData = BuildObjectConstants(Instance);
@@ -244,7 +302,7 @@ class ForwardRenderer final : public IRenderer {
 
             Pass.BindShaderParameters(Pipeline, std::move(DrawParameters));
             Pass.DrawIndexed(Pipeline,
-                             std::array<RHI::VertexBuffer*, RHI::kMaxVertexBufferBindings>{PositionVB, NormalVB},
+                             std::array<RHI::VertexBuffer*, RHI::kMaxVertexBufferBindings>{PositionVB, NormalVB, UVVB},
                              IB);
         }
 
@@ -252,7 +310,7 @@ class ForwardRenderer final : public IRenderer {
         return {};
     }
 
-    [[nodiscard]] static auto ResolveMeshPath(StringView AssetPath) -> Path {
+    [[nodiscard]] static auto ResolveAssetPath(StringView AssetPath) -> Path {
         const Path Asset{String(AssetPath)};
         if (Asset.is_absolute())
             return Asset.lexically_normal();
@@ -267,9 +325,22 @@ class ForwardRenderer final : public IRenderer {
 
         auto& Entry = m_MeshCache.emplace_back(ForwardMeshCacheEntry{
             .Asset = String(Asset),
-            .Mesh  = Resource::Manager::Get().RequestMeshRef(ResolveMeshPath(Asset).string()),
+            .Mesh  = Resource::Manager::Get().RequestMeshRef(ResolveAssetPath(Asset).string()),
         });
         return Entry.Mesh;
+    }
+
+    [[nodiscard]] auto GetOrRequestTexture(StringView Asset) -> Resource::ResourceRef<RHI::SampledTexture>& {
+        for (auto& Entry : m_TextureCache) {
+            if (Entry.Asset == Asset)
+                return Entry.Texture;
+        }
+
+        auto& Entry = m_TextureCache.emplace_back(ForwardTextureCacheEntry{
+            .Asset   = String(Asset),
+            .Texture = Resource::Manager::Get().RequestSampledTextureRef(ResolveAssetPath(Asset).string()),
+        });
+        return Entry.Texture;
     }
 
     [[nodiscard]] auto BuildDrawInstances(const Scene::SceneSnapshot& Scene)
@@ -285,17 +356,23 @@ class ForwardRenderer final : public IRenderer {
             if (!Mesh)
                 continue;
 
+            Resource::ResourceHandle<RHI::SampledTexture> BaseColorTexture = {};
+            if (!Renderable.TextureAsset.empty())
+                BaseColorTexture = GetOrRequestTexture(Renderable.TextureAsset).GetHandle();
+
             for (const auto& Group : Mesh->GetMeshGroups()) {
                 for (const auto& SubMesh : Group.SubMeshes) {
                     if (!SubMesh.PositionVB.IsValid() || !SubMesh.NormalVB.IsValid() || !SubMesh.IB.IsValid())
                         continue;
 
                     DrawInstances.emplace_back(ForwardDrawInstance{
-                        .PositionVB     = SubMesh.PositionVB,
-                        .NormalVB       = SubMesh.NormalVB,
-                        .IndexBuffer    = SubMesh.IB,
-                        .Material       = Renderable.Material,
-                        .WorldTransform = Renderable.WorldTransform,
+                        .PositionVB       = SubMesh.PositionVB,
+                        .NormalVB         = SubMesh.NormalVB,
+                        .UVVB             = SubMesh.UVVB,
+                        .IndexBuffer      = SubMesh.IB,
+                        .BaseColorTexture = BaseColorTexture,
+                        .Material         = Renderable.Material,
+                        .WorldTransform   = Renderable.WorldTransform,
                     });
                 }
             }
@@ -313,13 +390,15 @@ class ForwardRenderer final : public IRenderer {
         };
     }
 
-    [[nodiscard]] static auto BuildMaterialConstants(const Material::PbrMetallicRoughnessMaterial& Material)
+    [[nodiscard]] static auto BuildMaterialConstants(const Material::PbrMetallicRoughnessMaterial& Material,
+                                                     Int32 BaseColorTextureIndex)
         -> ForwardMaterialConstants {
         return ForwardMaterialConstants{
             .BaseColorFactor = hlslpp::interop::float4{
                 hlslpp::float4{Material.BaseColor.x, Material.BaseColor.y, Material.BaseColor.z, 1.0f}},
-            .MetallicFactor  = Material.Metallic,
-            .RoughnessFactor = Material.Roughness,
+            .MetallicFactor        = Material.Metallic,
+            .RoughnessFactor       = Material.Roughness,
+            .BaseColorTextureIndex = BaseColorTextureIndex,
         };
     }
 
@@ -358,7 +437,10 @@ class ForwardRenderer final : public IRenderer {
     Resource::ResourceRef<RHI::ConstantBuffer>   m_ViewConstants            = {};
     Resource::ResourceRef<RHI::ConstantBuffer>   m_MaterialConstants        = {};
     Resource::ResourceRef<RHI::ConstantBuffer>   m_ObjectConstants          = {};
+    Resource::ResourceRef<RHI::Sampler>          m_SamplerLinear            = {};
+    Resource::ResourceRef<RHI::Sampler>          m_SamplerAniso             = {};
     std::vector<ForwardMeshCacheEntry>             m_MeshCache                = {};
+    std::vector<ForwardTextureCacheEntry>          m_TextureCache             = {};
     std::vector<ForwardViewParameterState>          m_ViewParameters           = {};
 };
 

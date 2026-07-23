@@ -1,0 +1,27 @@
+material_instances:
+  viking_room:
+    base_color: [1.0, 1.0, 1.0]
+    metallic: 0.0
+    roughness: 0.9
+
+entities:
+  - name: Main Camera
+    transform:
+      translation: [0.5, -0.4, 0.55]
+      rotation_degrees: [-14.0, 42.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+    components:
+      camera:
+        fov_degrees: 60.0
+        near_plane: 0.05
+        far_plane: 100.0
+  - name: Viking Room
+    transform:
+      translation: [0.0, 0.0, 0.0]
+      rotation_degrees: [90.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+    components:
+      mesh:
+        asset: viking_room.obj
+        material: viking_room
+        texture: viking_room.png

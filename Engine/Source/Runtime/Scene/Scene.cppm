@@ -77,6 +77,9 @@ struct MeshComponent {
     String Asset = {};
     /// Scene-local PBR material instance ID. Empty uses the built-in material defaults.
     String Material = {};
+    /// Optional base-color texture path relative to the current application Assets directory.
+    /// Empty renders with material factors only.
+    String Texture = {};
 };
 
 struct LightComponent {};
@@ -100,6 +103,7 @@ struct RenderViewSnapshot {
 /// state. Each renderer resolves it to its own GPU representation.
 struct RenderableInstance {
     String                        MeshAsset      = {};
+    String                        TextureAsset   = {};
     Material::PbrMetallicRoughnessMaterial  Material       = {};
     hlslpp::float4x4              WorldTransform = hlslpp::float4x4::identity();
 };
@@ -423,6 +427,7 @@ auto Scene::UpdateWorldTransforms() -> void {
         const auto& Node = Meshes.get<SceneNode>(Entity);
         Snapshot.Renderables.emplace_back(RenderableInstance{
             .MeshAsset      = Mesh.Asset,
+            .TextureAsset   = Mesh.Texture,
             .Material       = Material,
             .WorldTransform = Node.Transform.WorldTransform,
         });

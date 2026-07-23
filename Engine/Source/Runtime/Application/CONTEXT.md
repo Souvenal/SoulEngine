@@ -46,6 +46,7 @@ never imports or constructs concrete application types.
 | `ApplicationFactory` | `Application.cppm` | `Core::Factory<Application>` — singleton-backed registry |
 | `Application::Create` | `Application.cppm` | Static factory — factory lookup + construction. Returns `std::expected<UPtr<Application>, ErrorMessage>`. |
 | `TestApplication` | `Applications/TestApp.cppm` | Standalone `export module TestApp;` — self-registers with `{"Test"}` key |
+| `VikingApplication` | `Applications/VikingApp.cppm` | Standalone `export module VikingApp;` — self-registers with `{"Viking"}` key |
 
 ## Adding a New Application
 

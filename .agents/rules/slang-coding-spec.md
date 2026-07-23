@@ -31,9 +31,11 @@ Runtime shader rules for SoulEngine. Prefer Slang cross-platform features. Backe
 ## Resource Binding
 
 - Runtime descriptor sets use `ParameterBlock<T>`.
-- Current shared runtime layout:
-  - Set 0: per-frame data from `Engine/Shaders/Common.slang`.
-  - Set 1: bindless sampled textures.
+- Current shared runtime layout (the Vulkan backend validates set indices against the device's `maxBoundDescriptorSets`):
+  - Set 0: per-frame/per-view data (e.g. `Engine/Shaders/Common.slang`).
+  - Set 1: per-draw constant data (object/material blocks).
+  - Set 2+: bindless sampling resources from `Engine/Shaders/Bindless.slang` (`g_samplers` + unbounded `g_textures` array).
+- Slang assigns set indices to global `ParameterBlock`s in declaration order, with imported module blocks placed after the importing module's own blocks.
 - Unbounded arrays (`T[]`) must be last/only field in a `ParameterBlock`; only one variable-count binding per set.
 - Immutable samplers belong in sampler `ParameterBlock` when added; backend bakes immutable sampler layout.
 - `[[vk::binding]]`, `[[binding]]`, `register(...)` allowed only in `Engine/Source/Runtime/ShaderCompiler/Tests/Slang/` or narrow backend/compiler fixtures.
