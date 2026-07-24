@@ -10,7 +10,7 @@ auto main(int argc, char* argv[]) -> int {
 
     std::span CmdLineArgs{argv, static_cast<std::size_t>(argc)};
 
-    Launch::EngineLoop GEngineLoop;
+    EngineLoop GEngineLoop;
 
     if (auto R = GEngineLoop.PreInit(CmdLineArgs); !R) {
         LogError("{}", R.error().ToString());

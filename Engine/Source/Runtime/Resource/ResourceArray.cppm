@@ -5,20 +5,18 @@ export import RHI;
 import :Manager;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 /// @brief Mutable resource array that retains every assigned resource ref.
 template <ManagedRHIResource T>
-class Array {
+class ResourceArray {
   public:
-    Array() = default;
+    ResourceArray() = default;
 
-    Array(const Array&)                    = delete;
-    auto operator=(const Array&) -> Array& = delete;
-    Array(Array&&) noexcept                = default;
-    auto operator=(Array&&) noexcept -> Array& = default;
+    ResourceArray(const ResourceArray&)                    = delete;
+    auto operator=(const ResourceArray&) -> ResourceArray& = delete;
+    ResourceArray(ResourceArray&&) noexcept                = default;
+    auto operator=(ResourceArray&&) noexcept -> ResourceArray& = default;
 
     [[nodiscard]] auto GetSize() const -> Uint32 {
         return static_cast<Uint32>(m_Resources.size());
@@ -37,7 +35,7 @@ class Array {
     }
 
     /// @brief Resolve resource observers into an RHI array snapshot when all assigned resources are ready.
-    [[nodiscard]] auto TryGetReady() -> std::optional<RHI::ResourceArray<T>> {
+    [[nodiscard]] auto TryGetReady() -> std::optional<RHIResourceArray<T>> {
         for (Uint32 Slot = 0; Slot < m_Resources.size(); ++Slot) {
             auto& ResourceRef = m_Resources[Slot];
             if (!ResourceRef) {
@@ -45,7 +43,7 @@ class Array {
                 continue;
             }
 
-            auto* Resource = Manager::Get().TryGetReady(ResourceRef);
+            auto* Resource = ResourceManager::Get().TryGetReady(ResourceRef);
             if (!Resource)
                 return std::nullopt;
             m_RhiArray.Set(Slot, Resource);
@@ -56,7 +54,7 @@ class Array {
 
   private:
     std::vector<ResourceRef<T>> m_Resources = {};
-    RHI::ResourceArray<T>       m_RhiArray  = {};
+    RHIResourceArray<T>       m_RhiArray  = {};
 };
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

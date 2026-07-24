@@ -1,10 +1,10 @@
 /// @file   VulkanResourceLifetime.cpp
-/// @brief  Integration test for GPU resource lifecycle with DeletionQueue.
+/// @brief  Integration test for GPU resource lifecycle with VulkanDeletionQueue.
 ///
-/// Requires a running Vulkan RHI device (created via RenderDevice::Create).
+/// Requires a running Vulkan RHI device (created via RHIRenderDevice::Create).
 /// Tests that:
 ///   - Resources can be created, used, and destroyed
-///   - DeletionQueue drains callbacks after GPU completes
+///   - VulkanDeletionQueue drains callbacks after GPU completes
 ///   - Bindless descriptor slots are recycled
 ///   - No VMA allocations leak on shutdown
 
@@ -13,8 +13,7 @@
 import RHI;
 import std;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::RHI;
+using namespace SoulEngine;
 
 // ── Fixture ──────────────────────────────────────────────────────────────
 //
@@ -26,7 +25,7 @@ using namespace SoulEngine::RHI;
 class VulkanResourceLifetimeTest : public ::testing::Test {
   protected:
     static void SetUpTestSuite() {
-        // RenderDevice::Create requires a GLFW window with a valid surface.
+        // RHIRenderDevice::Create requires a GLFW window with a valid surface.
         // In a headless CI environment this will fail gracefully.
         //
         // For now, the test records that the integration path exists and
@@ -43,7 +42,7 @@ TEST_F(VulkanResourceLifetimeTest, DISABLED_CreateAndDestroyTexture) {
 
 TEST_F(VulkanResourceLifetimeTest, DISABLED_DeletionQueueDrainsOnShutdown) {
     // Exercise: create resources, submit frames, drop SPtrs, call
-    // RenderDevice::Shutdown, verify Drain() succeeds.
+    // RHIRenderDevice::Shutdown, verify Drain() succeeds.
 }
 
 TEST_F(VulkanResourceLifetimeTest, DISABLED_BindlessSlotReuse) {

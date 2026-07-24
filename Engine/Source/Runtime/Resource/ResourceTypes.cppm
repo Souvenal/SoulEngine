@@ -9,9 +9,7 @@ export import RHI;
 export import ShaderCompiler;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 using ResourceGeneration = Uint64;
 
@@ -69,12 +67,12 @@ struct ResourceTraitInfo {
 template <typename T>
 struct ResourceTraits;
 
-class Mesh;
-class BottomLevelAccelerationStructure;
-class TopLevelAccelerationStructure;
+class ResourceMesh;
+class ResourceBottomLevelAccelerationStructure;
+class ResourceTopLevelAccelerationStructure;
 
 template <>
-struct ResourceTraits<RHI::SampledTexture> {
+struct ResourceTraits<RHISampledTexture> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::WaitForCompletion,
         "sampled texture",
@@ -83,7 +81,7 @@ struct ResourceTraits<RHI::SampledTexture> {
 };
 
 template <>
-struct ResourceTraits<RHI::RenderTarget> {
+struct ResourceTraits<RHIRenderTarget> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "render target",
@@ -92,7 +90,7 @@ struct ResourceTraits<RHI::RenderTarget> {
 };
 
 template <>
-struct ResourceTraits<RHI::GraphicsPipeline> {
+struct ResourceTraits<RHIGraphicsPipeline> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "graphics pipeline",
@@ -101,7 +99,7 @@ struct ResourceTraits<RHI::GraphicsPipeline> {
 };
 
 template <>
-struct ResourceTraits<RHI::RayTracingPipeline> {
+struct ResourceTraits<RHIRayTracingPipeline> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "ray tracing pipeline",
@@ -110,7 +108,7 @@ struct ResourceTraits<RHI::RayTracingPipeline> {
 };
 
 template <>
-struct ResourceTraits<RHI::VertexBuffer> {
+struct ResourceTraits<RHIVertexBuffer> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::WaitForCompletion,
         "vertex buffer",
@@ -119,7 +117,7 @@ struct ResourceTraits<RHI::VertexBuffer> {
 };
 
 template <>
-struct ResourceTraits<RHI::IndexBuffer> {
+struct ResourceTraits<RHIIndexBuffer> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::WaitForCompletion,
         "index buffer",
@@ -128,7 +126,7 @@ struct ResourceTraits<RHI::IndexBuffer> {
 };
 
 template <>
-struct ResourceTraits<RHI::ConstantBuffer> {
+struct ResourceTraits<RHIConstantBuffer> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "constant buffer",
@@ -137,7 +135,7 @@ struct ResourceTraits<RHI::ConstantBuffer> {
 };
 
 template <>
-struct ResourceTraits<RHI::Sampler> {
+struct ResourceTraits<RHISampler> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "sampler",
@@ -146,7 +144,7 @@ struct ResourceTraits<RHI::Sampler> {
 };
 
 template <>
-struct ResourceTraits<Mesh> {
+struct ResourceTraits<ResourceMesh> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "mesh",
@@ -155,7 +153,7 @@ struct ResourceTraits<Mesh> {
 };
 
 template <>
-struct ResourceTraits<BottomLevelAccelerationStructure> {
+struct ResourceTraits<ResourceBottomLevelAccelerationStructure> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "bottom-level acceleration structure",
@@ -164,7 +162,7 @@ struct ResourceTraits<BottomLevelAccelerationStructure> {
 };
 
 template <>
-struct ResourceTraits<TopLevelAccelerationStructure> {
+struct ResourceTraits<ResourceTopLevelAccelerationStructure> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
         "top-level acceleration structure",
@@ -178,17 +176,17 @@ struct ResourceTraits<TopLevelAccelerationStructure> {
 /// it satisfies `ManagedRHIResource`. Keeping both requirements in the concept
 /// prevents a traits-only type from compiling without Context/FrameScope
 /// storage.
-using ManagedRHIResourceTypes = std::tuple<RHI::SampledTexture,
-                                           RHI::RenderTarget,
-                                           RHI::GraphicsPipeline,
-                                           RHI::RayTracingPipeline,
-                                           RHI::VertexBuffer,
-                                           RHI::IndexBuffer,
-                                           RHI::ConstantBuffer,
-                                           RHI::Sampler>;
+using ManagedRHIResourceTypes = std::tuple<RHISampledTexture,
+                                           RHIRenderTarget,
+                                           RHIGraphicsPipeline,
+                                           RHIRayTracingPipeline,
+                                           RHIVertexBuffer,
+                                           RHIIndexBuffer,
+                                           RHIConstantBuffer,
+                                           RHISampler>;
 
 /// @brief Central list of high-level asset families managed by Resource.
-using ManagedAssetResourceTypes = std::tuple<Mesh, BottomLevelAccelerationStructure, TopLevelAccelerationStructure>;
+using ManagedAssetResourceTypes = std::tuple<ResourceMesh, ResourceBottomLevelAccelerationStructure, ResourceTopLevelAccelerationStructure>;
 
 using ManagedResourceTypes =
     decltype(std::tuple_cat(std::declval<ManagedRHIResourceTypes>(), std::declval<ManagedAssetResourceTypes>()));
@@ -227,23 +225,23 @@ concept ManagedResource = DefinedResourceTraits<T> && ListedManagedResource<T>;
 template <typename T>
 concept GpuPendingManagedRHIResource = ManagedRHIResource<T> && ResourceTraits<T>::Info.HasGpuPending();
 
-static_assert(ManagedRHIResource<RHI::SampledTexture>);
-static_assert(ManagedRHIResource<RHI::RenderTarget>);
-static_assert(ManagedRHIResource<RHI::GraphicsPipeline>);
-static_assert(ManagedRHIResource<RHI::RayTracingPipeline>);
-static_assert(ManagedRHIResource<RHI::VertexBuffer>);
-static_assert(ManagedRHIResource<RHI::IndexBuffer>);
-static_assert(ManagedRHIResource<RHI::ConstantBuffer>);
-static_assert(ManagedRHIResource<RHI::Sampler>);
-static_assert(ManagedAssetResource<Mesh>);
-static_assert(ManagedResource<Mesh>);
+static_assert(ManagedRHIResource<RHISampledTexture>);
+static_assert(ManagedRHIResource<RHIRenderTarget>);
+static_assert(ManagedRHIResource<RHIGraphicsPipeline>);
+static_assert(ManagedRHIResource<RHIRayTracingPipeline>);
+static_assert(ManagedRHIResource<RHIVertexBuffer>);
+static_assert(ManagedRHIResource<RHIIndexBuffer>);
+static_assert(ManagedRHIResource<RHIConstantBuffer>);
+static_assert(ManagedRHIResource<RHISampler>);
+static_assert(ManagedAssetResource<ResourceMesh>);
+static_assert(ManagedResource<ResourceMesh>);
 
 /// @brief ResourceContext-owned RHI payload for supported resource types.
 ///
 /// The primary template is constrained through `ManagedResource`, so trying
 /// to instantiate Resource/Handle/Slot for an unsupported type fails at compile
 /// time instead of silently creating an unmanaged resource family.
-/// Mesh extends this storage to imported non-RHI asset payloads.
+/// ResourceMesh extends this storage to imported non-RHI asset payloads.
 template <ManagedResource T>
 struct Resource {
     UPtr<T> Object = nullptr;
@@ -251,22 +249,22 @@ struct Resource {
 
 /// @brief Async graphics pipeline request descriptor.
 struct GraphicsPipelineRequest {
-    ShaderCompiler::ShaderEntry VertEntry         = {};
-    ShaderCompiler::ShaderEntry FragEntry         = {};
-    RHI::VertexInputLayoutDesc  VertexInputLayout = {};
-    RHI::PrimitiveTopology      Topology          = RHI::PrimitiveTopology::TriangleList;
-    RHI::RasterizerState        Rasterizer        = {};
-    RHI::BlendState             Blend             = {};
-    RHI::DepthStencilState      DepthStencil      = {};
-    RHI::Format                 ColorFormat       = RHI::Format::B8G8R8A8_UNORM;
-    RHI::Format                 DepthFormat       = RHI::Format::Unknown;
+    ShaderEntry VertEntry         = {};
+    ShaderEntry FragEntry         = {};
+    RHIVertexInputLayoutDesc  VertexInputLayout = {};
+    RHIPrimitiveTopology      Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState        Rasterizer        = {};
+    RHIBlendState             Blend             = {};
+    RHIDepthStencilState      DepthStencil      = {};
+    RHIFormat                 ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
+    RHIFormat                 DepthFormat       = RHIFormat::Unknown;
 };
 
 /// @brief Async hardware ray-tracing pipeline request descriptor.
 struct RayTracingPipelineRequest {
-    ShaderCompiler::ShaderEntry RayGeneration = {};
-    std::vector<ShaderCompiler::ShaderEntry> MissEntries = {};
-    std::vector<ShaderCompiler::RayTracingHitGroupCompileDesc> HitGroups = {};
+    ShaderEntry RayGeneration = {};
+    std::vector<ShaderEntry> MissEntries = {};
+    std::vector<RayTracingHitGroupCompileDesc> HitGroups = {};
     Uint32 MaxRecursionDepth = 1;
 };
 
@@ -440,7 +438,7 @@ class ResourceHandle {
 /// @brief Move-only logical owner for a resource request.
 ///
 /// `ResourceRef` expresses that a runtime system still wants the resource.
-/// Ready payload observer pointers are resolved through `Resource::Manager`;
+/// Ready payload observer pointers are resolved through `ResourceManager`;
 /// this type owns logical demand only.
 /// The type stores an opaque release callback so resource payload types can own
 /// dependency refs without importing ResourceContext and creating a module cycle.
@@ -523,11 +521,11 @@ struct SubMesh {
     std::vector<hlslpp::interop::float2> UVs       = {};
     std::vector<Uint32>                  Indices   = {};
 
-    ResourceHandle<RHI::VertexBuffer> PositionVB = {};
-    ResourceHandle<RHI::VertexBuffer> NormalVB   = {};
-    ResourceHandle<RHI::VertexBuffer> TangentVB  = {};
-    ResourceHandle<RHI::VertexBuffer> UVVB       = {};
-    ResourceHandle<RHI::IndexBuffer>  IB         = {};
+    ResourceHandle<RHIVertexBuffer> PositionVB = {};
+    ResourceHandle<RHIVertexBuffer> NormalVB   = {};
+    ResourceHandle<RHIVertexBuffer> TangentVB  = {};
+    ResourceHandle<RHIVertexBuffer> UVVB       = {};
+    ResourceHandle<RHIIndexBuffer>  IB         = {};
 
     Uint32 VertexCount  = 0;
     Uint32 MaterialSlot = 0;
@@ -539,16 +537,16 @@ struct MeshGroup {
 };
 
 /// @brief High-level imported mesh asset.
-class Mesh {
+class ResourceMesh {
   private:
-    friend auto ParseAssimpMeshes(StringView, Mesh&) -> std::expected<void, ErrorMessage>;
+    friend auto ParseAssimpMeshes(StringView, ResourceMesh&) -> std::expected<void, ErrorMessage>;
 
     std::vector<MeshGroup> m_MeshGroups    = {};
     std::vector<String>    m_MaterialNames = {};
     String                 m_Name          = {};
 
   public:
-    Mesh() = default;
+    ResourceMesh() = default;
 
     [[nodiscard]] auto GetName() const -> const String& {
         return m_Name;
@@ -566,61 +564,61 @@ enum class BottomLevelAccelerationStructureGeometryPolicy : Uint8 {
 
 /// Request options contributing to a reusable BLAS identity.
 struct BottomLevelAccelerationStructureRequest {
-    RHI::AccelerationStructureBuildFlags                     BuildFlags = RHI::AccelerationStructureBuildFlags::None;
+    RHIAccelerationStructureBuildFlags                     BuildFlags = RHIAccelerationStructureBuildFlags::None;
     BottomLevelAccelerationStructureGeometryPolicy           GeometryPolicy =
         BottomLevelAccelerationStructureGeometryPolicy::AllMeshSubMeshes;
 };
 
 /// Independent resource payload for reusable object-space acceleration geometry.
-class BottomLevelAccelerationStructure {
+class ResourceBottomLevelAccelerationStructure {
   public:
-    BottomLevelAccelerationStructure() = default;
+    ResourceBottomLevelAccelerationStructure() = default;
 
-    BottomLevelAccelerationStructure(std::vector<ResourceRef<RHI::VertexBuffer>> PositionBuffers,
-                                     std::vector<ResourceRef<RHI::IndexBuffer>> IndexBuffers,
-                                     UPtr<RHI::BottomLevelAccelerationStructure> Payload) {
+    ResourceBottomLevelAccelerationStructure(std::vector<ResourceRef<RHIVertexBuffer>> PositionBuffers,
+                                     std::vector<ResourceRef<RHIIndexBuffer>> IndexBuffers,
+                                     UPtr<RHIBottomLevelAccelerationStructure> Payload) {
         m_PositionBuffers = std::move(PositionBuffers);
         m_IndexBuffers = std::move(IndexBuffers);
         m_Payload = std::move(Payload);
     }
 
-    BottomLevelAccelerationStructure(const BottomLevelAccelerationStructure&) = delete;
-    auto operator=(const BottomLevelAccelerationStructure&) -> BottomLevelAccelerationStructure& = delete;
-    BottomLevelAccelerationStructure(BottomLevelAccelerationStructure&&) = delete;
-    auto operator=(BottomLevelAccelerationStructure&&) -> BottomLevelAccelerationStructure& = delete;
-    ~BottomLevelAccelerationStructure() = default;
+    ResourceBottomLevelAccelerationStructure(const ResourceBottomLevelAccelerationStructure&) = delete;
+    auto operator=(const ResourceBottomLevelAccelerationStructure&) -> ResourceBottomLevelAccelerationStructure& = delete;
+    ResourceBottomLevelAccelerationStructure(ResourceBottomLevelAccelerationStructure&&) = delete;
+    auto operator=(ResourceBottomLevelAccelerationStructure&&) -> ResourceBottomLevelAccelerationStructure& = delete;
+    ~ResourceBottomLevelAccelerationStructure() = default;
 
-    [[nodiscard]] auto GetRhiPayload() const -> RHI::BottomLevelAccelerationStructure* {
+    [[nodiscard]] auto GetRhiPayload() const -> RHIBottomLevelAccelerationStructure* {
         return m_Payload.get();
     }
 
   private:
-    std::vector<ResourceRef<RHI::VertexBuffer>> m_PositionBuffers = {};
-    std::vector<ResourceRef<RHI::IndexBuffer>>  m_IndexBuffers = {};
-    UPtr<RHI::BottomLevelAccelerationStructure> m_Payload = nullptr;
+    std::vector<ResourceRef<RHIVertexBuffer>> m_PositionBuffers = {};
+    std::vector<ResourceRef<RHIIndexBuffer>>  m_IndexBuffers = {};
+    UPtr<RHIBottomLevelAccelerationStructure> m_Payload = nullptr;
 };
 
 /// Persistent renderer-scoped TLAS allocation. Per-frame instances remain command-driven.
-class TopLevelAccelerationStructure {
+class ResourceTopLevelAccelerationStructure {
   public:
-    TopLevelAccelerationStructure() = default;
+    ResourceTopLevelAccelerationStructure() = default;
 
-    explicit TopLevelAccelerationStructure(UPtr<RHI::TopLevelAccelerationStructure> Payload) {
+    explicit ResourceTopLevelAccelerationStructure(UPtr<RHITopLevelAccelerationStructure> Payload) {
         m_Payload = std::move(Payload);
     }
 
-    TopLevelAccelerationStructure(const TopLevelAccelerationStructure&) = delete;
-    auto operator=(const TopLevelAccelerationStructure&) -> TopLevelAccelerationStructure& = delete;
-    TopLevelAccelerationStructure(TopLevelAccelerationStructure&&) = delete;
-    auto operator=(TopLevelAccelerationStructure&&) -> TopLevelAccelerationStructure& = delete;
-    ~TopLevelAccelerationStructure() = default;
+    ResourceTopLevelAccelerationStructure(const ResourceTopLevelAccelerationStructure&) = delete;
+    auto operator=(const ResourceTopLevelAccelerationStructure&) -> ResourceTopLevelAccelerationStructure& = delete;
+    ResourceTopLevelAccelerationStructure(ResourceTopLevelAccelerationStructure&&) = delete;
+    auto operator=(ResourceTopLevelAccelerationStructure&&) -> ResourceTopLevelAccelerationStructure& = delete;
+    ~ResourceTopLevelAccelerationStructure() = default;
 
-    [[nodiscard]] auto GetRhiPayload() const -> RHI::TopLevelAccelerationStructure* {
+    [[nodiscard]] auto GetRhiPayload() const -> RHITopLevelAccelerationStructure* {
         return m_Payload.get();
     }
 
   private:
-    UPtr<RHI::TopLevelAccelerationStructure> m_Payload = nullptr;
+    UPtr<RHITopLevelAccelerationStructure> m_Payload = nullptr;
 };
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

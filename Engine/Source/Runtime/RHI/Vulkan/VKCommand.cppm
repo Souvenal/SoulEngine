@@ -16,17 +16,15 @@ import :Texture;
 import :Descriptor;
 import :AccelerationStructure;
 
-using namespace SoulEngine::Core;
+namespace SoulEngine {
 
-namespace SoulEngine::RHI::Vulkan {
-
-/// Callable for std::visit over RHI::Command variants.
-struct CommandVisitor {
+/// Callable for std::visit over RHICommand variants.
+struct VulkanCommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
-    std::unordered_map<vk::Image, ImageState>& LocalStates;
-    DescriptorManager*                         Descriptors                = nullptr;
-    UniformBufferArena*                        ConstantArena              = nullptr;
-    TransientUniformBufferArena*               DrawConstantArena          = nullptr;
+    std::unordered_map<vk::Image, VulkanImageState>& LocalStates;
+    VulkanDescriptorManager*                         Descriptors                = nullptr;
+    VulkanUniformBufferArena*                        ConstantArena              = nullptr;
+    VulkanTransientUniformBufferArena*               DrawConstantArena          = nullptr;
     Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
     enum class BoundPipelineType : Uint8 {
@@ -36,11 +34,11 @@ struct CommandVisitor {
     };
 
     std::optional<ErrorMessage>                Error                      = std::nullopt;
-    RHI::Pipeline*                             m_BoundPipeline            = nullptr;
+    RHIPipeline*                             m_BoundPipeline            = nullptr;
     BoundPipelineType                          m_BoundPipelineType        = BoundPipelineType::Unknown;
 
-    /// Begin rendering scope from Pass desc.
-    auto BeginPass(const RHI::RenderingDesc& Desc) -> void {
+    /// Begin rendering scope from RHIPass desc.
+    auto BeginPass(const RHIRenderingDesc& Desc) -> void {
         // ── Resolve color attachment ──────────────────────────────────
         vk::RenderingAttachmentInfo ColorAttachment{};
         vk::ImageView               ColorImageView;
@@ -48,12 +46,12 @@ struct CommandVisitor {
         Uint32                      RenderWidth  = 1;
         Uint32                      RenderHeight = 1;
 
-        auto& VkRT     = static_cast<const Vulkan::RenderTarget&>(*Desc.ColorAttachment.TexturePtr);
+        auto& VkRT     = static_cast<const VulkanRenderTarget&>(*Desc.ColorAttachment.TexturePtr);
         ColorImage     = VkRT.GetVkImage();
         ColorImageView = VkRT.GetVkImageView();
         RenderWidth    = VkRT.GetWidth();
         RenderHeight   = VkRT.GetHeight();
-        TransitionImage(Buf,
+        VulkanTransitionImage(Buf,
                         LocalStates,
                         ColorImage,
                         vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -80,11 +78,11 @@ struct CommandVisitor {
         // ── Resolve depth attachment (optional) ───────────────────────
         std::optional<vk::RenderingAttachmentInfo> DepthAttachment = std::nullopt;
         if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr) {
-            auto& VkDepthRT   = static_cast<const Vulkan::RenderTarget&>(*Desc.DepthAttachment->TexturePtr);
+            auto& VkDepthRT   = static_cast<const VulkanRenderTarget&>(*Desc.DepthAttachment->TexturePtr);
             auto  DepthImage  = VkDepthRT.GetVkImage();
             auto  DepthView   = VkDepthRT.GetVkImageView();
             auto  DepthAspect = ToVkImageAspect(VkDepthRT.GetFormat());
-            TransitionImage(Buf,
+            VulkanTransitionImage(Buf,
                             LocalStates,
                             DepthImage,
                             vk::PipelineStageFlagBits2::eEarlyFragmentTests,
@@ -108,7 +106,7 @@ struct CommandVisitor {
         // the depth RT is smaller than the color RT (or vice versa) we
         // must shrink renderArea to fit the minimum.
         if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr) {
-            auto& VkDepthRT            = static_cast<const Vulkan::RenderTarget&>(*Desc.DepthAttachment->TexturePtr);
+            auto& VkDepthRT            = static_cast<const VulkanRenderTarget&>(*Desc.DepthAttachment->TexturePtr);
             CurrentRenderExtent.width  = (std::min)(CurrentRenderExtent.width, VkDepthRT.GetWidth());
             CurrentRenderExtent.height = (std::min)(CurrentRenderExtent.height, VkDepthRT.GetHeight());
         }
@@ -130,7 +128,7 @@ struct CommandVisitor {
     }
 
     template <typename PipelineType>
-    auto BindShaderParameters(const RHI::BindShaderParametersCmd& Cmd,
+    auto BindShaderParameters(const RHIBindShaderParametersCmd& Cmd,
                               PipelineType&                       Pipeline,
                               vk::PipelineBindPoint                BindPoint,
                               vk::PipelineStageFlags2              ShaderStage) -> void {
@@ -150,15 +148,15 @@ struct CommandVisitor {
                 const auto& Binding = Bindings[Index];
                 if (Binding.ArrayCount != std::numeric_limits<Uint32>::max())
                     continue;
-                if (Binding.Type != Shader::ResourceType::SampledTexture) {
-                    Error = ErrorMessage(Core::Format(
+                if (Binding.Type != ShaderResourceType::SampledTexture) {
+                    Error = ErrorMessage(Format(
                         "Runtime resource array '{}' uses unsupported resource type",
                         Binding.ParameterPath));
                     return;
                 }
-                const auto* Array = std::get_if<RHI::ResourceArray<RHI::SampledTexture>>(&Values[Index]);
+                const auto* Array = std::get_if<RHIResourceArray<RHISampledTexture>>(&Values[Index]);
                 if (!Array || Array->GetSize() == 0) {
-                    Error = ErrorMessage(Core::Format(
+                    Error = ErrorMessage(Format(
                         "Runtime sampled texture array '{}' is missing a non-empty resource array",
                         Binding.ParameterPath));
                     return;
@@ -180,13 +178,13 @@ struct CommandVisitor {
                 const auto& Binding = Bindings[Index];
                 const auto& Value   = Values[Index];
 
-                if (const auto* Constant = std::get_if<RHI::ShaderParameterConstant>(&Value)) {
+                if (const auto* Constant = std::get_if<RHIShaderParameterConstant>(&Value)) {
                     if (!Constant->Buffer || Constant->Data.empty()) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has an invalid constant buffer value", Binding.ParameterPath));
                         return;
                     }
-                    auto& VkBuffer = static_cast<const Vulkan::ConstantBuffer&>(*Constant->Buffer);
+                    auto& VkBuffer = static_cast<const VulkanConstantBuffer&>(*Constant->Buffer);
                     Uint32 Offset = 0;
                     vk::Buffer DescriptorBuffer = nullptr;
                     const void* DescriptorSource = Constant->Buffer;
@@ -221,14 +219,14 @@ struct CommandVisitor {
                     continue;
                 }
 
-                if (const auto* Target = std::get_if<RHI::RenderTarget*>(&Value)) {
+                if (const auto* Target = std::get_if<RHIRenderTarget*>(&Value)) {
                     if (!*Target) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null storage render target", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkTarget = static_cast<const Vulkan::RenderTarget&>(**Target);
-                    TransitionImage(Buf,
+                    const auto& VkTarget = static_cast<const VulkanRenderTarget&>(**Target);
+                    VulkanTransitionImage(Buf,
                                     LocalStates,
                                     VkTarget.GetVkImage(),
                                     ShaderStage,
@@ -250,15 +248,15 @@ struct CommandVisitor {
                 if (!bUpdateDescriptors)
                     continue;
 
-                if (const auto* GeometryTable = std::get_if<RHI::RayTracingGeometryTable*>(&Value)) {
+                if (const auto* GeometryTable = std::get_if<RHIRayTracingGeometryTable*>(&Value)) {
                     if (!*GeometryTable) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null BDA geometry table", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkTable = static_cast<const Vulkan::BdaRayTracingGeometryTable&>(**GeometryTable);
+                    const auto& VkTable = static_cast<const VulkanBdaRayTracingGeometryTable&>(**GeometryTable);
                     if (VkTable.GetByteSize() == 0) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' references an empty BDA geometry table", Binding.ParameterPath));
                         return;
                     }
@@ -271,48 +269,48 @@ struct CommandVisitor {
                     continue;
                 }
 
-                if (const auto* VertexBuffer = std::get_if<RHI::VertexBuffer*>(&Value)) {
-                    if (!*VertexBuffer) {
-                        Error = ErrorMessage(Core::Format(
+                if (const auto* VertexBufferPtr = std::get_if<RHIVertexBuffer*>(&Value)) {
+                    if (!*VertexBufferPtr) {
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null storage vertex buffer", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkBuffer = static_cast<const Vulkan::VertexBuffer&>(**VertexBuffer);
+                    const auto& VkBuffer = static_cast<const VulkanVertexBuffer&>(**VertexBufferPtr);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *VertexBuffer) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *VertexBufferPtr) {
                         Descriptors->WriteStorageBufferDescriptor(
                             *(*Instance)->Set,
                             Binding.Binding,
                             VkBuffer.GetVkBuffer(),
                             VkBuffer.GetStride() * VkBuffer.GetVertexCount());
-                        ResourceBindings[Binding.Binding] = *VertexBuffer;
+                        ResourceBindings[Binding.Binding] = *VertexBufferPtr;
                     }
                     continue;
                 }
 
-                if (const auto* IndexBuffer = std::get_if<RHI::IndexBuffer*>(&Value)) {
-                    if (!*IndexBuffer) {
-                        Error = ErrorMessage(Core::Format(
+                if (const auto* IndexBufferPtr = std::get_if<RHIIndexBuffer*>(&Value)) {
+                    if (!*IndexBufferPtr) {
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null storage index buffer", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkBuffer = static_cast<const Vulkan::IndexBuffer&>(**IndexBuffer);
+                    const auto& VkBuffer = static_cast<const VulkanIndexBuffer&>(**IndexBufferPtr);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *IndexBuffer) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *IndexBufferPtr) {
                         Descriptors->WriteStorageBufferDescriptor(
                             *(*Instance)->Set, Binding.Binding, VkBuffer.GetVkBuffer(), VkBuffer.GetIndexCount() * sizeof(Uint32));
-                        ResourceBindings[Binding.Binding] = *IndexBuffer;
+                        ResourceBindings[Binding.Binding] = *IndexBufferPtr;
                     }
                     continue;
                 }
 
-                if (const auto* Texture = std::get_if<RHI::SampledTexture*>(&Value)) {
+                if (const auto* Texture = std::get_if<RHISampledTexture*>(&Value)) {
                     if (!*Texture) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null sampled texture", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkTexture = static_cast<const Vulkan::SampledTexture&>(**Texture);
+                    const auto& VkTexture = static_cast<const VulkanSampledTexture&>(**Texture);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
                     if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Texture) {
                         Descriptors->WriteSampledTextureDescriptor(*(*Instance)->Set,
@@ -325,16 +323,16 @@ struct CommandVisitor {
                     continue;
                 }
 
-                if (const auto* Array = std::get_if<RHI::ResourceArray<RHI::SampledTexture>>(&Value)) {
+                if (const auto* Array = std::get_if<RHIResourceArray<RHISampledTexture>>(&Value)) {
                     if (Array->GetSize() == 0) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has an empty sampled-texture resource array",
                             Binding.ParameterPath));
                         return;
                     }
                     const bool bRuntimeArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
                     if (!bRuntimeArray && Array->GetSize() != Binding.ArrayCount) {
-                        Error = ErrorMessage(Core::Format(
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' sampled-texture array size {} does not match reflected array count {}",
                             Binding.ParameterPath,
                             Array->GetSize(),
@@ -346,13 +344,13 @@ struct CommandVisitor {
                         if (!Texture && bRuntimeArray)
                             continue;
                         if (!Texture) {
-                            Error = ErrorMessage(Core::Format(
+                            Error = ErrorMessage(Format(
                                 "Fixed-size shader parameter '{}' has an unset sampled-texture array slot {}",
                                 Binding.ParameterPath,
                                 Slot));
                             return;
                         }
-                        const auto& VkTexture = static_cast<const Vulkan::SampledTexture&>(*Texture);
+                        const auto& VkTexture = static_cast<const VulkanSampledTexture&>(*Texture);
                         Descriptors->WriteSampledTextureDescriptor(*(*Instance)->Set,
                                                                    Binding.Binding,
                                                                    Slot,
@@ -362,39 +360,39 @@ struct CommandVisitor {
                     continue;
                 }
 
-                if (const auto* AccelerationStructure = std::get_if<RHI::TopLevelAccelerationStructure*>(&Value)) {
-                    if (!*AccelerationStructure) {
-                        Error = ErrorMessage(Core::Format(
+                if (const auto* TlasPtr = std::get_if<RHITopLevelAccelerationStructure*>(&Value)) {
+                    if (!*TlasPtr) {
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null top-level acceleration structure", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkTlas = static_cast<const Vulkan::TopLevelAccelerationStructure&>(**AccelerationStructure);
+                    const auto& VkTlas = static_cast<const VulkanTopLevelAccelerationStructure&>(**TlasPtr);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *AccelerationStructure) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *TlasPtr) {
                         Descriptors->WriteAccelerationStructureDescriptor(
                             *(*Instance)->Set, Binding.Binding, VkTlas.GetAccelerationStructure());
-                        ResourceBindings[Binding.Binding] = *AccelerationStructure;
+                        ResourceBindings[Binding.Binding] = *TlasPtr;
                     }
                     continue;
                 }
 
-                if (const auto* Sampler = std::get_if<RHI::Sampler*>(&Value)) {
-                    if (!*Sampler) {
-                        Error = ErrorMessage(Core::Format(
+                if (const auto* SamplerPtr = std::get_if<RHISampler*>(&Value)) {
+                    if (!*SamplerPtr) {
+                        Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null sampler", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkSampler = static_cast<const Vulkan::Sampler&>(**Sampler);
+                    const auto& VkSampler = static_cast<const VulkanSampler&>(**SamplerPtr);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Sampler) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *SamplerPtr) {
                         Descriptors->WriteSamplerDescriptor(
                             *(*Instance)->Set, Binding.Binding, VkSampler.GetVkSampler());
-                        ResourceBindings[Binding.Binding] = *Sampler;
+                        ResourceBindings[Binding.Binding] = *SamplerPtr;
                     }
                     continue;
                 }
 
-                Error = ErrorMessage(Core::Format("Shader parameter '{}' is unset", Binding.ParameterPath));
+                Error = ErrorMessage(Format("Shader parameter '{}' is unset", Binding.ParameterPath));
                 return;
             }
 
@@ -417,31 +415,31 @@ struct CommandVisitor {
         }
     }
 
-    auto operator()(const RHI::SetGraphicsPipelineCmd& Cmd) -> void {
+    auto operator()(const RHISetGraphicsPipelineCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr)
             return;
 
-        auto& Pipeline = static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<VulkanGraphicsPipeline&>(*Cmd.PipelinePtr);
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
         m_BoundPipeline     = Cmd.PipelinePtr;
         m_BoundPipelineType = BoundPipelineType::Graphics;
     }
 
-    auto operator()(const RHI::SetRayTracingPipelineCmd& Cmd) -> void {
+    auto operator()(const RHISetRayTracingPipelineCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr)
             return;
-        auto& Pipeline = static_cast<Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<VulkanRayTracingPipeline&>(*Cmd.PipelinePtr);
         Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
         m_BoundPipeline     = Cmd.PipelinePtr;
         m_BoundPipelineType = BoundPipelineType::RayTracing;
     }
 
-    auto operator()(const RHI::UpdateRayTracingGeometryTableCmd& Cmd) -> void {
+    auto operator()(const RHIUpdateRayTracingGeometryTableCmd& Cmd) -> void {
         if (!Cmd.TablePtr) {
             Error = ErrorMessage("BDA geometry table update has no target table");
             return;
         }
-        auto& Table = static_cast<Vulkan::BdaRayTracingGeometryTable&>(*Cmd.TablePtr);
+        auto& Table = static_cast<VulkanBdaRayTracingGeometryTable&>(*Cmd.TablePtr);
         if (auto Result = Table.Update(Cmd.Update); !Result) {
             Error = Result.error().Append("BDA geometry table update failed");
             return;
@@ -456,10 +454,10 @@ struct CommandVisitor {
         Buf.pipelineBarrier2(Dependency);
     }
 
-    auto operator()(const RHI::BuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
+    auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
         if (!Cmd.TargetPtr)
             return;
-        auto& Tlas = static_cast<Vulkan::TopLevelAccelerationStructure&>(*Cmd.TargetPtr);
+        auto& Tlas = static_cast<VulkanTopLevelAccelerationStructure&>(*Cmd.TargetPtr);
         if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode); !R) {
             Error = R.error().Append("Failed to record TLAS build");
             return;
@@ -478,10 +476,10 @@ struct CommandVisitor {
         Buf.pipelineBarrier2(Dependency);
     }
 
-    auto operator()(const RHI::TraceRaysCmd& Cmd) -> void {
+    auto operator()(const RHITraceRaysCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr)
             return;
-        auto& Pipeline = static_cast<Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<VulkanRayTracingPipeline&>(*Cmd.PipelinePtr);
         Buf.traceRaysKHR(Pipeline.GetRayGenerationRegion(),
                          Pipeline.GetMissRegion(),
                          Pipeline.GetHitRegion(),
@@ -503,7 +501,7 @@ struct CommandVisitor {
         Buf.pipelineBarrier2(Dependency);
     }
 
-    auto operator()(const RHI::PushConstantsCmd& Cmd) -> void {
+    auto operator()(const RHIPushConstantsCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr || Cmd.Data.empty())
             return;
         if (m_BoundPipeline != Cmd.PipelinePtr) {
@@ -516,14 +514,14 @@ struct CommandVisitor {
         Uint32 PushConstantSize = 0;
         switch (m_BoundPipelineType) {
         case BoundPipelineType::Graphics: {
-            const auto& Pipeline = static_cast<const Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr);
+            const auto& Pipeline = static_cast<const VulkanGraphicsPipeline&>(*Cmd.PipelinePtr);
             PipelineLayout = Pipeline.GetPipelineLayout();
             Stages = vk::ShaderStageFlagBits::eAllGraphics;
             PushConstantSize = Pipeline.GetPushConstantSize();
             break;
         }
         case BoundPipelineType::RayTracing: {
-            const auto& Pipeline = static_cast<const Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr);
+            const auto& Pipeline = static_cast<const VulkanRayTracingPipeline&>(*Cmd.PipelinePtr);
             PipelineLayout = Pipeline.GetPipelineLayout();
             Stages = Pipeline.GetPushConstantStages();
             PushConstantSize = Pipeline.GetPushConstantSize();
@@ -535,7 +533,7 @@ struct CommandVisitor {
         }
 
         if (Cmd.Offset + Cmd.Data.size() > PushConstantSize) {
-            Error = ErrorMessage(Core::Format("PushConstants range exceeds reflected pipeline push-constant size ({} + {} > {})",
+            Error = ErrorMessage(Format("PushConstants range exceeds reflected pipeline push-constant size ({} + {} > {})",
                                               Cmd.Offset,
                                               Cmd.Data.size(),
                                               PushConstantSize));
@@ -549,11 +547,11 @@ struct CommandVisitor {
                           Cmd.Data.data());
     }
 
-    auto operator()(const RHI::BindShaderParametersCmd& Cmd) -> void {
+    auto operator()(const RHIBindShaderParametersCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr)
             return;
         if (!Descriptors || !ConstantArena || !DrawConstantArena) {
-            Error = ErrorMessage("CommandVisitor: descriptor manager or constant arena is missing");
+            Error = ErrorMessage("VulkanCommandVisitor: descriptor manager or constant arena is missing");
             return;
         }
         if (m_BoundPipeline != Cmd.PipelinePtr) {
@@ -564,13 +562,13 @@ struct CommandVisitor {
         switch (m_BoundPipelineType) {
         case BoundPipelineType::Graphics:
             BindShaderParameters(Cmd,
-                                 static_cast<Vulkan::GraphicsPipeline&>(*Cmd.PipelinePtr),
+                                 static_cast<VulkanGraphicsPipeline&>(*Cmd.PipelinePtr),
                                  vk::PipelineBindPoint::eGraphics,
                                  vk::PipelineStageFlagBits2::eAllGraphics);
             return;
         case BoundPipelineType::RayTracing:
             BindShaderParameters(Cmd,
-                                 static_cast<Vulkan::RayTracingPipeline&>(*Cmd.PipelinePtr),
+                                 static_cast<VulkanRayTracingPipeline&>(*Cmd.PipelinePtr),
                                  vk::PipelineBindPoint::eRayTracingKHR,
                                  vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
             return;
@@ -580,7 +578,7 @@ struct CommandVisitor {
         }
     }
 
-    auto operator()(const RHI::SetViewportCmd& Cmd) -> void {
+    auto operator()(const RHISetViewportCmd& Cmd) -> void {
         // Vulkan allows a negative viewport height to flip the framebuffer Y axis.
         vk::Viewport Viewport{
             Cmd.X,
@@ -593,7 +591,7 @@ struct CommandVisitor {
         Buf.setViewport(0, {Viewport});
     }
 
-    auto operator()(const RHI::SetFullViewportCmd& Cmd) -> void {
+    auto operator()(const RHISetFullViewportCmd& Cmd) -> void {
         // Vulkan allows a negative viewport height to flip the framebuffer Y axis.
         vk::Viewport Viewport{
             0.0f,
@@ -606,31 +604,31 @@ struct CommandVisitor {
         Buf.setViewport(0, {Viewport});
     }
 
-    auto operator()(const RHI::SetScissorCmd& Cmd) -> void {
+    auto operator()(const RHISetScissorCmd& Cmd) -> void {
         Buf.setScissor(0, {vk::Rect2D{{Cmd.X, Cmd.Y}, {Cmd.Width, Cmd.Height}}});
     }
 
-    auto operator()(const RHI::SetFullScissorRectCmd& /*Cmd*/) -> void {
+    auto operator()(const RHISetFullScissorRectCmd& /*Cmd*/) -> void {
         Buf.setScissor(0, {vk::Rect2D{{0, 0}, CurrentRenderExtent}});
     }
 
-    auto operator()(const RHI::DrawIndexedCmd& Cmd) -> void {
+    auto operator()(const RHIDrawIndexedCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0] || !Cmd.IndexBufferPtr)
             return;
 
-        const auto& VkIB   = static_cast<const Vulkan::IndexBuffer&>(*Cmd.IndexBufferPtr);
+        const auto& VkIB   = static_cast<const VulkanIndexBuffer&>(*Cmd.IndexBufferPtr);
         for (Uint32 Binding = 0; Binding < Cmd.VertexBuffers.size(); ++Binding) {
             auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
             if (!VertexBufferPtr)
                 continue;
-            const auto& VkVB = static_cast<const Vulkan::VertexBuffer&>(*VertexBufferPtr);
+            const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
             Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
         }
         Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
         Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
     }
 
-    auto operator()(const RHI::DrawCmd& Cmd) -> void {
+    auto operator()(const RHIDrawCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0])
             return;
 
@@ -638,12 +636,12 @@ struct CommandVisitor {
             auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
             if (!VertexBufferPtr)
                 continue;
-            const auto& VkVB = static_cast<const Vulkan::VertexBuffer&>(*VertexBufferPtr);
+            const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
             Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
         }
-        const auto& VkVB = static_cast<const Vulkan::VertexBuffer&>(*Cmd.VertexBuffers[0]);
+        const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*Cmd.VertexBuffers[0]);
         Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
     }
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

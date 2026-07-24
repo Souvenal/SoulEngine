@@ -2,7 +2,7 @@ export module Core:Util.Types;
 
 export import std;
 
-export namespace SoulEngine::Core {
+export namespace SoulEngine {
 
 using Int8  = std::int8_t;
 using Int16 = std::int16_t;
@@ -36,4 +36,4 @@ using UPtr = std::unique_ptr<T>;
 template <typename T>
 using SPtr = std::shared_ptr<T>;
 
-} // namespace SoulEngine::Core
+} // namespace SoulEngine

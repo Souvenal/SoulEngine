@@ -8,9 +8,7 @@ module Scene:YamlIO;
 
 import Scene;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::Scene {
+namespace SoulEngine {
 
 namespace {
 
@@ -157,11 +155,11 @@ auto RegisterBuiltInComponentSchemas() -> void {
 }
 
 [[nodiscard]] auto ReadMaterialInstance(const YAML::Node& Node, StringView Path)
-    -> std::expected<Material::PbrMetallicRoughnessMaterial, ErrorMessage> {
+    -> std::expected<PbrMetallicRoughnessMaterial, ErrorMessage> {
     if (!Node.IsMap())
         return MakeStructuralError(Path, "must be a mapping");
 
-    Material::PbrMetallicRoughnessMaterial Result = {};
+    PbrMetallicRoughnessMaterial Result = {};
     for (const auto& Entry : Node) {
         if (!Entry.first.IsScalar())
             return MakeStructuralError(Path, "contains a non-scalar key");
@@ -570,4 +568,4 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
     return {};
 }
 
-} // namespace SoulEngine::Scene
+} // namespace SoulEngine

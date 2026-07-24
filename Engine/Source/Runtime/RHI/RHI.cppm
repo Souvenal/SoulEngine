@@ -4,12 +4,12 @@ export import Core;
 export import :Types;
 export import :RayTracing;
 export import :RenderDevice;
-export import :Command;      // CommandList, Pass, Command variant
-export import :UsageVisitor; // UsageVisitor for command resource tracking
+export import :Command;      // RHICommandList, RHIPass, RHICommand variant
+export import :UsageVisitor; // RHIUsageVisitor for command resource tracking
 
-// RHI singleton lifecycle is now on RenderDevice:
-//   RenderDevice::Create(Window)   — bootstrap
-//   RenderDevice::Get()            — access
-//   RenderDevice::Destroy()        — teardown
+// RHI singleton lifecycle is now on RHIRenderDevice:
+//   RHIRenderDevice::Create(Window)   — bootstrap
+//   RHIRenderDevice::Get()            — access
+//   RHIRenderDevice::Destroy()        — teardown
 //
-// BackendFactory moved to RHI:RenderDevice alongside RenderDevice.
+// RHIBackendFactory moved to RHI:RenderDevice alongside RHIRenderDevice.

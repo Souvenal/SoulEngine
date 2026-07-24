@@ -7,9 +7,7 @@ export import :Types;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 template <ManagedResource T>
 auto PublishResourceReady(ResourceContext& Context,
@@ -93,7 +91,7 @@ auto PublishResourceGpuPending(ResourceContext& Context,
                                ResourceGeneration Generation,
                                const String& Key,
                                Resource<T> Resource,
-                               RHI::GpuCompletionToken UploadCompletion) -> void {
+                               RHIGpuCompletionToken UploadCompletion) -> void {
     if (Context.PublishGpuPending<T>(Key, Generation, std::move(Resource), UploadCompletion))
         LogDebug("Async {} GPU pending '{}'", ResourceTraits<T>::Info.Label, Key);
 }
@@ -109,4 +107,4 @@ template <ManagedResource T>
     return false;
 }
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

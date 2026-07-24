@@ -7,9 +7,7 @@ import std;
 import RHI;
 import :TransferCompletionQueue;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 /// One-shot GPU command executor (transfer queue).
 ///
@@ -17,22 +15,22 @@ namespace SoulEngine::RHI::Vulkan {
 /// caller-provided callback, submits to transfer queue with the provided
 /// signal semaphore, returns immediately (no waitIdle).
 ///
-/// Command buffers are moved into a deferred-deletion callback so they
+/// RHICommand buffers are moved into a deferred-deletion callback so they
 /// are automatically freed once the transfer timeline value is reached.
 ///
 /// Thread-safety: not thread-safe, caller must serialise.
-class ImmediateContext {
+class VulkanImmediateContext {
   public:
     using CmdFn = std::function<void(const vk::raii::CommandBuffer&)>;
 
-    ImmediateContext() = default;
+    VulkanImmediateContext() = default;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device,
                                       vk::raii::Queue& SubmitQueue,
                                       Uint32 SubmitQueueFamily,
                                       vk::PipelineStageFlagBits2 CompletionStage,
-                                      TransferCompletionQueue& CompletionQueue)
-        -> std::expected<ImmediateContext, ErrorMessage> {
+                                      VulkanTransferCompletionQueue& CompletionQueue)
+        -> std::expected<VulkanImmediateContext, ErrorMessage> {
         vk::CommandPoolCreateInfo PoolCI{
             // Transient: hint driver that cmdbufs recorded and re-recorded often
             .flags = vk::CommandPoolCreateFlagBits::eTransient,
@@ -42,16 +40,16 @@ class ImmediateContext {
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create immediate command pool"));
 
-        return ImmediateContext(Device, SubmitQueue, std::move(PoolRes.value), CompletionStage, CompletionQueue);
+        return VulkanImmediateContext(Device, SubmitQueue, std::move(PoolRes.value), CompletionStage, CompletionQueue);
     }
 
     /// Allocate one-shot cmdbuf, record via RecordFn, submit to transfer
     /// queue, return immediately (no waitIdle).
     ///
-    /// The command buffer is freed via TransferCompletionQueue once the
+    /// The command buffer is freed via VulkanTransferCompletionQueue once the
     /// timeline reaches the returned token. Caller must keep all referenced
     /// resources alive until that point.
-    [[nodiscard]] auto SubmitTransfer(const CmdFn& RecordFn) -> std::expected<GpuCompletionToken, ErrorMessage> {
+    [[nodiscard]] auto SubmitTransfer(const CmdFn& RecordFn) -> std::expected<RHIGpuCompletionToken, ErrorMessage> {
         auto CmdRes = m_Device->allocateCommandBuffers(vk::CommandBufferAllocateInfo{
             .commandPool        = *m_Pool,
             .level              = vk::CommandBufferLevel::ePrimary,
@@ -94,18 +92,18 @@ class ImmediateContext {
         return Token;
     }
 
-    ImmediateContext(ImmediateContext&&)            = default;
-    auto operator=(ImmediateContext&&) -> ImmediateContext& = default;
+    VulkanImmediateContext(VulkanImmediateContext&&)            = default;
+    auto operator=(VulkanImmediateContext&&) -> VulkanImmediateContext& = default;
 
-    ImmediateContext(const ImmediateContext&)            = delete;
-    auto operator=(const ImmediateContext&) -> ImmediateContext& = delete;
+    VulkanImmediateContext(const VulkanImmediateContext&)            = delete;
+    auto operator=(const VulkanImmediateContext&) -> VulkanImmediateContext& = delete;
 
   private:
-    ImmediateContext(vk::raii::Device& Device,
+    VulkanImmediateContext(vk::raii::Device& Device,
                       vk::raii::Queue& SubmitQueue,
                       vk::raii::CommandPool&& Pool,
                       vk::PipelineStageFlagBits2 CompletionStage,
-                      TransferCompletionQueue& CompletionQueue)
+                      VulkanTransferCompletionQueue& CompletionQueue)
         : m_Device(&Device)
         , m_SubmitQueue(&SubmitQueue)
         , m_Pool(std::move(Pool))
@@ -116,7 +114,7 @@ class ImmediateContext {
     vk::raii::Queue*             m_SubmitQueue      = nullptr;
     vk::raii::CommandPool        m_Pool             = nullptr;
     vk::PipelineStageFlagBits2   m_CompletionStage  = vk::PipelineStageFlagBits2::eAllCommands;
-    TransferCompletionQueue*     m_CompletionQueue  = nullptr;
+    VulkanTransferCompletionQueue*     m_CompletionQueue  = nullptr;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

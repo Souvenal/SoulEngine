@@ -8,13 +8,11 @@ export import :Types;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
+export namespace SoulEngine {
 
-export namespace SoulEngine::Resource {
-
-[[nodiscard]] auto SubmitRenderTargetRequest(ResourceContext& Context, String Key, const RHI::RenderTargetDesc& Desc)
-    -> ResourceHandle<RHI::RenderTarget> {
-    auto Work   = BeginResourceWork<RHI::RenderTarget>(Context, Key);
+[[nodiscard]] auto SubmitRenderTargetRequest(ResourceContext& Context, String Key, const RHIRenderTargetDesc& Desc)
+    -> ResourceHandle<RHIRenderTarget> {
+    auto Work   = BeginResourceWork<RHIRenderTarget>(Context, Key);
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
@@ -32,21 +30,21 @@ export namespace SoulEngine::Resource {
             return;
         }
 
-        if (!MarkResourceRhiCommitting<RHI::RenderTarget>(Context, Key, Generation))
+        if (!MarkResourceRhiCommitting<RHIRenderTarget>(Context, Key, Generation))
             return;
 
-        auto Result = RHI::RenderDevice::Get().CreateRenderTarget(Desc);
+        auto Result = RHIRenderDevice::Get().CreateRenderTarget(Desc);
         if (!Result) {
-            PublishResourceFailed<RHI::RenderTarget>(
+            PublishResourceFailed<RHIRenderTarget>(
                 Context, Generation, Key, Result.error().Append(Format("Failed to create render target '{}'", Key)));
             return;
         }
 
-        PublishResourceReady<RHI::RenderTarget>(
-            Context, Generation, Key, Resource<RHI::RenderTarget>{.Object = std::move(Result->Texture)});
+        PublishResourceReady<RHIRenderTarget>(
+            Context, Generation, Key, Resource<RHIRenderTarget>{.Object = std::move(Result->Texture)});
     });
 
     return Handle;
 }
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

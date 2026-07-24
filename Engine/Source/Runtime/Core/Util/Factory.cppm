@@ -15,7 +15,7 @@ import std;
 import :Util.Types;
 import :Util.Singleton;
 
-export namespace SoulEngine::Core {
+export namespace SoulEngine {
 
 /// @brief Type-safe factory that creates named instances of Interface
 ///        subclasses, forwarding CtorArgs to their constructors.
@@ -94,4 +94,4 @@ class Factory : public Singleton<Factory<Interface, CtorArgs...>> {
     std::flat_map<String, Creator> m_Registry;
 };
 
-} // namespace SoulEngine::Core
+} // namespace SoulEngine

@@ -3,7 +3,7 @@
 
 import Renderer;
 
-using namespace SoulEngine::Renderer;
+using namespace SoulEngine;
 
 namespace {
 

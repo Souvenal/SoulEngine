@@ -15,9 +15,7 @@ import std;
 import Core;
 import Shader;
 
-namespace SoulEngine::ShaderCompiler::SlangCompiler {
-
-using namespace SoulEngine::Core;
+namespace SoulEngine {
 
 // File-local helpers for normalizing Slang reflection details before public mappings.
 namespace {
@@ -29,42 +27,42 @@ namespace {
 }
 
 [[nodiscard]] auto ToShaderTextureResourceType(SlangResourceAccess Access)
-    -> std::expected<Shader::ResourceType, ErrorMessage> {
+    -> std::expected<ShaderResourceType, ErrorMessage> {
     switch (Access) {
     case SLANG_RESOURCE_ACCESS_NONE:
     case SLANG_RESOURCE_ACCESS_READ:
-        return Shader::ResourceType::SampledTexture;
+        return ShaderResourceType::SampledTexture;
     case SLANG_RESOURCE_ACCESS_READ_WRITE:
     case SLANG_RESOURCE_ACCESS_WRITE:
     case SLANG_RESOURCE_ACCESS_RASTER_ORDERED:
     case SLANG_RESOURCE_ACCESS_APPEND:
     case SLANG_RESOURCE_ACCESS_CONSUME:
     case SLANG_RESOURCE_ACCESS_FEEDBACK:
-        return Shader::ResourceType::StorageTexture;
+        return ShaderResourceType::StorageTexture;
     default:
         return std::unexpected(ErrorMessage("Unsupported texture access mode in reflection"));
     }
 }
 
 [[nodiscard]] auto ToShaderResourceTypeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
-    -> std::expected<Shader::ResourceType, ErrorMessage> {
+    -> std::expected<ShaderResourceType, ErrorMessage> {
     TypeLayout = StripArrayTypeLayout(TypeLayout);
     if (!TypeLayout)
         return std::unexpected(ErrorMessage("Binding reflection is missing a type layout"));
 
     switch (TypeLayout->getKind()) {
     case slang::TypeReflection::Kind::ConstantBuffer:
-        return Shader::ResourceType::ConstantBuffer;
+        return ShaderResourceType::ConstantBuffer;
     case slang::TypeReflection::Kind::SamplerState:
-        return Shader::ResourceType::Sampler;
+        return ShaderResourceType::Sampler;
     case slang::TypeReflection::Kind::Resource: {
         const auto BaseResourceShape = static_cast<SlangResourceShapeIntegral>(TypeLayout->getResourceShape()) &
             static_cast<SlangResourceShapeIntegral>(SLANG_RESOURCE_BASE_SHAPE_MASK);
         if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_ACCELERATION_STRUCTURE))
-            return Shader::ResourceType::AccelerationStructure;
+            return ShaderResourceType::AccelerationStructure;
         if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_STRUCTURED_BUFFER) ||
             BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_BYTE_ADDRESS_BUFFER)) {
-            return Shader::ResourceType::StorageBuffer;
+            return ShaderResourceType::StorageBuffer;
         }
         return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
     }
@@ -77,38 +75,38 @@ namespace {
 } // namespace
 
 /// Map a SlangStage enum value to the project's Stage.
-[[nodiscard]] auto ToShaderStage(SlangStage Stage) -> Shader::Stage {
+[[nodiscard]] auto ToShaderStage(SlangStage Stage) -> ShaderStage {
     switch (Stage) {
     case SLANG_STAGE_VERTEX:
-        return Shader::Stage::Vertex;
+        return ShaderStage::Vertex;
     case SLANG_STAGE_FRAGMENT:
-        return Shader::Stage::Fragment;
+        return ShaderStage::Fragment;
     case SLANG_STAGE_COMPUTE:
-        return Shader::Stage::Compute;
+        return ShaderStage::Compute;
     case SLANG_STAGE_HULL:
-        return Shader::Stage::Hull;
+        return ShaderStage::Hull;
     case SLANG_STAGE_DOMAIN:
-        return Shader::Stage::Domain;
+        return ShaderStage::Domain;
     case SLANG_STAGE_GEOMETRY:
-        return Shader::Stage::Geometry;
+        return ShaderStage::Geometry;
     case SLANG_STAGE_MESH:
-        return Shader::Stage::Mesh;
+        return ShaderStage::Mesh;
     case SLANG_STAGE_AMPLIFICATION:
-        return Shader::Stage::Amplification;
+        return ShaderStage::Amplification;
     case SLANG_STAGE_RAY_GENERATION:
-        return Shader::Stage::RayGeneration;
+        return ShaderStage::RayGeneration;
     case SLANG_STAGE_INTERSECTION:
-        return Shader::Stage::Intersection;
+        return ShaderStage::Intersection;
     case SLANG_STAGE_ANY_HIT:
-        return Shader::Stage::AnyHit;
+        return ShaderStage::AnyHit;
     case SLANG_STAGE_CLOSEST_HIT:
-        return Shader::Stage::ClosestHit;
+        return ShaderStage::ClosestHit;
     case SLANG_STAGE_MISS:
-        return Shader::Stage::Miss;
+        return ShaderStage::Miss;
     case SLANG_STAGE_CALLABLE:
-        return Shader::Stage::Callable;
+        return ShaderStage::Callable;
     default:
-        return Shader::Stage::Unknown;
+        return ShaderStage::Unknown;
     }
 }
 
@@ -116,19 +114,19 @@ namespace {
 /// TypeLayout supplies details that BindingType alone does not carry: ParameterBlock
 /// field kind and texture access mode (sampled vs storage).
 [[nodiscard]] auto ToShaderResourceType(slang::BindingType BindingType, slang::TypeLayoutReflection* TypeLayout)
-    -> std::expected<Shader::ResourceType, ErrorMessage> {
+    -> std::expected<ShaderResourceType, ErrorMessage> {
     const auto BaseBindingType = static_cast<slang::BindingType>(
         static_cast<SlangBindingTypeIntegral>(BindingType) &
         static_cast<SlangBindingTypeIntegral>(slang::BindingType::BaseMask));
     switch (BaseBindingType) {
     case slang::BindingType::ConstantBuffer:
-        return Shader::ResourceType::ConstantBuffer;
+        return ShaderResourceType::ConstantBuffer;
     case slang::BindingType::ParameterBlock:
         // ParameterBlock is only a descriptor-container binding. TypeLayout is the
         // reflected field/leaf resource inside that block.
         return ToShaderResourceTypeFromLeafLayout(TypeLayout);
     case slang::BindingType::Sampler:
-        return Shader::ResourceType::Sampler;
+        return ShaderResourceType::Sampler;
     case slang::BindingType::Texture:
         TypeLayout = StripArrayTypeLayout(TypeLayout);
         if (!TypeLayout)
@@ -136,37 +134,37 @@ namespace {
         return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
     case slang::BindingType::TypedBuffer:
     case slang::BindingType::RawBuffer:
-        return Shader::ResourceType::StorageBuffer;
+        return ShaderResourceType::StorageBuffer;
     case slang::BindingType::RayTracingAccelerationStructure:
-        return Shader::ResourceType::AccelerationStructure;
+        return ShaderResourceType::AccelerationStructure;
     default:
         return std::unexpected(ErrorMessage(
             Format("Unsupported Slang binding type {} in normalized reflection", magic_enum::enum_name(BindingType))));
     }
 }
-[[nodiscard]] auto ToShaderScalarType(slang::TypeReflection::ScalarType ScalarType) -> Shader::ScalarType {
+[[nodiscard]] auto ToShaderScalarType(slang::TypeReflection::ScalarType ScalarType) -> ShaderScalarType {
     switch (ScalarType) {
     case slang::TypeReflection::ScalarType::Float32:
-        return Shader::ScalarType::Float32;
+        return ShaderScalarType::Float32;
     case slang::TypeReflection::ScalarType::Int32:
-        return Shader::ScalarType::Int32;
+        return ShaderScalarType::Int32;
     case slang::TypeReflection::ScalarType::UInt32:
-        return Shader::ScalarType::Uint32;
+        return ShaderScalarType::Uint32;
     default:
-        return Shader::ScalarType::Unknown;
+        return ShaderScalarType::Unknown;
     }
 }
 
 /// Build a ValueType from a Slang type-layout reflection object.
-[[nodiscard]] auto ToShaderValueType(slang::TypeLayoutReflection* TypeLayout) -> Shader::ValueType {
+[[nodiscard]] auto ToShaderValueType(slang::TypeLayoutReflection* TypeLayout) -> ShaderValueType {
     if (!TypeLayout)
         return {};
 
-    return Shader::ValueType{
+    return ShaderValueType{
         .ScalarType  = ToShaderScalarType(TypeLayout->getScalarType()),
         .RowCount    = TypeLayout->getRowCount(),
         .ColumnCount = TypeLayout->getColumnCount(),
     };
 }
 
-} // namespace SoulEngine::ShaderCompiler::SlangCompiler
+} // namespace SoulEngine

@@ -12,9 +12,7 @@ import std;
 import :Buffer;
 import :Semaphore;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 namespace {
 
@@ -67,26 +65,26 @@ static_assert(offsetof(GeometryAddressRecord, VertexCount) == 48);
 
 } // namespace
 
-/// Vulkan realization of the RenderDevice-owned BDA geometry metadata table.
+/// Vulkan realization of the VulkanRenderDevice-owned BDA geometry metadata table.
 ///
 /// The table is persistently host-visible because it is rebuilt from the scene
-/// snapshot immediately before trace dispatch. Command recording inserts a host
+/// snapshot immediately before trace dispatch. RHICommand recording inserts a host
 /// write -> ray-tracing shader-read dependency after each update.
-class BdaRayTracingGeometryTable final : public RHI::RayTracingGeometryTable {
+class VulkanBdaRayTracingGeometryTable final : public RHIRayTracingGeometryTable {
   public:
-    [[nodiscard]] static auto Create(VmaAllocator Allocator, vk::raii::Device& Device, TimelineSemaphore& Timeline)
-        -> std::expected<UPtr<BdaRayTracingGeometryTable>, ErrorMessage> {
-        auto Buffer = HostBuffer::Create(
+    [[nodiscard]] static auto Create(VmaAllocator Allocator, vk::raii::Device& Device, VulkanTimelineSemaphore& Timeline)
+        -> std::expected<UPtr<VulkanBdaRayTracingGeometryTable>, ErrorMessage> {
+        auto Buffer = VulkanHostBuffer::Create(
             kGeometryTableCapacity, vk::BufferUsageFlagBits::eStorageBuffer, *Device, Allocator);
         if (!Buffer)
             return std::unexpected(Buffer.error().Append("BDA geometry metadata buffer creation failed"));
-        return std::make_unique<BdaRayTracingGeometryTable>(std::move(*Buffer), Device, Timeline);
+        return std::make_unique<VulkanBdaRayTracingGeometryTable>(std::move(*Buffer), Device, Timeline);
     }
 
-    BdaRayTracingGeometryTable(HostBuffer Buffer, vk::raii::Device& Device, TimelineSemaphore& Timeline)
+    VulkanBdaRayTracingGeometryTable(VulkanHostBuffer Buffer, vk::raii::Device& Device, VulkanTimelineSemaphore& Timeline)
         : m_Buffer(std::move(Buffer)), m_Device(&Device), m_Timeline(&Timeline) {}
 
-    [[nodiscard]] auto Update(const RHI::RayTracingGeometryTableUpdate& Update) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto Update(const RHIRayTracingGeometryTableUpdate& Update) -> std::expected<void, ErrorMessage> {
         // This metadata allocation is shared across frame slots. Wait for the
         // last submitted trace that referenced it before the CPU overwrites it.
         // The token is set only after graphics submission succeeds.
@@ -98,7 +96,7 @@ class BdaRayTracingGeometryTable final : public RHI::RayTracingGeometryTable {
         const Uint64 GeometryOffset = AlignUp16(InstanceOffset + sizeof(InstanceGeometryRecord) * Update.Instances.size());
         const Uint64 RequiredSize = GeometryOffset + sizeof(GeometryAddressRecord) * Update.Geometries.size();
         if (RequiredSize > m_Buffer.GetSize()) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "BDA geometry metadata needs {} bytes but table capacity is {} bytes", RequiredSize, m_Buffer.GetSize())));
         }
         if (Update.Instances.size() > std::numeric_limits<Uint32>::max() ||
@@ -120,7 +118,7 @@ class BdaRayTracingGeometryTable final : public RHI::RayTracingGeometryTable {
             const auto& Source = Update.Instances[Index];
             if (Source.GeometryCount == 0 || Source.FirstGeometry > Update.Geometries.size() ||
                 Source.GeometryCount > Update.Geometries.size() - Source.FirstGeometry) {
-                return std::unexpected(ErrorMessage(Core::Format(
+                return std::unexpected(ErrorMessage(Format(
                     "BDA instance record {} has invalid geometry range [{}..{}) for {} geometries",
                     Index,
                     Source.FirstGeometry,
@@ -138,21 +136,21 @@ class BdaRayTracingGeometryTable final : public RHI::RayTracingGeometryTable {
         for (Uint32 Index = 0; Index < Update.Geometries.size(); ++Index) {
             const auto& Source = Update.Geometries[Index];
             if (!Source.PositionBuffer || !Source.NormalBuffer || !Source.IndexBuffer) {
-                return std::unexpected(ErrorMessage(Core::Format("BDA geometry record {} has a null source buffer", Index)));
+                return std::unexpected(ErrorMessage(Format("BDA geometry record {} has a null source buffer", Index)));
             }
             if (Source.PositionStride == 0 || Source.NormalStride == 0 || Source.IndexStride != sizeof(Uint32) ||
                 Source.VertexCount == 0 || Source.IndexCount == 0) {
-                return std::unexpected(ErrorMessage(Core::Format("BDA geometry record {} has an unsupported layout", Index)));
+                return std::unexpected(ErrorMessage(Format("BDA geometry record {} has an unsupported layout", Index)));
             }
 
-            const auto& Position = static_cast<const Vulkan::VertexBuffer&>(*Source.PositionBuffer);
-            const auto& Normal = static_cast<const Vulkan::VertexBuffer&>(*Source.NormalBuffer);
-            const auto& Indices = static_cast<const Vulkan::IndexBuffer&>(*Source.IndexBuffer);
+            const auto& Position = static_cast<const VulkanVertexBuffer&>(*Source.PositionBuffer);
+            const auto& Normal = static_cast<const VulkanVertexBuffer&>(*Source.NormalBuffer);
+            const auto& Indices = static_cast<const VulkanIndexBuffer&>(*Source.IndexBuffer);
             const Uint64 PositionAddress = m_Device->getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = Position.GetVkBuffer()});
             const Uint64 NormalAddress = m_Device->getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = Normal.GetVkBuffer()});
             const Uint64 IndexAddress = m_Device->getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = Indices.GetVkBuffer()});
             if (PositionAddress == 0 || NormalAddress == 0 || IndexAddress == 0) {
-                return std::unexpected(ErrorMessage(Core::Format(
+                return std::unexpected(ErrorMessage(Format(
                     "BDA geometry record {} has a source buffer without a device address", Index)));
             }
 
@@ -190,10 +188,10 @@ class BdaRayTracingGeometryTable final : public RHI::RayTracingGeometryTable {
     }
 
   private:
-    HostBuffer m_Buffer = {};
+    VulkanHostBuffer m_Buffer = {};
     vk::raii::Device* m_Device = nullptr;
-    TimelineSemaphore* m_Timeline = nullptr;
+    VulkanTimelineSemaphore* m_Timeline = nullptr;
     Uint64     m_ByteSize = 0;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

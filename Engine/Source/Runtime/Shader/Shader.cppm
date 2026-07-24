@@ -6,9 +6,9 @@
 /// the types here describe *what a compiled shader is*, not how it
 /// is compiled or bound.
 ///
-/// Reflection model
+/// ShaderReflection model
 /// ────────────────
-/// Reflection is normalized here into backend-agnostic data structures.
+/// ShaderReflection is normalized here into backend-agnostic data structures.
 /// ShaderCompiler extracts that reflection from native compiler APIs,
 /// while RHI/backends consume it to derive pipeline resource layouts,
 /// vertex input requirements, and later binding interfaces.
@@ -19,9 +19,7 @@ import Core;
 
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Shader {
+export namespace SoulEngine {
 
 /// @brief Canonical pipeline stage enum.
 ///
@@ -29,7 +27,7 @@ export namespace SoulEngine::Shader {
 /// RHI to select pipeline bind points, and by reflection to label entry
 /// points.  Backends (Slang, Vulkan) map to/from their native stage
 /// types.
-enum class Stage : Uint8 {
+enum class ShaderStage : Uint8 {
     Unknown       = 0,
     Vertex        = 1,
     Fragment      = 2,
@@ -51,7 +49,7 @@ enum class Stage : Uint8 {
 ///
 /// TODO: Extend this if/when reflection must describe additional scalar
 /// categories such as 16-bit types or normalized integer encodings.
-enum class ScalarType : Uint8 {
+enum class ShaderScalarType : Uint8 {
     Unknown = 0,
     Float32 = 1,
     Int32   = 2,
@@ -63,7 +61,7 @@ enum class ScalarType : Uint8 {
 /// TODO: Extend this to cover more native resource kinds once the engine
 /// needs them (texel buffers, immutable samplers, acceleration structures,
 /// combined image samplers, etc.).
-enum class ResourceType : Uint8 {
+enum class ShaderResourceType : Uint8 {
     Unknown        = 0,
     ConstantBuffer = 1,
     StorageBuffer  = 2,
@@ -80,24 +78,24 @@ enum class ResourceType : Uint8 {
 };
 
 /// @brief Reflected scalar/vector/matrix shape for a shader-visible value.
-struct ValueType {
-    ScalarType ScalarType  = ScalarType::Unknown;
+struct ShaderValueType {
+    ShaderScalarType ScalarType  = ShaderScalarType::Unknown;
     Uint32     RowCount    = 1;
     Uint32     ColumnCount = 1;
 };
 
 /// @brief Reflected shader-visible resource binding.
-struct Binding {
+struct ShaderBinding {
     /// Shader parameter access path, e.g. "g_frame.cb"; not a resource key or file path.
     String       ParameterPath = {};
     Uint32       Set           = 0;
     Uint32       BindingIndex  = 0;
-    ResourceType Type          = ResourceType::Unknown;
+    ShaderResourceType Type          = ShaderResourceType::Unknown;
     Uint32       ArrayCount    = 1;
 };
 
 /// @brief Reflected push-constant byte range.
-struct PushConstantRange {
+struct ShaderPushConstantRange {
     Uint32 Offset = 0;
     Uint32 Size   = 0;
 };
@@ -108,57 +106,57 @@ struct PushConstantRange {
 /// describe how CPU-side vertex buffers are packed or streamed.
 /// TODO: introduce a distinct vertex-buffer stream-layout abstraction later
 /// if multi-stream, per-instance, or packed/custom vertex formats require it.
-struct VertexInputAttribute {
+struct ShaderVertexInputAttribute {
     String                SemanticName  = {};
     Uint32                SemanticIndex = 0;
     std::optional<Uint32> Location      = std::nullopt;
-    ValueType             ValueType     = {};
+    ShaderValueType             ValueType     = {};
 };
 
 /// @brief Normalized pipeline reflection data.
 ///
 /// TODO: Add specialization-constant reflection when pipeline specialization
 /// is introduced.
-struct Reflection {
-    std::vector<Binding>              Bindings      = {};
-    std::vector<PushConstantRange>    PushConstants = {};
-    std::vector<VertexInputAttribute> VertexInputs  = {};
+struct ShaderReflection {
+    std::vector<ShaderBinding>              Bindings      = {};
+    std::vector<ShaderPushConstantRange>    PushConstants = {};
+    std::vector<ShaderVertexInputAttribute> VertexInputs  = {};
 };
 
 /// @brief Compiled shader artifact for one graphics pipeline shader combination.
-struct GraphicsProgram {
+struct ShaderGraphicsProgram {
     /// SPIR-V binary is defined as 32-bit words, and Vulkan consumes shader
     /// module code through a uint32_t pointer rather than a byte buffer.
     std::vector<Uint32> Code                   = {};
     String              VertexEntryPointName   = {};
     String              FragmentEntryPointName = {};
-    Reflection          Reflection             = {};
+    ShaderReflection          Reflection             = {};
 };
 
 /// @brief Logical category of one ray-tracing hit group.
-enum class RayTracingHitGroupType : Uint8 {
+enum class ShaderRayTracingHitGroupType : Uint8 {
     Unknown    = 0,
     Triangles  = 1,
     Procedural = 2,
 };
 
 /// @brief Canonical entry-point names that form one linked ray-tracing hit group.
-struct RayTracingHitGroup {
-    RayTracingHitGroupType    Type                       = RayTracingHitGroupType::Triangles;
+struct ShaderRayTracingHitGroup {
+    ShaderRayTracingHitGroupType    Type                       = ShaderRayTracingHitGroupType::Triangles;
     std::optional<String>     ClosestHitEntryPointName   = std::nullopt;
     std::optional<String>     AnyHitEntryPointName       = std::nullopt;
     std::optional<String>     IntersectionEntryPointName = std::nullopt;
 };
 
 /// @brief Compiled shader artifact for one linked ray-tracing pipeline program.
-struct RayTracingProgram {
+struct ShaderRayTracingProgram {
     /// SPIR-V binary containing all selected ray-tracing entry points.
     std::vector<Uint32>                Code                     = {};
     String                             RayGenerationEntryPointName = {};
     std::vector<String>                MissEntryPointNames      = {};
-    std::vector<RayTracingHitGroup>    HitGroups                = {};
+    std::vector<ShaderRayTracingHitGroup>    HitGroups                = {};
     std::vector<String>                CallableEntryPointNames  = {};
-    Reflection                         Reflection               = {};
+    ShaderReflection                         Reflection               = {};
 };
 
-} // namespace SoulEngine::Shader
+} // namespace SoulEngine

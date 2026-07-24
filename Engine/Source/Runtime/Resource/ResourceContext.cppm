@@ -6,9 +6,7 @@ export import :Types;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 template <ManagedResource T>
 struct ResourceRequestResult {
@@ -26,7 +24,7 @@ struct GpuPendingResource {
     ResourceGeneration      Generation       = 0;
     String                  Key              = {};
     Resource<T>             Resource         = {};
-    RHI::GpuCompletionToken UploadCompletion = {};
+    RHIGpuCompletionToken UploadCompletion = {};
 };
 
 template <ManagedResource T>
@@ -230,7 +228,7 @@ class ResourceContext {
     [[nodiscard]] auto PublishGpuPending(const String& Key,
                                          ResourceGeneration Generation,
                                          Resource<T> Value,
-                                         RHI::GpuCompletionToken UploadCompletion) -> bool {
+                                         RHIGpuCompletionToken UploadCompletion) -> bool {
         std::lock_guard Lock(m_PublishMutex);
         if (IsShutdownRequested()) {
             LogDebug("Async {} GPU pending discarded after shutdown '{}'", ResourceTraits<T>::Info.Label, Key);
@@ -431,7 +429,7 @@ class ResourceContext {
                 LogDebug("Async {} GPU pending discarded '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
                 continue;
             }
-            if (!RHI::RenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
+            if (!RHIRenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
                 Next.push_back(std::move(Pending));
                 continue;
             }
@@ -472,4 +470,4 @@ template <ManagedResource T>
         });
 }
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

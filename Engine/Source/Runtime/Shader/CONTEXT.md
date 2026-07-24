@@ -1,6 +1,6 @@
 # Context: Shader
 
-**Namespace:** `SoulEngine::Shader`
+**Namespace:** `SoulEngine`
 
 Shader data model — owns the types that describe compiled shader artifacts.
 This module is the data contract between ShaderCompiler (produces) and RHI (consumes).
@@ -74,4 +74,4 @@ blob, and the linked pipeline-level reflection.
 
 ## Flagged ambiguities
 
-- `RHIStage` was a 3-value subset that duplicated `Stage` — removed in ADR 0001. All code now uses `Shader::Stage`.
+- `RHIStage` was a 3-value subset that duplicated `Stage` — removed in ADR 0001. All code now uses `ShaderStage`.

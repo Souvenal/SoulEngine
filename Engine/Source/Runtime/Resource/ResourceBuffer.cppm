@@ -8,12 +8,10 @@ export import :Types;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::Resource {
+namespace SoulEngine {
 namespace {
 
-[[nodiscard]] auto ValidateVertexBufferDesc(const RHI::VertexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] auto ValidateVertexBufferDesc(const RHIVertexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
     if (!Desc.Data)
         return std::unexpected(ErrorMessage("Vertex buffer data pointer is null"));
     if (Desc.VertexCount == 0)
@@ -26,7 +24,7 @@ namespace {
     return {};
 }
 
-[[nodiscard]] auto ValidateIndexBufferDesc(const RHI::IndexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] auto ValidateIndexBufferDesc(const RHIIndexBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
     if (!Desc.Data)
         return std::unexpected(ErrorMessage("Index buffer data pointer is null"));
     if (Desc.IndexCount == 0)
@@ -37,7 +35,7 @@ namespace {
     return {};
 }
 
-[[nodiscard]] auto ValidateConstantBufferDesc(const RHI::ConstantBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] auto ValidateConstantBufferDesc(const RHIConstantBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
     if (Desc.Size == 0)
         return std::unexpected(ErrorMessage("Constant buffer size is zero"));
 
@@ -47,15 +45,15 @@ namespace {
 } // namespace
 
 
-[[nodiscard]] auto SubmitVertexBufferRequest(ResourceContext& Context, String Key, const RHI::VertexBufferDesc& Desc)
-    -> ResourceHandle<RHI::VertexBuffer> {
-    auto Work   = BeginResourceWork<RHI::VertexBuffer>(Context, Key);
+[[nodiscard]] auto SubmitVertexBufferRequest(ResourceContext& Context, String Key, const RHIVertexBufferDesc& Desc)
+    -> ResourceHandle<RHIVertexBuffer> {
+    auto Work   = BeginResourceWork<RHIVertexBuffer>(Context, Key);
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
 
     if (auto R = ValidateVertexBufferDesc(Desc); !R) {
-        PublishResourceFailed<RHI::VertexBuffer>(
+        PublishResourceFailed<RHIVertexBuffer>(
             Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid vertex buffer request '{}'", Key)));
         return Handle;
     }
@@ -76,15 +74,15 @@ namespace {
                            return;
                        }
 
-                       if (!MarkResourceRhiCommitting<RHI::VertexBuffer>(Context, Key, Generation))
+                       if (!MarkResourceRhiCommitting<RHIVertexBuffer>(Context, Key, Generation))
                            return;
 
-                       RHI::VertexBufferDesc BufDesc = Desc;
+                       RHIVertexBufferDesc BufDesc = Desc;
                        BufDesc.Data                  = DataCopy.data();
 
-                       auto Result = RHI::RenderDevice::Get().CreateVertexBuffer(BufDesc);
+                       auto Result = RHIRenderDevice::Get().CreateVertexBuffer(BufDesc);
                        if (!Result) {
-                           PublishResourceFailed<RHI::VertexBuffer>(
+                           PublishResourceFailed<RHIVertexBuffer>(
                                Context,
                                Generation,
                                Key,
@@ -92,26 +90,26 @@ namespace {
                            return;
                        }
 
-                       PublishResourceGpuPending<RHI::VertexBuffer>(
+                       PublishResourceGpuPending<RHIVertexBuffer>(
                            Context,
                            Generation,
                            Key,
-                           Resource<RHI::VertexBuffer>{.Object = std::move(Result->Buffer)},
+                           Resource<RHIVertexBuffer>{.Object = std::move(Result->Buffer)},
                            Result->UploadCompletion);
                    });
 
     return Handle;
 }
 
-[[nodiscard]] auto SubmitIndexBufferRequest(ResourceContext& Context, String Key, const RHI::IndexBufferDesc& Desc)
-    -> ResourceHandle<RHI::IndexBuffer> {
-    auto Work   = BeginResourceWork<RHI::IndexBuffer>(Context, Key);
+[[nodiscard]] auto SubmitIndexBufferRequest(ResourceContext& Context, String Key, const RHIIndexBufferDesc& Desc)
+    -> ResourceHandle<RHIIndexBuffer> {
+    auto Work   = BeginResourceWork<RHIIndexBuffer>(Context, Key);
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
 
     if (auto R = ValidateIndexBufferDesc(Desc); !R) {
-        PublishResourceFailed<RHI::IndexBuffer>(
+        PublishResourceFailed<RHIIndexBuffer>(
             Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid index buffer request '{}'", Key)));
         return Handle;
     }
@@ -132,15 +130,15 @@ namespace {
                            return;
                        }
 
-                       if (!MarkResourceRhiCommitting<RHI::IndexBuffer>(Context, Key, Generation))
+                       if (!MarkResourceRhiCommitting<RHIIndexBuffer>(Context, Key, Generation))
                            return;
 
-                       RHI::IndexBufferDesc BufDesc = Desc;
+                       RHIIndexBufferDesc BufDesc = Desc;
                        BufDesc.Data                 = DataCopy.data();
 
-                       auto Result = RHI::RenderDevice::Get().CreateIndexBuffer(BufDesc);
+                       auto Result = RHIRenderDevice::Get().CreateIndexBuffer(BufDesc);
                        if (!Result) {
-                           PublishResourceFailed<RHI::IndexBuffer>(
+                           PublishResourceFailed<RHIIndexBuffer>(
                                Context,
                                Generation,
                                Key,
@@ -148,11 +146,11 @@ namespace {
                            return;
                        }
 
-                       PublishResourceGpuPending<RHI::IndexBuffer>(
+                       PublishResourceGpuPending<RHIIndexBuffer>(
                            Context,
                            Generation,
                            Key,
-                           Resource<RHI::IndexBuffer>{.Object = std::move(Result->Buffer)},
+                           Resource<RHIIndexBuffer>{.Object = std::move(Result->Buffer)},
                            Result->UploadCompletion);
                    });
 
@@ -161,15 +159,15 @@ namespace {
 
 [[nodiscard]] auto SubmitConstantBufferRequest(ResourceContext& Context,
                                                String           Key,
-                                               const RHI::ConstantBufferDesc& Desc)
-    -> ResourceHandle<RHI::ConstantBuffer> {
-    auto Work   = BeginResourceWork<RHI::ConstantBuffer>(Context, Key);
+                                               const RHIConstantBufferDesc& Desc)
+    -> ResourceHandle<RHIConstantBuffer> {
+    auto Work   = BeginResourceWork<RHIConstantBuffer>(Context, Key);
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
 
     if (auto R = ValidateConstantBufferDesc(Desc); !R) {
-        PublishResourceFailed<RHI::ConstantBuffer>(
+        PublishResourceFailed<RHIConstantBuffer>(
             Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid constant buffer request '{}'", Key)));
         return Handle;
     }
@@ -185,12 +183,12 @@ namespace {
             return;
         }
 
-        if (!MarkResourceRhiCommitting<RHI::ConstantBuffer>(Context, Key, Generation))
+        if (!MarkResourceRhiCommitting<RHIConstantBuffer>(Context, Key, Generation))
             return;
 
-        auto Result = RHI::RenderDevice::Get().CreateConstantBuffer(Desc);
+        auto Result = RHIRenderDevice::Get().CreateConstantBuffer(Desc);
         if (!Result) {
-            PublishResourceFailed<RHI::ConstantBuffer>(
+            PublishResourceFailed<RHIConstantBuffer>(
                 Context,
                 Generation,
                 Key,
@@ -198,11 +196,11 @@ namespace {
             return;
         }
 
-        PublishResourceReady<RHI::ConstantBuffer>(
-            Context, Generation, Key, Resource<RHI::ConstantBuffer>{.Object = std::move(*Result)});
+        PublishResourceReady<RHIConstantBuffer>(
+            Context, Generation, Key, Resource<RHIConstantBuffer>{.Object = std::move(*Result)});
     });
 
     return Handle;
 }
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

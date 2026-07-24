@@ -16,15 +16,13 @@ export import :Types;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 [[nodiscard]] auto NormalizeMeshResourcePath(StringView InPath) -> String {
     return Path(String(InPath)).lexically_normal().string();
 }
 
-[[nodiscard]] auto ParseAssimpMeshes(StringView MeshPath, Mesh& Out) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] auto ParseAssimpMeshes(StringView MeshPath, ResourceMesh& Out) -> std::expected<void, ErrorMessage> {
     Assimp::Importer Importer;
 
     constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
@@ -91,15 +89,15 @@ export namespace SoulEngine::Resource {
     return {};
 }
 
-[[nodiscard]] auto Mesh::GetMeshGroups() -> std::vector<MeshGroup>& {
+[[nodiscard]] auto ResourceMesh::GetMeshGroups() -> std::vector<MeshGroup>& {
     return m_MeshGroups;
 }
 
-[[nodiscard]] auto Mesh::GetMeshGroups() const -> const std::vector<MeshGroup>& {
+[[nodiscard]] auto ResourceMesh::GetMeshGroups() const -> const std::vector<MeshGroup>& {
     return m_MeshGroups;
 }
 
-auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, Mesh& InMesh) -> void {
+auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, ResourceMesh& InMesh) -> void {
     auto& Groups = InMesh.GetMeshGroups();
     for (std::size_t GroupIndex = 0; GroupIndex < Groups.size(); ++GroupIndex) {
         auto& Group = Groups[GroupIndex];
@@ -125,9 +123,9 @@ auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, Mesh& In
     }
 }
 
-[[nodiscard]] auto SubmitMeshRequest(ResourceContext& Context, StringView MeshPath) -> ResourceHandle<Mesh> {
+[[nodiscard]] auto SubmitMeshRequest(ResourceContext& Context, StringView MeshPath) -> ResourceHandle<ResourceMesh> {
     const auto Key = NormalizeMeshResourcePath(MeshPath);
-    auto       Work = BeginResourceWork<Mesh>(Context, Key);
+    auto       Work = BeginResourceWork<ResourceMesh>(Context, Key);
     if (!Work.ShouldStartWork)
         return Work.Handle;
 
@@ -137,19 +135,19 @@ auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, Mesh& In
         if (Context.IsShutdownRequested())
             return;
 
-        auto ImportedMesh = std::make_unique<Mesh>();
+        auto ImportedMesh = std::make_unique<ResourceMesh>();
         if (auto Parsed = ParseAssimpMeshes(Key, *ImportedMesh); !Parsed) {
-            PublishResourceFailed<Mesh>(Context, Generation, Key, Parsed.error());
+            PublishResourceFailed<ResourceMesh>(Context, Generation, Key, Parsed.error());
             return;
         }
         if (Context.IsShutdownRequested())
             return;
 
         UploadMeshBuffers(Context, Key, *ImportedMesh);
-        PublishResourceReady<Mesh>(Context, Generation, Key, {.Object = std::move(ImportedMesh)});
+        PublishResourceReady<ResourceMesh>(Context, Generation, Key, {.Object = std::move(ImportedMesh)});
     });
 
     return Work.Handle;
 }
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

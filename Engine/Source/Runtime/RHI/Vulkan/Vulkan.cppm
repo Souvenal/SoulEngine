@@ -1,7 +1,7 @@
 /// @file   Vulkan/Vulkan.cppm
 /// @brief  Standalone Vulkan RHI backend module.
 ///
-/// Self-registers with RHI::BackendFactory when the shared library is loaded.
+/// Self-registers with RHIBackendFactory when the shared library is loaded.
 /// No consumer of RHI ever needs to import this module directly --
 /// registration fires automatically via the static initializer.
 
@@ -16,11 +16,11 @@ export import :RayTracingPipeline;
 
 import RHI;
 
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 /// Auto-register the Vulkan backend with the RHI factory.
-/// Safe at global/namespace scope -- RHI::BackendFactory inherits Singleton,
+/// Safe at global/namespace scope -- RHIBackendFactory inherits Singleton,
 /// so the registry map is guaranteed to exist when this constructor runs.
-RHI::BackendFactory::AutoRegistrar<RenderDevice> RegVulkan{"Vulkan"};
+RHIBackendFactory::AutoRegistrar<VulkanRenderDevice> RegVulkan{"Vulkan"};
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

@@ -15,17 +15,15 @@ import Core;
 
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::ShaderCompiler {
+export namespace SoulEngine {
 
 /// Supported shader compiler backends.
 ///
-/// The Backend field in shader compile descriptors is the canonical source of
+/// The ShaderBackend field in shader compile descriptors is the canonical source of
 /// truth for selecting which compiler pipeline to use. Source file extensions
 /// are validated against this value (warning on mismatch), but the enum always
 /// wins.
-enum class Backend : Uint8 {
+enum class ShaderBackend : Uint8 {
     Unknown = 0,
 
     /// Slang shading language — the project's primary shader compiler.
@@ -36,7 +34,7 @@ enum class Backend : Uint8 {
 struct ShaderEntry {
     Path    SourcePath = {};
     String  EntryPoint = {};
-    Backend Backend    = Backend::Slang;
+    ShaderBackend Backend    = ShaderBackend::Slang;
 };
 
 /// @brief Descriptor for a graphics-pipeline shader compile request.
@@ -50,7 +48,7 @@ struct GraphicsCompileDesc {
 
 /// @brief One logical ray-tracing hit group compile request.
 struct RayTracingHitGroupCompileDesc {
-    Shader::RayTracingHitGroupType Type         = Shader::RayTracingHitGroupType::Triangles;
+    ShaderRayTracingHitGroupType Type         = ShaderRayTracingHitGroupType::Triangles;
     std::optional<ShaderEntry>     ClosestHit   = std::nullopt;
     std::optional<ShaderEntry>     AnyHit       = std::nullopt;
     std::optional<ShaderEntry>     Intersection = std::nullopt;
@@ -71,27 +69,27 @@ struct RayTracingCompileDesc {
 ///
 /// Each supported shading language gets its own implementation.
 /// Owned by the ShaderCompiler facade.
-class IBackend {
+class IShaderBackend {
   public:
-    IBackend()                                   = default;
-    IBackend(const IBackend&)                    = delete;
-    auto operator=(const IBackend&) -> IBackend& = delete;
-    IBackend(IBackend&&)                         = delete;
-    auto operator=(IBackend&&) -> IBackend&      = delete;
+    IShaderBackend()                                   = default;
+    IShaderBackend(const IShaderBackend&)                    = delete;
+    auto operator=(const IShaderBackend&) -> IShaderBackend& = delete;
+    IShaderBackend(IShaderBackend&&)                         = delete;
+    auto operator=(IShaderBackend&&) -> IShaderBackend&      = delete;
 
-    virtual ~IBackend() = default;
+    virtual ~IShaderBackend() = default;
 
     /// @brief Compile and reflect a graphics pipeline shader combination.
     [[nodiscard]] virtual auto CompileGraphics(const GraphicsCompileDesc& Desc)
-        -> std::expected<Shader::GraphicsProgram, ErrorMessage> = 0;
+        -> std::expected<ShaderGraphicsProgram, ErrorMessage> = 0;
 
     /// @brief Compile and reflect one linked ray-tracing shader program.
     [[nodiscard]] virtual auto CompileRayTracing(const RayTracingCompileDesc& Desc)
-        -> std::expected<Shader::RayTracingProgram, ErrorMessage> = 0;
+        -> std::expected<ShaderRayTracingProgram, ErrorMessage> = 0;
 };
 
 /// @brief Factory type for compiler backends.
 /// Each backend auto-registers via AutoRegistrar in its own translation unit.
-using BackendFactory = Factory<IBackend>;
+using ShaderBackendFactory = Factory<IShaderBackend>;
 
-} // namespace SoulEngine::ShaderCompiler
+} // namespace SoulEngine

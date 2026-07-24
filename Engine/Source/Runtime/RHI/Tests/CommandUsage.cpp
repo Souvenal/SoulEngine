@@ -1,5 +1,5 @@
 /// @file   CommandUsage.cpp
-/// @brief  Tests for UsageVisitor — verifies that GpuResource usage tokens
+/// @brief  Tests for RHIUsageVisitor — verifies that RHIGpuResource usage tokens
 ///         are correctly updated when visiting each command variant.
 
 #include <gtest/gtest.h>
@@ -8,13 +8,12 @@ import RHI;
 import Shader;
 import std;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::RHI;
+using namespace SoulEngine;
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
-/// Concrete SampledTexture for testing (RHI::SampledTexture has pure virtuals).
-class MockSampledTexture final : public SampledTexture {
+/// Concrete SampledTexture for testing (RHISampledTexture has pure virtuals).
+class MockSampledTexture final : public RHISampledTexture {
   public:
     MockSampledTexture() = default;
     [[nodiscard]] auto GetWidth() const -> Uint32 override {
@@ -26,7 +25,7 @@ class MockSampledTexture final : public SampledTexture {
 };
 
 /// Concrete RenderTarget for testing storage-image shader parameters.
-class MockRenderTarget final : public RenderTarget {
+class MockRenderTarget final : public RHIRenderTarget {
   public:
     [[nodiscard]] auto GetWidth() const -> Uint32 override {
         return 256;
@@ -34,20 +33,20 @@ class MockRenderTarget final : public RenderTarget {
     [[nodiscard]] auto GetHeight() const -> Uint32 override {
         return 256;
     }
-    [[nodiscard]] auto GetFormat() const -> SoulEngine::RHI::Format override {
-        return SoulEngine::RHI::Format::R16G16B16A16_SFLOAT;
+    [[nodiscard]] auto GetFormat() const -> RHIFormat override {
+        return RHIFormat::R16G16B16A16_SFLOAT;
     }
-    [[nodiscard]] auto GetUsage() const -> TextureUsage override {
-        return TextureUsage::RenderTarget | TextureUsage::ShaderStorage;
+    [[nodiscard]] auto GetUsage() const -> RHITextureUsage override {
+        return RHITextureUsage::RenderTarget | RHITextureUsage::ShaderStorage;
     }
 };
 
 /// Concrete RT pipeline exposing the protected reflection-layout setup for testing.
-class MockRayTracingGeometryTable final : public RayTracingGeometryTable {};
+class MockRayTracingGeometryTable final : public RHIRayTracingGeometryTable {};
 
-class MockRayTracingPipeline final : public RayTracingPipeline {
+class MockRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
-    auto ConfigureShaderParameterLayout(ShaderParameterLayout Layout) -> void {
+    auto ConfigureShaderParameterLayout(RHIShaderParameterLayout Layout) -> void {
         SetShaderParameterLayout(std::move(Layout));
     }
 };
@@ -56,19 +55,19 @@ class MockRayTracingPipeline final : public RayTracingPipeline {
 
 class UsageVisitorTest : public ::testing::Test {
   protected:
-    SPtr<GraphicsPipeline>                      m_Pipeline   = std::make_shared<GraphicsPipeline>();
+    SPtr<RHIGraphicsPipeline>                      m_Pipeline   = std::make_shared<RHIGraphicsPipeline>();
     SPtr<MockRayTracingPipeline>                 m_RayPipeline = std::make_shared<MockRayTracingPipeline>();
     SPtr<MockRayTracingGeometryTable>             m_GeometryTable = std::make_shared<MockRayTracingGeometryTable>();
-    SPtr<BottomLevelAccelerationStructure>       m_BLAS       = std::make_shared<BottomLevelAccelerationStructure>();
-    SPtr<TopLevelAccelerationStructure>          m_TLAS       = std::make_shared<TopLevelAccelerationStructure>();
-    SPtr<VertexBuffer>                           m_VB         = std::make_shared<VertexBuffer>();
-    SPtr<VertexBuffer>                           m_SecondVB   = std::make_shared<VertexBuffer>();
-    SPtr<IndexBuffer>                            m_IB         = std::make_shared<IndexBuffer>();
+    SPtr<RHIBottomLevelAccelerationStructure>       m_BLAS       = std::make_shared<RHIBottomLevelAccelerationStructure>();
+    SPtr<RHITopLevelAccelerationStructure>          m_TLAS       = std::make_shared<RHITopLevelAccelerationStructure>();
+    SPtr<RHIVertexBuffer>                           m_VB         = std::make_shared<RHIVertexBuffer>();
+    SPtr<RHIVertexBuffer>                           m_SecondVB   = std::make_shared<RHIVertexBuffer>();
+    SPtr<RHIIndexBuffer>                            m_IB         = std::make_shared<RHIIndexBuffer>();
     SPtr<MockSampledTexture>                     m_Texture    = std::make_shared<MockSampledTexture>();
     SPtr<MockRenderTarget>                       m_Output     = std::make_shared<MockRenderTarget>();
 
-    GpuCompletionToken m_Token{42};
-    UsageVisitor       m_Visitor{m_Token};
+    RHIGpuCompletionToken m_Token{42};
+    RHIUsageVisitor       m_Visitor{m_Token};
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -76,7 +75,7 @@ class UsageVisitorTest : public ::testing::Test {
 TEST_F(UsageVisitorTest, SetGraphicsPipelineCmdUpdatesToken) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
 
-    std::visit(m_Visitor, Command{SetGraphicsPipelineCmd{.PipelinePtr = m_Pipeline.get()}});
+    std::visit(m_Visitor, RHICommand{RHISetGraphicsPipelineCmd{.PipelinePtr = m_Pipeline.get()}});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
 }
@@ -84,7 +83,7 @@ TEST_F(UsageVisitorTest, SetGraphicsPipelineCmdUpdatesToken) {
 TEST_F(UsageVisitorTest, SetRayTracingPipelineCmdUpdatesToken) {
     ASSERT_EQ(m_RayPipeline->GetLastUsageToken().Id, 0);
 
-    std::visit(m_Visitor, Command{SetRayTracingPipelineCmd{.PipelinePtr = m_RayPipeline.get()}});
+    std::visit(m_Visitor, RHICommand{RHISetRayTracingPipelineCmd{.PipelinePtr = m_RayPipeline.get()}});
 
     EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
 }
@@ -93,7 +92,7 @@ TEST_F(UsageVisitorTest, PushConstantsCmdUpdatesPipelineToken) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{PushConstantsCmd{
+               RHICommand{RHIPushConstantsCmd{
                    .PipelinePtr = m_Pipeline.get(),
                    .Data        = {std::byte{0}},
                }});
@@ -105,7 +104,7 @@ TEST_F(UsageVisitorTest, PushConstantsCmdSupportsRayTracingPipeline) {
     ASSERT_EQ(m_RayPipeline->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{PushConstantsCmd{
+               RHICommand{RHIPushConstantsCmd{
                    .PipelinePtr = m_RayPipeline.get(),
                    .Data        = {std::byte{0}},
                }});
@@ -114,17 +113,17 @@ TEST_F(UsageVisitorTest, PushConstantsCmdSupportsRayTracingPipeline) {
 }
 
 TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
-    ResourceArray<SampledTexture> Textures;
+    RHIResourceArray<RHISampledTexture> Textures;
     Textures.Set(3, m_Texture.get());
     EXPECT_EQ(Textures.GetSize(), 4);
-    auto Parameters = ShaderParameters::Create(ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+    auto Parameters = RHIShaderParameters::Create(RHIShaderParameterLayout::Create(ShaderReflection{
         .Bindings =
             {
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_textures.uTextures",
                     .Set           = 0,
                     .BindingIndex  = 0,
-                    .Type          = SoulEngine::Shader::ResourceType::SampledTexture,
+                    .Type          = ShaderResourceType::SampledTexture,
                     .ArrayCount    = std::numeric_limits<Uint32>::max(),
                 },
             },
@@ -135,7 +134,7 @@ TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Texture->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{BindShaderParametersCmd{
+               RHICommand{RHIBindShaderParametersCmd{
                    .PipelinePtr = m_Pipeline.get(),
                    .Parameters  = std::move(Parameters),
                }});
@@ -145,14 +144,14 @@ TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
 }
 
 TEST(RayTracingCommandTest, NonRenderingPassCopiesBdaGeometryTableUpdate) {
-    RayTracingGeometryTable Table;
-    VertexBuffer Position;
-    VertexBuffer Normal;
-    IndexBuffer Index;
-    VertexBuffer SecondPosition;
-    VertexBuffer SecondNormal;
-    IndexBuffer SecondIndex;
-    RayTracingGeometryTableUpdate Update{
+    RHIRayTracingGeometryTable Table;
+    RHIVertexBuffer Position;
+    RHIVertexBuffer Normal;
+    RHIIndexBuffer Index;
+    RHIVertexBuffer SecondPosition;
+    RHIVertexBuffer SecondNormal;
+    RHIIndexBuffer SecondIndex;
+    RHIRayTracingGeometryTableUpdate Update{
         .Instances = {{.FirstGeometry = 0, .GeometryCount = 1, .MaterialIndex = 9},
                       {.FirstGeometry = 1, .GeometryCount = 1, .MaterialIndex = 17}},
         .Geometries = {{.PositionBuffer = &Position,
@@ -166,14 +165,14 @@ TEST(RayTracingCommandTest, NonRenderingPassCopiesBdaGeometryTableUpdate) {
                         .VertexCount = 4,
                         .IndexCount = 6}},
     };
-    NonRenderingPass Pass;
+    RHINonRenderingPass RHIPass;
 
-    Pass.UpdateRayTracingGeometryTable(&Table, Update);
+    RHIPass.UpdateRayTracingGeometryTable(&Table, Update);
     Update.Instances.clear();
     Update.Geometries.clear();
 
-    ASSERT_EQ(Pass.Commands.size(), 1);
-    const auto* CommandPtr = std::get_if<UpdateRayTracingGeometryTableCmd>(&Pass.Commands.front());
+    ASSERT_EQ(RHIPass.Commands.size(), 1);
+    const auto* CommandPtr = std::get_if<RHIUpdateRayTracingGeometryTableCmd>(&RHIPass.Commands.front());
     ASSERT_NE(CommandPtr, nullptr);
     ASSERT_EQ(CommandPtr->Update.Instances.size(), 2);
     ASSERT_EQ(CommandPtr->Update.Geometries.size(), 2);
@@ -197,9 +196,9 @@ TEST_F(UsageVisitorTest, UpdateBdaGeometryTableCmdUpdatesSourceBufferTokens) {
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{UpdateRayTracingGeometryTableCmd{
+               RHICommand{RHIUpdateRayTracingGeometryTableCmd{
                    .TablePtr = m_GeometryTable.get(),
-                   .Update = RayTracingGeometryTableUpdate{
+                   .Update = RHIRayTracingGeometryTableUpdate{
                        .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}},
                        .Geometries = {{.PositionBuffer = m_VB.get(),
                                        .NormalBuffer = m_SecondVB.get(),
@@ -222,7 +221,7 @@ TEST_F(UsageVisitorTest, BuildTopLevelAccelerationStructureCmdUpdatesTargetAndBl
     ASSERT_EQ(m_BLAS->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{BuildOrUpdateTopLevelAccelerationStructureCmd{
+               RHICommand{RHIBuildOrUpdateTopLevelAccelerationStructureCmd{
                    .TargetPtr = m_TLAS.get(),
                    .Instances = {{.BottomLevelPtr = m_BLAS.get()}},
                }});
@@ -235,7 +234,7 @@ TEST_F(UsageVisitorTest, TraceRaysCmdUpdatesRayTracingPipelineToken) {
     ASSERT_EQ(m_RayPipeline->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{TraceRaysCmd{
+               RHICommand{RHITraceRaysCmd{
                    .PipelinePtr = m_RayPipeline.get(),
                    .Width       = 640,
                    .Height      = 480,
@@ -245,16 +244,16 @@ TEST_F(UsageVisitorTest, TraceRaysCmdUpdatesRayTracingPipelineToken) {
 }
 
 TEST(RayTracingCommandTest, PassCopiesTopLevelAccelerationStructureInstances) {
-    BottomLevelAccelerationStructure BLAS;
-    TopLevelAccelerationStructure    TLAS;
-    std::vector<AccelerationStructureInstance> Instances{{.BottomLevelPtr = &BLAS}};
-    Pass PassValue{};
+    RHIBottomLevelAccelerationStructure BLAS;
+    RHITopLevelAccelerationStructure    TLAS;
+    std::vector<RHIAccelerationStructureInstance> Instances{{.BottomLevelPtr = &BLAS}};
+    RHIPass PassValue{};
 
     PassValue.BuildOrUpdateTopLevelAccelerationStructure(&TLAS, Instances);
     Instances.clear();
 
     ASSERT_EQ(PassValue.Commands.size(), 1);
-    const auto* CommandPtr = std::get_if<BuildOrUpdateTopLevelAccelerationStructureCmd>(&PassValue.Commands.front());
+    const auto* CommandPtr = std::get_if<RHIBuildOrUpdateTopLevelAccelerationStructureCmd>(&PassValue.Commands.front());
     ASSERT_NE(CommandPtr, nullptr);
     ASSERT_EQ(CommandPtr->Instances.size(), 1);
     EXPECT_EQ(CommandPtr->TargetPtr, &TLAS);
@@ -262,40 +261,40 @@ TEST(RayTracingCommandTest, PassCopiesTopLevelAccelerationStructureInstances) {
 }
 
 TEST_F(UsageVisitorTest, RayTracingGeometryTableShaderParameterDefersTokenToVulkanSubmit) {
-    const auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+    const auto Layout = RHIShaderParameterLayout::Create(ShaderReflection{
         .Bindings = {{.ParameterPath = "g_rt.metadata", .Set = 0, .BindingIndex = 0,
-                      .Type = SoulEngine::Shader::ResourceType::StorageBuffer}},
+                      .Type = ShaderResourceType::StorageBuffer}},
     });
-    auto Parameters = ShaderParameters::Create(Layout);
+    auto Parameters = RHIShaderParameters::Create(Layout);
     ASSERT_TRUE(Parameters.SetRayTracingGeometryTable("g_rt.metadata", m_GeometryTable.get()));
 
     std::visit(m_Visitor,
-               Command{BindShaderParametersCmd{.PipelinePtr = m_RayPipeline.get(), .Parameters = std::move(Parameters)}});
+               RHICommand{RHIBindShaderParametersCmd{.PipelinePtr = m_RayPipeline.get(), .Parameters = std::move(Parameters)}});
 
     EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
 }
 
 TEST_F(UsageVisitorTest, RayTracingShaderParametersUpdateTlasAndStorageOutputTokens) {
-    const auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+    const auto Layout = RHIShaderParameterLayout::Create(ShaderReflection{
         .Bindings =
             {
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_scene.tlas",
                     .Set           = 0,
                     .BindingIndex  = 0,
-                    .Type          = SoulEngine::Shader::ResourceType::AccelerationStructure,
+                    .Type          = ShaderResourceType::AccelerationStructure,
                 },
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_frame.output",
                     .Set           = 0,
                     .BindingIndex  = 1,
-                    .Type          = SoulEngine::Shader::ResourceType::StorageTexture,
+                    .Type          = ShaderResourceType::StorageTexture,
                 },
             },
     });
     m_RayPipeline->ConfigureShaderParameterLayout(Layout);
-    auto Parameters = ShaderParameters::Create(*m_RayPipeline);
+    auto Parameters = RHIShaderParameters::Create(*m_RayPipeline);
 
     ASSERT_TRUE(Parameters.SetTopLevelAccelerationStructure("g_scene.tlas", m_TLAS.get()));
     ASSERT_TRUE(Parameters.SetStorageRenderTarget("g_frame.output", m_Output.get()));
@@ -303,7 +302,7 @@ TEST_F(UsageVisitorTest, RayTracingShaderParametersUpdateTlasAndStorageOutputTok
     ASSERT_EQ(m_Output->GetLastUsageToken().Id, 0);
 
     std::visit(m_Visitor,
-               Command{BindShaderParametersCmd{
+               RHICommand{RHIBindShaderParametersCmd{
                    .PipelinePtr = m_RayPipeline.get(),
                    .Parameters  = std::move(Parameters),
                }});
@@ -314,8 +313,8 @@ TEST_F(UsageVisitorTest, RayTracingShaderParametersUpdateTlasAndStorageOutputTok
 }
 
 TEST(ResourceArrayTest, SupportsMultipleResourceTypes) {
-    Sampler SamplerValue{SamplerDesc{}};
-    ResourceArray<Sampler> Samplers;
+    RHISampler SamplerValue{RHISamplerDesc{}};
+    RHIResourceArray<RHISampler> Samplers;
 
     Samplers.Set(2, &SamplerValue);
 
@@ -324,32 +323,32 @@ TEST(ResourceArrayTest, SupportsMultipleResourceTypes) {
 }
 
 TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
-    auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+    auto Layout = RHIShaderParameterLayout::Create(ShaderReflection{
         .Bindings =
             {
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_frame.cb",
                     .Set           = 0,
                     .BindingIndex  = 0,
-                    .Type          = SoulEngine::Shader::ResourceType::ConstantBuffer,
+                    .Type          = ShaderResourceType::ConstantBuffer,
                 },
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_samplers.uLinear",
                     .Set           = 1,
                     .BindingIndex  = 0,
-                    .Type          = SoulEngine::Shader::ResourceType::Sampler,
+                    .Type          = ShaderResourceType::Sampler,
                 },
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_textures.uTextures",
                     .Set           = 1,
                     .BindingIndex  = 1,
-                    .Type          = SoulEngine::Shader::ResourceType::SampledTexture,
+                    .Type          = ShaderResourceType::SampledTexture,
                     .ArrayCount    = std::numeric_limits<Uint32>::max(),
                 },
             },
     });
 
-    auto Parameters = ShaderParameters::Create(Layout);
+    auto Parameters = RHIShaderParameters::Create(Layout);
 
     EXPECT_NE(Layout.GetId(), 0);
     EXPECT_EQ(Parameters.GetLayoutId(), Layout.GetId());
@@ -357,7 +356,7 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
     EXPECT_EQ(Parameters.GetSets()[0].GetLayout().GetSetIndex(), 0);
     EXPECT_EQ(Parameters.GetSets()[1].GetLayout().GetSetIndex(), 1);
 
-    ResourceArray<SampledTexture> Textures;
+    RHIResourceArray<RHISampledTexture> Textures;
     EXPECT_FALSE(Parameters.SetSampledTexture("g_textures.uTextures", nullptr));
     EXPECT_TRUE(Parameters.SetResourceArray("g_textures.uTextures", Textures));
     const auto TextureSetRevision = Parameters.GetSets()[1].GetRevision();
@@ -365,7 +364,7 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
     EXPECT_EQ(Parameters.GetSets()[1].GetRevision(), TextureSetRevision);
     EXPECT_FALSE(Parameters.SetSampler("g_textures.uTextures", nullptr));
 
-    Sampler LinearSampler{SamplerDesc{}};
+    RHISampler LinearSampler{RHISamplerDesc{}};
     EXPECT_TRUE(Parameters.SetSampler("g_samplers.uLinear", &LinearSampler));
     const auto SamplerSetRevision = Parameters.GetSets()[1].GetRevision();
     EXPECT_TRUE(Parameters.SetSampler("g_samplers.uLinear", &LinearSampler));
@@ -373,23 +372,23 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
 }
 
 TEST(ShaderParametersTest, PerDrawConstantUsesTransientAllocation) {
-    auto Layout = ShaderParameterLayout::Create(SoulEngine::Shader::Reflection{
+    auto Layout = RHIShaderParameterLayout::Create(ShaderReflection{
         .Bindings =
             {
-                SoulEngine::Shader::Binding{
+                ShaderBinding{
                     .ParameterPath = "g_object.data",
                     .Set           = 0,
                     .BindingIndex  = 0,
-                    .Type          = SoulEngine::Shader::ResourceType::ConstantBuffer,
+                    .Type          = ShaderResourceType::ConstantBuffer,
                 },
             },
     });
-    auto Parameters = ShaderParameters::Create(Layout);
-    ConstantBuffer Buffer{ConstantBufferDesc{.Size = 64}};
+    auto Parameters = RHIShaderParameters::Create(Layout);
+    RHIConstantBuffer Buffer{RHIConstantBufferDesc{.Size = 64}};
     std::array<std::byte, 64> Data = {};
 
     ASSERT_TRUE(Parameters.SetConstantBuffer("g_object.data", &Buffer, Data.data(), Data.size(), true));
-    const auto* Constant = std::get_if<ShaderParameterConstant>(&Parameters.GetSets()[0].GetValues()[0]);
+    const auto* Constant = std::get_if<RHIShaderParameterConstant>(&Parameters.GetSets()[0].GetValues()[0]);
 
     ASSERT_NE(Constant, nullptr);
     EXPECT_EQ(Constant->Buffer, &Buffer);
@@ -402,7 +401,7 @@ TEST_F(UsageVisitorTest, DrawIndexedCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_SecondVB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
     std::visit(m_Visitor,
-               Command{DrawIndexedCmd{.PipelinePtr     = m_Pipeline.get(),
+               RHICommand{RHIDrawIndexedCmd{.PipelinePtr     = m_Pipeline.get(),
                                        .VertexBuffers   = {m_VB.get(), m_SecondVB.get()},
                                        .IndexBufferPtr  = m_IB.get()}});
 
@@ -416,29 +415,29 @@ TEST_F(UsageVisitorTest, DrawCmdUpdatesReferencedResources) {
     ASSERT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
     std::visit(m_Visitor,
-               Command{DrawCmd{.PipelinePtr = m_Pipeline.get(), .VertexBuffers = {m_VB.get()}}});
+               RHICommand{RHIDrawCmd{.PipelinePtr = m_Pipeline.get(), .VertexBuffers = {m_VB.get()}}});
 
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
 }
 
 TEST_F(UsageVisitorTest, NullPipelineDoesNotCrash) {
-    std::visit(m_Visitor, Command{DrawCmd{.PipelinePtr = nullptr}});
+    std::visit(m_Visitor, RHICommand{RHIDrawCmd{.PipelinePtr = nullptr}});
     // Should not crash — no assertion needed beyond survival.
 }
 
 TEST_F(UsageVisitorTest, NullDrawResourcesDoNotCrash) {
-    std::visit(m_Visitor, Command{DrawIndexedCmd{}});
-    std::visit(m_Visitor, Command{DrawCmd{}});
+    std::visit(m_Visitor, RHICommand{RHIDrawIndexedCmd{}});
+    std::visit(m_Visitor, RHICommand{RHIDrawCmd{}});
     // Should not crash — no assertion needed beyond survival.
 }
 
 TEST_F(UsageVisitorTest, NonResourceCommandsDoNotUpdateAnyToken) {
     // These command types don't reference GPU resources.
-    std::visit(m_Visitor, Command{SetViewportCmd{}});
-    std::visit(m_Visitor, Command{SetFullViewportCmd{}});
-    std::visit(m_Visitor, Command{SetScissorCmd{}});
-    std::visit(m_Visitor, Command{SetFullScissorRectCmd{}});
+    std::visit(m_Visitor, RHICommand{RHISetViewportCmd{}});
+    std::visit(m_Visitor, RHICommand{RHISetFullViewportCmd{}});
+    std::visit(m_Visitor, RHICommand{RHISetScissorCmd{}});
+    std::visit(m_Visitor, RHICommand{RHISetFullScissorRectCmd{}});
 
     // Tokens on all resources should remain default (0).
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 0);
@@ -448,9 +447,9 @@ TEST_F(UsageVisitorTest, NonResourceCommandsDoNotUpdateAnyToken) {
 }
 
 TEST_F(UsageVisitorTest, VisitEntireCommandList) {
-    CommandList CmdList;
-    auto& Scope     = CmdList.Scopes.emplace_back(Pass{});
-    auto& PassValue = std::get<SoulEngine::RHI::Pass>(Scope);
+    RHICommandList CmdList;
+    auto& Scope     = CmdList.Scopes.emplace_back(RHIPass{});
+    auto& PassValue = std::get<RHIPass>(Scope);
 
     PassValue.SetViewport(0, 0, 800, 600);
     PassValue.SetGraphicsPipeline(m_Pipeline.get());
@@ -461,9 +460,9 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
 
-    // Visit all commands with a single UsageVisitor
+    // Visit all commands with a single RHIUsageVisitor
     for (const auto& Cmd : PassValue.Commands)
-        std::visit(UsageVisitor{GpuCompletionToken{.Id = 99}}, Cmd);
+        std::visit(RHIUsageVisitor{RHIGpuCompletionToken{.Id = 99}}, Cmd);
 
     // Resource commands updated
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 99);
@@ -473,13 +472,13 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
 
 
 TEST_F(UsageVisitorTest, NonRenderingScopeRecordsRayTracingCommands) {
-    NonRenderingPass Scope;
+    RHINonRenderingPass Scope;
     Scope.SetRayTracingPipeline(m_RayPipeline.get());
     Scope.TraceRays(m_RayPipeline.get(), 1280, 720);
 
     ASSERT_EQ(Scope.Commands.size(), 2);
-    EXPECT_TRUE(std::holds_alternative<SetRayTracingPipelineCmd>(Scope.Commands[0]));
-    EXPECT_TRUE(std::holds_alternative<TraceRaysCmd>(Scope.Commands[1]));
+    EXPECT_TRUE(std::holds_alternative<RHISetRayTracingPipelineCmd>(Scope.Commands[0]));
+    EXPECT_TRUE(std::holds_alternative<RHITraceRaysCmd>(Scope.Commands[1]));
 
     for (const auto& Cmd : Scope.Commands)
         std::visit(m_Visitor, Cmd);
@@ -487,13 +486,13 @@ TEST_F(UsageVisitorTest, NonRenderingScopeRecordsRayTracingCommands) {
 }
 
 TEST_F(UsageVisitorTest, CommandListPreservesRenderingAndNonRenderingScopeOrder) {
-    CommandList CmdList;
-    auto& RayScope = CmdList.Scopes.emplace_back(NonRenderingPass{});
-    std::get<NonRenderingPass>(RayScope).SetRayTracingPipeline(m_RayPipeline.get());
-    auto& RenderingScope = CmdList.Scopes.emplace_back(Pass{});
-    std::get<Pass>(RenderingScope).SetGraphicsPipeline(m_Pipeline.get());
+    RHICommandList CmdList;
+    auto& RayScope = CmdList.Scopes.emplace_back(RHINonRenderingPass{});
+    std::get<RHINonRenderingPass>(RayScope).SetRayTracingPipeline(m_RayPipeline.get());
+    auto& RenderingScope = CmdList.Scopes.emplace_back(RHIPass{});
+    std::get<RHIPass>(RenderingScope).SetGraphicsPipeline(m_Pipeline.get());
 
     ASSERT_EQ(CmdList.Scopes.size(), 2);
-    EXPECT_TRUE(std::holds_alternative<NonRenderingPass>(CmdList.Scopes[0]));
-    EXPECT_TRUE(std::holds_alternative<Pass>(CmdList.Scopes[1]));
+    EXPECT_TRUE(std::holds_alternative<RHINonRenderingPass>(CmdList.Scopes[0]));
+    EXPECT_TRUE(std::holds_alternative<RHIPass>(CmdList.Scopes[1]));
 }

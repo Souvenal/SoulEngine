@@ -8,27 +8,25 @@ import Shader;
 import ShaderCompiler;
 import std;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::Shader;
-using namespace SoulEngine::ShaderCompiler;
+using namespace SoulEngine;
 
 namespace {
 
 [[nodiscard]] auto MakeCompileDesc(const Path& SourcePath) -> RayTracingCompileDesc {
     return RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
-        .MissEntries   = {ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "missMain", .Backend = Backend::Slang}},
+        .RayGeneration = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
+        .MissEntries   = {ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang}},
         .HitGroups = {
             RayTracingHitGroupCompileDesc{
-                .Type       = RayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "closestHitMain", .Backend = Backend::Slang},
+                .Type       = ShaderRayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
             },
         },
     };
 }
 
-[[nodiscard]] auto FindBinding(const Reflection& ReflectionValue, StringView ParameterPath) -> const Binding* {
-    const auto It = std::ranges::find_if(ReflectionValue.Bindings, [ParameterPath](const Binding& Candidate) {
+[[nodiscard]] auto FindBinding(const ShaderReflection& ReflectionValue, StringView ParameterPath) -> const ShaderBinding* {
+    const auto It = std::ranges::find_if(ReflectionValue.Bindings, [ParameterPath](const ShaderBinding& Candidate) {
         return Candidate.ParameterPath == ParameterPath;
     });
     return It == ReflectionValue.Bindings.end() ? nullptr : &*It;
@@ -69,7 +67,7 @@ TEST_F(RayTracingCompilerTest, CompilesLinkedRayTracingProgram) {
     ASSERT_EQ(Result->MissEntryPointNames.size(), 1);
     EXPECT_EQ(Result->MissEntryPointNames[0], "missMain");
     ASSERT_EQ(Result->HitGroups.size(), 1);
-    EXPECT_EQ(Result->HitGroups[0].Type, RayTracingHitGroupType::Triangles);
+    EXPECT_EQ(Result->HitGroups[0].Type, ShaderRayTracingHitGroupType::Triangles);
     ASSERT_TRUE(Result->HitGroups[0].ClosestHitEntryPointName.has_value());
     EXPECT_EQ(*Result->HitGroups[0].ClosestHitEntryPointName, "closestHitMain");
     EXPECT_FALSE(Result->HitGroups[0].AnyHitEntryPointName.has_value());
@@ -85,13 +83,13 @@ TEST_F(RayTracingCompilerTest, ReflectsTopLevelAccelerationStructureAndStorageOu
     ASSERT_NE(Tlas, nullptr);
     EXPECT_EQ(Tlas->Set, 0U);
     EXPECT_EQ(Tlas->BindingIndex, 0U);
-    EXPECT_EQ(Tlas->Type, ResourceType::AccelerationStructure);
+    EXPECT_EQ(Tlas->Type, ShaderResourceType::AccelerationStructure);
 
     const auto* Output = FindBinding(Result->Reflection, "g_output");
     ASSERT_NE(Output, nullptr);
     EXPECT_EQ(Output->Set, 0U);
     EXPECT_EQ(Output->BindingIndex, 1U);
-    EXPECT_EQ(Output->Type, ResourceType::StorageTexture);
+    EXPECT_EQ(Output->Type, ShaderResourceType::StorageTexture);
 }
 
 TEST_F(RayTracingCompilerTest, ReflectsParameterBlockTopLevelAccelerationStructure) {
@@ -100,11 +98,11 @@ TEST_F(RayTracingCompilerTest, ReflectsParameterBlockTopLevelAccelerationStructu
 
     const auto* Tlas = FindBinding(Result->Reflection, "g_rayTracingResources.tlas");
     ASSERT_NE(Tlas, nullptr);
-    EXPECT_EQ(Tlas->Type, ResourceType::AccelerationStructure);
+    EXPECT_EQ(Tlas->Type, ShaderResourceType::AccelerationStructure);
 
     const auto* Output = FindBinding(Result->Reflection, "g_rayTracingResources.output");
     ASSERT_NE(Output, nullptr);
-    EXPECT_EQ(Output->Type, ResourceType::StorageTexture);
+    EXPECT_EQ(Output->Type, ShaderResourceType::StorageTexture);
 }
 
 TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadataBinding) {
@@ -114,25 +112,25 @@ TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadat
 
     const auto* Metadata = FindBinding(Result->Reflection, "g_bdaMetadata.metadata");
     ASSERT_NE(Metadata, nullptr);
-    EXPECT_EQ(Metadata->Type, ResourceType::StorageBuffer);
+    EXPECT_EQ(Metadata->Type, ShaderResourceType::StorageBuffer);
     EXPECT_EQ(Metadata->ArrayCount, 1U);
 }
 
 TEST_F(RayTracingCompilerTest, CompilesRuntimePathTracingShaderWithFixedBdaMetadata) {
     auto Result = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
+        .RayGeneration = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
         .MissEntries = {
-            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "missMain", .Backend = Backend::Slang},
-            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowMissMain", .Backend = Backend::Slang},
+            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang},
+            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowMissMain", .Backend = ShaderBackend::Slang},
         },
         .HitGroups = {
             RayTracingHitGroupCompileDesc{
-                .Type = RayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "closestHitMain", .Backend = Backend::Slang},
+                .Type = ShaderRayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
             },
             RayTracingHitGroupCompileDesc{
-                .Type = RayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowClosestHitMain", .Backend = Backend::Slang},
+                .Type = ShaderRayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowClosestHitMain", .Backend = ShaderBackend::Slang},
             },
         },
     });
@@ -140,7 +138,7 @@ TEST_F(RayTracingCompilerTest, CompilesRuntimePathTracingShaderWithFixedBdaMetad
 
     const auto* Metadata = FindBinding(Result->Reflection, "g_rayTracingGeometryMetadata.metadata");
     ASSERT_NE(Metadata, nullptr);
-    EXPECT_EQ(Metadata->Type, ResourceType::StorageBuffer);
+    EXPECT_EQ(Metadata->Type, ShaderResourceType::StorageBuffer);
     EXPECT_EQ(Metadata->ArrayCount, 1U);
     EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracing.geometry"), nullptr);
     EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.materials"), nullptr);

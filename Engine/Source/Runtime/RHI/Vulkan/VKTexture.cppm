@@ -15,20 +15,18 @@ import :ImmediateContext;
 import :TransferCompletionQueue;
 import :DeletionQueue;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DeviceTexture — reusable GPU image wrapper
+// VulkanDeviceTexture — reusable GPU image wrapper
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Owns VkImage + VkImageView + VMA allocation lifecycle.
-class DeviceTexture {
+class VulkanDeviceTexture {
   public:
-    DeviceTexture() = default;
+    VulkanDeviceTexture() = default;
 
-    DeviceTexture(VmaAllocator          Alloc,
+    VulkanDeviceTexture(VmaAllocator          Alloc,
                   vk::Image             Image,
                   VmaAllocation         Allocation,
                   vk::raii::ImageView&& ImageView)
@@ -37,19 +35,19 @@ class DeviceTexture {
           m_Allocation(Allocation),
           m_ImageView(std::move(ImageView)) {}
 
-    ~DeviceTexture() {
+    ~VulkanDeviceTexture() {
         if (m_Allocation)
             vmaDestroyImage(m_Allocator, static_cast<VkImage>(m_Image), m_Allocation);
     }
 
     // Move-only.
-    DeviceTexture(DeviceTexture&& Other) noexcept
+    VulkanDeviceTexture(VulkanDeviceTexture&& Other) noexcept
         : m_Allocator(std::exchange(Other.m_Allocator, nullptr)),
           m_Image(std::exchange(Other.m_Image, nullptr)),
           m_Allocation(std::exchange(Other.m_Allocation, nullptr)),
           m_ImageView(std::move(Other.m_ImageView)) {}
 
-    auto operator=(DeviceTexture&& Other) noexcept -> DeviceTexture& {
+    auto operator=(VulkanDeviceTexture&& Other) noexcept -> VulkanDeviceTexture& {
         if (this != &Other) {
             std::swap(m_Allocator, Other.m_Allocator);
             std::swap(m_Image, Other.m_Image);
@@ -59,8 +57,8 @@ class DeviceTexture {
         return *this;
     }
 
-    DeviceTexture(const DeviceTexture&)  = delete;
-    auto operator=(const DeviceTexture&) = delete;
+    VulkanDeviceTexture(const VulkanDeviceTexture&)  = delete;
+    auto operator=(const VulkanDeviceTexture&) = delete;
 
     [[nodiscard]] auto GetImage() const -> vk::Image {
         return m_Image;
@@ -72,12 +70,12 @@ class DeviceTexture {
         return m_Allocation;
     }
 
-    /// Submit a staging-buffer → image copy via ImmediateContext.
+    /// Submit a staging-buffer → image copy via VulkanImmediateContext.
     /// Handles Undefined→TransferDst→ShaderReadOnly barriers.
     /// Returns upload completion token (caller defers staging destruction).
     [[nodiscard]] auto
-    CopyFrom(HostBuffer& Staging, ImmediateContext& Ctx, Uint32 Width, Uint32 Height, vk::Format VkFmt)
-        -> std::expected<GpuCompletionToken, ErrorMessage> {
+    CopyFrom(VulkanHostBuffer& Staging, VulkanImmediateContext& Ctx, Uint32 Width, Uint32 Height, vk::Format VkFmt)
+        -> std::expected<RHIGpuCompletionToken, ErrorMessage> {
 
         return Ctx.SubmitTransfer([&](const vk::raii::CommandBuffer& CmdBuf) {
             // Barrier: Undefined → TransferDst
@@ -148,47 +146,47 @@ class DeviceTexture {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Vulkan::SampledTexture — GPU sampled texture resource
+// VulkanSampledTexture — GPU sampled texture resource
 // ═════════════════════════════════════════════════════════════════════════════
 
-class SampledTexture final : public RHI::SampledTexture {
+class VulkanSampledTexture final : public RHISampledTexture {
   public:
-    SampledTexture(SPtr<DeviceTexture> Tex, DeletionQueue& Queue, Uint32 Width, Uint32 Height)
+    VulkanSampledTexture(SPtr<VulkanDeviceTexture> Tex, VulkanDeletionQueue& Queue, Uint32 Width, Uint32 Height)
         : m_Texture(std::move(Tex)), m_DeletionQueue(&Queue), m_Width(Width), m_Height(Height) {}
 
-    ~SampledTexture() override {
+    ~VulkanSampledTexture() override {
         if (m_DeletionQueue)
             m_DeletionQueue->Enqueue(GetLastUsageToken(), [Tex = m_Texture]() {});
     }
 
-    SampledTexture(const SampledTexture&)                    = delete;
-    auto operator=(const SampledTexture&) -> SampledTexture& = delete;
-    SampledTexture(SampledTexture&&)                         = delete;
-    auto operator=(SampledTexture&&) -> SampledTexture&      = delete;
+    VulkanSampledTexture(const VulkanSampledTexture&)                    = delete;
+    auto operator=(const VulkanSampledTexture&) -> VulkanSampledTexture& = delete;
+    VulkanSampledTexture(VulkanSampledTexture&&)                         = delete;
+    auto operator=(VulkanSampledTexture&&) -> VulkanSampledTexture&      = delete;
 
     /// Static factory: upload pixel data to GPU texture via staging buffer.
-    [[nodiscard]] static auto Create(const RHI::SampledTextureDesc& Desc,
+    [[nodiscard]] static auto Create(const RHISampledTextureDesc& Desc,
                                      VmaAllocator                   Alloc,
                                      vk::raii::Device&              Dev,
-                                     ImmediateContext&              ImmCtx,
-                                     TransferCompletionQueue&       CompletionQueue,
-                                     DeletionQueue&                 DelQueue)
-        -> std::expected<RHI::SampledTextureCreateResult, ErrorMessage> {
+                                     VulkanImmediateContext&              ImmCtx,
+                                     VulkanTransferCompletionQueue&       CompletionQueue,
+                                     VulkanDeletionQueue&                 DelQueue)
+        -> std::expected<RHISampledTextureCreateResult, ErrorMessage> {
 
         if (!Desc.Data || Desc.Width == 0 || Desc.Height == 0)
-            return std::unexpected(ErrorMessage("SampledTexture::Create: invalid desc (null data or zero dimensions)"));
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: invalid desc (null data or zero dimensions)"));
 
         Uint64     PixelSize = static_cast<Uint64>(Desc.Width) * Desc.Height * Desc.Channels;
-        vk::Format VkFmt     = SoulEngine::RHI::Vulkan::ToVkFormat(static_cast<RHI::Format>(Desc.Format));
+        vk::Format VkFmt     = ToVkFormat(static_cast<RHIFormat>(Desc.Format));
 
         // ── Staging buffer ─────────────────────────────────────────────
-        auto StagingRes = HostBuffer::Create(PixelSize, vk::BufferUsageFlagBits::eTransferSrc, *Dev, Alloc);
+        auto StagingRes = VulkanHostBuffer::Create(PixelSize, vk::BufferUsageFlagBits::eTransferSrc, *Dev, Alloc);
         if (!StagingRes)
-            return std::unexpected(StagingRes.error().Append("SampledTexture::Create: staging creation failed"));
+            return std::unexpected(StagingRes.error().Append("VulkanSampledTexture::Create: staging creation failed"));
         auto Staging = std::move(*StagingRes);
 
         if (auto R = Staging.Upload(Desc.Data, PixelSize); !R)
-            return std::unexpected(R.error().Append("SampledTexture::Create: staging upload failed"));
+            return std::unexpected(R.error().Append("VulkanSampledTexture::Create: staging upload failed"));
 
         // ── Create VkImage ─────────────────────────────────────────────
         vk::ImageCreateInfo ImageCI{
@@ -210,7 +208,7 @@ class SampledTexture final : public RHI::SampledTexture {
         VmaAllocation     RawAlloc = nullptr;
         VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
         if (vmaCreateImage(Alloc, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("SampledTexture::Create: vmaCreateImage failed"));
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: vmaCreateImage failed"));
 
         auto VkImage = static_cast<vk::Image>(RawImage);
 
@@ -231,25 +229,25 @@ class SampledTexture final : public RHI::SampledTexture {
         };
         auto ViewRes = Dev.createImageView(ViewCI);
         if (ViewRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("SampledTexture::Create: vkCreateImageView failed"));
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: vkCreateImageView failed"));
 
-        // ── Copy staging → device via DeviceTexture ────────────────────
-        auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value));
+        // ── Copy staging → device via VulkanDeviceTexture ────────────────────
+        auto Tex = std::make_shared<VulkanDeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value));
 
         auto CopyResult = Tex->CopyFrom(Staging, ImmCtx, Desc.Width, Desc.Height, VkFmt);
         if (!CopyResult)
-            return std::unexpected(CopyResult.error().Append("SampledTexture::Create: transfer submission failed"));
+            return std::unexpected(CopyResult.error().Append("VulkanSampledTexture::Create: transfer submission failed"));
 
         // ── Defer staging destruction ──────────────────────────────────
         Staging.DeferredDelete(CompletionQueue, *CopyResult);
 
-        return RHI::SampledTextureCreateResult{
-            .Texture          = std::make_unique<SampledTexture>(std::move(Tex), DelQueue, Desc.Width, Desc.Height),
+        return RHISampledTextureCreateResult{
+            .Texture          = std::make_unique<VulkanSampledTexture>(std::move(Tex), DelQueue, Desc.Width, Desc.Height),
             .UploadCompletion = *CopyResult,
         };
     }
 
-    // ── RHI::SampledTexture interface ──────────────────────────────────
+    // ── RHISampledTexture interface ──────────────────────────────────
 
     [[nodiscard]] auto GetWidth() const -> Uint32 override {
         return m_Width;
@@ -267,20 +265,20 @@ class SampledTexture final : public RHI::SampledTexture {
         return m_Texture->GetImageView();
     }
   private:
-    SPtr<DeviceTexture> m_Texture       = nullptr;
-    DeletionQueue*      m_DeletionQueue = nullptr;
+    SPtr<VulkanDeviceTexture> m_Texture       = nullptr;
+    VulkanDeletionQueue*      m_DeletionQueue = nullptr;
     Uint32              m_Width         = 0;
     Uint32              m_Height        = 0;
 };
 
-class RenderTarget final : public RHI::RenderTarget {
+class VulkanRenderTarget final : public RHIRenderTarget {
   public:
-    RenderTarget(SPtr<DeviceTexture> Tex,
-                 DeletionQueue&      Queue,
+    VulkanRenderTarget(SPtr<VulkanDeviceTexture> Tex,
+                 VulkanDeletionQueue&      Queue,
                  Uint32              Width,
                  Uint32              Height,
-                 RHI::Format         Format,
-                 RHI::TextureUsage   Usage)
+                 RHIFormat         Format,
+                 RHITextureUsage   Usage)
         : m_Texture(std::move(Tex)),
           m_DeletionQueue(&Queue),
           m_Width(Width),
@@ -288,36 +286,36 @@ class RenderTarget final : public RHI::RenderTarget {
           m_Format(Format),
           m_Usage(Usage) {}
 
-    ~RenderTarget() override {
+    ~VulkanRenderTarget() override {
         if (m_DeletionQueue)
             m_DeletionQueue->Enqueue(GetLastUsageToken(), [Tex = m_Texture]() {});
     }
 
-    RenderTarget(const RenderTarget&)                    = delete;
-    auto operator=(const RenderTarget&) -> RenderTarget& = delete;
-    RenderTarget(RenderTarget&&)                         = delete;
-    auto operator=(RenderTarget&&) -> RenderTarget&      = delete;
+    VulkanRenderTarget(const VulkanRenderTarget&)                    = delete;
+    auto operator=(const VulkanRenderTarget&) -> VulkanRenderTarget& = delete;
+    VulkanRenderTarget(VulkanRenderTarget&&)                         = delete;
+    auto operator=(VulkanRenderTarget&&) -> VulkanRenderTarget&      = delete;
 
-    [[nodiscard]] static auto Create(const RHI::RenderTargetDesc& Desc,
+    [[nodiscard]] static auto Create(const RHIRenderTargetDesc& Desc,
                                      VmaAllocator                 Alloc,
                                      vk::raii::Device&            Dev,
-                                     DeletionQueue&               DelQueue)
-        -> std::expected<RHI::RenderTargetCreateResult, ErrorMessage> {
+                                     VulkanDeletionQueue&               DelQueue)
+        -> std::expected<RHIRenderTargetCreateResult, ErrorMessage> {
         if (Desc.Width == 0 || Desc.Height == 0)
-            return std::unexpected(ErrorMessage("RenderTarget::Create: invalid desc (zero dimensions)"));
-        if (Desc.Format == RHI::Format::Unknown)
-            return std::unexpected(ErrorMessage("RenderTarget::Create: invalid desc (unknown format)"));
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: invalid desc (zero dimensions)"));
+        if (Desc.Format == RHIFormat::Unknown)
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: invalid desc (unknown format)"));
 
-        const bool IsDepth = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::DepthStencil)) != 0;
-        const bool IsColor = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::RenderTarget)) != 0;
+        const bool IsDepth = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::DepthStencil)) != 0;
+        const bool IsColor = (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::RenderTarget)) != 0;
         const bool IsFrameOutput =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::FrameOutput)) != 0;
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::FrameOutput)) != 0;
         const bool IsStorage =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHI::TextureUsage::ShaderStorage)) != 0;
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0;
         if (IsStorage && IsDepth)
-            return std::unexpected(ErrorMessage("RenderTarget::Create: storage usage is not supported for depth targets"));
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: storage usage is not supported for depth targets"));
         if (!IsDepth && !IsColor)
-            return std::unexpected(ErrorMessage("RenderTarget::Create: missing attachment usage"));
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: missing attachment usage"));
 
         auto Usage = vk::ImageUsageFlags{};
         if (IsDepth)
@@ -329,7 +327,7 @@ class RenderTarget final : public RHI::RenderTarget {
         if (IsStorage)
             Usage |= vk::ImageUsageFlagBits::eStorage;
 
-        const auto VkFmt = SoulEngine::RHI::Vulkan::ToVkFormat(Desc.Format);
+        const auto VkFmt = ToVkFormat(Desc.Format);
         vk::ImageCreateInfo ImageCI{
             .imageType     = vk::ImageType::e2D,
             .format        = VkFmt,
@@ -349,7 +347,7 @@ class RenderTarget final : public RHI::RenderTarget {
         VmaAllocation     RawAlloc = nullptr;
         VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
         if (vmaCreateImage(Alloc, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("RenderTarget::Create: vmaCreateImage failed"));
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: vmaCreateImage failed"));
 
         auto VkImage = static_cast<vk::Image>(RawImage);
         const auto Aspect = IsDepth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
@@ -371,12 +369,12 @@ class RenderTarget final : public RHI::RenderTarget {
         auto ViewRes = Dev.createImageView(ViewCI);
         if (ViewRes.result != vk::Result::eSuccess) {
             vmaDestroyImage(Alloc, RawImage, RawAlloc);
-            return std::unexpected(ErrorMessage("RenderTarget::Create: vkCreateImageView failed"));
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: vkCreateImageView failed"));
         }
 
-        auto Tex = std::make_shared<DeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value));
-        return RHI::RenderTargetCreateResult{
-            .Texture = std::make_unique<RenderTarget>(std::move(Tex), DelQueue, Desc.Width, Desc.Height, Desc.Format, Desc.Usage),
+        auto Tex = std::make_shared<VulkanDeviceTexture>(Alloc, VkImage, RawAlloc, std::move(ViewRes.value));
+        return RHIRenderTargetCreateResult{
+            .Texture = std::make_unique<VulkanRenderTarget>(std::move(Tex), DelQueue, Desc.Width, Desc.Height, Desc.Format, Desc.Usage),
         };
     }
 
@@ -386,10 +384,10 @@ class RenderTarget final : public RHI::RenderTarget {
     [[nodiscard]] auto GetHeight() const -> Uint32 override {
         return m_Height;
     }
-    [[nodiscard]] auto GetFormat() const -> RHI::Format override {
+    [[nodiscard]] auto GetFormat() const -> RHIFormat override {
         return m_Format;
     }
-    [[nodiscard]] auto GetUsage() const -> RHI::TextureUsage override {
+    [[nodiscard]] auto GetUsage() const -> RHITextureUsage override {
         return m_Usage;
     }
 
@@ -401,12 +399,12 @@ class RenderTarget final : public RHI::RenderTarget {
     }
 
   private:
-    SPtr<DeviceTexture> m_Texture       = nullptr;
-    DeletionQueue*      m_DeletionQueue = nullptr;
+    SPtr<VulkanDeviceTexture> m_Texture       = nullptr;
+    VulkanDeletionQueue*      m_DeletionQueue = nullptr;
     Uint32              m_Width         = 0;
     Uint32              m_Height        = 0;
-    RHI::Format         m_Format        = RHI::Format::Unknown;
-    RHI::TextureUsage   m_Usage         = RHI::TextureUsage::None;
+    RHIFormat         m_Format        = RHIFormat::Unknown;
+    RHITextureUsage   m_Usage         = RHITextureUsage::None;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

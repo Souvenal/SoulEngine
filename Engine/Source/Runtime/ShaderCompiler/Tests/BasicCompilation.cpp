@@ -8,12 +8,7 @@ import Shader;
 import ShaderCompiler;
 import std;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::Shader;
-using SoulEngine::ShaderCompiler::Backend;
-using SoulEngine::ShaderCompiler::GraphicsCompileDesc;
-using SoulEngine::ShaderCompiler::ShaderCompiler;
-using SoulEngine::ShaderCompiler::ShaderEntry;
+using namespace SoulEngine;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -41,8 +36,8 @@ class ShaderCompilerTest : public ::testing::Test {
 
 TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
@@ -53,8 +48,8 @@ TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     EXPECT_FALSE(Result->Reflection.Bindings.empty());
 }
 
-[[nodiscard]] static auto HasBinding(const Reflection& InReflection, StringView BindingPath, ResourceType Type) -> bool {
-    return std::ranges::any_of(InReflection.Bindings, [&](const Binding& InBinding) {
+[[nodiscard]] static auto HasBinding(const ShaderReflection& InReflection, StringView BindingPath, ShaderResourceType Type) -> bool {
+    return std::ranges::any_of(InReflection.Bindings, [&](const ShaderBinding& InBinding) {
         return InBinding.ParameterPath == BindingPath && InBinding.Type == Type;
     });
 }
@@ -67,16 +62,16 @@ TEST_F(ShaderCompilerTest, CompileForwardPbrProgramWithExpectedBindings) {
     const auto ShaderDir  = ProjectDir / "Engine" / "Shaders";
     const auto ShaderPath = ShaderDir / "ForwardPbr.slang";
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.frame", ResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.view", ResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardMaterial.material", ResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardObject.object", ResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_textures.uTextures", ResourceType::SampledTexture));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_samplers.uSamplerLinear", ResourceType::Sampler));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.frame", ShaderResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.view", ShaderResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardMaterial.material", ShaderResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardObject.object", ShaderResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_textures.uTextures", ShaderResourceType::SampledTexture));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_samplers.uSamplerLinear", ShaderResourceType::Sampler));
     EXPECT_EQ(Result->Reflection.Bindings.size(), 7);
 }

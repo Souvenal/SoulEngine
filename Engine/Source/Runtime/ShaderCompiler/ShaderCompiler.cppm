@@ -8,11 +8,11 @@
 /// Thread safety: each compiler backend has its own mutex.  Compiling
 /// concurrently; same-language compilations are serialized.
 ///
-/// Backend selection: explicit Backend enum in shader compile descriptors. File extension
+/// ShaderBackend selection: explicit ShaderBackend enum in shader compile descriptors. File extension
 /// is validated against the enum value (warning on mismatch) but never overrides it.
 ///
-/// Backend registration: backend modules (e.g., Slang) self-register with
-/// BackendFactory via AutoRegistrar constructors when the shared library
+/// ShaderBackend registration: backend modules (e.g., Slang) self-register with
+/// ShaderBackendFactory via AutoRegistrar constructors when the shared library
 /// is loaded.  ShaderCompiler never references concrete backend types directly.
 /// Adding a new backend requires zero changes to this file.
 
@@ -30,9 +30,7 @@ import Shader;
 
 export import Shader;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::ShaderCompiler {
+export namespace SoulEngine {
 
 /// @brief Singleton facade over shader-language compiler backends.
 ///
@@ -50,7 +48,7 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
 
     struct BackendSlot {
         std::mutex     Mutex;
-        UPtr<IBackend> Instance = nullptr;
+        UPtr<IShaderBackend> Instance = nullptr;
     };
 
   public:
@@ -61,7 +59,7 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
 
     /// @brief Compile a graphics-pipeline shader combination and pipeline-level reflection.
     [[nodiscard]] auto CompileGraphics(const GraphicsCompileDesc& Desc)
-        -> std::expected<Shader::GraphicsProgram, ErrorMessage> {
+        -> std::expected<ShaderGraphicsProgram, ErrorMessage> {
         ValidateEntryBackendConsistency(Desc.Vertex);
         ValidateEntryBackendConsistency(Desc.Fragment);
         if (Desc.Vertex.Backend != Desc.Fragment.Backend) {
@@ -82,7 +80,7 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
     }
 
     [[nodiscard]] auto CompileRayTracing(const RayTracingCompileDesc& Desc)
-        -> std::expected<Shader::RayTracingProgram, ErrorMessage> {
+        -> std::expected<ShaderRayTracingProgram, ErrorMessage> {
         if (Desc.RayGeneration.EntryPoint.empty())
             return std::unexpected(ErrorMessage("Ray-tracing shader compile requires a ray-generation entry point"));
 
@@ -130,19 +128,19 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
     ShaderCompiler()  = default;
     ~ShaderCompiler() = default;
 
-    // ── Backend router ──────────────────────────────────────────────
+    // ── ShaderBackend router ──────────────────────────────────────────────
 
     auto ValidateEntryBackendConsistency(const ShaderEntry& Entry) -> void {
         auto ExpectedExt = StringView{};
         switch (Entry.Backend) {
-        case Backend::Slang:
+        case ShaderBackend::Slang:
             ExpectedExt = ".slang";
             break;
         default:
             break;
         }
         if (!ExpectedExt.empty() && Entry.SourcePath.extension() != ExpectedExt)
-            LogWarning("Source '{}' has extension '{}', expected '{}' for Backend::{}",
+            LogWarning("Source '{}' has extension '{}', expected '{}' for ShaderBackend::{}",
                        Entry.SourcePath.string(),
                        Entry.SourcePath.extension().string(),
                        ExpectedExt,
@@ -152,15 +150,15 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
     /// Create a new backend instance via the factory.
     /// The factory registry is populated by AutoRegistrar instances in
     /// each backend's translation unit.
-    [[nodiscard]] auto CreateBackend(Backend Backend) -> std::expected<UPtr<IBackend>, ErrorMessage> {
-        auto Name = magic_enum::enum_name(Backend);
-        auto Inst = BackendFactory::Get().Create(Name);
+    [[nodiscard]] auto CreateBackend(ShaderBackend Kind) -> std::expected<UPtr<IShaderBackend>, ErrorMessage> {
+        auto Name = magic_enum::enum_name(Kind);
+        auto Inst = ShaderBackendFactory::Get().Create(Name);
         if (!Inst)
             return std::unexpected(ErrorMessage(Format("Internal error: no backend registered for '{}'", Name)));
         return Inst;
     }
 
-    std::array<BackendSlot, magic_enum::enum_count<Backend>()> m_Backends;
+    std::array<BackendSlot, magic_enum::enum_count<ShaderBackend>()> m_Backends;
 };
 
-} // namespace SoulEngine::ShaderCompiler
+} // namespace SoulEngine

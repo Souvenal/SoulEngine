@@ -8,7 +8,7 @@ import std;
 
 export import Core;
 
-export namespace SoulEngine::Material {
+export namespace SoulEngine {
 
 /// @brief Renderer-neutral parameters for the built-in metallic-roughness PBR material.
 struct PbrMetallicRoughnessMaterial {
@@ -17,4 +17,4 @@ struct PbrMetallicRoughnessMaterial {
     float          Roughness = 0.42f;
 };
 
-} // namespace SoulEngine::Material
+} // namespace SoulEngine

@@ -7,8 +7,7 @@
 
 import Scene;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::Scene;
+using namespace SoulEngine;
 
 namespace {
 

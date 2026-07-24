@@ -1,8 +1,8 @@
 # Context: Vulkan
 
-**Namespace:** `SoulEngine::RHI::Vulkan`
+**Namespace:** `SoulEngine`
 
-Vulkan RHI backend — implements `SoulEngine::RHI::RenderDevice`.
+Vulkan RHI backend — implements `SoulEngineRenderDevice`.
 
 ## Terms
 
@@ -16,7 +16,7 @@ Vulkan RHI backend — implements `SoulEngine::RHI::RenderDevice`.
 | Term | Definition |
 |------|------------|
 | **DescriptorManager** | Class in `:Descriptor` partition. Owns descriptor pool policy and descriptor write helpers. It allocates persistent descriptor-set instances owned by compatible Vulkan pipelines. |
-| **Shader-oriented pipeline layout** | Each `Vulkan::GraphicsPipeline` consumes `Shader::GraphicsProgram::Reflection`, creates the matching Vulkan descriptor set layouts and `vk::PipelineLayout`, and keeps shader binding name lookup data for recording-time descriptor binding. |
+| **Shader-oriented pipeline layout** | Each `VulkanGraphicsPipeline` consumes `ShaderGraphicsProgram::Reflection`, creates the matching Vulkan descriptor set layouts and `vk::PipelineLayout`, and keeps shader binding name lookup data for recording-time descriptor binding. |
 | **Mutable sampler descriptor** | Vulkan sampler descriptor whose `VkSampler` comes from a draw shader binding. It replaces immutable sampler layouts in the target model so Renderer-authored sampler resources can be bound by shader binding name. |
 | **Explicit vertex input layout** | `GraphicsPipelineDesc::VertexInputLayout` is lowered to Vulkan binding and attribute descriptions. Shader reflection validates location/format compatibility with warnings only; it does not define CPU stride or offset. |
 | **VertexBinding slot** | Currently one explicit binding, single interleaved buffer, per-vertex rate. Multi-binding and per-instance rate deferred. |
@@ -39,7 +39,7 @@ visibility is currently lowered conservatively to all graphics stages.
 
 The implementation derives descriptor set layout, descriptor lookup, dynamic
 uniform-buffer offset order, and descriptor writes from shader reflection.
-`RHI::ShaderParameters` are automatically partitioned into reflected sets;
+`RHIShaderParameters` are automatically partitioned into reflected sets;
 Vulkan associates each partition with a persistent descriptor-set instance
 owned by the compatible graphics pipeline and updates it by parameter revision.
 Sampler bindings use mutable sampler descriptors, not immutable sampler
@@ -69,7 +69,7 @@ BDA (Buffer Device Address) rather than descriptor tables.
 
 ## Presentation
 
-Normal render passes target engine-owned `RHI::RenderTarget` images. The Vulkan
+Normal render passes target engine-owned `RHIRenderTarget` images. The Vulkan
 backend does not treat a null color attachment as the swapchain. At the end of
 `RenderDevice::Execute()`, `CommandList::PresentSource` is transitioned to a
 backend transfer-source layout, the acquired swapchain image is transitioned to

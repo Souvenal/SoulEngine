@@ -9,25 +9,23 @@ import Core;
 import vulkan;
 import std;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Extension request
 // ═════════════════════════════════════════════════════════════════════════════
 
-struct ExtensionRequest {
+struct VulkanExtensionRequest {
     const char* Name     = nullptr;
     bool        Required = false;
     bool        Enabled  = false; // set during resolve
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Capability
+// VulkanCapability
 // ═════════════════════════════════════════════════════════════════════════════
 
-using FeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
+using VulkanFeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                          vk::PhysicalDeviceVulkan11Features,
                                          vk::PhysicalDeviceVulkan12Features,
                                          vk::PhysicalDeviceVulkan13Features,
@@ -35,7 +33,7 @@ using FeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                          vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
                                          vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>;
 
-using PropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
+using VulkanPropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
                                            vk::PhysicalDeviceVulkan11Properties,
                                            vk::PhysicalDeviceVulkan12Properties,
                                            vk::PhysicalDeviceVulkan13Properties,
@@ -43,13 +41,13 @@ using PropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
                                            vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
                                            vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>;
 
-struct RayTracingSupport {
+struct VulkanRayTracingSupport {
     bool   Available         = false;
     String UnavailableReason = {};
 };
 
-class Capability : public Singleton<Capability> {
-    friend class Singleton<Capability>;
+class VulkanCapability : public Singleton<VulkanCapability> {
+    friend class Singleton<VulkanCapability>;
 
   public:
     // ── Phase 1: Resolve instance extensions ─────────────────────────────
@@ -63,7 +61,7 @@ class Capability : public Singleton<Capability> {
             const char* Desc = nullptr;
             glfwGetError(&Desc);
             return std::unexpected(
-                ErrorMessage(Core::Format("glfwGetRequiredInstanceExtensions failed: {}",
+                ErrorMessage(Format("glfwGetRequiredInstanceExtensions failed: {}",
                                           Desc ? Desc : "GLFW not initialized or no Vulkan support")));
         }
         for (auto* GlfwExt : std::span(GlfwExts, GlfwCount)) {
@@ -90,7 +88,7 @@ class Capability : public Singleton<Capability> {
     // ── Phase 2: Resolve device extensions + query features ──────────────
 
     [[nodiscard]] auto ResolveDeviceExtensionsAndFeatures(vk::raii::PhysicalDevice& PD)
-        -> std::expected<std::tuple<std::vector<const char*>, const FeaturesChain&>, ErrorMessage> {
+        -> std::expected<std::tuple<std::vector<const char*>, const VulkanFeaturesChain&>, ErrorMessage> {
         // Enumerate available device extensions
         auto ExtPropsRes = PD.enumerateDeviceExtensionProperties();
         if (ExtPropsRes.result != vk::Result::eSuccess)
@@ -125,7 +123,7 @@ class Capability : public Singleton<Capability> {
             m_SupportedFeatures.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline = false;
         }
 
-        return std::tuple<std::vector<const char*>, const FeaturesChain&>{m_EnabledDeviceNames, m_SupportedFeatures};
+        return std::tuple<std::vector<const char*>, const VulkanFeaturesChain&>{m_EnabledDeviceNames, m_SupportedFeatures};
     }
 
     // ── Phase 3: Query device properties ────────────────────────────────
@@ -175,7 +173,7 @@ class Capability : public Singleton<Capability> {
     }
 
     [[nodiscard]] auto IsDeviceExtensionEnabled(const char* Name) -> bool {
-        const auto IsEnabled = [Name](const std::vector<ExtensionRequest>& Extensions) -> bool {
+        const auto IsEnabled = [Name](const std::vector<VulkanExtensionRequest>& Extensions) -> bool {
             auto It = std::ranges::find_if(
                 Extensions, [Name](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
             return It != Extensions.end() && It->Enabled;
@@ -183,14 +181,14 @@ class Capability : public Singleton<Capability> {
         return IsEnabled(m_DeviceExts) || (m_RayTracingSupport.Available && IsEnabled(m_RayTracingExts));
     }
 
-    [[nodiscard]] auto GetRayTracingSupport() const -> const RayTracingSupport& {
+    [[nodiscard]] auto GetRayTracingSupport() const -> const VulkanRayTracingSupport& {
         return m_RayTracingSupport;
     }
 
   private:
     // ── Shared match logic ───────────────────────────────────────────────
 
-    [[nodiscard]] auto MatchExtensions(std::vector<ExtensionRequest>&           Exts,
+    [[nodiscard]] auto MatchExtensions(std::vector<VulkanExtensionRequest>&           Exts,
                                        std::span<const vk::ExtensionProperties> Available)
         -> std::expected<std::vector<const char*>, ErrorMessage> {
         for (auto& E : Exts)
@@ -217,7 +215,7 @@ class Capability : public Singleton<Capability> {
                     Msg += ", ";
                 Msg += Missing[i];
             }
-            return std::unexpected(ErrorMessage(Core::Format("Required Vulkan extensions not supported: {}", Msg)));
+            return std::unexpected(ErrorMessage(Format("Required Vulkan extensions not supported: {}", Msg)));
         }
 
         std::vector<const char*> EnabledNames;
@@ -229,7 +227,7 @@ class Capability : public Singleton<Capability> {
     }
 
   private:
-    Capability() {
+    VulkanCapability() {
         RegisterInstanceExtensions();
         RegisterDeviceExtensions();
     }
@@ -306,14 +304,14 @@ class Capability : public Singleton<Capability> {
 
     // ── Members ─────────────────────────────────────────────────────────
 
-    std::vector<ExtensionRequest> m_InstanceExts;
-    std::vector<ExtensionRequest> m_DeviceExts;
-    std::vector<ExtensionRequest> m_RayTracingExts;
+    std::vector<VulkanExtensionRequest> m_InstanceExts;
+    std::vector<VulkanExtensionRequest> m_DeviceExts;
+    std::vector<VulkanExtensionRequest> m_RayTracingExts;
     std::vector<const char*>      m_EnabledDeviceNames;
-    RayTracingSupport             m_RayTracingSupport = {};
+    VulkanRayTracingSupport             m_RayTracingSupport = {};
 
-    FeaturesChain   m_SupportedFeatures; ///< Queried from physical device
-    PropertiesChain m_Properties;        ///< Queried from physical device
+    VulkanFeaturesChain   m_SupportedFeatures; ///< Queried from physical device
+    VulkanPropertiesChain m_Properties;        ///< Queried from physical device
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine
