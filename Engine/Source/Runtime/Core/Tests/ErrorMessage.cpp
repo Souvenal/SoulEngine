@@ -6,7 +6,7 @@
 import Core;
 import std;
 
-using namespace SoulEngine::Core;
+using namespace SoulEngine;
 
 TEST(ErrorMessageTest, LeafErrorRendersAsIs) {
     const ErrorMessage Error{"Leaf failure"};

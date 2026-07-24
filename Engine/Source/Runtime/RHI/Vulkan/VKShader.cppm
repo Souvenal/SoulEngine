@@ -2,7 +2,7 @@
 ///
 /// Converts RHI shader resource and vertex-input types to their Vulkan
 /// equivalents, and provides CreateShaderStages for turning a
-/// GraphicsPipelineDesc into live VkShaderModule + PipelineShaderStageCreateInfo
+/// RHIGraphicsPipelineDesc into live VkShaderModule + PipelineShaderStageCreateInfo
 /// arrays.
 ///
 /// Internal to the Vulkan RHI backend; imported by VKPipeline and (in future)
@@ -21,41 +21,39 @@ import Shader;
 import RHI;
 import std;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Resource-type conversion
 // ═════════════════════════════════════════════════════════════════════════════
 
-[[nodiscard]] auto ToVkDescriptorType(Shader::ResourceType ResourceType)
+[[nodiscard]] auto ToVkDescriptorType(ShaderResourceType ResourceType)
     -> std::expected<vk::DescriptorType, ErrorMessage> {
     switch (ResourceType) {
-    case Shader::ResourceType::Unknown:
+    case ShaderResourceType::Unknown:
         return std::unexpected(ErrorMessage("Cannot lower Unknown shader resource type to Vulkan descriptor type"));
-    case Shader::ResourceType::ConstantBuffer:
+    case ShaderResourceType::ConstantBuffer:
         return vk::DescriptorType::eUniformBuffer;
-    case Shader::ResourceType::StorageBuffer:
+    case ShaderResourceType::StorageBuffer:
         return vk::DescriptorType::eStorageBuffer;
-    case Shader::ResourceType::SampledTexture:
+    case ShaderResourceType::SampledTexture:
         return vk::DescriptorType::eSampledImage;
-    case Shader::ResourceType::StorageTexture:
+    case ShaderResourceType::StorageTexture:
         return vk::DescriptorType::eStorageImage;
-    case Shader::ResourceType::Sampler:
+    case ShaderResourceType::Sampler:
         return vk::DescriptorType::eSampler;
     }
     return std::unexpected(ErrorMessage("Unsupported shader resource type in Vulkan lowering"));
 }
 
-[[nodiscard]] auto ToVkVertexFormat(const Shader::ValueType& ValueType) -> std::expected<vk::Format, ErrorMessage> {
+[[nodiscard]] auto ToVkVertexFormat(const ShaderValueType& ValueType) -> std::expected<vk::Format, ErrorMessage> {
     if (ValueType.RowCount != 1) {
         return std::unexpected(
             ErrorMessage("Matrix vertex inputs are not supported by vertex input layout validation"));
     }
 
     switch (ValueType.ScalarType) {
-    case Shader::ScalarType::Float32:
+    case ShaderScalarType::Float32:
         switch (ValueType.ColumnCount) {
         case 1:
             return vk::Format::eR32Sfloat;
@@ -69,7 +67,7 @@ namespace SoulEngine::RHI::Vulkan {
             break;
         }
         break;
-    case Shader::ScalarType::Int32:
+    case ShaderScalarType::Int32:
         switch (ValueType.ColumnCount) {
         case 1:
             return vk::Format::eR32Sint;
@@ -83,7 +81,7 @@ namespace SoulEngine::RHI::Vulkan {
             break;
         }
         break;
-    case Shader::ScalarType::Uint32:
+    case ShaderScalarType::Uint32:
         switch (ValueType.ColumnCount) {
         case 1:
             return vk::Format::eR32Uint;
@@ -102,31 +100,31 @@ namespace SoulEngine::RHI::Vulkan {
     }
 
     return std::unexpected(
-        ErrorMessage(Core::Format("Unsupported reflected vertex input type: scalar={}, rows={}, cols={}",
+        ErrorMessage(Format("Unsupported reflected vertex input type: scalar={}, rows={}, cols={}",
                                   magic_enum::enum_name(ValueType.ScalarType),
                                   ValueType.RowCount,
                                   ValueType.ColumnCount)));
 }
 
-[[nodiscard]] auto ToVkVertexFormat(RHI::Format Format) -> std::expected<vk::Format, ErrorMessage> {
-    switch (Format) {
-    case RHI::Format::R32_SFLOAT:
+[[nodiscard]] auto ToVkVertexFormat(RHIFormat Fmt) -> std::expected<vk::Format, ErrorMessage> {
+    switch (Fmt) {
+    case RHIFormat::R32_SFLOAT:
         return vk::Format::eR32Sfloat;
-    case RHI::Format::R32G32_SFLOAT:
+    case RHIFormat::R32G32_SFLOAT:
         return vk::Format::eR32G32Sfloat;
-    case RHI::Format::R32G32B32_SFLOAT:
+    case RHIFormat::R32G32B32_SFLOAT:
         return vk::Format::eR32G32B32Sfloat;
-    case RHI::Format::R32G32B32A32_SFLOAT:
+    case RHIFormat::R32G32B32A32_SFLOAT:
         return vk::Format::eR32G32B32A32Sfloat;
     default:
         return std::unexpected(
-            ErrorMessage(Core::Format("Unsupported explicit vertex input format: {}", magic_enum::enum_name(Format))));
+            ErrorMessage(Format("Unsupported explicit vertex input format: {}", magic_enum::enum_name(Fmt))));
     }
 }
 
-[[nodiscard]] auto FindReflectedVertexInputByLocation(const std::vector<Shader::VertexInputAttribute>& VertexInputs,
+[[nodiscard]] auto FindReflectedVertexInputByLocation(const std::vector<ShaderVertexInputAttribute>& VertexInputs,
                                                       Uint32                                           Location)
-    -> const Shader::VertexInputAttribute* {
+    -> const ShaderVertexInputAttribute* {
     for (const auto& Attr : VertexInputs) {
         if (Attr.Location && *Attr.Location == Location)
             return &Attr;
@@ -134,28 +132,28 @@ namespace SoulEngine::RHI::Vulkan {
     return nullptr;
 }
 
-[[nodiscard]] auto ValidateVertexInputLayout(const GraphicsPipelineDesc& Desc) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] auto ValidateVertexInputLayout(const RHIGraphicsPipelineDesc& Desc) -> std::expected<void, ErrorMessage> {
     const auto& ExplicitLayout = Desc.VertexInputLayout;
     std::array<bool, kMaxVertexBufferBindings> DeclaredBindings = {};
     for (const auto& Binding : ExplicitLayout.Bindings) {
         if (Binding.Binding >= kMaxVertexBufferBindings) {
             return std::unexpected(
-                ErrorMessage(Core::Format("Vertex input binding {} exceeds supported binding count {}", Binding.Binding,
+                ErrorMessage(Format("Vertex input binding {} exceeds supported binding count {}", Binding.Binding,
                                           kMaxVertexBufferBindings)));
         }
         if (Binding.Stride == 0)
             return std::unexpected(
-                ErrorMessage(Core::Format("Vertex input binding {} has zero stride", Binding.Binding)));
+                ErrorMessage(Format("Vertex input binding {} has zero stride", Binding.Binding)));
         if (DeclaredBindings[Binding.Binding])
             return std::unexpected(
-                ErrorMessage(Core::Format("Vertex input binding {} is duplicated", Binding.Binding)));
+                ErrorMessage(Format("Vertex input binding {} is duplicated", Binding.Binding)));
         DeclaredBindings[Binding.Binding] = true;
     }
 
     for (const auto& Attr : ExplicitLayout.Attributes) {
         if (Attr.Binding >= kMaxVertexBufferBindings || !DeclaredBindings[Attr.Binding]) {
             return std::unexpected(
-                ErrorMessage(Core::Format("Vertex input attribute location {} references undeclared binding {}",
+                ErrorMessage(Format("Vertex input attribute location {} references undeclared binding {}",
                                           Attr.Location,
                                           Attr.Binding)));
         }
@@ -183,7 +181,7 @@ namespace SoulEngine::RHI::Vulkan {
 
         auto It = std::find_if(ExplicitLayout.Attributes.begin(),
                                ExplicitLayout.Attributes.end(),
-                               [&](const VertexInputAttributeDesc& DescAttr) -> bool {
+                               [&](const RHIVertexInputAttributeDesc& DescAttr) -> bool {
                                    return DescAttr.Location == *Attr.Location;
                                });
         if (It == ExplicitLayout.Attributes.end()) {
@@ -235,15 +233,15 @@ namespace SoulEngine::RHI::Vulkan {
 ///
 /// Owns VkShaderModule lifetimes; all modules are destroyed when this
 /// object is destroyed.
-class GraphicsShaderStates {
+class VulkanGraphicsShaderStates {
   public:
     std::vector<vk::PipelineShaderStageCreateInfo> StageInfos = {};
 
     /// Create shader modules, stage infos, and vertex input state from a
     /// graphics pipeline descriptor.
-    [[nodiscard]] static auto Create(const vk::raii::Device& Device, const GraphicsPipelineDesc& Desc)
-        -> std::expected<GraphicsShaderStates, ErrorMessage> {
-        GraphicsShaderStates Result;
+    [[nodiscard]] static auto Create(const vk::raii::Device& Device, const RHIGraphicsPipelineDesc& Desc)
+        -> std::expected<VulkanGraphicsShaderStates, ErrorMessage> {
+        VulkanGraphicsShaderStates Result;
 
         if (Desc.Program.Code.empty())
             return std::unexpected(ErrorMessage("Graphics shader program has no SPIR-V code"));
@@ -255,7 +253,7 @@ class GraphicsShaderStates {
         };
         auto [Res, Module] = Device.createShaderModule(ModuleCI);
         if (Res != vk::Result::eSuccess) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Failed to create shader module for graphics program '{} + {}': {}",
                 Desc.Program.VertexEntryPointName,
                 Desc.Program.FragmentEntryPointName,
@@ -285,7 +283,7 @@ class GraphicsShaderStates {
             for (const auto& Attr : Desc.VertexInputLayout.Attributes) {
                 auto VkFormat = ToVkVertexFormat(Attr.Format);
                 if (!VkFormat)
-                    return std::unexpected(VkFormat.error().Append(Core::Format(
+                    return std::unexpected(VkFormat.error().Append(Format(
                         "Failed to lower explicit vertex input layout location {}", Attr.Location)));
 
                 Result.m_VertexAttributes.push_back(vk::VertexInputAttributeDescription{
@@ -310,7 +308,7 @@ class GraphicsShaderStates {
     }
 
     /// @brief Build a vertex-input-state create-info whose pointers are valid
-    /// for the lifetime of this GraphicsShaderStates object.
+    /// for the lifetime of this VulkanGraphicsShaderStates object.
     ///
     /// Delay the construction of CI rather than contructing in` Create`,
     /// Because anything in `Create` is a temp value, leading to hanging pointers.
@@ -331,4 +329,4 @@ class GraphicsShaderStates {
     std::vector<vk::VertexInputAttributeDescription> m_VertexAttributes  = {};
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

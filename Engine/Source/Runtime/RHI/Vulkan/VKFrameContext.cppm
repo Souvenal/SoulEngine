@@ -5,17 +5,15 @@ import RHI;
 import vulkan;
 import std;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 /// Per-frame-in-flight state: semaphores, timeline value, and the
 /// command buffer for this frame slot — everything that cycles with
 /// the frame index lives here.
 ///
-/// Named FrameContext to reserve FrameData for the future game→render
+/// Named VulkanFrameContext to reserve FrameData for the future game→render
 /// thread transfer struct that will carry draw commands, view state, etc.
-struct FrameContext {
+struct VulkanFrameContext {
     vk::raii::Semaphore       PresentComplete                 = nullptr;
     Uint64                    SubmissionCompleteTimelineValue = 0;
     vk::raii::CommandPool     Pool                            = nullptr;
@@ -27,7 +25,7 @@ struct FrameContext {
     std::vector<vk::raii::CommandBuffer> ScratchSecondaries;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device, Uint32 QueueFamily)
-        -> std::expected<FrameContext, ErrorMessage> {
+        -> std::expected<VulkanFrameContext, ErrorMessage> {
         auto SemaRes = Device.createSemaphore({});
         if (SemaRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create present-complete semaphore"));
@@ -39,7 +37,7 @@ struct FrameContext {
         };
         auto PoolRes = Device.createCommandPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("FrameContext: failed to create main command pool"));
+            return std::unexpected(ErrorMessage("VulkanFrameContext: failed to create main command pool"));
 
         // Allocate one primary command buffer from pool.
         vk::CommandBufferAllocateInfo PrimaryAlloc{
@@ -49,18 +47,18 @@ struct FrameContext {
         };
         auto PrimaryRes = Device.allocateCommandBuffers(PrimaryAlloc);
         if (PrimaryRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("FrameContext: failed to allocate primary command buffer"));
+            return std::unexpected(ErrorMessage("VulkanFrameContext: failed to allocate primary command buffer"));
 
-        // ── Sub pool (per CommandList secondary buffers) ─────────────────
+        // ── Sub pool (per RHICommandList secondary buffers) ─────────────────
         vk::CommandPoolCreateInfo SubPoolCI{
             .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer | vk::CommandPoolCreateFlagBits::eTransient,
             .queueFamilyIndex = QueueFamily,
         };
         auto SubPoolRes = Device.createCommandPool(SubPoolCI);
         if (SubPoolRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("FrameContext: failed to create sub command pool"));
+            return std::unexpected(ErrorMessage("VulkanFrameContext: failed to create sub command pool"));
 
-        return FrameContext{
+        return VulkanFrameContext{
             .PresentComplete                 = std::move(SemaRes.value),
             .SubmissionCompleteTimelineValue = 0,
             .Pool                            = std::move(PoolRes.value),
@@ -70,4 +68,4 @@ struct FrameContext {
     }
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

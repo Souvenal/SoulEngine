@@ -1,6 +1,6 @@
 export module Core:Util.Singleton;
 
-export namespace SoulEngine::Core {
+export namespace SoulEngine {
 /// @brief Meyer's singleton base class.
 ///
 /// Derive your singleton class publicly from `Singleton<Derived>`:
@@ -56,4 +56,4 @@ class Singleton {
     Singleton()  = default;
     ~Singleton() = default;
 };
-} // namespace SoulEngine::Core
+} // namespace SoulEngine

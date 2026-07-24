@@ -1,6 +1,6 @@
 # Context: Resource
 
-**Namespace:** `SoulEngine::Resource`
+**Namespace:** `SoulEngine`
 
 Runtime asset/resource loading context. This context names resource lifecycle states from request through render-consumable availability.
 
@@ -13,14 +13,14 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Resource ref** | Move-only logical owner for a resource request. It tracks that a runtime system still wants the resource, but does not expose the ready payload. |
 | **Resource entry** | ResourceContext-owned registry node for one canonical key. It owns request coalescing metadata such as logical ref count and lifetime policy, and contains the slot for the current generation. |
 | **Resource slot** | Internal payload state machine for one resource entry. It owns generation, state, error, and ready payload, but not logical ownership policy. |
-| **Ready resource observer** | Raw pointer returned by `Resource::Manager::TryGetReady(ref)` for immediate command-list recording or inspection. It does not own or extend payload lifetime. |
+| **Ready resource observer** | Raw pointer returned by `ResourceManager::TryGetReady(ref)` for immediate command-list recording or inspection. It does not own or extend payload lifetime. |
 | **Resource generation** | Version of a resource identity used to distinguish current asynchronous work from stale completions. |
 | **Resource payload** | Committed runtime object published by a ready resource, represented as `Resource<T>` with a ResourceContext-owned `UPtr<T>`. |
 | **Resource name** | Human-authored runtime identity for a resource request, such as a material texture name or buffer name. It may contribute to a Resource key, but it is not a shader binding name and does not bind the resource to a shader parameter by itself. |
 | **Resource key** | Canonical identity used to deduplicate equivalent resource requests. It may be derived from a resource name, normalized path, descriptor contents, or a combination of request fields. |
 | **In-flight resource request** | Resource request that has been accepted and has not yet reached ready or failed state. |
 | **Sampled texture resource** | Resource-system identity for a sampled texture asset request; its ready payload is an RHI `SampledTexture`. It does not represent render targets or swapchain images. |
-| **Resource array** | Mutable non-global `Array<T>` Resource-layer object for one ordered array of managed resources. It owns `ResourceRef<T>` values and produces ready `RHI::ResourceArray<T>` snapshots with non-owning observers. It is not a ResourceManager registry entry. |
+| **Resource array** | Mutable non-global `ResourceArray<T>` Resource-layer object for one ordered array of managed resources. It owns `ResourceRef<T>` values and produces ready `RHIResourceArray<T>` snapshots with non-owning observers. It is not a ResourceManager registry entry. |
 | **Sampler resource** | Resource-system identity for a small RHI sampler profile such as linear-repeat or anisotropic-repeat; its ready payload is an RHI `Sampler`. |
 | **Buffer resource** | Resource-system identity for a buffer request; its ready payload is an RHI buffer. |
 | **Pipeline resource** | Resource-system identity for a graphics pipeline request; its ready payload is an RHI graphics pipeline. |
@@ -51,15 +51,15 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - **Resource state** is public consumer-facing information, not an internal debug-only phase.
 - Consumers may use **Resource state** directly; helper predicates such as ready/failed checks are optional convenience, not required API surface.
 - A **Resource handle** refers to a resource identity and generation, not directly to a **Resource payload**.
-- A **Resource handle** stores only **Resource key** and `ResourceGeneration`; it does not hold `SPtr<ResourceSlot<T>>`, does not call back into `Resource::Manager`, and does not keep the payload alive.
-- A **Resource ref** tracks logical ownership. It is created by `Resource::Manager`, retains a non-owning observer for the creating `ResourceContext`, and calls that context to release logical demand. When the resource entry's ref count reaches zero, the entry's lifetime policy decides whether the resource is merely cache-eligible or should release its payload.
+- A **Resource handle** stores only **Resource key** and `ResourceGeneration`; it does not hold `SPtr<ResourceSlot<T>>`, does not call back into `ResourceManager`, and does not keep the payload alive.
+- A **Resource ref** tracks logical ownership. It is created by `ResourceManager`, retains a non-owning observer for the creating `ResourceContext`, and calls that context to release logical demand. When the resource entry's ref count reaches zero, the entry's lifetime policy decides whether the resource is merely cache-eligible or should release its payload.
 - A **Resource entry** owns registry/cache metadata. New lifetime policy fields, logical ref counts, eviction markers, budget metadata, and reload bookkeeping belong here or in `ResourceContext`, not in the slot.
 - A **Resource slot** owns payload readiness state only. New state-machine transitions, generation checks, publish results, and payload reset belong here.
-- `ResourceContext` is the sole owner of resource entries, slots, and ready payloads. `Resource::Manager` is the public facade over that context.
-- `Resource::Manager` may own the `ResourceContext` instance, but it is not a second lifecycle owner. Manager should stay a facade for public Runtime call sites.
+- `ResourceContext` is the sole owner of resource entries, slots, and ready payloads. `ResourceManager` is the public facade over that context.
+- `ResourceManager` may own the `ResourceContext` instance, but it is not a second lifecycle owner. Manager should stay a facade for public Runtime call sites.
 - Supported RHI payload families require both `ResourceTraits<RHI::T>::Info` and inclusion in `ManagedRHIResourceTypes`; unsupported `Resource<T>` / `ResourceHandle<T>` / `ResourceSlot<T>` instantiations fail at compile time.
 - Supported asset payload families require both `ResourceTraits<T>::Info` and inclusion in `ManagedAssetResourceTypes`. `ManagedResourceTypes` combines the RHI and asset family lists for `ResourceContext` storage.
-- Consumers must query `Resource::Manager::GetState(handle)` and `GetError(handle)` instead of resolving payloads from the handle. Renderers resolve ready observer pointers through `Resource::Manager::TryGetReady(ref)`.
+- Consumers must query `ResourceManager::GetState(handle)` and `GetError(handle)` instead of resolving payloads from the handle. Renderers resolve ready observer pointers through `ResourceManager::TryGetReady(ref)`.
 - A successful **Ready resource observer** requires matching generation and `Ready` state.
 - A **Ready resource observer** does not keep the ResourceContext-owned payload alive. The owning renderer, scene, or application must keep a `ResourceRef<T>` alive for every resource whose observer pointer is recorded into a command list.
 - A **Resource key** maps equivalent requests to the same **Resource**.
@@ -92,7 +92,7 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 - Render targets are Resource-managed attachment resources when requested
   through typed render-target handles. They are not sampled texture resources
   and do not belong to Async Resource v1.
-- Camera render targets use **Transient lifetime** through `ResourceRef<RHI::RenderTarget>`.
+- Camera render targets use **Transient lifetime** through `ResourceRef<RHIRenderTarget>`.
 - Swapchain images remain backend-private presentation targets.
 - Constant buffers and per-frame uniform buffers are outside **Async Resource
   v1**.
@@ -110,7 +110,7 @@ separate:
 | Resource entry | `ResourceContext` internals | What registry record exists for this key? | Ref count, lifetime policy, cache/eviction metadata, request coalescing for one key. | RHI payload state transitions or command-list observer safety. |
 | `ResourceSlot<T>` | Resource internals | What is the payload state for this generation? | Generation, state, error, and ready payload. | Logical ref count, cache policy, budget policy, request coalescing, or command-list observer lifetime. |
 | `ResourceContext` | Resource internals | Where does lifecycle state live? | Resource families, entries, slots, ready payloads, ref counts, lifetime policy state, and GPU-pending queues. | Public facade behavior or family-specific loading code. |
-| `Resource::Manager` | Public Runtime facade | What API should the rest of Runtime call? | The singleton `ResourceContext` instance and public request/query/tick/clear/collect entry points. | Slot internals, entry maps, per-family loading implementation, or ownership hidden in handles. |
+| `ResourceManager` | Public Runtime facade | What API should the rest of Runtime call? | The singleton `ResourceContext` instance and public request/query/tick/clear/collect entry points. | Slot internals, entry maps, per-family loading implementation, or ownership hidden in handles. |
 | Request partitions | Resource internals | How does one resource family prepare work? | Key derivation, CPU preparation, RHI-thread creation/upload, and result publication for one family. | Registry ownership, logical ref counts, observer lifetime, or public owner semantics. |
 
 When a new feature needs to answer "does anyone still want this resource?",
@@ -123,7 +123,7 @@ When code needs entry maps, ref counts, lifetime policy application, or
 GPU-pending queues, it belongs in `ResourceContext`. When code needs texture
 decode, mesh import, shader compilation, RHI object creation, or upload
 submission, it belongs in a request partition. When code only adapts Resource
-for external callers, it belongs in `Resource::Manager`.
+for external callers, it belongs in `ResourceManager`.
 
 `CollectReleasedResources()` is a collection pass, not a release trigger. A
 transient resource is released by last-ref release through `ResourceRef<T>` and
@@ -213,7 +213,7 @@ eventually require fewer central edits than it does today.
 9. If render code will pass the resource as a raw RHI observer pointer into a
    command list, make sure the owning scene/application/renderer keeps a
    `ResourceRef<T>` alive, then resolve the pointer through
-   `Resource::Manager::TryGetReady(ref)` or `TryGetReady(handle)`.
+   `ResourceManager::TryGetReady(ref)` or `TryGetReady(handle)`.
 10. Add focused tests under `Engine/Source/Runtime/Resource/Tests/`.
 
 ### When to add a new file

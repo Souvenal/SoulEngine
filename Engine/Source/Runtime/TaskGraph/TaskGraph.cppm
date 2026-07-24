@@ -3,8 +3,6 @@ export module TaskGraph;
 import Core;
 export import std;
 
-using namespace SoulEngine::Core;
-
 export namespace SoulEngine {
 
 /// @brief Thread queue target for Enqueue / TryDequeue.

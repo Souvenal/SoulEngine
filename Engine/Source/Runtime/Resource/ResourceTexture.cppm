@@ -12,9 +12,7 @@ export import :Types;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 struct DecodedTexture {
     std::vector<Uint8> Pixels;
@@ -50,10 +48,10 @@ struct DecodedTexture {
 }
 
 [[nodiscard]] auto SubmitSampledTextureRequest(ResourceContext& Context, StringView TexturePath)
-    -> ResourceHandle<RHI::SampledTexture> {
+    -> ResourceHandle<RHISampledTexture> {
     const auto Key = NormalizeResourcePath(TexturePath);
 
-    auto Work   = BeginResourceWork<RHI::SampledTexture>(Context, Key);
+    auto Work   = BeginResourceWork<RHISampledTexture>(Context, Key);
     auto Handle = Work.Handle;
     if (!Work.ShouldStartWork)
         return Handle;
@@ -71,7 +69,7 @@ struct DecodedTexture {
 
         auto DecodeResult = DecodeTexture(Key);
         if (!DecodeResult) {
-            PublishResourceFailed<RHI::SampledTexture>(Context, Generation, Key, DecodeResult.error());
+            PublishResourceFailed<RHISampledTexture>(Context, Generation, Key, DecodeResult.error());
             return;
         }
 
@@ -87,30 +85,30 @@ struct DecodedTexture {
                 return;
             }
 
-            if (!MarkResourceRhiCommitting<RHI::SampledTexture>(Context, Key, Generation))
+            if (!MarkResourceRhiCommitting<RHISampledTexture>(Context, Key, Generation))
                 return;
 
-            RHI::SampledTextureDesc Desc{
+            RHISampledTextureDesc Desc{
                 .Data     = Decoded.Pixels.data(),
                 .Width    = Decoded.Width,
                 .Height   = Decoded.Height,
                 .Channels = 4,
-                .Format   = RHI::Format::R8G8B8A8_UNORM,
-                .Usage    = RHI::TextureUsage::ShaderResource,
+                .Format   = RHIFormat::R8G8B8A8_UNORM,
+                .Usage    = RHITextureUsage::ShaderResource,
             };
 
-            auto TexResult = RHI::RenderDevice::Get().CreateSampledTexture(Desc);
+            auto TexResult = RHIRenderDevice::Get().CreateSampledTexture(Desc);
             if (!TexResult) {
-                PublishResourceFailed<RHI::SampledTexture>(
+                PublishResourceFailed<RHISampledTexture>(
                     Context, Generation, Key, TexResult.error().Append(Format("Failed to create GPU texture for '{}'", Key)));
                 return;
             }
 
-            PublishResourceGpuPending<RHI::SampledTexture>(
+            PublishResourceGpuPending<RHISampledTexture>(
                 Context,
                 Generation,
                 Key,
-                Resource<RHI::SampledTexture>{.Object = std::move(TexResult->Texture)},
+                Resource<RHISampledTexture>{.Object = std::move(TexResult->Texture)},
                 TexResult->UploadCompletion);
         });
     });
@@ -118,4 +116,4 @@ struct DecodedTexture {
     return Handle;
 }
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

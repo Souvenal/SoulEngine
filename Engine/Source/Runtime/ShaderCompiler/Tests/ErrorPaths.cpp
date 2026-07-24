@@ -8,12 +8,11 @@ import Shader;
 import std;
 import ShaderCompiler;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::ShaderCompiler;
+using namespace SoulEngine;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-static auto ExpectErrorContains(const std::expected<SoulEngine::Shader::GraphicsProgram, ErrorMessage>& Result,
+static auto ExpectErrorContains(const std::expected<ShaderGraphicsProgram, ErrorMessage>& Result,
                                 StringView                                                              ExpectedText)
     -> void {
     ASSERT_FALSE(Result.has_value());
@@ -45,24 +44,24 @@ class ShaderCompilerErrorPathTest : public ::testing::Test {
 
 TEST_F(ShaderCompilerErrorPathTest, InvalidEntryPointName) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "doesNotExist", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "doesNotExist", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
     ExpectErrorContains(Result, "Vertex entry point 'doesNotExist' not found");
 }
 
 TEST_F(ShaderCompilerErrorPathTest, InvalidFragmentEntryPointName) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "doesNotExist", .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "doesNotExist", .Backend = ShaderBackend::Slang},
     });
     ExpectErrorContains(Result, "Fragment entry point 'doesNotExist' not found");
 }
 
 TEST_F(ShaderCompilerErrorPathTest, BackendsMustMatch) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = Backend::Unknown},
+        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Unknown},
     });
     ExpectErrorContains(Result, "Graphics shader compile requires matching vertex/fragment backends");
 }
@@ -70,16 +69,16 @@ TEST_F(ShaderCompilerErrorPathTest, BackendsMustMatch) {
 TEST(ShaderCompilerTest, NonexistentFile) // NOLINT-RAW-MEM
 {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = "/nonexistent/path/to/file.slang", .EntryPoint = "VertexMain", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = "/nonexistent/path/to/file.slang", .EntryPoint = "FragmentMain", .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = "/nonexistent/path/to/file.slang", .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = "/nonexistent/path/to/file.slang", .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
     ExpectErrorContains(Result, "Cannot open file");
 }
 
 TEST_F(ShaderCompilerErrorPathTest, InvalidShaderSource) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_InvalidShaderPath, .EntryPoint = "VertexMain", .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_InvalidShaderPath, .EntryPoint = "FragmentMain", .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = m_InvalidShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = m_InvalidShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
     ExpectErrorContains(Result, "Failed to load module");
     ExpectErrorContains(Result, "ErrorSyntax.slang");

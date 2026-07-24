@@ -9,44 +9,42 @@ import Shader;
 
 export import std;
 
-using namespace SoulEngine::Core;
+export namespace SoulEngine {
 
-export namespace SoulEngine::RHI {
-
-class RenderTarget;
-class TopLevelAccelerationStructure;
-class RayTracingGeometryTable;
+class RHIRenderTarget;
+class RHITopLevelAccelerationStructure;
+class RHIRayTracingGeometryTable;
 
 // ── Buffer descriptor types ────────────────────────────────────────────────
 
-struct VertexBufferDesc {
+struct RHIVertexBufferDesc {
     const void* Data        = nullptr;
     Uint64      VertexCount = 0;
     Uint32      Stride      = 0;
 };
 
-struct IndexBufferDesc {
+struct RHIIndexBufferDesc {
     const void* Data       = nullptr;
     Uint64      IndexCount = 0;
 };
 
-struct ConstantBufferDesc {
+struct RHIConstantBufferDesc {
     Uint64 Size = 0;
 };
 
-enum class SamplerProfile : Uint8 {
+enum class RHISamplerProfile : Uint8 {
     Unknown = 0,
     LinearRepeat,
     AnisotropicRepeat,
 };
 
-struct SamplerDesc {
-    SamplerProfile Profile = SamplerProfile::LinearRepeat;
+struct RHISamplerDesc {
+    RHISamplerProfile Profile = RHISamplerProfile::LinearRepeat;
 };
 
-// ── GpuResource — base for GPU resources with usage tracking ────────────
+// ── RHIGpuResource — base for GPU resources with usage tracking ────────────
 
-struct GpuCompletionToken {
+struct RHIGpuCompletionToken {
     Uint64 Id = 0;
 };
 
@@ -54,51 +52,51 @@ struct GpuCompletionToken {
 /// Resources inheriting this can participate in deferred deletion via
 /// DeletionQueue: when the GPU completes all work up to the last usage token,
 /// the resource is safe to destroy.
-class GpuResource {
+class RHIGpuResource {
   public:
-    GpuResource()                                      = default;
-    GpuResource(const GpuResource&)                    = delete;
-    auto operator=(const GpuResource&) -> GpuResource& = delete;
-    GpuResource(GpuResource&&)                         = delete;
-    auto operator=(GpuResource&&) -> GpuResource&      = delete;
-    virtual ~GpuResource()                             = default;
+    RHIGpuResource()                                      = default;
+    RHIGpuResource(const RHIGpuResource&)                    = delete;
+    auto operator=(const RHIGpuResource&) -> RHIGpuResource& = delete;
+    RHIGpuResource(RHIGpuResource&&)                         = delete;
+    auto operator=(RHIGpuResource&&) -> RHIGpuResource&      = delete;
+    virtual ~RHIGpuResource()                             = default;
 
-    [[nodiscard]] auto GetLastUsageToken() const noexcept -> GpuCompletionToken {
+    [[nodiscard]] auto GetLastUsageToken() const noexcept -> RHIGpuCompletionToken {
         return m_LastUsage;
     }
-    auto UpdateLastUsageToken(GpuCompletionToken Token) noexcept -> void {
+    auto UpdateLastUsageToken(RHIGpuCompletionToken Token) noexcept -> void {
         m_LastUsage = Token;
     }
 
   private:
-    GpuCompletionToken m_LastUsage = {};
+    RHIGpuCompletionToken m_LastUsage = {};
 };
 
 // ── Typed GPU buffer polymorphic bases ──────────────────────────────────
 
 /// Empty polymorphic base for vertex buffer resources.
-/// Backend concrete class (e.g. Vulkan::VertexBuffer) owns the GPU allocation.
-/// Resource::Manager owns VertexBuffer instances; command lists only observe them.
-class VertexBuffer : public GpuResource {
+/// Backend concrete class (e.g. VulkanVertexBuffer) owns the GPU allocation.
+/// ResourceManager owns RHIVertexBuffer instances; command lists only observe them.
+class RHIVertexBuffer : public RHIGpuResource {
   public:
-    VertexBuffer()                                       = default;
-    VertexBuffer(const VertexBuffer&)                    = delete;
-    auto operator=(const VertexBuffer&) -> VertexBuffer& = delete;
-    VertexBuffer(VertexBuffer&&)                         = delete;
-    auto operator=(VertexBuffer&&) -> VertexBuffer&      = delete;
-    virtual ~VertexBuffer()                              = default;
+    RHIVertexBuffer()                                       = default;
+    RHIVertexBuffer(const RHIVertexBuffer&)                    = delete;
+    auto operator=(const RHIVertexBuffer&) -> RHIVertexBuffer& = delete;
+    RHIVertexBuffer(RHIVertexBuffer&&)                         = delete;
+    auto operator=(RHIVertexBuffer&&) -> RHIVertexBuffer&      = delete;
+    virtual ~RHIVertexBuffer()                              = default;
 };
 
 /// Empty polymorphic base for index buffer resources.
-/// Same role as VertexBuffer, for index data.
-class IndexBuffer : public GpuResource {
+/// Same role as RHIVertexBuffer, for index data.
+class RHIIndexBuffer : public RHIGpuResource {
   public:
-    IndexBuffer()                                      = default;
-    IndexBuffer(const IndexBuffer&)                    = delete;
-    auto operator=(const IndexBuffer&) -> IndexBuffer& = delete;
-    IndexBuffer(IndexBuffer&&)                         = delete;
-    auto operator=(IndexBuffer&&) -> IndexBuffer&      = delete;
-    virtual ~IndexBuffer()                             = default;
+    RHIIndexBuffer()                                      = default;
+    RHIIndexBuffer(const RHIIndexBuffer&)                    = delete;
+    auto operator=(const RHIIndexBuffer&) -> RHIIndexBuffer& = delete;
+    RHIIndexBuffer(RHIIndexBuffer&&)                         = delete;
+    auto operator=(RHIIndexBuffer&&) -> RHIIndexBuffer&      = delete;
+    virtual ~RHIIndexBuffer()                             = default;
 };
 
 /// Logical shader-visible constant block identity.
@@ -106,16 +104,16 @@ class IndexBuffer : public GpuResource {
 /// This object declares the size and stable RHI identity of a constant block.
 /// It does not imply a dedicated backend buffer allocation. Backends lower
 /// command-list constant writes into their own in-flight-safe storage.
-class ConstantBuffer {
+class RHIConstantBuffer {
   public:
-    explicit ConstantBuffer(const ConstantBufferDesc& Desc) {
+    explicit RHIConstantBuffer(const RHIConstantBufferDesc& Desc) {
         m_Size = Desc.Size;
     }
-    ConstantBuffer(const ConstantBuffer&)                    = delete;
-    auto operator=(const ConstantBuffer&) -> ConstantBuffer& = delete;
-    ConstantBuffer(ConstantBuffer&&)                         = delete;
-    auto operator=(ConstantBuffer&&) -> ConstantBuffer&      = delete;
-    virtual ~ConstantBuffer()                                = default;
+    RHIConstantBuffer(const RHIConstantBuffer&)                    = delete;
+    auto operator=(const RHIConstantBuffer&) -> RHIConstantBuffer& = delete;
+    RHIConstantBuffer(RHIConstantBuffer&&)                         = delete;
+    auto operator=(RHIConstantBuffer&&) -> RHIConstantBuffer&      = delete;
+    virtual ~RHIConstantBuffer()                                = default;
 
     /// Return the declared size in bytes.
     [[nodiscard]] auto GetSize() const -> Uint64 {
@@ -128,49 +126,49 @@ class ConstantBuffer {
 
 /// Shader-visible sampling state object.
 ///
-/// Backends own the native sampler handle. Resource::Manager owns Sampler
+/// Backends own the native sampler handle. ResourceManager owns RHISampler
 /// instances; command lists only observe them.
-class Sampler : public GpuResource {
+class RHISampler : public RHIGpuResource {
   public:
-    explicit Sampler(const SamplerDesc& Desc) {
+    explicit RHISampler(const RHISamplerDesc& Desc) {
         m_Desc = Desc;
     }
-    Sampler(const Sampler&)                    = delete;
-    auto operator=(const Sampler&) -> Sampler& = delete;
-    Sampler(Sampler&&)                         = delete;
-    auto operator=(Sampler&&) -> Sampler&      = delete;
-    virtual ~Sampler()                         = default;
+    RHISampler(const RHISampler&)                    = delete;
+    auto operator=(const RHISampler&) -> RHISampler& = delete;
+    RHISampler(RHISampler&&)                         = delete;
+    auto operator=(RHISampler&&) -> RHISampler&      = delete;
+    virtual ~RHISampler()                         = default;
 
-    [[nodiscard]] auto GetDesc() const -> const SamplerDesc& {
+    [[nodiscard]] auto GetDesc() const -> const RHISamplerDesc& {
         return m_Desc;
     }
 
   private:
-    SamplerDesc m_Desc = {};
+    RHISamplerDesc m_Desc = {};
 };
 
 /// @brief One reflected resource binding in a shader parameter-set layout.
-struct ShaderParameterBindingLayout {
+struct RHIShaderParameterBindingLayout {
     String               ParameterPath = {};
     Uint32               Binding       = 0;
-    Shader::ResourceType Type          = Shader::ResourceType::Unknown;
+    ShaderResourceType Type          = ShaderResourceType::Unknown;
     Uint32               ArrayCount    = 1;
 };
 
 /// @brief Immutable reflected layout for one shader descriptor set.
-class ShaderParameterSetLayout {
+class RHIShaderParameterSetLayout {
   public:
-    ShaderParameterSetLayout() = default;
+    RHIShaderParameterSetLayout() = default;
 
     [[nodiscard]] auto GetSetIndex() const -> Uint32 {
         return m_SetIndex;
     }
 
-    [[nodiscard]] auto GetBindings() const -> std::span<const ShaderParameterBindingLayout> {
+    [[nodiscard]] auto GetBindings() const -> std::span<const RHIShaderParameterBindingLayout> {
         return m_Bindings;
     }
 
-    [[nodiscard]] auto FindBinding(StringView ParameterPath) const -> const ShaderParameterBindingLayout* {
+    [[nodiscard]] auto FindBinding(StringView ParameterPath) const -> const RHIShaderParameterBindingLayout* {
         for (const auto& Binding : m_Bindings) {
             if (Binding.ParameterPath == ParameterPath)
                 return &Binding;
@@ -179,17 +177,17 @@ class ShaderParameterSetLayout {
     }
 
   private:
-    friend class ShaderParameterLayout;
+    friend class RHIShaderParameterLayout;
 
     Uint32                                        m_SetIndex = 0;
-    std::vector<ShaderParameterBindingLayout> m_Bindings = {};
+    std::vector<RHIShaderParameterBindingLayout> m_Bindings = {};
 };
 
 /// @brief Immutable shader parameter interface derived from pipeline reflection.
-class ShaderParameterLayout {
+class RHIShaderParameterLayout {
   public:
-    [[nodiscard]] static auto Create(const Shader::Reflection& Reflection) -> ShaderParameterLayout {
-        ShaderParameterLayout Result;
+    [[nodiscard]] static auto Create(const ShaderReflection& Reflection) -> RHIShaderParameterLayout {
+        RHIShaderParameterLayout Result;
         Result.m_Id = NextId();
         if (Reflection.Bindings.empty())
             return Result;
@@ -203,7 +201,7 @@ class ShaderParameterLayout {
             Result.m_Sets[SetIndex].m_SetIndex = SetIndex;
 
         for (const auto& Binding : Reflection.Bindings) {
-            Result.m_Sets[Binding.Set].m_Bindings.push_back(ShaderParameterBindingLayout{
+            Result.m_Sets[Binding.Set].m_Bindings.push_back(RHIShaderParameterBindingLayout{
                 .ParameterPath = Binding.ParameterPath,
                 .Binding       = Binding.BindingIndex,
                 .Type          = Binding.Type,
@@ -212,7 +210,7 @@ class ShaderParameterLayout {
         }
 
         for (auto& Set : Result.m_Sets)
-            std::ranges::sort(Set.m_Bindings, {}, &ShaderParameterBindingLayout::Binding);
+            std::ranges::sort(Set.m_Bindings, {}, &RHIShaderParameterBindingLayout::Binding);
 
         return Result;
     }
@@ -221,11 +219,11 @@ class ShaderParameterLayout {
         return m_Id;
     }
 
-    [[nodiscard]] auto GetSets() const -> std::span<const ShaderParameterSetLayout> {
+    [[nodiscard]] auto GetSets() const -> std::span<const RHIShaderParameterSetLayout> {
         return m_Sets;
     }
 
-    [[nodiscard]] auto GetSetLayout(Uint32 SetIndex) const -> const ShaderParameterSetLayout* {
+    [[nodiscard]] auto GetSetLayout(Uint32 SetIndex) const -> const RHIShaderParameterSetLayout* {
         if (SetIndex >= m_Sets.size())
             return nullptr;
         return &m_Sets[SetIndex];
@@ -238,67 +236,67 @@ class ShaderParameterLayout {
     }
 
     Uint64                                m_Id   = 0;
-    std::vector<ShaderParameterSetLayout> m_Sets = {};
+    std::vector<RHIShaderParameterSetLayout> m_Sets = {};
 };
 
 /// Common polymorphic base for pipelines that consume reflection-derived shader parameters.
-class Pipeline : public GpuResource {
+class RHIPipeline : public RHIGpuResource {
   public:
-    Pipeline()                                  = default;
-    Pipeline(const Pipeline&)                    = delete;
-    auto operator=(const Pipeline&) -> Pipeline& = delete;
-    Pipeline(Pipeline&&)                         = delete;
-    auto operator=(Pipeline&&) -> Pipeline&      = delete;
-    virtual ~Pipeline()                          = default;
+    RHIPipeline()                                  = default;
+    RHIPipeline(const RHIPipeline&)                    = delete;
+    auto operator=(const RHIPipeline&) -> RHIPipeline& = delete;
+    RHIPipeline(RHIPipeline&&)                         = delete;
+    auto operator=(RHIPipeline&&) -> RHIPipeline&      = delete;
+    virtual ~RHIPipeline()                          = default;
 
-    [[nodiscard]] auto GetShaderParameterLayout() const -> const ShaderParameterLayout& {
+    [[nodiscard]] auto GetShaderParameterLayout() const -> const RHIShaderParameterLayout& {
         return m_ShaderParameterLayout;
     }
 
   protected:
-    auto SetShaderParameterLayout(ShaderParameterLayout Layout) -> void {
+    auto SetShaderParameterLayout(RHIShaderParameterLayout Layout) -> void {
         m_ShaderParameterLayout = std::move(Layout);
     }
 
   private:
-    ShaderParameterLayout m_ShaderParameterLayout = {};
+    RHIShaderParameterLayout m_ShaderParameterLayout = {};
 };
 
 /// Empty polymorphic base for graphics pipeline resources.
-/// Backend concrete class (e.g. Vulkan::GraphicsPipeline) owns the native
-/// pipeline. Resource::Manager owns GraphicsPipeline instances.
-class GraphicsPipeline : public Pipeline {
+/// Backend concrete class (e.g. VulkanGraphicsPipeline) owns the native
+/// pipeline. ResourceManager owns RHIGraphicsPipeline instances.
+class RHIGraphicsPipeline : public RHIPipeline {
   public:
-    GraphicsPipeline()                                           = default;
-    GraphicsPipeline(const GraphicsPipeline&)                    = delete;
-    auto operator=(const GraphicsPipeline&) -> GraphicsPipeline& = delete;
-    GraphicsPipeline(GraphicsPipeline&&)                         = delete;
-    auto operator=(GraphicsPipeline&&) -> GraphicsPipeline&      = delete;
-    virtual ~GraphicsPipeline()                                  = default;
+    RHIGraphicsPipeline()                                           = default;
+    RHIGraphicsPipeline(const RHIGraphicsPipeline&)                    = delete;
+    auto operator=(const RHIGraphicsPipeline&) -> RHIGraphicsPipeline& = delete;
+    RHIGraphicsPipeline(RHIGraphicsPipeline&&)                         = delete;
+    auto operator=(RHIGraphicsPipeline&&) -> RHIGraphicsPipeline&      = delete;
+    virtual ~RHIGraphicsPipeline()                                  = default;
 
-    [[nodiscard]] auto GetShaderParameterLayout() const -> const ShaderParameterLayout& {
-        return Pipeline::GetShaderParameterLayout();
+    [[nodiscard]] auto GetShaderParameterLayout() const -> const RHIShaderParameterLayout& {
+        return RHIPipeline::GetShaderParameterLayout();
     }
 
   protected:
-    auto SetShaderParameterLayout(ShaderParameterLayout Layout) -> void {
-        Pipeline::SetShaderParameterLayout(std::move(Layout));
+    auto SetShaderParameterLayout(RHIShaderParameterLayout Layout) -> void {
+        RHIPipeline::SetShaderParameterLayout(std::move(Layout));
     }
 };
 
 // ── Opaque handle types ───────────────────────────────────────────────────
 
 /// Polymorphic base for shader-readable sampled texture resources.
-/// Backend concrete class (e.g. Vulkan::SampledTexture) owns the GPU allocation.
-/// Resource::Manager owns SampledTexture instances.
-class SampledTexture : public GpuResource {
+/// Backend concrete class (e.g. VulkanSampledTexture) owns the GPU allocation.
+/// ResourceManager owns RHISampledTexture instances.
+class RHISampledTexture : public RHIGpuResource {
   public:
-    SampledTexture()                                         = default;
-    SampledTexture(const SampledTexture&)                    = delete;
-    auto operator=(const SampledTexture&) -> SampledTexture& = delete;
-    SampledTexture(SampledTexture&&)                         = delete;
-    auto operator=(SampledTexture&&) -> SampledTexture&      = delete;
-    virtual ~SampledTexture()                                = default;
+    RHISampledTexture()                                         = default;
+    RHISampledTexture(const RHISampledTexture&)                    = delete;
+    auto operator=(const RHISampledTexture&) -> RHISampledTexture& = delete;
+    RHISampledTexture(RHISampledTexture&&)                         = delete;
+    auto operator=(RHISampledTexture&&) -> RHISampledTexture&      = delete;
+    virtual ~RHISampledTexture()                                = default;
 
     [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
     [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
@@ -309,9 +307,9 @@ class SampledTexture : public GpuResource {
 /// Resource-layer arrays retain the corresponding ResourceRefs. This RHI value
 /// contains only the resolved observers recorded into command lists.
 template <typename T>
-class ResourceArray {
+class RHIResourceArray {
   public:
-    ResourceArray() = default;
+    RHIResourceArray() = default;
 
     [[nodiscard]] auto GetSize() const -> Uint32 {
         return static_cast<Uint32>(m_Resources.size());
@@ -341,47 +339,47 @@ class ResourceArray {
 };
 
 template <typename T>
-struct ShaderParameterResourceTraits;
+struct RHIShaderParameterResourceTraits;
 
 template <>
-struct ShaderParameterResourceTraits<SampledTexture> {
-    static constexpr Shader::ResourceType Type = Shader::ResourceType::SampledTexture;
+struct RHIShaderParameterResourceTraits<RHISampledTexture> {
+    static constexpr ShaderResourceType Type = ShaderResourceType::SampledTexture;
 };
 
 template <typename T>
 concept ShaderParameterArrayResource = requires {
-    { ShaderParameterResourceTraits<T>::Type } -> std::convertible_to<Shader::ResourceType>;
+    { RHIShaderParameterResourceTraits<T>::Type } -> std::convertible_to<ShaderResourceType>;
 };
 
 /// @brief CPU-side snapshot for one reflected constant-buffer binding.
-struct ShaderParameterConstant {
-    ConstantBuffer*        Buffer   = nullptr;
+struct RHIShaderParameterConstant {
+    RHIConstantBuffer*        Buffer   = nullptr;
     std::vector<std::byte> Data     = {};
     bool                   bPerDraw = false;
 };
 
 /// @brief One value assigned to a reflected shader parameter binding.
-using ShaderParameterValue = std::variant<std::monostate,
-                                          SampledTexture*,
-                                          VertexBuffer*,
-                                          IndexBuffer*,
-                                          ResourceArray<SampledTexture>,
-                                          Sampler*,
-                                          TopLevelAccelerationStructure*,
-                                          RayTracingGeometryTable*,
-                                          RenderTarget*,
-                                          ShaderParameterConstant>;
+using RHIShaderParameterValue = std::variant<std::monostate,
+                                          RHISampledTexture*,
+                                          RHIVertexBuffer*,
+                                          RHIIndexBuffer*,
+                                          RHIResourceArray<RHISampledTexture>,
+                                          RHISampler*,
+                                          RHITopLevelAccelerationStructure*,
+                                          RHIRayTracingGeometryTable*,
+                                          RHIRenderTarget*,
+                                          RHIShaderParameterConstant>;
 
 /// @brief Runtime values for one reflected shader descriptor set.
-class ShaderParameterSet {
+class RHIShaderParameterSet {
   public:
-    ShaderParameterSet() = default;
+    RHIShaderParameterSet() = default;
 
-    [[nodiscard]] auto GetLayout() const -> const ShaderParameterSetLayout& {
+    [[nodiscard]] auto GetLayout() const -> const RHIShaderParameterSetLayout& {
         return m_Layout;
     }
 
-    [[nodiscard]] auto GetValues() const -> std::span<const ShaderParameterValue> {
+    [[nodiscard]] auto GetValues() const -> std::span<const RHIShaderParameterValue> {
         return m_Values;
     }
 
@@ -390,9 +388,9 @@ class ShaderParameterSet {
     }
 
   private:
-    friend class ShaderParameters;
+    friend class RHIShaderParameters;
 
-    explicit ShaderParameterSet(ShaderParameterSetLayout Layout)
+    explicit RHIShaderParameterSet(RHIShaderParameterSetLayout Layout)
         : m_Layout(std::move(Layout)), m_Values(m_Layout.GetBindings().size()) {}
 
     [[nodiscard]] auto FindBindingIndex(StringView ParameterPath) const -> std::optional<Uint32> {
@@ -404,7 +402,7 @@ class ShaderParameterSet {
         return std::nullopt;
     }
 
-    auto SetValue(Uint32 Index, ShaderParameterValue Value) -> void {
+    auto SetValue(Uint32 Index, RHIShaderParameterValue Value) -> void {
         if (AreEquivalent(m_Values[Index], Value))
             return;
 
@@ -412,7 +410,7 @@ class ShaderParameterSet {
         ++m_Revision;
     }
 
-    [[nodiscard]] static auto AreEquivalent(const ShaderParameterValue& Left, const ShaderParameterValue& Right)
+    [[nodiscard]] static auto AreEquivalent(const RHIShaderParameterValue& Left, const RHIShaderParameterValue& Right)
         -> bool {
         return std::visit(
             [](const auto& LeftValue, const auto& RightValue) -> bool {
@@ -422,9 +420,9 @@ class ShaderParameterSet {
                     return false;
                 } else if constexpr (std::same_as<LeftType, std::monostate>) {
                     return true;
-                } else if constexpr (std::same_as<LeftType, ResourceArray<SampledTexture>>) {
+                } else if constexpr (std::same_as<LeftType, RHIResourceArray<RHISampledTexture>>) {
                     return std::ranges::equal(LeftValue.GetResources(), RightValue.GetResources());
-                } else if constexpr (std::same_as<LeftType, ShaderParameterConstant>) {
+                } else if constexpr (std::same_as<LeftType, RHIShaderParameterConstant>) {
                     return LeftValue.Buffer == RightValue.Buffer && LeftValue.Data == RightValue.Data;
                 } else {
                     return LeftValue == RightValue;
@@ -434,30 +432,30 @@ class ShaderParameterSet {
             Right);
     }
 
-    ShaderParameterSetLayout           m_Layout   = {};
-    std::vector<ShaderParameterValue>  m_Values   = {};
+    RHIShaderParameterSetLayout           m_Layout   = {};
+    std::vector<RHIShaderParameterValue>  m_Values   = {};
     Uint64                              m_Revision = 0;
 };
 
 /// @brief Renderer-facing shader binding values automatically partitioned by reflection.
-class ShaderParameters {
+class RHIShaderParameters {
   public:
-    ShaderParameters() = default;
+    RHIShaderParameters() = default;
 
-    [[nodiscard]] static auto Create(const Pipeline& PipelineValue) -> ShaderParameters {
+    [[nodiscard]] static auto Create(const RHIPipeline& PipelineValue) -> RHIShaderParameters {
         return Create(PipelineValue.GetShaderParameterLayout());
     }
 
-    [[nodiscard]] static auto Create(const GraphicsPipeline& PipelineValue) -> ShaderParameters {
-        return Create(static_cast<const Pipeline&>(PipelineValue));
+    [[nodiscard]] static auto Create(const RHIGraphicsPipeline& PipelineValue) -> RHIShaderParameters {
+        return Create(static_cast<const RHIPipeline&>(PipelineValue));
     }
 
-    [[nodiscard]] static auto Create(const ShaderParameterLayout& Layout) -> ShaderParameters {
-        ShaderParameters Result;
+    [[nodiscard]] static auto Create(const RHIShaderParameterLayout& Layout) -> RHIShaderParameters {
+        RHIShaderParameters Result;
         Result.m_Id       = NextId();
         Result.m_LayoutId = Layout.GetId();
         for (const auto& SetLayout : Layout.GetSets())
-            Result.m_Sets.push_back(ShaderParameterSet{SetLayout});
+            Result.m_Sets.push_back(RHIShaderParameterSet{SetLayout});
         return Result;
     }
 
@@ -469,53 +467,53 @@ class ShaderParameters {
         return m_LayoutId;
     }
 
-    [[nodiscard]] auto GetSets() const -> std::span<const ShaderParameterSet> {
+    [[nodiscard]] auto GetSets() const -> std::span<const RHIShaderParameterSet> {
         return m_Sets;
     }
 
-    [[nodiscard]] auto SetSampledTexture(StringView ParameterPath, SampledTexture* Texture)
+    [[nodiscard]] auto SetSampledTexture(StringView ParameterPath, RHISampledTexture* Texture)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::SampledTexture, false, Texture);
+        return Set(ParameterPath, ShaderResourceType::SampledTexture, false, Texture);
     }
 
-    [[nodiscard]] auto SetStorageVertexBuffer(StringView ParameterPath, VertexBuffer* Buffer)
+    [[nodiscard]] auto SetStorageVertexBuffer(StringView ParameterPath, RHIVertexBuffer* Buffer)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::StorageBuffer, false, Buffer);
+        return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }
 
-    [[nodiscard]] auto SetStorageIndexBuffer(StringView ParameterPath, IndexBuffer* Buffer)
+    [[nodiscard]] auto SetStorageIndexBuffer(StringView ParameterPath, RHIIndexBuffer* Buffer)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::StorageBuffer, false, Buffer);
+        return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }
 
     [[nodiscard]] auto SetTopLevelAccelerationStructure(StringView                         ParameterPath,
-                                                         TopLevelAccelerationStructure* AccelerationStructure)
+                                                         RHITopLevelAccelerationStructure* RHIAccelerationStructure)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::AccelerationStructure, false, AccelerationStructure);
+        return Set(ParameterPath, ShaderResourceType::AccelerationStructure, false, RHIAccelerationStructure);
     }
 
-    [[nodiscard]] auto SetRayTracingGeometryTable(StringView ParameterPath, RayTracingGeometryTable* Table)
+    [[nodiscard]] auto SetRayTracingGeometryTable(StringView ParameterPath, RHIRayTracingGeometryTable* Table)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::StorageBuffer, false, Table);
+        return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Table);
     }
 
-    [[nodiscard]] auto SetStorageRenderTarget(StringView ParameterPath, RenderTarget* Target)
+    [[nodiscard]] auto SetStorageRenderTarget(StringView ParameterPath, RHIRenderTarget* Target)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::StorageTexture, false, Target);
+        return Set(ParameterPath, ShaderResourceType::StorageTexture, false, Target);
     }
 
     template <ShaderParameterArrayResource T>
-    [[nodiscard]] auto SetResourceArray(StringView ParameterPath, const ResourceArray<T>& Array)
+    [[nodiscard]] auto SetResourceArray(StringView ParameterPath, const RHIResourceArray<T>& Array)
         -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, ShaderParameterResourceTraits<T>::Type, true, Array);
+        return Set(ParameterPath, RHIShaderParameterResourceTraits<T>::Type, true, Array);
     }
 
-    [[nodiscard]] auto SetSampler(StringView ParameterPath, Sampler* SamplerPtr) -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, Shader::ResourceType::Sampler, false, SamplerPtr);
+    [[nodiscard]] auto SetSampler(StringView ParameterPath, RHISampler* SamplerPtr) -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, ShaderResourceType::Sampler, false, SamplerPtr);
     }
 
     [[nodiscard]] auto SetConstantBuffer(StringView            ParameterPath,
-                                         ConstantBuffer*       Buffer,
+                                         RHIConstantBuffer*       Buffer,
                                          const void*           Data,
                                          Uint64                Size,
                                          bool                  bPerDraw = false)
@@ -526,19 +524,19 @@ class ShaderParameters {
             return std::unexpected(ErrorMessage("Shader parameter constant buffer data is empty"));
         if (Size > Buffer->GetSize()) {
             return std::unexpected(ErrorMessage(
-                Format("Shader parameter '{}' exceeds declared ConstantBuffer size ({} bytes > {} bytes)",
+                Format("Shader parameter '{}' exceeds declared RHIConstantBuffer size ({} bytes > {} bytes)",
                        ParameterPath,
                        Size,
                        Buffer->GetSize())));
         }
 
-        ShaderParameterConstant Constant{
+        RHIShaderParameterConstant Constant{
             .Buffer   = Buffer,
             .bPerDraw = bPerDraw,
         };
         Constant.Data.resize(Size);
         std::memcpy(Constant.Data.data(), Data, Size);
-        return Set(ParameterPath, Shader::ResourceType::ConstantBuffer, false, std::move(Constant));
+        return Set(ParameterPath, ShaderResourceType::ConstantBuffer, false, std::move(Constant));
     }
 
   private:
@@ -548,7 +546,7 @@ class ShaderParameters {
     }
 
     template <typename T>
-    [[nodiscard]] auto Set(StringView ParameterPath, Shader::ResourceType ExpectedType, bool bExpectArray, T Value)
+    [[nodiscard]] auto Set(StringView ParameterPath, ShaderResourceType ExpectedType, bool bExpectArray, T Value)
         -> std::expected<void, ErrorMessage> {
         for (auto& Set : m_Sets) {
             auto Index = Set.FindBindingIndex(ParameterPath);
@@ -572,7 +570,7 @@ class ShaderParameters {
                     Format("Shader parameter '{}' is not an array; bind one sampled texture instead", ParameterPath)));
             }
 
-            Set.SetValue(*Index, ShaderParameterValue{std::move(Value)});
+            Set.SetValue(*Index, RHIShaderParameterValue{std::move(Value)});
             return {};
         }
 
@@ -581,12 +579,12 @@ class ShaderParameters {
 
     Uint64                           m_Id       = 0;
     Uint64                           m_LayoutId = 0;
-    std::vector<ShaderParameterSet> m_Sets = {};
+    std::vector<RHIShaderParameterSet> m_Sets = {};
 };
 
 // ── Texture ──────────────────────────────────────────────────────────────────
 
-enum class Format : Uint8 {
+enum class RHIFormat : Uint8 {
     Unknown             = 0,
     R8_UNORM            = 1,
     R8G8_UNORM          = 2,
@@ -602,26 +600,26 @@ enum class Format : Uint8 {
     D32_SFLOAT_S8_UINT  = 12,
 };
 
-struct VertexInputAttributeDesc {
+struct RHIVertexInputAttributeDesc {
     Uint32 Location = 0;
     Uint32 Binding  = 0;
-    Format Format   = Format::Unknown;
+    RHIFormat Format   = RHIFormat::Unknown;
     Uint32 Offset   = 0;
 };
 
-struct VertexInputBindingDesc {
+struct RHIVertexInputBindingDesc {
     Uint32 Binding = 0;
     Uint32 Stride  = 0;
 };
 
 inline constexpr Uint32 kMaxVertexBufferBindings = 4;
 
-struct VertexInputLayoutDesc {
-    std::vector<VertexInputBindingDesc>   Bindings   = {};
-    std::vector<VertexInputAttributeDesc> Attributes = {};
+struct RHIVertexInputLayoutDesc {
+    std::vector<RHIVertexInputBindingDesc>   Bindings   = {};
+    std::vector<RHIVertexInputAttributeDesc> Attributes = {};
 };
 
-enum class TextureUsage : Uint32 {
+enum class RHITextureUsage : Uint32 {
     None           = 0,
     RenderTarget   = 1u << 0,
     DepthStencil   = 1u << 1,
@@ -630,66 +628,66 @@ enum class TextureUsage : Uint32 {
     ShaderStorage  = 1u << 4,
 };
 
-[[nodiscard]] inline auto operator|(TextureUsage a, TextureUsage b) -> TextureUsage {
-    return static_cast<TextureUsage>(static_cast<Uint32>(a) | static_cast<Uint32>(b));
+[[nodiscard]] inline auto operator|(RHITextureUsage a, RHITextureUsage b) -> RHITextureUsage {
+    return static_cast<RHITextureUsage>(static_cast<Uint32>(a) | static_cast<Uint32>(b));
 }
 
 /// Polymorphic base for render-target images (color or depth/stencil).
 /// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
-/// Backend concrete class owns GPU allocation. Resource::Manager owns render targets.
-class RenderTarget : public GpuResource {
+/// Backend concrete class owns GPU allocation. ResourceManager owns render targets.
+class RHIRenderTarget : public RHIGpuResource {
   public:
-    RenderTarget()                                       = default;
-    RenderTarget(const RenderTarget&)                    = delete;
-    auto operator=(const RenderTarget&) -> RenderTarget& = delete;
-    RenderTarget(RenderTarget&&)                         = delete;
-    auto operator=(RenderTarget&&) -> RenderTarget&      = delete;
-    virtual ~RenderTarget()                              = default;
+    RHIRenderTarget()                                       = default;
+    RHIRenderTarget(const RHIRenderTarget&)                    = delete;
+    auto operator=(const RHIRenderTarget&) -> RHIRenderTarget& = delete;
+    RHIRenderTarget(RHIRenderTarget&&)                         = delete;
+    auto operator=(RHIRenderTarget&&) -> RHIRenderTarget&      = delete;
+    virtual ~RHIRenderTarget()                              = default;
 
     [[nodiscard]] virtual auto GetWidth() const -> Uint32       = 0;
     [[nodiscard]] virtual auto GetHeight() const -> Uint32      = 0;
-    [[nodiscard]] virtual auto GetFormat() const -> Format      = 0;
-    [[nodiscard]] virtual auto GetUsage() const -> TextureUsage = 0;
+    [[nodiscard]] virtual auto GetFormat() const -> RHIFormat      = 0;
+    [[nodiscard]] virtual auto GetUsage() const -> RHITextureUsage = 0;
 };
 
-struct SampledTextureDesc {
+struct RHISampledTextureDesc {
     const void*  Data     = nullptr;
     Uint32       Width    = 1;
     Uint32       Height   = 1;
     Uint32       Channels = 4;
-    Format       Format   = Format::R8G8B8A8_UNORM;
-    TextureUsage Usage    = TextureUsage::ShaderResource;
+    RHIFormat       Format   = RHIFormat::R8G8B8A8_UNORM;
+    RHITextureUsage Usage    = RHITextureUsage::ShaderResource;
 };
 
-struct SampledTextureCreateResult {
-    UPtr<SampledTexture> Texture          = nullptr;
-    GpuCompletionToken   UploadCompletion = {};
+struct RHISampledTextureCreateResult {
+    UPtr<RHISampledTexture> Texture          = nullptr;
+    RHIGpuCompletionToken   UploadCompletion = {};
 };
 
-struct RenderTargetDesc {
+struct RHIRenderTargetDesc {
     Uint32       Width  = 1;
     Uint32       Height = 1;
-    Format       Format = Format::B8G8R8A8_UNORM;
-    TextureUsage Usage  = TextureUsage::RenderTarget;
+    RHIFormat       Format = RHIFormat::B8G8R8A8_UNORM;
+    RHITextureUsage Usage  = RHITextureUsage::RenderTarget;
 };
 
-struct RenderTargetCreateResult {
-    UPtr<RenderTarget> Texture = nullptr;
+struct RHIRenderTargetCreateResult {
+    UPtr<RHIRenderTarget> Texture = nullptr;
 };
 
-struct VertexBufferCreateResult {
-    UPtr<VertexBuffer> Buffer           = nullptr;
-    GpuCompletionToken UploadCompletion = {};
+struct RHIVertexBufferCreateResult {
+    UPtr<RHIVertexBuffer> Buffer           = nullptr;
+    RHIGpuCompletionToken UploadCompletion = {};
 };
 
-struct IndexBufferCreateResult {
-    UPtr<IndexBuffer>  Buffer           = nullptr;
-    GpuCompletionToken UploadCompletion = {};
+struct RHIIndexBufferCreateResult {
+    UPtr<RHIIndexBuffer>  Buffer           = nullptr;
+    RHIGpuCompletionToken UploadCompletion = {};
 };
 
-// ── Pipeline ─────────────────────────────────────────────────────────────────
+// ── RHIPipeline ─────────────────────────────────────────────────────────────────
 
-enum class PrimitiveTopology : Uint8 {
+enum class RHIPrimitiveTopology : Uint8 {
     Unknown      = 0,
     TriangleList = 1,
 };
@@ -699,63 +697,63 @@ enum class PrimitiveTopology : Uint8 {
 //   - Code and Reflection must be non-null for every stage program
 //   - Mesh shaders preclude Vertex/Hull/Domain/Geometry stages
 
-struct RasterizerState {
+struct RHIRasterizerState {
     bool    FillMode  = true; // true = solid, false = wireframe
     bool    CullMode  = true; // true = back cull
     Float32 LineWidth = 1.0f;
 };
 
-struct BlendAttachment {
+struct RHIBlendAttachment {
     bool BlendEnable = false;
 };
 
-struct BlendState {
-    BlendAttachment Attachments[8] = {};
+struct RHIBlendState {
+    RHIBlendAttachment Attachments[8] = {};
 };
 
-struct DepthStencilState {
+struct RHIDepthStencilState {
     bool DepthTestEnable  = true;
     bool DepthWriteEnable = true;
 };
 
-struct GraphicsPipelineDesc {
-    Shader::GraphicsProgram        Program           = {};
-    VertexInputLayoutDesc          VertexInputLayout = {};
-    PrimitiveTopology              Topology          = PrimitiveTopology::TriangleList;
-    RasterizerState                Rasterizer        = {};
-    BlendState                     Blend             = {};
-    DepthStencilState              DepthStencil      = {};
-    Format                         ColorFormat       = Format::B8G8R8A8_UNORM;
-    Format                         DepthFormat       = Format::Unknown;
+struct RHIGraphicsPipelineDesc {
+    ShaderGraphicsProgram        Program           = {};
+    RHIVertexInputLayoutDesc          VertexInputLayout = {};
+    RHIPrimitiveTopology              Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState                Rasterizer        = {};
+    RHIBlendState                     Blend             = {};
+    RHIDepthStencilState              DepthStencil      = {};
+    RHIFormat                         ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
+    RHIFormat                         DepthFormat       = RHIFormat::Unknown;
 };
 
 // ── Clear values ─────────────────────────────────────────────────────────────
 
-struct ClearColorValue {
+struct RHIClearColorValue {
     Float32 R = 0.0f;
     Float32 G = 0.0f;
     Float32 B = 0.0f;
     Float32 A = 1.0f;
 };
 
-struct ClearDepthStencilValue {
+struct RHIClearDepthStencilValue {
     Float32 Depth   = 1.0f;
     Uint32  Stencil = 0;
 };
 
-struct ColorAttachmentDesc {
-    RenderTarget*   TexturePtr = nullptr;
-    ClearColorValue ClearValue = {};
+struct RHIColorAttachmentDesc {
+    RHIRenderTarget*   TexturePtr = nullptr;
+    RHIClearColorValue ClearValue = {};
 };
 
-struct DepthAttachmentDesc {
-    RenderTarget*          TexturePtr = nullptr;
-    ClearDepthStencilValue ClearValue = {};
+struct RHIDepthAttachmentDesc {
+    RHIRenderTarget*          TexturePtr = nullptr;
+    RHIClearDepthStencilValue ClearValue = {};
 };
 
-struct RenderingDesc {
-    ColorAttachmentDesc                ColorAttachment = {};
-    std::optional<DepthAttachmentDesc> DepthAttachment = std::nullopt;
+struct RHIRenderingDesc {
+    RHIColorAttachmentDesc                ColorAttachment = {};
+    std::optional<RHIDepthAttachmentDesc> DepthAttachment = std::nullopt;
 };
 
-} // namespace SoulEngine::RHI
+} // namespace SoulEngine

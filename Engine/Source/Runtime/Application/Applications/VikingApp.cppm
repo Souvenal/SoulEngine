@@ -15,7 +15,7 @@ import Window;
 
 namespace SoulEngine {
 
-class VikingApplication final : public Application::Application {
+class VikingApplication final : public Application {
   public:
     VikingApplication() = default;
 
@@ -33,6 +33,6 @@ class VikingApplication final : public Application::Application {
 };
 
 /// Auto-register with the application factory.
-Application::ApplicationFactory::AutoRegistrar<VikingApplication> RegVikingApp{"Viking"};
+ApplicationFactory::AutoRegistrar<VikingApplication> RegVikingApp{"Viking"};
 
 } // namespace SoulEngine

@@ -16,9 +16,7 @@ export import Core;
 
 export import std;
 
-namespace SoulEngine::ShaderCompiler::SlangCompiler {
-
-using namespace SoulEngine::Core;
+namespace SoulEngine {
 
 /// Build the session-level compiler options vector from the engine config.
 [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry> {
@@ -83,4 +81,4 @@ using namespace SoulEngine::Core;
            std::toupper(static_cast<unsigned char>(SemanticName[1])) == 'V' && SemanticName[2] == '_';
 }
 
-} // namespace SoulEngine::ShaderCompiler::SlangCompiler
+} // namespace SoulEngine

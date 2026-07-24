@@ -8,27 +8,25 @@ import :Capability;
 import vulkan;
 import std;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TimelineSemaphore
+// VulkanTimelineSemaphore
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Thin wrapper around a single per-device VkSemaphore of type
 /// VK_SEMAPHORE_TYPE_TIMELINE. Owns the monotonic CPU signal counter and
 /// provides blocking CPU waits / non-blocking completion queries.
-class TimelineSemaphore {
+class VulkanTimelineSemaphore {
   public:
-    TimelineSemaphore() = default;
+    VulkanTimelineSemaphore() = default;
 
-    TimelineSemaphore(TimelineSemaphore&& Other) noexcept
+    VulkanTimelineSemaphore(VulkanTimelineSemaphore&& Other) noexcept
         : m_Device(std::exchange(Other.m_Device, nullptr)),
           m_Semaphore(std::move(Other.m_Semaphore)),
           m_NextValue(Other.m_NextValue.load()) {}
 
-    auto operator=(TimelineSemaphore&& Other) noexcept -> TimelineSemaphore& {
+    auto operator=(VulkanTimelineSemaphore&& Other) noexcept -> VulkanTimelineSemaphore& {
         if (this != &Other) {
             m_Device    = std::exchange(Other.m_Device, nullptr);
             m_Semaphore = std::move(Other.m_Semaphore);
@@ -37,16 +35,16 @@ class TimelineSemaphore {
         return *this;
     }
 
-    TimelineSemaphore(const TimelineSemaphore&)                    = delete;
-    auto operator=(const TimelineSemaphore&) -> TimelineSemaphore& = delete;
+    VulkanTimelineSemaphore(const VulkanTimelineSemaphore&)                    = delete;
+    auto operator=(const VulkanTimelineSemaphore&) -> VulkanTimelineSemaphore& = delete;
 
-    [[nodiscard]] static auto Create(vk::raii::Device& Device) -> std::expected<TimelineSemaphore, ErrorMessage> {
-        TimelineSemaphore Result;
+    [[nodiscard]] static auto Create(vk::raii::Device& Device) -> std::expected<VulkanTimelineSemaphore, ErrorMessage> {
+        VulkanTimelineSemaphore Result;
         Result.m_Device = &Device;
 
-        if (!Capability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
+        if (!VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
             return std::unexpected(
-                ErrorMessage("TimelineSemaphore: timelineSemaphore feature not supported by device"));
+                ErrorMessage("VulkanTimelineSemaphore: timelineSemaphore feature not supported by device"));
 
         vk::StructureChain<vk::SemaphoreCreateInfo, vk::SemaphoreTypeCreateInfo> Chain = {
             {}, {.semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = 0}};
@@ -70,7 +68,7 @@ class TimelineSemaphore {
         auto Res = m_Semaphore.getCounterValue();
         if (Res.result != vk::Result::eSuccess) {
             return std::unexpected(
-                ErrorMessage(Core::Format("vkGetSemaphoreCounterValue failed: {}", vk::to_string(Res.result))));
+                ErrorMessage(Format("vkGetSemaphoreCounterValue failed: {}", vk::to_string(Res.result))));
         }
         return Res.value;
     }
@@ -86,7 +84,7 @@ class TimelineSemaphore {
             .pValues        = &Value,
         };
         if (auto R = m_Device->waitSemaphores(WaitInfo, TimeoutNs); R != vk::Result::eSuccess) {
-            return std::unexpected(ErrorMessage(Core::Format("vkWaitSemaphores failed: {}", vk::to_string(R))));
+            return std::unexpected(ErrorMessage(Format("vkWaitSemaphores failed: {}", vk::to_string(R))));
         }
         return {};
     }
@@ -112,4 +110,4 @@ class TimelineSemaphore {
     std::atomic<Uint64> m_NextValue = 0;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

@@ -10,10 +10,7 @@ import TaskGraph;
 import Vulkan;
 import std;
 
-using namespace SoulEngine::Core;
 using namespace SoulEngine;
-using namespace SoulEngine::Resource;
-using namespace SoulEngine::RHI;
 
 namespace {
 
@@ -22,7 +19,7 @@ namespace {
            State == ResourceState::GpuPending;
 }
 
-class MockSampledTexture final : public RHI::SampledTexture {
+class MockSampledTexture final : public RHISampledTexture {
   public:
     MockSampledTexture() = default;
     explicit MockSampledTexture(bool* Destroyed) : m_Destroyed(Destroyed) {}
@@ -45,30 +42,30 @@ class MockSampledTexture final : public RHI::SampledTexture {
 };
 
 [[nodiscard]] auto MakeTextureResource(bool* Destroyed = nullptr)
-    -> SoulEngine::Resource::Resource<RHI::SampledTexture> {
-    return SoulEngine::Resource::Resource<RHI::SampledTexture>{
+    -> Resource<RHISampledTexture> {
+    return Resource<RHISampledTexture>{
         .Object = std::make_unique<MockSampledTexture>(Destroyed),
     };
 }
 
 auto ResetManagerForTest() -> void {
-    Manager::Get().BeginShutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().BeginShutdown();
+    ResourceManager::Get().Clear();
 }
 
-[[nodiscard]] auto MakeTestRenderTargetDesc() -> RHI::RenderTargetDesc {
-    return RHI::RenderTargetDesc{
+[[nodiscard]] auto MakeTestRenderTargetDesc() -> RHIRenderTargetDesc {
+    return RHIRenderTargetDesc{
         .Width  = 128,
         .Height = 64,
-        .Format = RHI::Format::D32_SFLOAT,
-        .Usage  = RHI::TextureUsage::DepthStencil,
+        .Format = RHIFormat::D32_SFLOAT,
+        .Usage  = RHITextureUsage::DepthStencil,
     };
 }
 
 } // namespace
 
 TEST(ResourceSlotTest, ReadyPublishMakesSlotReadyAndReadable) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto Generation = Slot.Reset();
 
     EXPECT_EQ(Slot.GetState(Generation), ResourceState::CpuPreparing);
@@ -79,7 +76,7 @@ TEST(ResourceSlotTest, ReadyPublishMakesSlotReadyAndReadable) {
 }
 
 TEST(ResourceSlotTest, FailedPublishMakesSlotFailed) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto Generation = Slot.Reset();
 
     EXPECT_TRUE(Slot.PublishFailed(Generation, ErrorMessage{"missing texture"}));
@@ -90,7 +87,7 @@ TEST(ResourceSlotTest, FailedPublishMakesSlotFailed) {
 }
 
 TEST(ResourceSlotTest, StaleGenerationPublishIgnored) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto FirstGeneration  = Slot.Reset();
     auto SecondGeneration = Slot.Reset();
 
@@ -103,17 +100,17 @@ TEST(ResourceSlotTest, StaleGenerationPublishIgnored) {
 }
 
 TEST(ResourceHandleTest, DefaultHandleStateIsUnknown) {
-    ResourceHandle<RHI::SampledTexture> Handle;
-    ResourceRef<RHI::SampledTexture> Ref;
+    ResourceHandle<RHISampledTexture> Handle;
+    ResourceRef<RHISampledTexture> Ref;
 
     EXPECT_FALSE(Handle.IsValid());
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Unknown);
-    EXPECT_EQ(Manager::Get().TryGetReady(Handle), nullptr);
-    EXPECT_EQ(Manager::Get().TryGetReady(Ref), nullptr);
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::Unknown);
+    EXPECT_EQ(ResourceManager::Get().TryGetReady(Handle), nullptr);
+    EXPECT_EQ(ResourceManager::Get().TryGetReady(Ref), nullptr);
 }
 
 TEST(ResourceSlotTest, ExplicitStateTransitionsPublishExpectedStates) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto Generation = Slot.Reset();
 
     EXPECT_EQ(Slot.GetState(Generation), ResourceState::CpuPreparing);
@@ -126,7 +123,7 @@ TEST(ResourceSlotTest, ExplicitStateTransitionsPublishExpectedStates) {
 }
 
 TEST(ResourceSlotTest, StaleGenerationCannotPublishPendingReadyOrFailed) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto FirstGeneration  = Slot.Reset();
     auto SecondGeneration = Slot.Reset();
 
@@ -139,7 +136,7 @@ TEST(ResourceSlotTest, StaleGenerationCannotPublishPendingReadyOrFailed) {
 }
 
 TEST(ResourceSlotTest, TryGetReadyOnlySucceedsForReadyMatchingGeneration) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto FirstGeneration = Slot.Reset();
 
     EXPECT_EQ(Slot.TryGetReady(FirstGeneration), nullptr);
@@ -153,7 +150,7 @@ TEST(ResourceSlotTest, TryGetReadyOnlySucceedsForReadyMatchingGeneration) {
 }
 
 TEST(ResourceSlotTest, RequestReleaseDestroysPayload) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto Generation = Slot.Reset();
     bool Destroyed  = false;
     EXPECT_TRUE(Slot.PublishReady(Generation, MakeTextureResource(&Destroyed)));
@@ -166,9 +163,9 @@ TEST(ResourceSlotTest, RequestReleaseDestroysPayload) {
 TEST(ResourceRefTest, RequestRefCreatesLogicalOwnerHandle) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref    = Manager::Get().RequestRenderTargetRef("TransientRefOwnerHandle", MakeTestRenderTargetDesc());
+    auto Ref    = ResourceManager::Get().RequestRenderTargetRef("TransientRefOwnerHandle", MakeTestRenderTargetDesc());
     auto Handle = Ref.GetHandle();
     ASSERT_TRUE(Handle.IsValid());
 
@@ -179,18 +176,18 @@ TEST(ResourceRefTest, RequestRefCreatesLogicalOwnerHandle) {
     }
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceAccelerationStructureRequestTest, EquivalentMeshBlasRequestsDeduplicateBeforeDependenciesAreReady) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto MeshRef = Manager::Get().RequestMeshRef("NotYetLoadedMesh.obj");
+    auto MeshRef = ResourceManager::Get().RequestMeshRef("NotYetLoadedMesh.obj");
     ASSERT_TRUE(MeshRef);
-    auto FirstRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
-    auto SecondRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    auto FirstRef = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    auto SecondRef = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
     ASSERT_TRUE(FirstRef);
     ASSERT_TRUE(SecondRef);
 
@@ -198,24 +195,24 @@ TEST(ResourceAccelerationStructureRequestTest, EquivalentMeshBlasRequestsDedupli
     const auto& Second = SecondRef.GetHandle();
     EXPECT_EQ(First.GetKey(), Second.GetKey());
     EXPECT_EQ(First.GetGeneration(), Second.GetGeneration());
-    EXPECT_EQ(Manager::Get().GetState(First), ResourceState::CpuPreparing);
+    EXPECT_EQ(ResourceManager::Get().GetState(First), ResourceState::CpuPreparing);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceAccelerationStructureRequestTest, RendererScopedTlasRequestsDeduplicateAndReleaseAsTransient) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    const RHI::TopLevelAccelerationStructureDesc Desc{
+    const RHITopLevelAccelerationStructureDesc Desc{
         .InitialInstanceCapacity = 4,
-        .BuildFlags = RHI::AccelerationStructureBuildFlags::AllowUpdate,
+        .BuildFlags = RHIAccelerationStructureBuildFlags::AllowUpdate,
     };
-    auto FirstRef = Manager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
-    auto SecondRef = Manager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
-    auto OtherScopeRef = Manager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererReflection", Desc);
+    auto FirstRef = ResourceManager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
+    auto SecondRef = ResourceManager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
+    auto OtherScopeRef = ResourceManager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererReflection", Desc);
     ASSERT_TRUE(FirstRef);
     ASSERT_TRUE(SecondRef);
     ASSERT_TRUE(OtherScopeRef);
@@ -226,26 +223,26 @@ TEST(ResourceAccelerationStructureRequestTest, RendererScopedTlasRequestsDedupli
     EXPECT_NE(First.GetKey(), OtherScopeRef.GetHandle().GetKey());
 
     FirstRef.Reset();
-    EXPECT_EQ(Manager::Get().GetState(First), ResourceState::CpuPreparing);
+    EXPECT_EQ(ResourceManager::Get().GetState(First), ResourceState::CpuPreparing);
     SecondRef.Reset();
-    EXPECT_EQ(Manager::Get().GetState(First), ResourceState::Stale);
+    EXPECT_EQ(ResourceManager::Get().GetState(First), ResourceState::Stale);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceAccelerationStructureRequestTest, EmptyRendererScopePublishesFailure) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref = Manager::Get().RequestTopLevelAccelerationStructureRef(
-        "", RHI::TopLevelAccelerationStructureDesc{.InitialInstanceCapacity = 1});
+    auto Ref = ResourceManager::Get().RequestTopLevelAccelerationStructureRef(
+        "", RHITopLevelAccelerationStructureDesc{.InitialInstanceCapacity = 1});
     ASSERT_TRUE(Ref);
-    EXPECT_EQ(Manager::Get().GetState(Ref.GetHandle()), ResourceState::Failed);
+    EXPECT_EQ(ResourceManager::Get().GetState(Ref.GetHandle()), ResourceState::Failed);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesSharedBlasPayload) {
@@ -262,7 +259,7 @@ TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesShar
     GLFWwindow* Window = glfwCreateWindow(1, 1, "SoulEngine BLAS resource test", nullptr, nullptr);
     ASSERT_NE(Window, nullptr) << "glfwCreateWindow failed";
 
-    auto DeviceResult = RenderDevice::Create(Window);
+    auto DeviceResult = RHIRenderDevice::Create(Window);
     if (!DeviceResult) {
         glfwDestroyWindow(Window);
         glfwTerminate();
@@ -270,9 +267,9 @@ TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesShar
     }
 
     const auto Cleanup = [Window]() -> void {
-        Manager::Get().BeginShutdown();
-        Manager::Get().Clear();
-        RenderDevice::Destroy();
+        ResourceManager::Get().BeginShutdown();
+        ResourceManager::Get().Clear();
+        RHIRenderDevice::Destroy();
         glfwDestroyWindow(Window);
         glfwTerminate();
     };
@@ -280,19 +277,19 @@ TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesShar
     ResetManagerForTest();
     TaskGraph Graph;
     Graph.Init(1);
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
     const Path MeshPath = EngineDir.parent_path() / "Applications" / "Test" / "Assets" / "teapot.obj";
-    auto MeshRef = Manager::Get().RequestMeshRef(MeshPath.string());
+    auto MeshRef = ResourceManager::Get().RequestMeshRef(MeshPath.string());
     ASSERT_TRUE(MeshRef);
-    auto FirstBlasRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
-    auto SecondBlasRef = Manager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    auto FirstBlasRef = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    auto SecondBlasRef = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
     ASSERT_TRUE(FirstBlasRef);
     ASSERT_TRUE(SecondBlasRef);
     EXPECT_EQ(FirstBlasRef.GetHandle().GetKey(), SecondBlasRef.GetHandle().GetKey());
 
     const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (IsPending(Manager::Get().GetState(FirstBlasRef.GetHandle())) &&
+    while (IsPending(ResourceManager::Get().GetState(FirstBlasRef.GetHandle())) &&
            std::chrono::steady_clock::now() < Deadline) {
         for (std::size_t TaskIndex = 0; TaskIndex < TaskGraph::kMaxTasksPerPoll; ++TaskIndex) {
             auto Task = Graph.TryDequeue(ThreadQueue::RHI);
@@ -300,12 +297,12 @@ TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesShar
                 break;
             (*Task)();
         }
-        Manager::Get().TickGpuPending();
+        ResourceManager::Get().TickGpuPending();
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    EXPECT_EQ(Manager::Get().GetState(FirstBlasRef.GetHandle()), ResourceState::Ready);
-    auto* BlasResource = Manager::Get().TryGetReady(FirstBlasRef);
+    EXPECT_EQ(ResourceManager::Get().GetState(FirstBlasRef.GetHandle()), ResourceState::Ready);
+    auto* BlasResource = ResourceManager::Get().TryGetReady(FirstBlasRef);
     ASSERT_NE(BlasResource, nullptr);
     EXPECT_NE(BlasResource->GetRhiPayload(), nullptr);
 
@@ -319,47 +316,47 @@ TEST(ResourceAccelerationStructureHardwareTest, DISABLED_MeshRequestResolvesShar
 TEST(ResourceRefLifetimeTest, CachedAssetLastRefReleaseDoesNotMakeEntryStale) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref    = Manager::Get().RequestSampledTextureRef("CachedRefLifetimeTexture.png");
+    auto Ref    = ResourceManager::Get().RequestSampledTextureRef("CachedRefLifetimeTexture.png");
     auto Handle = Ref.GetHandle();
     ASSERT_TRUE(Handle.IsValid());
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::CpuPreparing);
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::CpuPreparing);
 
     Ref.Reset();
 
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::CpuPreparing);
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::CpuPreparing);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceRefLifetimeTest, TransientLastRefReleaseMakesEntryStale) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref    = Manager::Get().RequestRenderTargetRef("TransientRefLifetimeDepth", MakeTestRenderTargetDesc());
+    auto Ref    = ResourceManager::Get().RequestRenderTargetRef("TransientRefLifetimeDepth", MakeTestRenderTargetDesc());
     auto Handle = Ref.GetHandle();
     ASSERT_TRUE(Handle.IsValid());
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::CpuPreparing);
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::CpuPreparing);
 
     Ref.Reset();
 
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Stale);
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::Stale);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceRefLifetimeTest, MoveAssignmentReleasesPreviousTransientOwner) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto FirstRef    = Manager::Get().RequestRenderTargetRef("TransientMoveAssignFirst", MakeTestRenderTargetDesc());
+    auto FirstRef    = ResourceManager::Get().RequestRenderTargetRef("TransientMoveAssignFirst", MakeTestRenderTargetDesc());
     auto FirstHandle = FirstRef.GetHandle();
-    auto NextRef     = Manager::Get().RequestRenderTargetRef("TransientMoveAssignNext", MakeTestRenderTargetDesc());
+    auto NextRef     = ResourceManager::Get().RequestRenderTargetRef("TransientMoveAssignNext", MakeTestRenderTargetDesc());
     auto NextHandle  = NextRef.GetHandle();
     ASSERT_TRUE(FirstHandle.IsValid());
     ASSERT_TRUE(NextHandle.IsValid());
@@ -367,42 +364,42 @@ TEST(ResourceRefLifetimeTest, MoveAssignmentReleasesPreviousTransientOwner) {
     FirstRef = std::move(NextRef);
 
     EXPECT_FALSE(NextRef);
-    EXPECT_EQ(Manager::Get().GetState(FirstHandle), ResourceState::Stale);
-    EXPECT_EQ(Manager::Get().GetState(NextHandle), ResourceState::CpuPreparing);
+    EXPECT_EQ(ResourceManager::Get().GetState(FirstHandle), ResourceState::Stale);
+    EXPECT_EQ(ResourceManager::Get().GetState(NextHandle), ResourceState::CpuPreparing);
 
     FirstRef.Reset();
-    EXPECT_EQ(Manager::Get().GetState(NextHandle), ResourceState::Stale);
+    EXPECT_EQ(ResourceManager::Get().GetState(NextHandle), ResourceState::Stale);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceRefLifetimeTest, CollectReleasedResourcesErasesReleasedTransientEntry) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref    = Manager::Get().RequestRenderTargetRef("TransientCollectReleased", MakeTestRenderTargetDesc());
+    auto Ref    = ResourceManager::Get().RequestRenderTargetRef("TransientCollectReleased", MakeTestRenderTargetDesc());
     auto Handle = Ref.GetHandle();
     ASSERT_TRUE(Handle.IsValid());
 
     Ref.Reset();
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Stale);
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::Stale);
 
-    Manager::Get().CollectReleasedResources();
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Unknown);
+    ResourceManager::Get().CollectReleasedResources();
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::Unknown);
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceSampledTextureRequestTest, CoalescesNormalizedTexturePaths) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto ARef = Manager::Get().RequestSampledTextureRef("Assets/../Textures/Missing.png");
-    auto BRef = Manager::Get().RequestSampledTextureRef("Textures/Missing.png");
+    auto ARef = ResourceManager::Get().RequestSampledTextureRef("Assets/../Textures/Missing.png");
+    auto BRef = ResourceManager::Get().RequestSampledTextureRef("Textures/Missing.png");
     auto A    = ARef.GetHandle();
     auto B    = BRef.GetHandle();
 
@@ -411,48 +408,48 @@ TEST(ResourceSampledTextureRequestTest, CoalescesNormalizedTexturePaths) {
     EXPECT_EQ(A.GetGeneration(), B.GetGeneration());
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceSampledTextureRequestTest, RejectsRequestsAfterShutdownBegins) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
-    Manager::Get().BeginShutdown();
+    ResourceManager::Get().Init(Graph);
+    ResourceManager::Get().BeginShutdown();
 
-    auto Ref    = Manager::Get().RequestSampledTextureRef("Textures/Missing.png");
+    auto Ref    = ResourceManager::Get().RequestSampledTextureRef("Textures/Missing.png");
     auto Handle = Ref.GetHandle();
 
     EXPECT_FALSE(Handle.IsValid());
 
     Graph.Shutdown();
-    Manager::Get().Clear();
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Clear();
+    ResourceManager::Get().Init(Graph);
 }
 
 TEST(ResourceSampledTextureRequestTest, MissingFilePublishesFailedResource) {
     ResetManagerForTest();
     TaskGraph Graph;
     Graph.Init(1);
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref    = Manager::Get().RequestSampledTextureRef("DefinitelyMissingTexture.png");
+    auto Ref    = ResourceManager::Get().RequestSampledTextureRef("DefinitelyMissingTexture.png");
     auto Handle = Ref.GetHandle();
 
     const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (IsPending(Manager::Get().GetState(Handle)) && std::chrono::steady_clock::now() < Deadline)
+    while (IsPending(ResourceManager::Get().GetState(Handle)) && std::chrono::steady_clock::now() < Deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Failed);
-    ASSERT_TRUE(Manager::Get().GetError(Handle).has_value());
-    EXPECT_TRUE(Manager::Get().GetError(Handle)->ToString().starts_with("stbi_load failed"));
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::Failed);
+    ASSERT_TRUE(ResourceManager::Get().GetError(Handle).has_value());
+    EXPECT_TRUE(ResourceManager::Get().GetError(Handle)->ToString().starts_with("stbi_load failed"));
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourceSampledTextureRequestTest, StaleTexturePublishIgnored) {
-    ResourceSlot<RHI::SampledTexture> Slot;
+    ResourceSlot<RHISampledTexture> Slot;
     auto FirstGeneration  = Slot.Reset();
     auto SecondGeneration = Slot.Reset();
 
@@ -462,7 +459,7 @@ TEST(ResourceSampledTextureRequestTest, StaleTexturePublishIgnored) {
 }
 
 TEST(ResourceArrayTest, RejectsInvalidResourceRef) {
-    Array<RHI::SampledTexture> Resources;
+    ResourceArray<RHISampledTexture> Resources;
 
     auto Result = Resources.Set(0, {});
 
@@ -473,31 +470,31 @@ TEST(ResourceArrayTest, RejectsInvalidResourceRef) {
 TEST(ResourcePipelineRequestTest, CoalescesPipelineKeys) {
     ResetManagerForTest();
     TaskGraph Graph;
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
     GraphicsPipelineRequest Req{
         .VertEntry = {.SourcePath = Path("Shaders/Test.slang"), .EntryPoint = "vertMain"},
         .FragEntry = {.SourcePath = Path("Shaders/Test.slang"), .EntryPoint = "fragMain"},
         .VertexInputLayout =
-            RHI::VertexInputLayoutDesc{
+            RHIVertexInputLayoutDesc{
                 .Bindings =
                     {
                         {.Binding = 0, .Stride = 32},
                     },
                 .Attributes =
                     {
-                        RHI::VertexInputAttributeDesc{
+                        RHIVertexInputAttributeDesc{
                             .Location = 0,
                             .Binding  = 0,
-                            .Format   = RHI::Format::R32G32B32_SFLOAT,
+                            .Format   = RHIFormat::R32G32B32_SFLOAT,
                             .Offset   = 0,
                         },
                     },
             },
     };
 
-    auto ARef = Manager::Get().RequestGraphicsPipelineRef(Req);
-    auto BRef = Manager::Get().RequestGraphicsPipelineRef(Req);
+    auto ARef = ResourceManager::Get().RequestGraphicsPipelineRef(Req);
+    auto BRef = ResourceManager::Get().RequestGraphicsPipelineRef(Req);
     auto A    = ARef.GetHandle();
     auto B    = BRef.GetHandle();
 
@@ -506,28 +503,28 @@ TEST(ResourcePipelineRequestTest, CoalescesPipelineKeys) {
     EXPECT_EQ(A.GetGeneration(), B.GetGeneration());
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }
 
 TEST(ResourcePipelineRequestTest, ShaderCompileFailurePublishesFailedResource) {
     ResetManagerForTest();
     TaskGraph Graph;
     Graph.Init(1);
-    Manager::Get().Init(Graph);
+    ResourceManager::Get().Init(Graph);
 
-    auto Ref = Manager::Get().RequestGraphicsPipelineRef(GraphicsPipelineRequest{
+    auto Ref = ResourceManager::Get().RequestGraphicsPipelineRef(GraphicsPipelineRequest{
         .VertEntry = {.SourcePath = Path("DefinitelyMissingShader.slang"), .EntryPoint = "vertMain"},
         .FragEntry = {.SourcePath = Path("DefinitelyMissingShader.slang"), .EntryPoint = "fragMain"},
     });
     auto Handle = Ref.GetHandle();
 
     const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (IsPending(Manager::Get().GetState(Handle)) && std::chrono::steady_clock::now() < Deadline)
+    while (IsPending(ResourceManager::Get().GetState(Handle)) && std::chrono::steady_clock::now() < Deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-    EXPECT_EQ(Manager::Get().GetState(Handle), ResourceState::Failed);
-    ASSERT_TRUE(Manager::Get().GetError(Handle).has_value());
+    EXPECT_EQ(ResourceManager::Get().GetState(Handle), ResourceState::Failed);
+    ASSERT_TRUE(ResourceManager::Get().GetError(Handle).has_value());
 
     Graph.Shutdown();
-    Manager::Get().Clear();
+    ResourceManager::Get().Clear();
 }

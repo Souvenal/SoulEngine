@@ -15,7 +15,7 @@ import Window;
 
 namespace SoulEngine {
 
-class TestApplication final : public Application::Application {
+class TestApplication final : public Application {
   public:
     TestApplication() = default;
 
@@ -33,6 +33,6 @@ class TestApplication final : public Application::Application {
 };
 
 /// Auto-register with the application factory.
-Application::ApplicationFactory::AutoRegistrar<TestApplication> RegTestApp{"Test"};
+ApplicationFactory::AutoRegistrar<TestApplication> RegTestApp{"Test"};
 
 } // namespace SoulEngine

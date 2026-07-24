@@ -9,11 +9,9 @@ import std;
 import :Capability;
 import :Buffer;
 
-using namespace SoulEngine::Core;
+namespace SoulEngine {
 
-namespace SoulEngine::RHI::Vulkan {
-
-auto WriteConstantArenaDescriptor(vk::raii::Device& Device,
+auto VulkanWriteConstantArenaDescriptor(vk::raii::Device& Device,
                                   vk::Buffer Buffer,
                                   vk::DescriptorSet Set,
                                   Uint32 Binding,
@@ -35,35 +33,35 @@ auto WriteConstantArenaDescriptor(vk::raii::Device& Device,
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DescriptorManager
+// VulkanDescriptorManager
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Owns descriptor allocation and draw-scope descriptor writes.
-/// Pipeline-specific descriptor set layouts and pipeline layouts are created
-/// from shader reflection by Vulkan::GraphicsPipeline.
-class DescriptorManager {
+/// RHIPipeline-specific descriptor set layouts and pipeline layouts are created
+/// from shader reflection by VulkanGraphicsPipeline.
+class VulkanDescriptorManager {
   public:
-    DescriptorManager() = default;
+    VulkanDescriptorManager() = default;
 
-    DescriptorManager(DescriptorManager&&) noexcept                    = default;
-    auto operator=(DescriptorManager&&) noexcept -> DescriptorManager& = default;
+    VulkanDescriptorManager(VulkanDescriptorManager&&) noexcept                    = default;
+    auto operator=(VulkanDescriptorManager&&) noexcept -> VulkanDescriptorManager& = default;
 
-    DescriptorManager(const DescriptorManager&)                    = delete;
-    auto operator=(const DescriptorManager&) -> DescriptorManager& = delete;
+    VulkanDescriptorManager(const VulkanDescriptorManager&)                    = delete;
+    auto operator=(const VulkanDescriptorManager&) -> VulkanDescriptorManager& = delete;
 
     /// @param Device           Vulkan device handle.
     /// @param FramesInFlight   Number of frame slots.
     [[nodiscard]] static auto Create(vk::raii::Device& Device, Uint32 FramesInFlight)
-        -> std::expected<DescriptorManager, ErrorMessage> {
+        -> std::expected<VulkanDescriptorManager, ErrorMessage> {
         // ── Verify descriptor indexing features are supported ───────────
-        const auto& V12 = Capability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
+        const auto& V12 = VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
         if (!V12.descriptorIndexing || !V12.descriptorBindingPartiallyBound ||
             !V12.descriptorBindingVariableDescriptorCount || !V12.runtimeDescriptorArray ||
             !V12.descriptorBindingSampledImageUpdateAfterBind)
             return std::unexpected(
-                ErrorMessage("DescriptorManager: required Vulkan 1.2 descriptor indexing features not supported by device"));
+                ErrorMessage("VulkanDescriptorManager: required Vulkan 1.2 descriptor indexing features not supported by device"));
 
-        DescriptorManager Mgr;
+        VulkanDescriptorManager Mgr;
         Mgr.m_Device         = &Device;
         Mgr.m_FramesInFlight = FramesInFlight;
 
@@ -76,7 +74,7 @@ class DescriptorManager {
             vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, ScratchDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, ScratchDescriptorCount},
         };
-        if (Capability::Get().GetRayTracingSupport().Available)
+        if (VulkanCapability::Get().GetRayTracingSupport().Available)
             PoolSizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, ScratchDescriptorCount);
         Uint32 MaxSets = ScratchDescriptorCount + 1;
         vk::DescriptorPoolCreateInfo PoolCI{
@@ -90,7 +88,7 @@ class DescriptorManager {
         };
         auto PoolRes = Device.createDescriptorPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("DescriptorManager: failed to create descriptor pool"));
+            return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to create descriptor pool"));
         Mgr.m_Pool = std::move(PoolRes.value);
 
         Mgr.m_ScratchSets.resize(FramesInFlight);
@@ -117,9 +115,9 @@ class DescriptorManager {
         if (SetLayouts.empty())
             return std::vector<vk::DescriptorSet>{};
         if (FrameIndex >= m_ScratchSets.size())
-            return std::unexpected(ErrorMessage("DescriptorManager: invalid frame index for scratch descriptor sets"));
+            return std::unexpected(ErrorMessage("VulkanDescriptorManager: invalid frame index for scratch descriptor sets"));
         if (VariableCounts.size() != SetLayouts.size())
-            return std::unexpected(ErrorMessage("DescriptorManager: variable descriptor counts do not match set layouts"));
+            return std::unexpected(ErrorMessage("VulkanDescriptorManager: variable descriptor counts do not match set layouts"));
 
         vk::DescriptorSetVariableDescriptorCountAllocateInfo VariableInfo{
             .descriptorSetCount = static_cast<Uint32>(VariableCounts.size()),
@@ -134,7 +132,7 @@ class DescriptorManager {
              };
         auto Res = m_Device->allocateDescriptorSets(AllocChain.get<vk::DescriptorSetAllocateInfo>());
         if (Res.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("DescriptorManager: failed to allocate draw descriptor sets"));
+            return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate draw descriptor sets"));
 
         std::vector<vk::DescriptorSet> RawSets;
         RawSets.reserve(Res.value.size());
@@ -157,7 +155,7 @@ class DescriptorManager {
         -> std::expected<vk::raii::DescriptorSet, ErrorMessage>;
 
     auto WriteConstantDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
-        WriteConstantArenaDescriptor(*m_Device, Buffer, Set, Binding, Range);
+        VulkanWriteConstantArenaDescriptor(*m_Device, Buffer, Set, Binding, Range);
     }
 
     auto WriteStorageBufferDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
@@ -208,21 +206,21 @@ class DescriptorManager {
 
     auto WriteAccelerationStructureDescriptor(vk::DescriptorSet Set,
                                               Uint32            Binding,
-                                              vk::AccelerationStructureKHR AccelerationStructure) -> void {
+                                              vk::AccelerationStructureKHR RHIAccelerationStructure) -> void {
         vk::StructureChain<vk::WriteDescriptorSet, vk::WriteDescriptorSetAccelerationStructureKHR> WriteChain = {
             {.dstSet          = Set,
              .dstBinding      = Binding,
              .dstArrayElement = 0,
              .descriptorCount = 1,
              .descriptorType  = vk::DescriptorType::eAccelerationStructureKHR},
-            {.accelerationStructureCount = 1, .pAccelerationStructures = &AccelerationStructure},
+            {.accelerationStructureCount = 1, .pAccelerationStructures = &RHIAccelerationStructure},
         };
         m_Device->updateDescriptorSets(WriteChain.get<vk::WriteDescriptorSet>(), {});
     }
 
-    auto WriteSamplerDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Sampler Sampler) -> void {
+    auto WriteSamplerDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Sampler VulkanSampler) -> void {
         vk::DescriptorImageInfo ImageInfo{
-            .sampler     = Sampler,
+            .sampler     = VulkanSampler,
             .imageView   = nullptr,
             .imageLayout = vk::ImageLayout::eUndefined,
         };
@@ -246,7 +244,7 @@ class DescriptorManager {
     std::vector<std::vector<vk::raii::DescriptorSet>> m_ScratchSets;
 };
 
-auto DescriptorManager::AllocateDescriptorSet(Uint32                  FrameIndex,
+auto VulkanDescriptorManager::AllocateDescriptorSet(Uint32                  FrameIndex,
                                               vk::DescriptorSetLayout SetLayout,
                                               Uint32                  VariableDescriptorCount)
     -> std::expected<vk::DescriptorSet, ErrorMessage> {
@@ -258,11 +256,11 @@ auto DescriptorManager::AllocateDescriptorSet(Uint32                  FrameIndex
     if (!Sets)
         return std::unexpected(Sets.error());
     if (Sets->empty())
-        return std::unexpected(ErrorMessage("DescriptorManager: single descriptor set allocation returned no sets"));
+        return std::unexpected(ErrorMessage("VulkanDescriptorManager: single descriptor set allocation returned no sets"));
     return (*Sets)[0];
 }
 
-auto DescriptorManager::AllocatePersistentDescriptorSet(vk::DescriptorSetLayout SetLayout,
+auto VulkanDescriptorManager::AllocatePersistentDescriptorSet(vk::DescriptorSetLayout SetLayout,
                                                          Uint32                  VariableDescriptorCount)
     -> std::expected<vk::raii::DescriptorSet, ErrorMessage> {
     std::array Layouts{SetLayout};
@@ -280,8 +278,8 @@ auto DescriptorManager::AllocatePersistentDescriptorSet(vk::DescriptorSetLayout 
          };
     auto Res = m_Device->allocateDescriptorSets(AllocChain.get<vk::DescriptorSetAllocateInfo>());
     if (Res.result != vk::Result::eSuccess || Res.value.empty())
-        return std::unexpected(ErrorMessage("DescriptorManager: failed to allocate persistent descriptor set"));
+        return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate persistent descriptor set"));
     return std::move(Res.value.front());
 }
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

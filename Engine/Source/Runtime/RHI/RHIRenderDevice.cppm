@@ -7,21 +7,19 @@ export module RHI:RenderDevice;
 import std;
 import :Types;
 import :RayTracing;
-import :Command; // CommandList
+import :Command; // RHICommandList
 
-using namespace SoulEngine::Core;
+export namespace SoulEngine {
 
-export namespace SoulEngine::RHI {
-
-class RenderDevice {
+class RHIRenderDevice {
   public:
-    RenderDevice()                                       = default;
-    RenderDevice(const RenderDevice&)                    = delete;
-    auto operator=(const RenderDevice&) -> RenderDevice& = delete;
-    RenderDevice(RenderDevice&&)                         = delete;
-    auto operator=(RenderDevice&&) -> RenderDevice&      = delete;
+    RHIRenderDevice()                                       = default;
+    RHIRenderDevice(const RHIRenderDevice&)                    = delete;
+    auto operator=(const RHIRenderDevice&) -> RHIRenderDevice& = delete;
+    RHIRenderDevice(RHIRenderDevice&&)                         = delete;
+    auto operator=(RHIRenderDevice&&) -> RHIRenderDevice&      = delete;
 
-    virtual ~RenderDevice() = default;
+    virtual ~RHIRenderDevice() = default;
 
     /// @brief One-time initialization with the application window.
     /// Must be called exactly once after construction, before any other method.
@@ -31,40 +29,40 @@ class RenderDevice {
 
     // ── Resource creation ────────────────────────────────────────────────────
 
-    [[nodiscard]] virtual auto CreateVertexBuffer(const VertexBufferDesc& Desc)
-        -> std::expected<VertexBufferCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateIndexBuffer(const IndexBufferDesc& Desc)
-        -> std::expected<IndexBufferCreateResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateVertexBuffer(const RHIVertexBufferDesc& Desc)
+        -> std::expected<RHIVertexBufferCreateResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
+        -> std::expected<RHIIndexBufferCreateResult, ErrorMessage> = 0;
     /// Create a logical shader-visible constant block identity.
     /// Constant data is supplied through draw-scope shader bindings.
-    [[nodiscard]] virtual auto CreateConstantBuffer(const ConstantBufferDesc& Desc)
-        -> std::expected<UPtr<ConstantBuffer>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateSampler(const SamplerDesc& Desc)
-        -> std::expected<UPtr<Sampler>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateSampledTexture(const SampledTextureDesc& Desc)
-        -> std::expected<SampledTextureCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateRenderTarget(const RenderTargetDesc& Desc)
-        -> std::expected<RenderTargetCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateGraphicsPipeline(const GraphicsPipelineDesc& Desc)
-        -> std::expected<UPtr<GraphicsPipeline>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RayTracingPipelineDesc& Desc)
-        -> std::expected<UPtr<RayTracingPipeline>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const BottomLevelAccelerationStructureDesc& Desc)
-        -> std::expected<UPtr<BottomLevelAccelerationStructure>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const TopLevelAccelerationStructureDesc& Desc)
-        -> std::expected<UPtr<TopLevelAccelerationStructure>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateConstantBuffer(const RHIConstantBufferDesc& Desc)
+        -> std::expected<UPtr<RHIConstantBuffer>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateSampler(const RHISamplerDesc& Desc)
+        -> std::expected<UPtr<RHISampler>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
+        -> std::expected<RHISampledTextureCreateResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateRenderTarget(const RHIRenderTargetDesc& Desc)
+        -> std::expected<RHIRenderTargetCreateResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
+        -> std::expected<UPtr<RHIGraphicsPipeline>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
+        -> std::expected<UPtr<RHIRayTracingPipeline>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
+        -> std::expected<UPtr<RHIBottomLevelAccelerationStructure>, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
+        -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
 
-    /// Return the RenderDevice-owned BDA metadata table, or null when hardware ray tracing is unavailable.
-    [[nodiscard]] virtual auto GetRayTracingGeometryTable() -> RayTracingGeometryTable* = 0;
+    /// Return the RHIRenderDevice-owned BDA metadata table, or null when hardware ray tracing is unavailable.
+    [[nodiscard]] virtual auto GetRayTracingGeometryTable() -> RHIRayTracingGeometryTable* = 0;
 
-    // ── Command execution ────────────────────────────────────
+    // ── RHICommand execution ────────────────────────────────────
 
     /// @brief Execute a frame's worth of RHI commands.
     /// Replaces the old single-threaded BeginFrame/EndFrame pattern.
     /// The backend handles submission + present internally.
-    [[nodiscard]] virtual auto Execute(const CommandList& CmdList) -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Execute(const RHICommandList& CmdList) -> std::expected<void, ErrorMessage> = 0;
 
-    // ── Command context access ──────────────────────────────────────────
+    // ── RHICommand context access ──────────────────────────────────────────
 
     /// @brief Return the current frame-in-flight index.
     [[nodiscard]] virtual auto GetCurrentFrameIndex() const -> Uint32 = 0;
@@ -72,7 +70,7 @@ class RenderDevice {
     // ── GPU sync ───────────────────────────────────────────────────────────
 
     /// @brief Non-blocking query for backend GPU completion tokens.
-    [[nodiscard]] virtual auto IsGpuComplete(GpuCompletionToken Token) -> bool = 0;
+    [[nodiscard]] virtual auto IsGpuComplete(RHIGpuCompletionToken Token) -> bool = 0;
 
     /// @brief Block the CPU until all GPU work completes.
     /// Safe to call at any point after Init(); required before destroying
@@ -107,14 +105,14 @@ class RenderDevice {
     /// @brief Access the process-wide RHI singleton.
     ///
     /// Valid only between a successful Create() and Destroy().
-    [[nodiscard]] static auto Get() -> RenderDevice&;
+    [[nodiscard]] static auto Get() -> RHIRenderDevice&;
 
   private:
-    static UPtr<RenderDevice> s_Instance;
+    static UPtr<RHIRenderDevice> s_Instance;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// BackendFactory — defined after RenderDevice so the type is complete
+// RHIBackendFactory — defined after RHIRenderDevice so the type is complete
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// @brief Factory type for RHI backend creation.
@@ -122,15 +120,15 @@ class RenderDevice {
 /// Each backend (Vulkan, Metal, D3D12, …) auto-registers via
 /// AutoRegistrar in its own standalone module — zero changes needed
 /// here to add a new backend.
-using BackendFactory = Core::Factory<RenderDevice>;
+using RHIBackendFactory = Factory<RHIRenderDevice>;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Static member definitions
 // ═════════════════════════════════════════════════════════════════════════════
 
-inline UPtr<RenderDevice> RenderDevice::s_Instance = nullptr;
+inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
 
-[[nodiscard]] inline auto RenderDevice::Create(GLFWwindow* Window) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] inline auto RHIRenderDevice::Create(GLFWwindow* Window) -> std::expected<void, ErrorMessage> {
     const auto& Cfg = ConfigManager::Get().GetConfig();
 
     if (!Cfg.Render.RHI.has_value())
@@ -140,39 +138,39 @@ inline UPtr<RenderDevice> RenderDevice::s_Instance = nullptr;
     LogInfo("Configured RHI backend: '{}'", Backend);
 
     // Verify the backend is registered before attempting creation.
-    if (!BackendFactory::Get().Contains(Backend)) {
+    if (!RHIBackendFactory::Get().Contains(Backend)) {
         String Supported;
-        auto   Names = BackendFactory::Get().Keys();
+        auto   Names = RHIBackendFactory::Get().Keys();
         for (std::size_t i = 0; i < Names.size(); ++i) {
             if (i > 0)
                 Supported += ", ";
             Supported += Names[i];
         }
         return std::unexpected(
-            ErrorMessage(Core::Format("Unsupported RHI backend: '{}'. Supported backends: {}", Backend, Supported)));
+            ErrorMessage(Format("Unsupported RHI backend: '{}'. Supported backends: {}", Backend, Supported)));
     }
 
     // Create the backend via self-registering factory — no switch,
     // no concrete backend imports needed.
-    auto Ctx = BackendFactory::Get().Create(Backend);
+    auto Ctx = RHIBackendFactory::Get().Create(Backend);
 
     // Initialize the backend with the application window.
     if (auto R = Ctx->Init(Window); !R)
-        return std::unexpected(R.error().Append(Core::Format("Failed to initialize '{}' RHI backend", Backend)));
+        return std::unexpected(R.error().Append(Format("Failed to initialize '{}' RHI backend", Backend)));
 
     s_Instance = std::move(Ctx);
     return {};
 }
 
-inline auto RenderDevice::Destroy() -> void {
+inline auto RHIRenderDevice::Destroy() -> void {
     if (s_Instance) {
         s_Instance->Shutdown();
         s_Instance.reset();
     }
 }
 
-inline auto RenderDevice::Get() -> RenderDevice& {
+inline auto RHIRenderDevice::Get() -> RHIRenderDevice& {
     return *s_Instance;
 }
 
-} // namespace SoulEngine::RHI
+} // namespace SoulEngine

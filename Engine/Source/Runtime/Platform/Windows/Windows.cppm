@@ -82,7 +82,7 @@ auto AbortHandler(int /*Signal*/) -> void {
 }
 
 export auto InstallCrashHandler() -> void {
-    auto BinDir = SoulEngine::Core::ConfigManager::Get().BinariesDirPath();
+    auto BinDir = SoulEngine::ConfigManager::Get().BinariesDirPath();
     wcscpy_s(g_DumpDir, BinDir.wstring().c_str());
 
     // Catch SEH crashes (access violation, divide-by-zero, etc.)

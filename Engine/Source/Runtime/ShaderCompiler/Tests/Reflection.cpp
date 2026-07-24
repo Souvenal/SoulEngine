@@ -1,4 +1,4 @@
-/// @file   Reflection.cpp
+/// @file   ShaderReflection.cpp
 /// @brief  Tests for shader reflection data (bindings, push constants, vertex inputs).
 
 #include <gtest/gtest.h>
@@ -8,22 +8,17 @@ import Shader;
 import ShaderCompiler;
 import std;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::Shader;
-using SoulEngine::ShaderCompiler::Backend;
-using SoulEngine::ShaderCompiler::GraphicsCompileDesc;
-using SoulEngine::ShaderCompiler::ShaderEntry;
-using SoulEngine::ShaderCompiler::ShaderCompiler;
+using namespace SoulEngine;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 static auto CompileGraphicsForReflection(const Path& SourcePath,
                                          StringView  VertexEntry = "VertexMain",
                                          StringView  FragmentEntry = "FragmentMain")
-    -> std::expected<GraphicsProgram, ErrorMessage> {
+    -> std::expected<ShaderGraphicsProgram, ErrorMessage> {
     return ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = String(VertexEntry), .Backend = Backend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = String(FragmentEntry), .Backend = Backend::Slang},
+        .Vertex   = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = String(VertexEntry), .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = String(FragmentEntry), .Backend = ShaderBackend::Slang},
     });
 }
 
@@ -58,7 +53,7 @@ class ReflectionTest : public ::testing::Test {
     }
 };
 
-// ── Vertex Input Reflection ────────────────────────────────────────────────
+// ── Vertex Input ShaderReflection ────────────────────────────────────────────────
 
 TEST_F(ReflectionTest, PositionOnlyVertexInput) {
     auto Result = CompileGraphicsForReflection(
@@ -73,7 +68,7 @@ TEST_F(ReflectionTest, PositionOnlyVertexInput) {
     EXPECT_EQ(R.VertexInputs[0].SemanticName, "POSITION");
     EXPECT_EQ(R.VertexInputs[0].SemanticIndex, 0U);
     EXPECT_TRUE(R.VertexInputs[0].Location.has_value());
-    EXPECT_EQ(R.VertexInputs[0].ValueType.ScalarType, ScalarType::Float32);
+    EXPECT_EQ(R.VertexInputs[0].ValueType.ScalarType, ShaderScalarType::Float32);
     EXPECT_EQ(R.VertexInputs[0].ValueType.RowCount, 1U);
     EXPECT_EQ(R.VertexInputs[0].ValueType.ColumnCount, 3U);
 }
@@ -90,7 +85,7 @@ TEST_F(ReflectionTest, FullVertexInputLayout) {
     // POSITION: float3
     EXPECT_EQ(R.VertexInputs[0].SemanticName, "POSITION");
     EXPECT_EQ(R.VertexInputs[0].SemanticIndex, 0U);
-    EXPECT_EQ(R.VertexInputs[0].ValueType.ScalarType, ScalarType::Float32);
+    EXPECT_EQ(R.VertexInputs[0].ValueType.ScalarType, ShaderScalarType::Float32);
     EXPECT_EQ(R.VertexInputs[0].ValueType.ColumnCount, 3U);
 
     // NORMAL: float3
@@ -116,7 +111,7 @@ TEST_F(ReflectionTest, FullVertexInputLayout) {
     // BLENDINDICES: uint4
     EXPECT_EQ(R.VertexInputs[5].SemanticName, "BLENDINDICES");
     EXPECT_EQ(R.VertexInputs[5].SemanticIndex, 0U);
-    EXPECT_EQ(R.VertexInputs[5].ValueType.ScalarType, ScalarType::Uint32);
+    EXPECT_EQ(R.VertexInputs[5].ValueType.ScalarType, ShaderScalarType::Uint32);
     EXPECT_EQ(R.VertexInputs[5].ValueType.ColumnCount, 4U);
 
     // BLENDWEIGHT: float4
@@ -173,7 +168,7 @@ TEST_F(ReflectionTest, FragmentShaderNoVertexInputs) {
     EXPECT_TRUE(R.VertexInputs.empty());
 }
 
-// ── Bindings Reflection ────────────────────────────────────────────────────
+// ── Bindings ShaderReflection ────────────────────────────────────────────────────
 
 TEST_F(ReflectionTest, ResourceBindings) {
     auto Result = CompileGraphicsForReflection(ShaderPath("ReflectionPushConstantsAndResources.slang"));
@@ -182,23 +177,23 @@ TEST_F(ReflectionTest, ResourceBindings) {
     const auto& R = Result->Reflection;
 
     // ConstantBuffer<float4> [[vk::binding(0, 0)]]
-    auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.BindingIndex == 0; });
+    auto It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) { return B.Set == 0 && B.BindingIndex == 0; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_cb");
-    EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
+    EXPECT_EQ(It->Type, ShaderResourceType::ConstantBuffer);
     EXPECT_EQ(It->ArrayCount, 1U);
 
     // Texture2D<float4> [[vk::binding(1, 0)]]
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.BindingIndex == 1; });
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) { return B.Set == 0 && B.BindingIndex == 1; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_tex");
-    EXPECT_EQ(It->Type, ResourceType::SampledTexture);
+    EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
 
     // SamplerState [[vk::binding(2, 0)]]
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.Set == 0 && B.BindingIndex == 2; });
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) { return B.Set == 0 && B.BindingIndex == 2; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_sam");
-	EXPECT_EQ(It->Type, ResourceType::Sampler);
+	EXPECT_EQ(It->Type, ShaderResourceType::Sampler);
 }
 
 TEST_F(ReflectionTest, ExplicitDescriptorSet) {
@@ -206,11 +201,11 @@ TEST_F(ReflectionTest, ExplicitDescriptorSet) {
 	ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
 	const auto& R = Result->Reflection;
-	auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) { return B.ParameterPath == "g_scene"; });
+	auto It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) { return B.ParameterPath == "g_scene"; });
 	ASSERT_NE(It, R.Bindings.end());
 	EXPECT_EQ(It->Set, 2U);
 	EXPECT_EQ(It->BindingIndex, 3U);
-	EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
+	EXPECT_EQ(It->Type, ShaderResourceType::ConstantBuffer);
 }
 
 TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
@@ -220,45 +215,45 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     const auto& R = Result->Reflection;
     ASSERT_EQ(R.Bindings.size(), 5UL);
 
-    auto It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+    auto It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
         return B.ParameterPath == "g_frameView.frame";
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 0U);
     EXPECT_EQ(It->BindingIndex, 0U);
-    EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
+    EXPECT_EQ(It->Type, ShaderResourceType::ConstantBuffer);
 
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
         return B.ParameterPath == "g_frameView.view";
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 0U);
     EXPECT_EQ(It->BindingIndex, 1U);
-    EXPECT_EQ(It->Type, ResourceType::ConstantBuffer);
+    EXPECT_EQ(It->Type, ShaderResourceType::ConstantBuffer);
 
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
         return B.ParameterPath == "g_samplers.uSamplerLinear";
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 1U);
     EXPECT_EQ(It->BindingIndex, 0U);
-    EXPECT_EQ(It->Type, ResourceType::Sampler);
+    EXPECT_EQ(It->Type, ShaderResourceType::Sampler);
 
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
         return B.ParameterPath == "g_samplers.uSamplerAniso";
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 1U);
     EXPECT_EQ(It->BindingIndex, 1U);
-    EXPECT_EQ(It->Type, ResourceType::Sampler);
+    EXPECT_EQ(It->Type, ShaderResourceType::Sampler);
 
-    It = std::ranges::find_if(R.Bindings, [](const Binding& B) {
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
         return B.ParameterPath == "g_textures.uTextures";
     });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 2U);
     EXPECT_EQ(It->BindingIndex, 0U);
-    EXPECT_EQ(It->Type, ResourceType::SampledTexture);
+    EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
 	EXPECT_EQ(It->ArrayCount, std::numeric_limits<Uint32>::max());
 }
 
@@ -270,7 +265,7 @@ TEST_F(ReflectionTest, NestedParameterBlockIsRejected) {
 	EXPECT_NE(ErrorText.find("Nested ParameterBlock"), String::npos) << ErrorText;
 }
 
-// ── Push Constants Reflection ──────────────────────────────────────────────
+// ── Push Constants ShaderReflection ──────────────────────────────────────────────
 
 TEST_F(ReflectionTest, PushConstants) {
     auto Result = CompileGraphicsForReflection(ShaderPath("ReflectionPushConstantsAndResources.slang"));

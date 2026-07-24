@@ -13,17 +13,15 @@ export import Core;
 import TaskGraph;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Resource {
+export namespace SoulEngine {
 
 /// @brief Central resource manager facade.
 ///
 /// Public request/query entry point over the ResourceContext-owned registry.
 /// ResourceContext owns entries, slots, payloads, and lifetime policy state;
-/// Manager keeps that ownership model out of normal runtime call sites.
-class Manager : public Singleton<Manager> {
-    friend class Singleton<Manager>;
+/// ResourceManager keeps that ownership model out of normal runtime call sites.
+class ResourceManager : public Singleton<ResourceManager> {
+    friend class Singleton<ResourceManager>;
 
   public:
     /// @brief Attach engine task graph for asynchronous resource work.
@@ -37,57 +35,57 @@ class Manager : public Singleton<Manager> {
     }
 
     /// @brief Request sampled texture and retain an owner ref.
-    [[nodiscard]] auto RequestSampledTextureRef(StringView TexturePath) -> ResourceRef<RHI::SampledTexture> {
+    [[nodiscard]] auto RequestSampledTextureRef(StringView TexturePath) -> ResourceRef<RHISampledTexture> {
         return AcquireResourceRef(m_Context, SubmitSampledTextureRequest(m_Context, TexturePath));
     }
 
     /// @brief Request graphics pipeline and retain an owner ref.
-    [[nodiscard]] auto RequestGraphicsPipelineRef(const GraphicsPipelineRequest& Req) -> ResourceRef<RHI::GraphicsPipeline> {
+    [[nodiscard]] auto RequestGraphicsPipelineRef(const GraphicsPipelineRequest& Req) -> ResourceRef<RHIGraphicsPipeline> {
         return AcquireResourceRef(m_Context, SubmitGraphicsPipelineRequest(m_Context, Req));
     }
 
     /// @brief Request ray-tracing pipeline and retain an owner ref.
     [[nodiscard]] auto RequestRayTracingPipelineRef(const RayTracingPipelineRequest& Req)
-        -> ResourceRef<RHI::RayTracingPipeline> {
+        -> ResourceRef<RHIRayTracingPipeline> {
         return AcquireResourceRef(m_Context, SubmitRayTracingPipelineRequest(m_Context, Req));
     }
 
     /// @brief Request vertex buffer and retain an owner ref.
-    [[nodiscard]] auto RequestVertexBufferRef(String Key, const RHI::VertexBufferDesc& Desc) -> ResourceRef<RHI::VertexBuffer> {
+    [[nodiscard]] auto RequestVertexBufferRef(String Key, const RHIVertexBufferDesc& Desc) -> ResourceRef<RHIVertexBuffer> {
         return AcquireResourceRef(m_Context, SubmitVertexBufferRequest(m_Context, std::move(Key), Desc));
     }
 
     /// @brief Request index buffer and retain an owner ref.
-    [[nodiscard]] auto RequestIndexBufferRef(String Key, const RHI::IndexBufferDesc& Desc) -> ResourceRef<RHI::IndexBuffer> {
+    [[nodiscard]] auto RequestIndexBufferRef(String Key, const RHIIndexBufferDesc& Desc) -> ResourceRef<RHIIndexBuffer> {
         return AcquireResourceRef(m_Context, SubmitIndexBufferRequest(m_Context, std::move(Key), Desc));
     }
 
     /// @brief Request render target and retain an owner ref.
-    [[nodiscard]] auto RequestRenderTargetRef(String Key, const RHI::RenderTargetDesc& Desc)
-        -> ResourceRef<RHI::RenderTarget> {
+    [[nodiscard]] auto RequestRenderTargetRef(String Key, const RHIRenderTargetDesc& Desc)
+        -> ResourceRef<RHIRenderTarget> {
         return AcquireResourceRef(m_Context, SubmitRenderTargetRequest(m_Context, std::move(Key), Desc));
     }
 
     /// @brief Request constant buffer and retain an owner ref.
-    [[nodiscard]] auto RequestConstantBufferRef(String Key, const RHI::ConstantBufferDesc& Desc)
-        -> ResourceRef<RHI::ConstantBuffer> {
+    [[nodiscard]] auto RequestConstantBufferRef(String Key, const RHIConstantBufferDesc& Desc)
+        -> ResourceRef<RHIConstantBuffer> {
         return AcquireResourceRef(m_Context, SubmitConstantBufferRequest(m_Context, std::move(Key), Desc));
     }
 
     /// @brief Request sampler state and retain an owner ref.
-    [[nodiscard]] auto RequestSamplerRef(const RHI::SamplerDesc& Desc) -> ResourceRef<RHI::Sampler> {
+    [[nodiscard]] auto RequestSamplerRef(const RHISamplerDesc& Desc) -> ResourceRef<RHISampler> {
         return AcquireResourceRef(m_Context, SubmitSamplerRequest(m_Context, Desc));
     }
 
     /// @brief Request a mesh asset and retain its logical owner ref.
-    [[nodiscard]] auto RequestMeshRef(StringView MeshPath) -> ResourceRef<Mesh> {
+    [[nodiscard]] auto RequestMeshRef(StringView MeshPath) -> ResourceRef<ResourceMesh> {
         return AcquireResourceRef(m_Context, SubmitMeshRequest(m_Context, MeshPath));
     }
 
     /// @brief Request a mesh-derived reusable BLAS and retain its logical owner ref.
     [[nodiscard]] auto RequestBottomLevelAccelerationStructureRef(
-        const ResourceRef<Mesh>& MeshRef,
-        const BottomLevelAccelerationStructureRequest& Request = {}) -> ResourceRef<BottomLevelAccelerationStructure> {
+        const ResourceRef<ResourceMesh>& MeshRef,
+        const BottomLevelAccelerationStructureRequest& Request = {}) -> ResourceRef<ResourceBottomLevelAccelerationStructure> {
         if (!MeshRef)
             return {};
         return AcquireResourceRef(
@@ -97,8 +95,8 @@ class Manager : public Singleton<Manager> {
 
     /// @brief Request a persistent renderer-scoped TLAS allocation and retain its owner ref.
     [[nodiscard]] auto RequestTopLevelAccelerationStructureRef(StringView ScopeKey,
-                                                                const RHI::TopLevelAccelerationStructureDesc& Desc)
-        -> ResourceRef<TopLevelAccelerationStructure> {
+                                                                const RHITopLevelAccelerationStructureDesc& Desc)
+        -> ResourceRef<ResourceTopLevelAccelerationStructure> {
         return AcquireResourceRef(
             m_Context,
             SubmitTopLevelAccelerationStructureRequest(m_Context, ScopeKey, Desc));
@@ -140,10 +138,10 @@ class Manager : public Singleton<Manager> {
     }
 
   private:
-    Manager()  = default;
-    ~Manager() = default;
+    ResourceManager()  = default;
+    ~ResourceManager() = default;
 
     ResourceContext m_Context = {};
 };
 
-} // namespace SoulEngine::Resource
+} // namespace SoulEngine

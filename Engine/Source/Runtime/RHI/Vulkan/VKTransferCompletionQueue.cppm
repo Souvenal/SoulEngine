@@ -9,51 +9,49 @@ import std;
 
 import :Semaphore;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 /// Transfer-completion queue backed by a dedicated timeline semaphore.
 ///
-/// HostBuffer staging uploads, DeviceBuffer transfers, and other GPU resources
+/// VulkanHostBuffer staging uploads, VulkanDeviceBuffer transfers, and other GPU resources
 /// that must outlive their submitting queue operation are enqueued with a
 /// timeline value. Tick() fires callbacks whose timeline value has been reached
 /// (non-blocking, safe to call every frame).
 ///
 /// Owns its own vk::SemaphoreType::eTimeline — separate from the frame-level
-/// timeline in RenderDevice. This guarantees monotonic signal ordering on the
+/// timeline in VulkanRenderDevice. This guarantees monotonic signal ordering on the
 /// transfer queue without cross-queue ordering constraints.
-class TransferCompletionQueue {
+class VulkanTransferCompletionQueue {
   public:
-    TransferCompletionQueue() = default;
+    VulkanTransferCompletionQueue() = default;
 
-    TransferCompletionQueue(TransferCompletionQueue&&)                    = default;
-    auto operator=(TransferCompletionQueue&&) -> TransferCompletionQueue& = default;
+    VulkanTransferCompletionQueue(VulkanTransferCompletionQueue&&)                    = default;
+    auto operator=(VulkanTransferCompletionQueue&&) -> VulkanTransferCompletionQueue& = default;
 
-    TransferCompletionQueue(const TransferCompletionQueue&)                    = delete;
-    auto operator=(const TransferCompletionQueue&) -> TransferCompletionQueue& = delete;
+    VulkanTransferCompletionQueue(const VulkanTransferCompletionQueue&)                    = delete;
+    auto operator=(const VulkanTransferCompletionQueue&) -> VulkanTransferCompletionQueue& = delete;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device)
-        -> std::expected<TransferCompletionQueue, ErrorMessage> {
-        TransferCompletionQueue Queue;
-        auto Sema = TimelineSemaphore::Create(Device);
+        -> std::expected<VulkanTransferCompletionQueue, ErrorMessage> {
+        VulkanTransferCompletionQueue Queue;
+        auto Sema = VulkanTimelineSemaphore::Create(Device);
         if (!Sema)
             return std::unexpected(
-                Sema.error().Append("TransferCompletionQueue: timeline semaphore creation failed"));
+                Sema.error().Append("VulkanTransferCompletionQueue: timeline semaphore creation failed"));
         Queue.m_Device   = &Device;
         Queue.m_Timeline = std::move(*Sema);
         return Queue;
     }
 
     /// Enqueue a callback to fire when transfer timeline reaches Token.
-    auto EnqueueCallback(GpuCompletionToken Token, std::function<void()> Fn) -> void {
+    auto EnqueueCallback(RHIGpuCompletionToken Token, std::function<void()> Fn) -> void {
         m_Queue.push_back(Entry{.Token = Token, .Fn = std::move(Fn)});
     }
 
     /// Allocate the next transfer completion token and matching signal info.
     [[nodiscard]] auto AllocateSignalSubmitInfo(vk::PipelineStageFlagBits2 Stage)
-        -> std::pair<GpuCompletionToken, vk::SemaphoreSubmitInfo> {
-        GpuCompletionToken Token{.Id = m_Timeline.NextValue()};
+        -> std::pair<RHIGpuCompletionToken, vk::SemaphoreSubmitInfo> {
+        RHIGpuCompletionToken Token{.Id = m_Timeline.NextValue()};
         return {Token,
                 vk::SemaphoreSubmitInfo{
                     .semaphore = m_Timeline.Get(),
@@ -63,7 +61,7 @@ class TransferCompletionQueue {
     }
 
     /// Non-blocking completion query for transfer upload tokens.
-    [[nodiscard]] auto IsComplete(GpuCompletionToken Token) -> bool {
+    [[nodiscard]] auto IsComplete(RHIGpuCompletionToken Token) -> bool {
         if (Token.Id == 0)
             return true;
 
@@ -91,20 +89,20 @@ class TransferCompletionQueue {
             return {};
         auto LastValue = m_Queue.back().Token.Id;
         if (auto R = m_Timeline.Wait(LastValue); !R)
-            return std::unexpected(R.error().Append("TransferCompletionQueue::Drain: wait failed"));
+            return std::unexpected(R.error().Append("VulkanTransferCompletionQueue::Drain: wait failed"));
         Tick();
         return {};
     }
 
   private:
     struct Entry {
-        GpuCompletionToken   Token = {};
+        RHIGpuCompletionToken   Token = {};
         std::function<void()> Fn    = {};
     };
 
     vk::raii::Device* m_Device = nullptr;
-    TimelineSemaphore m_Timeline;
+    VulkanTimelineSemaphore m_Timeline;
     std::deque<Entry> m_Queue;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

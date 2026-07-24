@@ -11,13 +11,10 @@ import ShaderCompiler;
 import Vulkan;
 import std;
 
-using namespace SoulEngine::Core;
-using namespace SoulEngine::RHI;
-using namespace SoulEngine::RHI::Vulkan;
-using namespace SoulEngine::ShaderCompiler;
+using namespace SoulEngine;
 
 TEST(ShaderBindingTableLayoutTest, AlignsRecordsAndRegions) {
-    auto Layout = CreateShaderBindingTableLayout(
+    auto Layout = VulkanCreateShaderBindingTableLayout(
         24, 32, 64, 4096, 1, 2, 1, 0);
 
     ASSERT_TRUE(Layout.has_value()) << Layout.error().ToString();
@@ -35,7 +32,7 @@ TEST(ShaderBindingTableLayoutTest, AlignsRecordsAndRegions) {
 }
 
 TEST(ShaderBindingTableLayoutTest, SupportsEmptyCallableRegion) {
-    auto Layout = CreateShaderBindingTableLayout(
+    auto Layout = VulkanCreateShaderBindingTableLayout(
         32, 32, 64, 4096, 1, 1, 1, 0);
 
     ASSERT_TRUE(Layout.has_value()) << Layout.error().ToString();
@@ -46,7 +43,7 @@ TEST(ShaderBindingTableLayoutTest, SupportsEmptyCallableRegion) {
 }
 
 TEST(ShaderBindingTableLayoutTest, RejectsInvalidRayGenerationRecordCount) {
-    auto Layout = CreateShaderBindingTableLayout(
+    auto Layout = VulkanCreateShaderBindingTableLayout(
         32, 32, 64, 4096, 0, 1, 1, 0);
 
     ASSERT_FALSE(Layout.has_value());
@@ -54,7 +51,7 @@ TEST(ShaderBindingTableLayoutTest, RejectsInvalidRayGenerationRecordCount) {
 }
 
 TEST(ShaderBindingTableLayoutTest, RejectsRecordStrideBeyondDeviceLimit) {
-    auto Layout = CreateShaderBindingTableLayout(
+    auto Layout = VulkanCreateShaderBindingTableLayout(
         64, 128, 64, 64, 1, 1, 1, 0);
 
     ASSERT_FALSE(Layout.has_value());
@@ -75,7 +72,7 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
     GLFWwindow* Window = glfwCreateWindow(1, 1, "SoulEngine RT pipeline test", nullptr, nullptr);
     ASSERT_NE(Window, nullptr) << "glfwCreateWindow failed";
 
-    auto DeviceResult = RenderDevice::Create(Window);
+    auto DeviceResult = RHIRenderDevice::Create(Window);
     if (!DeviceResult) {
         glfwDestroyWindow(Window);
         glfwTerminate();
@@ -83,7 +80,7 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
     }
 
     const auto Cleanup = [Window]() -> void {
-        RenderDevice::Destroy();
+        RHIRenderDevice::Destroy();
         glfwDestroyWindow(Window);
         glfwTerminate();
     };
@@ -94,12 +91,12 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
          0.0f,  0.5f, 0.0f,
     };
     const std::array<Uint32, 3> TriangleIndices{0, 1, 2};
-    auto VertexBuffer = RenderDevice::Get().CreateVertexBuffer(VertexBufferDesc{
+    auto VertexBuffer = RHIRenderDevice::Get().CreateVertexBuffer(RHIVertexBufferDesc{
         .Data        = TriangleVertices.data(),
         .VertexCount = 3,
         .Stride      = sizeof(Float32) * 3,
     });
-    auto IndexBuffer = RenderDevice::Get().CreateIndexBuffer(IndexBufferDesc{
+    auto IndexBuffer = RHIRenderDevice::Get().CreateIndexBuffer(RHIIndexBufferDesc{
         .Data       = TriangleIndices.data(),
         .IndexCount = 3,
     });
@@ -109,13 +106,13 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         ADD_FAILURE() << Error;
         return;
     }
-    auto Blas = RenderDevice::Get().CreateBottomLevelAccelerationStructure(BottomLevelAccelerationStructureDesc{
+    auto Blas = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructureDesc{
         .Geometries = {
-            TriangleAccelerationStructureGeometryDesc{
+            RHITriangleAccelerationStructureGeometryDesc{
                 .VertexBufferPtr = VertexBuffer->Buffer.get(),
                 .VertexCount     = 3,
                 .VertexStride    = sizeof(Float32) * 3,
-                .VertexFormat    = Format::R32G32B32_SFLOAT,
+                .VertexFormat    = RHIFormat::R32G32B32_SFLOAT,
                 .IndexBufferPtr  = IndexBuffer->Buffer.get(),
                 .IndexCount      = 3,
             },
@@ -130,12 +127,12 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
 
     const Path ShaderPath = EngineDir / "Source" / "Runtime" / "ShaderCompiler" / "Tests" / "Slang" / "RayTracingBda.slang";
     auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "rayGenMain", .Backend = Backend::Slang},
-        .MissEntries   = {ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "missMain", .Backend = Backend::Slang}},
+        .RayGeneration = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
+        .MissEntries   = {ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang}},
         .HitGroups = {
             RayTracingHitGroupCompileDesc{
-                .Type       = SoulEngine::Shader::RayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "closestHitMain", .Backend = Backend::Slang},
+                .Type       = ShaderRayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
             },
         },
     });
@@ -146,17 +143,17 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         return;
     }
 
-    auto Pipeline = RenderDevice::Get().CreateRayTracingPipeline(RayTracingPipelineDesc{.Program = std::move(*Program)});
-    if (!Pipeline) {
-        const auto Error = Pipeline.error().ToString();
+    auto RHIPipeline = RHIRenderDevice::Get().CreateRayTracingPipeline(RHIRayTracingPipelineDesc{.Program = std::move(*Program)});
+    if (!RHIPipeline) {
+        const auto Error = RHIPipeline.error().ToString();
         Cleanup();
         GTEST_SKIP() << Error;
     }
-    EXPECT_NE(Pipeline->get(), nullptr);
+    EXPECT_NE(RHIPipeline->get(), nullptr);
 
-    auto Tlas = RenderDevice::Get().CreateTopLevelAccelerationStructure(TopLevelAccelerationStructureDesc{
+    auto Tlas = RHIRenderDevice::Get().CreateTopLevelAccelerationStructure(RHITopLevelAccelerationStructureDesc{
         .InitialInstanceCapacity = 1,
-        .BuildFlags = AccelerationStructureBuildFlags::AllowUpdate,
+        .BuildFlags = RHIAccelerationStructureBuildFlags::AllowUpdate,
     });
     if (!Tlas) {
         const auto Error = Tlas.error().ToString();
@@ -164,11 +161,11 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         ADD_FAILURE() << Error;
         return;
     }
-    auto Output = RenderDevice::Get().CreateRenderTarget(RenderTargetDesc{
+    auto Output = RHIRenderDevice::Get().CreateRenderTarget(RHIRenderTargetDesc{
         .Width  = 1,
         .Height = 1,
-        .Format = Format::B8G8R8A8_UNORM,
-        .Usage  = TextureUsage::RenderTarget | TextureUsage::ShaderStorage | TextureUsage::FrameOutput,
+        .Format = RHIFormat::B8G8R8A8_UNORM,
+        .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderStorage | RHITextureUsage::FrameOutput,
     });
     if (!Output) {
         const auto Error = Output.error().ToString();
@@ -177,13 +174,13 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         return;
     }
 
-    auto* GeometryTable = RenderDevice::Get().GetRayTracingGeometryTable();
+    auto* GeometryTable = RHIRenderDevice::Get().GetRayTracingGeometryTable();
     if (!GeometryTable) {
         Cleanup();
         GTEST_SKIP() << "BDA geometry table is unavailable";
     }
 
-    auto Parameters = ShaderParameters::Create(**Pipeline);
+    auto Parameters = RHIShaderParameters::Create(**RHIPipeline);
     if (auto R = Parameters.SetTopLevelAccelerationStructure("g_resources.tlas", Tlas->get()); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
@@ -203,20 +200,20 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         return;
     }
 
-    const std::array<AccelerationStructureInstance, 2> Instances{
-        AccelerationStructureInstance{
+    const std::array<RHIAccelerationStructureInstance, 2> Instances{
+        RHIAccelerationStructureInstance{
             .BottomLevelPtr = Blas->get(),
             .CustomIndex = 0,
         },
-        AccelerationStructureInstance{
+        RHIAccelerationStructureInstance{
             .BottomLevelPtr = Blas->get(),
-            .Transform = RowMajorTransform3x4{
+            .Transform = RHIRowMajorTransform3x4{
                 .M03 = 0.1f,
             },
             .CustomIndex = 1,
         },
     };
-    const RayTracingGeometryTableUpdate GeometryUpdate{
+    const RHIRayTracingGeometryTableUpdate GeometryUpdate{
         .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}, {.FirstGeometry = 1, .GeometryCount = 1}},
         .Geometries = {{.PositionBuffer = VertexBuffer->Buffer.get(),
                         .NormalBuffer = VertexBuffer->Buffer.get(),
@@ -235,24 +232,24 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
                         .VertexCount = 3,
                         .IndexCount = 3}},
     };
-    CommandList Commands;
-    auto& ScopeValue = Commands.Scopes.emplace_back(NonRenderingPass{});
-    auto& Scope = std::get<NonRenderingPass>(ScopeValue);
+    RHICommandList Commands;
+    auto& ScopeValue = Commands.Scopes.emplace_back(RHINonRenderingPass{});
+    auto& Scope = std::get<RHINonRenderingPass>(ScopeValue);
     Scope.UpdateRayTracingGeometryTable(GeometryTable, GeometryUpdate);
     Scope.BuildOrUpdateTopLevelAccelerationStructure(Tlas->get(), Instances);
-    Scope.SetRayTracingPipeline(Pipeline->get());
-    Scope.BindShaderParameters(Pipeline->get(), std::move(Parameters));
-    Scope.TraceRays(Pipeline->get(), 1, 1);
+    Scope.SetRayTracingPipeline(RHIPipeline->get());
+    Scope.BindShaderParameters(RHIPipeline->get(), std::move(Parameters));
+    Scope.TraceRays(RHIPipeline->get(), 1, 1);
     Commands.PresentSource = Output->Texture.get();
 
-    if (auto R = RenderDevice::Get().Execute(Commands); !R) {
+    if (auto R = RHIRenderDevice::Get().Execute(Commands); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
         return;
     }
 
-    auto UpdateParameters = ShaderParameters::Create(**Pipeline);
+    auto UpdateParameters = RHIShaderParameters::Create(**RHIPipeline);
     if (auto R = UpdateParameters.SetTopLevelAccelerationStructure("g_resources.tlas", Tlas->get()); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
@@ -272,18 +269,18 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         return;
     }
 
-    CommandList UpdateCommands;
-    auto& UpdateScopeValue = UpdateCommands.Scopes.emplace_back(NonRenderingPass{});
-    auto& UpdateScope = std::get<NonRenderingPass>(UpdateScopeValue);
+    RHICommandList UpdateCommands;
+    auto& UpdateScopeValue = UpdateCommands.Scopes.emplace_back(RHINonRenderingPass{});
+    auto& UpdateScope = std::get<RHINonRenderingPass>(UpdateScopeValue);
     UpdateScope.UpdateRayTracingGeometryTable(GeometryTable, GeometryUpdate);
     UpdateScope.BuildOrUpdateTopLevelAccelerationStructure(
-        Tlas->get(), Instances, TopLevelAccelerationStructureBuildMode::Update);
-    UpdateScope.SetRayTracingPipeline(Pipeline->get());
-    UpdateScope.BindShaderParameters(Pipeline->get(), std::move(UpdateParameters));
-    UpdateScope.TraceRays(Pipeline->get(), 1, 1);
+        Tlas->get(), Instances, RHITopLevelAccelerationStructureBuildMode::Update);
+    UpdateScope.SetRayTracingPipeline(RHIPipeline->get());
+    UpdateScope.BindShaderParameters(RHIPipeline->get(), std::move(UpdateParameters));
+    UpdateScope.TraceRays(RHIPipeline->get(), 1, 1);
     UpdateCommands.PresentSource = Output->Texture.get();
 
-    if (auto R = RenderDevice::Get().Execute(UpdateCommands); !R) {
+    if (auto R = RHIRenderDevice::Get().Execute(UpdateCommands); !R) {
         const auto Error = R.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
@@ -292,7 +289,7 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
 
     Output->Texture.reset();
     (*Tlas).reset();
-    (*Pipeline).reset();
+    (*RHIPipeline).reset();
     (*Blas).reset();
     VertexBuffer->Buffer.reset();
     IndexBuffer->Buffer.reset();

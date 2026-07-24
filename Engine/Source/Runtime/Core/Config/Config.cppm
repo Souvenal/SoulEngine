@@ -41,7 +41,7 @@ export import std;
 /// Consumers call `cfg.Field.value_or(fallback)` where the fallback is the
 /// one-and-only default for that module.
 
-export namespace SoulEngine::Core {
+export namespace SoulEngine {
 /// @brief Window subsystem configuration.
 ///
 /// Pure mirror of the `[Window]` TOML table.  All fields are optional;
@@ -263,4 +263,4 @@ class ConfigManager final : public Singleton<ConfigManager> {
     Path         m_ApplicationsRootDirPath; ///< Applications/, pre-computed by Init().
     Path         m_CurrentApplicationDir;   ///< Applications/<AppName>, set by Application::Create().
 };
-} // namespace SoulEngine::Core
+} // namespace SoulEngine

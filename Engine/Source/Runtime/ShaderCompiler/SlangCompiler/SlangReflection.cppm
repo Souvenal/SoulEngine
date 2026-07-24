@@ -3,7 +3,7 @@
 ///         constants, vertex inputs.
 ///
 /// Stateless extraction functions that translate Slang reflection API objects
-/// into the engine's uniform Shader::Reflection representation.
+/// into the engine's uniform ShaderReflection representation.
 /// All Slang SDK dependencies are isolated to this partition.
 
 module;
@@ -19,9 +19,7 @@ import std;
 import Core;
 import Shader;
 
-namespace SoulEngine::ShaderCompiler::SlangCompiler {
-
-using namespace SoulEngine::Core;
+namespace SoulEngine {
 
 namespace {
 
@@ -29,7 +27,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
 // ── Reflection extraction helpers ──────────────────────────────────
 // File-local helpers for normalizing Slang reflection details before the
-// Slang module exposes the final Shader::Reflection value.
+// Slang module exposes the final ShaderReflection value.
 
 [[nodiscard]] auto IsParameterBlockTypeLayout(slang::TypeLayoutReflection* TypeLayout) -> bool {
     while (TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::Array)
@@ -61,8 +59,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
 [[nodiscard]] auto ExtractParameterBlockBindings(slang::ShaderReflection*          ProgramLayout,
                                                  slang::VariableLayoutReflection* Param)
-    -> std::expected<std::vector<Shader::Binding>, ErrorMessage> {
-    std::vector<Shader::Binding> Bindings;
+    -> std::expected<std::vector<ShaderBinding>, ErrorMessage> {
+    std::vector<ShaderBinding> Bindings;
     if (!Param)
         return Bindings;
 
@@ -124,7 +122,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
                        Field->getName() ? Field->getName() : "<unnamed>")));
         }
 
-        Bindings.emplace_back(Shader::Binding{
+        Bindings.emplace_back(ShaderBinding{
             .ParameterPath = Format("{}.{}", ParameterName, Field->getName() ? Field->getName() : "<unnamed>"),
             .Set           = static_cast<Uint32>(Set),
             .BindingIndex  = static_cast<Uint32>(BindingIndex),
@@ -137,8 +135,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 }
 
 [[nodiscard]] auto ExtractShaderBindings(slang::ShaderReflection* ProgramLayout)
-    -> std::expected<std::vector<Shader::Binding>, ErrorMessage> {
-    std::vector<Shader::Binding> Bindings;
+    -> std::expected<std::vector<ShaderBinding>, ErrorMessage> {
+    std::vector<ShaderBinding> Bindings;
     if (!ProgramLayout)
         return Bindings;
 
@@ -232,7 +230,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
                                Param->getName() ? Param->getName() : "<unnamed>")));
                 }
 
-                Bindings.emplace_back(Shader::Binding{
+                Bindings.emplace_back(ShaderBinding{
                     .ParameterPath = std::move(ParameterPath),
                     .Set           = static_cast<Uint32>(Set),
                     .BindingIndex  = BindingIndex,
@@ -247,7 +245,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return Bindings;
 }
 
-[[nodiscard]] auto AppendPushConstantRange(std::vector<Shader::PushConstantRange>& PushConstants,
+[[nodiscard]] auto AppendPushConstantRange(std::vector<ShaderPushConstantRange>& PushConstants,
                                            slang::VariableLayoutReflection*        Param,
                                            slang::ParameterCategory                Category)
     -> std::expected<void, ErrorMessage> {
@@ -268,18 +266,18 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
                                 Param->getName() ? Param->getName() : "<unnamed>")));
     }
 
-    PushConstants.emplace_back(Shader::PushConstantRange{
+    PushConstants.emplace_back(ShaderPushConstantRange{
         .Offset = static_cast<Uint32>(Offset),
         .Size   = static_cast<Uint32>(Size),
     });
     return {};
 }
 
-[[nodiscard]] auto MergePushConstantRanges(std::vector<Shader::PushConstantRange> Ranges)
-    -> std::vector<Shader::PushConstantRange> {
-    std::ranges::sort(Ranges, {}, &Shader::PushConstantRange::Offset);
+[[nodiscard]] auto MergePushConstantRanges(std::vector<ShaderPushConstantRange> Ranges)
+    -> std::vector<ShaderPushConstantRange> {
+    std::ranges::sort(Ranges, {}, &ShaderPushConstantRange::Offset);
 
-    std::vector<Shader::PushConstantRange> Merged;
+    std::vector<ShaderPushConstantRange> Merged;
     for (const auto& Range : Ranges) {
         if (Range.Size == 0)
             continue;
@@ -306,8 +304,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 [[nodiscard]] auto ExtractPushConstantRanges(slang::ShaderReflection*     ProgramLayout,
                                              slang::EntryPointReflection* VertexEntryPoint,
                                              slang::EntryPointReflection* FragmentEntryPoint)
-    -> std::expected<std::vector<Shader::PushConstantRange>, ErrorMessage> {
-    std::vector<Shader::PushConstantRange> PushConstants;
+    -> std::expected<std::vector<ShaderPushConstantRange>, ErrorMessage> {
+    std::vector<ShaderPushConstantRange> PushConstants;
     if (!ProgramLayout)
         return PushConstants;
 
@@ -341,7 +339,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 }
 
 [[nodiscard]] auto ExtractVertexInputsFromVarLayout(slang::VariableLayoutReflection*           VarLayout,
-                                                    std::vector<Shader::VertexInputAttribute>& VertexInputs)
+                                                    std::vector<ShaderVertexInputAttribute>& VertexInputs)
     -> std::expected<void, ErrorMessage> {
     if (!VarLayout)
         return {};
@@ -373,7 +371,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (BindingIndex != UnknownBindingIndex)
         Location = static_cast<Uint32>(BindingIndex);
 
-    VertexInputs.emplace_back(Shader::VertexInputAttribute{
+    VertexInputs.emplace_back(ShaderVertexInputAttribute{
         .SemanticName  = String(SemanticName),
         .SemanticIndex = static_cast<Uint32>(VarLayout->getSemanticIndex()),
         .Location      = Location,
@@ -383,8 +381,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 }
 
 [[nodiscard]] auto ExtractVertexInputs(slang::EntryPointReflection* EntryPoint)
-    -> std::expected<std::vector<Shader::VertexInputAttribute>, ErrorMessage> {
-    std::vector<Shader::VertexInputAttribute> VertexInputs;
+    -> std::expected<std::vector<ShaderVertexInputAttribute>, ErrorMessage> {
+    std::vector<ShaderVertexInputAttribute> VertexInputs;
     // Only vertex entry points consume fixed-function vertex inputs.
     if (!EntryPoint || EntryPoint->getStage() != SLANG_STAGE_VERTEX)
         return VertexInputs;
@@ -403,7 +401,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 [[nodiscard]] auto BuildShaderReflection(slang::ShaderReflection*     ProgramLayout,
                                          slang::EntryPointReflection* VertexEntryPoint,
                                          slang::EntryPointReflection* FragmentEntryPoint)
-    -> std::expected<Shader::Reflection, ErrorMessage> {
+    -> std::expected<ShaderReflection, ErrorMessage> {
     if (!ProgramLayout || !VertexEntryPoint || !FragmentEntryPoint)
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
@@ -423,7 +421,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!VertexInputs)
         return std::unexpected(VertexInputs.error());
 
-    return Shader::Reflection{
+    return ShaderReflection{
         .Bindings      = std::move(*Bindings),
         .PushConstants = std::move(*PushConstants),
         .VertexInputs  = std::move(*VertexInputs),
@@ -432,7 +430,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
 [[nodiscard]] auto BuildRayTracingShaderReflection(
     slang::ShaderReflection* ProgramLayout, std::span<slang::EntryPointReflection* const> EntryPoints)
-    -> std::expected<Shader::Reflection, ErrorMessage> {
+    -> std::expected<ShaderReflection, ErrorMessage> {
     if (!ProgramLayout || EntryPoints.empty())
         return std::unexpected(ErrorMessage("Ray-tracing shader reflection is incomplete for a compiled entry point"));
 
@@ -440,7 +438,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!Bindings)
         return std::unexpected(Bindings.error());
 
-    std::vector<Shader::PushConstantRange> PushConstants = {};
+    std::vector<ShaderPushConstantRange> PushConstants = {};
     for (unsigned Index = 0; Index < ProgramLayout->getParameterCount(); ++Index) {
         if (auto R = AppendPushConstantRange(PushConstants,
                                              ProgramLayout->getParameterByIndex(Index),
@@ -462,11 +460,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         }
     }
 
-    return Shader::Reflection{
+    return ShaderReflection{
         .Bindings      = std::move(*Bindings),
         .PushConstants = MergePushConstantRanges(std::move(PushConstants)),
         .VertexInputs  = {},
     };
 }
 
-} // namespace SoulEngine::ShaderCompiler::SlangCompiler
+} // namespace SoulEngine

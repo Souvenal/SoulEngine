@@ -27,9 +27,7 @@ import Window;
 
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Application {
+export namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Application — abstract base class
@@ -77,18 +75,18 @@ class Application {
     /// @brief Mutable access to the active scene.
     /// Used by the GameLoop to update mutable scene data before building
     /// the next frame's SceneSnapshot.
-    [[nodiscard]] auto GetScene() -> Scene::Scene& {
+    [[nodiscard]] auto GetScene() -> Scene& {
         return m_Scene;
     }
 
     /// @brief Read-only access to the active scene.
-    [[nodiscard]] auto GetScene() const -> const Scene::Scene& {
+    [[nodiscard]] auto GetScene() const -> const Scene& {
         return m_Scene;
     }
 
     /// @brief Access the renderer.
     /// Valid after OnAttach() succeeds and before OnDetach() returns.
-    [[nodiscard]] auto GetRenderer() -> Renderer::IRenderer& {
+    [[nodiscard]] auto GetRenderer() -> IRenderer& {
         return *m_Renderer;
     }
 
@@ -98,15 +96,15 @@ class Application {
 
   protected:
     String                    m_Name;
-    Scene::Scene              m_Scene;
-    UPtr<Renderer::IRenderer> m_Renderer = nullptr;
+    Scene              m_Scene;
+    UPtr<IRenderer> m_Renderer = nullptr;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ApplicationFactory — factory-backed application creation
 // ═════════════════════════════════════════════════════════════════════════════
 
-using ApplicationFactory = Core::Factory<Application>;
+using ApplicationFactory = Factory<Application>;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Application::Create — static factory
@@ -141,7 +139,7 @@ inline auto Application::OnAttach() -> std::expected<void, ErrorMessage> {
     for (const auto& Warning : Loaded->Warnings)
         LogWarning("Default Scene warning at '{}': {}", Warning.Path, Warning.Message);
 
-    auto CreatedRenderer = Renderer::CreateDefault();
+    auto CreatedRenderer = CreateDefault();
     if (!CreatedRenderer)
         return std::unexpected(CreatedRenderer.error().Append("Default renderer creation failed"));
     m_Renderer = std::move(*CreatedRenderer);
@@ -171,4 +169,4 @@ inline auto Application::OnRender() -> void {
         LogError("Render failed:\n{}", R.error().ToString());
 }
 
-} // namespace SoulEngine::Application
+} // namespace SoulEngine

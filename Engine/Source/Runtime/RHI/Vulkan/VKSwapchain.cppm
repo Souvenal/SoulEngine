@@ -10,11 +10,7 @@ import RHI;
 import std;
 import vulkan;
 
-using namespace SoulEngine;
-using namespace SoulEngine::Core;
-using namespace SoulEngine::RHI;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 [[nodiscard]] auto ResolveSurfaceFormat(std::span<const vk::SurfaceFormatKHR> Formats) -> vk::SurfaceFormatKHR {
     for (auto& Fmt : Formats)
@@ -88,26 +84,26 @@ namespace SoulEngine::RHI::Vulkan {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Swapchain
+// VulkanSwapchain
 // ═════════════════════════════════════════════════════════════════════════════
 //
 // Owns the VkSwapchainKHR and its image views.  Does NOT own the device,
-// physical device, or surface — those are held by RenderDevice.
+// physical device, or surface — those are held by VulkanRenderDevice.
 //
-// Swapchain operations (AcquireNextImage, Present) are not thread-safe
+// VulkanSwapchain operations (AcquireNextImage, Present) are not thread-safe
 // and must be serialized by the caller (typically the main thread).
 
-class Swapchain {
+class VulkanSwapchain {
   public:
-    Swapchain() = default;
+    VulkanSwapchain() = default;
 
-    /// Create a fully initialized Swapchain. Stores non-owning references to
-    /// Vulkan objects owned by RenderDevice.
+    /// Create a fully initialized VulkanSwapchain. Stores non-owning references to
+    /// Vulkan objects owned by VulkanRenderDevice.
     [[nodiscard]] static auto Create(vk::raii::Device&         Device,
                                      vk::raii::PhysicalDevice& PhysDevice,
                                      vk::raii::SurfaceKHR&     Surface,
-                                     GLFWwindow*               Window) -> std::expected<Swapchain, ErrorMessage> {
-        Swapchain Result;
+                                     GLFWwindow*               Window) -> std::expected<VulkanSwapchain, ErrorMessage> {
+        VulkanSwapchain Result;
         Result.m_Device     = &Device;
         Result.m_PhysDevice = &PhysDevice;
         Result.m_Surface    = &Surface;
@@ -150,7 +146,7 @@ class Swapchain {
                 ImageCount);
 
         if ((Caps.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferDst) == vk::ImageUsageFlags{})
-            return std::unexpected(ErrorMessage("Swapchain does not support transfer-destination presentation"));
+            return std::unexpected(ErrorMessage("VulkanSwapchain does not support transfer-destination presentation"));
 
         // ── Create swapchain ────────────────────────────────────────────
         vk::SwapchainCreateInfoKHR SwapchainCI{
@@ -190,14 +186,14 @@ class Swapchain {
 
         auto [Res, SC] = Result.m_Device->createSwapchainKHR(SwapchainCI);
         if (Res != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage(Core::Format("Failed to create swapchain: {}", vk::to_string(Res))));
+            return std::unexpected(ErrorMessage(Format("Failed to create swapchain: {}", vk::to_string(Res))));
         Result.m_Swapchain = std::move(SC);
 
         // ── Retrieve swapchain images ───────────────────────────────────
         auto ImagesResult = Result.m_Swapchain.getImages();
         if (ImagesResult.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(
-                Core::Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
+                Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
         Result.m_Images = std::move(ImagesResult.value);
 
         // ── Create render-complete binary semaphores (one per swapchain image) ──
@@ -209,7 +205,7 @@ class Swapchain {
             Result.m_RenderComplete.emplace_back(std::move(SemRes.value));
         }
 
-        LogInfo("Swapchain created: {}x{}, format={}, images={}",
+        LogInfo("VulkanSwapchain created: {}x{}, format={}, images={}",
                 Result.m_Extent.width,
                 Result.m_Extent.height,
                 vk::to_string(Result.m_Format.format),
@@ -287,7 +283,7 @@ class Swapchain {
     }
 
     /// Returns the render-complete semaphore for the currently acquired
-    /// swapchain image.  Used by RenderDevice::EndFrame to build the
+    /// swapchain image.  Used by VulkanRenderDevice::EndFrame to build the
     /// semaphore-submit info for queue submit.
     [[nodiscard]] auto GetCurrentRenderCompleteSemaphore() const -> vk::Semaphore {
         return *m_RenderComplete[m_CurrentIndex];
@@ -311,4 +307,4 @@ class Swapchain {
     uint32_t                         m_CurrentIndex = 0;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

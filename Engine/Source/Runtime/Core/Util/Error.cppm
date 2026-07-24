@@ -12,7 +12,7 @@ export module Core:Util.Error;
 import std;
 import :Util.Types;
 
-export namespace SoulEngine::Core {
+export namespace SoulEngine {
 
 /// @brief Structured error chain holding messages from innermost cause to
 ///        outermost context.
@@ -68,4 +68,4 @@ class ErrorMessage {
     std::source_location m_Location = {}; // leaf error construction site
 };
 
-} // namespace SoulEngine::Core
+} // namespace SoulEngine

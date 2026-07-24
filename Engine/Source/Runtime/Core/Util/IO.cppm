@@ -7,7 +7,7 @@ export import :Util.Types;
 export import :Util.Error;
 export import std;
 
-export namespace SoulEngine::Core {
+export namespace SoulEngine {
 
 /// @brief Read an entire file into a string (binary mode).
 ///
@@ -34,4 +34,4 @@ export namespace SoulEngine::Core {
     return Content;
 }
 
-} // namespace SoulEngine::Core
+} // namespace SoulEngine

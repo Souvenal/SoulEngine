@@ -9,13 +9,11 @@ import Scene;
 
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Renderer {
+export namespace SoulEngine {
 
 /// @brief Render-thread packet kept alive until RHILoop finishes Execute().
 struct RenderResult {
-    RHI::CommandList CmdList = {};
+    RHICommandList CmdList = {};
 };
 
 /// @brief Abstract base class for all renderers.
@@ -38,7 +36,7 @@ class IRenderer {
     virtual ~IRenderer() = default;
 
     /// @brief Create GPU resources (passes, buffers, etc.).
-    /// RHI singleton is available via RHI::RenderDevice::Get().
+    /// RHI singleton is available via RHIRenderDevice::Get().
     [[nodiscard]] virtual auto OnAttach() -> std::expected<void, ErrorMessage> = 0;
 
     /// @brief Release all GPU resources and owned objects.
@@ -46,13 +44,13 @@ class IRenderer {
 
     /// @brief Render the scene snapshot and return commands for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
-    [[nodiscard]] virtual auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Render(const SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
 };
 
 /// @brief Factory type for renderer creation.
 ///
 /// Each renderer implementation auto-registers from its own module partition,
 /// so adding a renderer does not require changes to application code.
-using RendererFactory = Core::Factory<IRenderer>;
+using RendererFactory = Factory<IRenderer>;
 
-} // namespace SoulEngine::Renderer
+} // namespace SoulEngine

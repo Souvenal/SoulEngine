@@ -16,9 +16,7 @@ import :IRenderer;
 
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Renderer {
+export namespace SoulEngine {
 
 /// @brief Constant buffer layout matching Common.slang FrameData.
 struct alignas(16) ForwardFrameConstants {
@@ -71,28 +69,28 @@ static_assert(sizeof(ForwardObjectConstants) == 64,
               "ForwardObjectConstants must match ForwardPbr.slang ObjectData std140 layout");
 struct ForwardViewParameterState {
     String                ViewConstantBufferKey = {};
-    RHI::ShaderParameters Parameters            = {};
+    RHIShaderParameters Parameters            = {};
 };
 
 /// @brief One concrete indexed draw consumed by the forward raster pass.
 struct ForwardDrawInstance {
-    Resource::ResourceHandle<RHI::VertexBuffer>   PositionVB       = {};
-    Resource::ResourceHandle<RHI::VertexBuffer>   NormalVB         = {};
-    Resource::ResourceHandle<RHI::VertexBuffer>   UVVB             = {};
-    Resource::ResourceHandle<RHI::IndexBuffer>    IndexBuffer      = {};
-    Resource::ResourceHandle<RHI::SampledTexture> BaseColorTexture = {};
-    Material::PbrMetallicRoughnessMaterial        Material         = {};
+    ResourceHandle<RHIVertexBuffer>   PositionVB       = {};
+    ResourceHandle<RHIVertexBuffer>   NormalVB         = {};
+    ResourceHandle<RHIVertexBuffer>   UVVB             = {};
+    ResourceHandle<RHIIndexBuffer>    IndexBuffer      = {};
+    ResourceHandle<RHISampledTexture> BaseColorTexture = {};
+    PbrMetallicRoughnessMaterial        Material         = {};
     hlslpp::float4x4                              WorldTransform   = hlslpp::float4x4::identity();
 };
 
 struct ForwardMeshCacheEntry {
     String                                Asset = {};
-    Resource::ResourceRef<Resource::Mesh> Mesh  = {};
+    ResourceRef<ResourceMesh> Mesh  = {};
 };
 
 struct ForwardTextureCacheEntry {
     String                                     Asset   = {};
-    Resource::ResourceRef<RHI::SampledTexture> Texture = {};
+    ResourceRef<RHISampledTexture> Texture = {};
 };
 
 /// @brief Single-material metallic-roughness forward renderer.
@@ -106,7 +104,7 @@ class ForwardRenderer final : public IRenderer {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "ForwardPbr.slang";
 
-        m_Pipeline = Resource::Manager::Get().RequestGraphicsPipelineRef(Resource::GraphicsPipelineRequest{
+        m_Pipeline = ResourceManager::Get().RequestGraphicsPipelineRef(GraphicsPipelineRequest{
             .VertEntry = {
                 .SourcePath = ShaderPath,
                 .EntryPoint = "vertMain",
@@ -116,12 +114,12 @@ class ForwardRenderer final : public IRenderer {
                 .EntryPoint = "fragMain",
             },
             .VertexInputLayout = MakeVertexInputLayout(),
-            .DepthFormat       = RHI::Format::D32_SFLOAT,
+            .DepthFormat       = RHIFormat::D32_SFLOAT,
         });
         if (!m_Pipeline)
             return std::unexpected(ErrorMessage("Forward PBR graphics pipeline request failed"));
 
-        auto& Resources = Resource::Manager::Get();
+        auto& Resources = ResourceManager::Get();
         m_FrameConstants = Resources.RequestConstantBufferRef(
             "forward_pbr_frame_constants", {.Size = sizeof(ForwardFrameConstants)});
         if (!m_FrameConstants)
@@ -141,11 +139,11 @@ class ForwardRenderer final : public IRenderer {
         if (!m_MaterialConstants)
             return std::unexpected(ErrorMessage("Forward PBR material constant buffer request failed"));
 
-        m_SamplerLinear = Resources.RequestSamplerRef({.Profile = RHI::SamplerProfile::LinearRepeat});
+        m_SamplerLinear = Resources.RequestSamplerRef({.Profile = RHISamplerProfile::LinearRepeat});
         if (!m_SamplerLinear)
             return std::unexpected(ErrorMessage("Forward PBR linear sampler request failed"));
 
-        m_SamplerAniso = Resources.RequestSamplerRef({.Profile = RHI::SamplerProfile::AnisotropicRepeat});
+        m_SamplerAniso = Resources.RequestSamplerRef({.Profile = RHISamplerProfile::AnisotropicRepeat});
         if (!m_SamplerAniso)
             return std::unexpected(ErrorMessage("Forward PBR anisotropic sampler request failed"));
 
@@ -165,12 +163,12 @@ class ForwardRenderer final : public IRenderer {
         m_ViewParameters.clear();
     }
 
-    [[nodiscard]] auto Render(const Scene::SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
+    [[nodiscard]] auto Render(const SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
         RenderResult Result = {};
         if (Scene.Views.empty())
             return Result;
 
-        auto* FrameCB = Resource::Manager::Get().TryGetReady(m_FrameConstants);
+        auto* FrameCB = ResourceManager::Get().TryGetReady(m_FrameConstants);
         if (!FrameCB)
             return Result;
 
@@ -185,28 +183,28 @@ class ForwardRenderer final : public IRenderer {
     }
 
   private:
-    [[nodiscard]] static auto MakeVertexInputLayout() -> RHI::VertexInputLayoutDesc {
-        return RHI::VertexInputLayoutDesc{
+    [[nodiscard]] static auto MakeVertexInputLayout() -> RHIVertexInputLayoutDesc {
+        return RHIVertexInputLayoutDesc{
             .Bindings = {
                 {.Binding = 0, .Stride = sizeof(hlslpp::interop::float3)},
                 {.Binding = 1, .Stride = sizeof(hlslpp::interop::float3)},
                 {.Binding = 2, .Stride = sizeof(hlslpp::interop::float2)},
             },
             .Attributes = {
-                {.Location = 0, .Binding = 0, .Format = RHI::Format::R32G32B32_SFLOAT, .Offset = 0},
-                {.Location = 1, .Binding = 1, .Format = RHI::Format::R32G32B32_SFLOAT, .Offset = 0},
-                {.Location = 2, .Binding = 2, .Format = RHI::Format::R32G32_SFLOAT, .Offset = 0},
+                {.Location = 0, .Binding = 0, .Format = RHIFormat::R32G32B32_SFLOAT, .Offset = 0},
+                {.Location = 1, .Binding = 1, .Format = RHIFormat::R32G32B32_SFLOAT, .Offset = 0},
+                {.Location = 2, .Binding = 2, .Format = RHIFormat::R32G32_SFLOAT, .Offset = 0},
             },
         };
     }
 
-    [[nodiscard]] auto RenderView(RHI::CommandList&                    CmdList,
+    [[nodiscard]] auto RenderView(RHICommandList&                    CmdList,
                                   std::span<const ForwardDrawInstance> DrawInstances,
-                                  const Scene::RenderViewSnapshot&    View,
-                                  RHI::ConstantBuffer*                FrameCB,
+                                  const RenderViewSnapshot&    View,
+                                  RHIConstantBuffer*                FrameCB,
                                   const ForwardFrameConstants&        FrameData)
         -> std::expected<void, ErrorMessage> {
-        auto& Resources = Resource::Manager::Get();
+        auto& Resources = ResourceManager::Get();
 
         auto* ColorRT = Resources.TryGetReady(View.ColorRT);
         auto* DepthRT = Resources.TryGetReady(View.DepthRT);
@@ -234,18 +232,18 @@ class ForwardRenderer final : public IRenderer {
             return std::unexpected(R.error().Append("Forward PBR sampler parameter binding failed"));
         if (auto R = Parameters.SetSampler("g_samplers.uSamplerAniso", SamplerAniso); !R)
             return std::unexpected(R.error().Append("Forward PBR sampler parameter binding failed"));
-        RHI::ResourceArray<RHI::SampledTexture> NoTextures = {};
+        RHIResourceArray<RHISampledTexture> NoTextures = {};
         NoTextures.Set(0, nullptr);
         if (auto R = Parameters.SetResourceArray("g_textures.uTextures", NoTextures); !R)
             return std::unexpected(R.error().Append("Forward PBR texture parameter binding failed"));
 
-        RHI::Pass Pass{
-            .Desc = RHI::RenderingDesc{
+        RHIPass Pass{
+            .Desc = RHIRenderingDesc{
                 .ColorAttachment = {
                     .TexturePtr = ColorRT,
                     .ClearValue = {.R = 0.025f, .G = 0.035f, .B = 0.055f, .A = 1.0f},
                 },
-                .DepthAttachment = RHI::DepthAttachmentDesc{
+                .DepthAttachment = RHIDepthAttachmentDesc{
                     .TexturePtr = DepthRT,
                     .ClearValue = {.Depth = 1.0f, .Stencil = 0},
                 },
@@ -270,7 +268,7 @@ class ForwardRenderer final : public IRenderer {
             if (!UVVB)
                 UVVB = PositionVB;
 
-            RHI::SampledTexture* BaseColorTexture = nullptr;
+            RHISampledTexture* BaseColorTexture = nullptr;
             if (Instance.BaseColorTexture.IsValid()) {
                 BaseColorTexture = Resources.TryGetReady(Instance.BaseColorTexture);
                 if (!BaseColorTexture)
@@ -286,7 +284,7 @@ class ForwardRenderer final : public IRenderer {
             }
 
             if (BaseColorTexture) {
-                RHI::ResourceArray<RHI::SampledTexture> Textures = {};
+                RHIResourceArray<RHISampledTexture> Textures = {};
                 Textures.Set(0, BaseColorTexture);
                 if (auto R = DrawParameters.SetResourceArray("g_textures.uTextures", Textures); !R) {
                     return std::unexpected(R.error().Append("Forward PBR texture parameter binding failed"));
@@ -302,7 +300,7 @@ class ForwardRenderer final : public IRenderer {
 
             Pass.BindShaderParameters(Pipeline, std::move(DrawParameters));
             Pass.DrawIndexed(Pipeline,
-                             std::array<RHI::VertexBuffer*, RHI::kMaxVertexBufferBindings>{PositionVB, NormalVB, UVVB},
+                             std::array<RHIVertexBuffer*, kMaxVertexBufferBindings>{PositionVB, NormalVB, UVVB},
                              IB);
         }
 
@@ -317,7 +315,7 @@ class ForwardRenderer final : public IRenderer {
         return (ConfigManager::Get().CurrentApplicationDir() / "Assets" / Asset).lexically_normal();
     }
 
-    [[nodiscard]] auto GetOrRequestMesh(StringView Asset) -> Resource::ResourceRef<Resource::Mesh>& {
+    [[nodiscard]] auto GetOrRequestMesh(StringView Asset) -> ResourceRef<ResourceMesh>& {
         for (auto& Entry : m_MeshCache) {
             if (Entry.Asset == Asset)
                 return Entry.Mesh;
@@ -325,12 +323,12 @@ class ForwardRenderer final : public IRenderer {
 
         auto& Entry = m_MeshCache.emplace_back(ForwardMeshCacheEntry{
             .Asset = String(Asset),
-            .Mesh  = Resource::Manager::Get().RequestMeshRef(ResolveAssetPath(Asset).string()),
+            .Mesh  = ResourceManager::Get().RequestMeshRef(ResolveAssetPath(Asset).string()),
         });
         return Entry.Mesh;
     }
 
-    [[nodiscard]] auto GetOrRequestTexture(StringView Asset) -> Resource::ResourceRef<RHI::SampledTexture>& {
+    [[nodiscard]] auto GetOrRequestTexture(StringView Asset) -> ResourceRef<RHISampledTexture>& {
         for (auto& Entry : m_TextureCache) {
             if (Entry.Asset == Asset)
                 return Entry.Texture;
@@ -338,15 +336,15 @@ class ForwardRenderer final : public IRenderer {
 
         auto& Entry = m_TextureCache.emplace_back(ForwardTextureCacheEntry{
             .Asset   = String(Asset),
-            .Texture = Resource::Manager::Get().RequestSampledTextureRef(ResolveAssetPath(Asset).string()),
+            .Texture = ResourceManager::Get().RequestSampledTextureRef(ResolveAssetPath(Asset).string()),
         });
         return Entry.Texture;
     }
 
-    [[nodiscard]] auto BuildDrawInstances(const Scene::SceneSnapshot& Scene)
+    [[nodiscard]] auto BuildDrawInstances(const SceneSnapshot& Scene)
         -> std::vector<ForwardDrawInstance> {
         std::vector<ForwardDrawInstance> DrawInstances = {};
-        auto& Resources = Resource::Manager::Get();
+        auto& Resources = ResourceManager::Get();
 
         for (const auto& Renderable : Scene.Renderables) {
             if (Renderable.MeshAsset.empty())
@@ -356,7 +354,7 @@ class ForwardRenderer final : public IRenderer {
             if (!Mesh)
                 continue;
 
-            Resource::ResourceHandle<RHI::SampledTexture> BaseColorTexture = {};
+            ResourceHandle<RHISampledTexture> BaseColorTexture = {};
             if (!Renderable.TextureAsset.empty())
                 BaseColorTexture = GetOrRequestTexture(Renderable.TextureAsset).GetHandle();
 
@@ -390,7 +388,7 @@ class ForwardRenderer final : public IRenderer {
         };
     }
 
-    [[nodiscard]] static auto BuildMaterialConstants(const Material::PbrMetallicRoughnessMaterial& Material,
+    [[nodiscard]] static auto BuildMaterialConstants(const PbrMetallicRoughnessMaterial& Material,
                                                      Int32 BaseColorTextureIndex)
         -> ForwardMaterialConstants {
         return ForwardMaterialConstants{
@@ -406,7 +404,7 @@ class ForwardRenderer final : public IRenderer {
         return ForwardObjectConstants{.WorldTransform = Instance.WorldTransform};
     }
 
-    [[nodiscard]] static auto BuildViewConstants(const Scene::RenderViewSnapshot& View) -> ForwardViewConstants {
+    [[nodiscard]] static auto BuildViewConstants(const RenderViewSnapshot& View) -> ForwardViewConstants {
         return ForwardViewConstants{
             .ViewProjection = View.ViewProjection,
             .CameraPosition = hlslpp::interop::float4{
@@ -414,31 +412,31 @@ class ForwardRenderer final : public IRenderer {
         };
     }
 
-    auto GetViewParameters(const Scene::RenderViewSnapshot& View, const RHI::GraphicsPipeline& Pipeline)
-        -> RHI::ShaderParameters& {
+    auto GetViewParameters(const RenderViewSnapshot& View, const RHIGraphicsPipeline& Pipeline)
+        -> RHIShaderParameters& {
         const auto& ViewConstantBufferKey = View.ViewCB.GetKey();
         for (auto& State : m_ViewParameters) {
             if (State.ViewConstantBufferKey != ViewConstantBufferKey)
                 continue;
             if (State.Parameters.GetLayoutId() != Pipeline.GetShaderParameterLayout().GetId())
-                State.Parameters = RHI::ShaderParameters::Create(Pipeline);
+                State.Parameters = RHIShaderParameters::Create(Pipeline);
             return State.Parameters;
         }
 
         auto& State = m_ViewParameters.emplace_back(ForwardViewParameterState{
             .ViewConstantBufferKey = ViewConstantBufferKey,
-            .Parameters            = RHI::ShaderParameters::Create(Pipeline),
+            .Parameters            = RHIShaderParameters::Create(Pipeline),
         });
         return State.Parameters;
     }
 
-    Resource::ResourceRef<RHI::GraphicsPipeline> m_Pipeline                 = {};
-    Resource::ResourceRef<RHI::ConstantBuffer>   m_FrameConstants           = {};
-    Resource::ResourceRef<RHI::ConstantBuffer>   m_ViewConstants            = {};
-    Resource::ResourceRef<RHI::ConstantBuffer>   m_MaterialConstants        = {};
-    Resource::ResourceRef<RHI::ConstantBuffer>   m_ObjectConstants          = {};
-    Resource::ResourceRef<RHI::Sampler>          m_SamplerLinear            = {};
-    Resource::ResourceRef<RHI::Sampler>          m_SamplerAniso             = {};
+    ResourceRef<RHIGraphicsPipeline> m_Pipeline                 = {};
+    ResourceRef<RHIConstantBuffer>   m_FrameConstants           = {};
+    ResourceRef<RHIConstantBuffer>   m_ViewConstants            = {};
+    ResourceRef<RHIConstantBuffer>   m_MaterialConstants        = {};
+    ResourceRef<RHIConstantBuffer>   m_ObjectConstants          = {};
+    ResourceRef<RHISampler>          m_SamplerLinear            = {};
+    ResourceRef<RHISampler>          m_SamplerAniso             = {};
     std::vector<ForwardMeshCacheEntry>             m_MeshCache                = {};
     std::vector<ForwardTextureCacheEntry>          m_TextureCache             = {};
     std::vector<ForwardViewParameterState>          m_ViewParameters           = {};
@@ -446,4 +444,4 @@ class ForwardRenderer final : public IRenderer {
 
 RendererFactory::AutoRegistrar<ForwardRenderer> RegForwardRenderer{"Forward"};
 
-} // namespace SoulEngine::Renderer
+} // namespace SoulEngine

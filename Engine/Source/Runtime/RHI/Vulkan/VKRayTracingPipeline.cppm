@@ -14,12 +14,10 @@ import :Capability;
 import :DeletionQueue;
 import :Pipeline;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::RHI::Vulkan {
+export namespace SoulEngine {
 
 /// Backend-independent layout for the immutable shader-binding-table payload.
-struct ShaderBindingTableRegionLayout {
+struct VulkanShaderBindingTableRegionLayout {
     Uint64 Offset      = 0;
     Uint64 Stride      = 0;
     Uint64 Size        = 0;
@@ -27,18 +25,18 @@ struct ShaderBindingTableRegionLayout {
 };
 
 /// SBT allocation layout derived from Vulkan ray-tracing pipeline properties.
-struct ShaderBindingTableLayout {
+struct VulkanShaderBindingTableLayout {
     Uint64                           HandleSize = 0;
     Uint64                           RecordStride = 0;
     Uint64                           TotalSize = 0;
-    ShaderBindingTableRegionLayout   RayGeneration = {};
-    ShaderBindingTableRegionLayout   Miss = {};
-    ShaderBindingTableRegionLayout   Hit = {};
-    ShaderBindingTableRegionLayout   Callable = {};
+    VulkanShaderBindingTableRegionLayout   RayGeneration = {};
+    VulkanShaderBindingTableRegionLayout   Miss = {};
+    VulkanShaderBindingTableRegionLayout   Hit = {};
+    VulkanShaderBindingTableRegionLayout   Callable = {};
 };
 
 /// Calculate SBT offsets while preserving Vulkan's handle and base-alignment invariants.
-[[nodiscard]] auto CreateShaderBindingTableLayout(Uint32 HandleSize,
+[[nodiscard]] auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
                                                    Uint32 HandleAlignment,
                                                    Uint32 BaseAlignment,
                                                    Uint32 MaxShaderGroupStride,
@@ -46,11 +44,11 @@ struct ShaderBindingTableLayout {
                                                    Uint32 MissRecordCount,
                                                    Uint32 HitRecordCount,
                                                    Uint32 CallableRecordCount)
-    -> std::expected<ShaderBindingTableLayout, ErrorMessage>;
+    -> std::expected<VulkanShaderBindingTableLayout, ErrorMessage>;
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine
 
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 
 namespace {
 
@@ -70,7 +68,7 @@ namespace {
                                    Uint64                          RecordStride,
                                    Uint64                          BaseAlignment,
                                    Uint32                          RecordCount,
-                                   ShaderBindingTableRegionLayout& Out)
+                                   VulkanShaderBindingTableRegionLayout& Out)
     -> std::expected<void, ErrorMessage> {
     Out = {.Offset = 0, .Stride = 0, .Size = 0, .RecordCount = RecordCount};
     if (RecordCount == 0)
@@ -91,30 +89,30 @@ namespace {
     return {};
 }
 
-[[nodiscard]] auto ToVkRayTracingShaderStage(Shader::Stage Stage)
+[[nodiscard]] auto ToVkRayTracingShaderStage(ShaderStage Stage)
     -> std::expected<vk::ShaderStageFlagBits, ErrorMessage> {
     switch (Stage) {
-    case Shader::Stage::RayGeneration:
+    case ShaderStage::RayGeneration:
         return vk::ShaderStageFlagBits::eRaygenKHR;
-    case Shader::Stage::Intersection:
+    case ShaderStage::Intersection:
         return vk::ShaderStageFlagBits::eIntersectionKHR;
-    case Shader::Stage::AnyHit:
+    case ShaderStage::AnyHit:
         return vk::ShaderStageFlagBits::eAnyHitKHR;
-    case Shader::Stage::ClosestHit:
+    case ShaderStage::ClosestHit:
         return vk::ShaderStageFlagBits::eClosestHitKHR;
-    case Shader::Stage::Miss:
+    case ShaderStage::Miss:
         return vk::ShaderStageFlagBits::eMissKHR;
-    case Shader::Stage::Callable:
+    case ShaderStage::Callable:
         return vk::ShaderStageFlagBits::eCallableKHR;
-    case Shader::Stage::Unknown:
-    case Shader::Stage::Vertex:
-    case Shader::Stage::Hull:
-    case Shader::Stage::Domain:
-    case Shader::Stage::Geometry:
-    case Shader::Stage::Fragment:
-    case Shader::Stage::Compute:
-    case Shader::Stage::Mesh:
-    case Shader::Stage::Amplification:
+    case ShaderStage::Unknown:
+    case ShaderStage::Vertex:
+    case ShaderStage::Hull:
+    case ShaderStage::Domain:
+    case ShaderStage::Geometry:
+    case ShaderStage::Fragment:
+    case ShaderStage::Compute:
+    case ShaderStage::Mesh:
+    case ShaderStage::Amplification:
         break;
     }
     return std::unexpected(ErrorMessage("Shader stage is not valid for a Vulkan ray-tracing pipeline"));
@@ -126,22 +124,22 @@ namespace {
            vk::ShaderStageFlagBits::eMissKHR | vk::ShaderStageFlagBits::eCallableKHR;
 }
 
-struct RayTracingShaderGroupIndices {
+struct VulkanRayTracingShaderGroupIndices {
     Uint32              RayGeneration = vk::ShaderUnusedKHR;
     std::vector<Uint32> Miss = {};
     std::vector<Uint32> Hit = {};
     std::vector<Uint32> Callable = {};
 };
 
-struct RayTracingShaderStates {
+struct VulkanRayTracingShaderStates {
     vk::raii::ShaderModule                                  Module = nullptr;
     std::vector<vk::PipelineShaderStageCreateInfo>          Stages = {};
     std::vector<vk::RayTracingShaderGroupCreateInfoKHR>     Groups = {};
-    RayTracingShaderGroupIndices                             GroupIndices = {};
+    VulkanRayTracingShaderGroupIndices                             GroupIndices = {};
 };
 
-[[nodiscard]] auto CreateRayTracingShaderStates(vk::raii::Device& Device, const RHI::RayTracingPipelineDesc& Desc)
-    -> std::expected<RayTracingShaderStates, ErrorMessage> {
+[[nodiscard]] auto CreateRayTracingShaderStates(vk::raii::Device& Device, const RHIRayTracingPipelineDesc& Desc)
+    -> std::expected<VulkanRayTracingShaderStates, ErrorMessage> {
     const auto& Program = Desc.Program;
     if (Program.Code.empty())
         return std::unexpected(ErrorMessage("Ray-tracing shader program has no SPIR-V code"));
@@ -155,12 +153,12 @@ struct RayTracingShaderStates {
     auto [ModuleResult, Module] = Device.createShaderModule(ModuleCI);
     if (ModuleResult != vk::Result::eSuccess) {
         return std::unexpected(ErrorMessage(
-            Core::Format("Failed to create shader module for ray-tracing program '{}': {}",
+            Format("Failed to create shader module for ray-tracing program '{}': {}",
                          Program.RayGenerationEntryPointName,
                          vk::to_string(ModuleResult))));
     }
 
-    RayTracingShaderStates Result{.Module = std::move(Module)};
+    VulkanRayTracingShaderStates Result{.Module = std::move(Module)};
     const auto AppendStage = [&](vk::ShaderStageFlagBits Stage, const String& EntryPoint) -> Uint32 {
         Result.Stages.push_back(vk::PipelineShaderStageCreateInfo{
             .stage  = Stage,
@@ -206,16 +204,16 @@ struct RayTracingShaderStates {
 
         vk::RayTracingShaderGroupTypeKHR Type = vk::RayTracingShaderGroupTypeKHR::eTrianglesHitGroup;
         switch (HitGroup.Type) {
-        case Shader::RayTracingHitGroupType::Triangles:
+        case ShaderRayTracingHitGroupType::Triangles:
             if (Intersection != vk::ShaderUnusedKHR)
                 return std::unexpected(ErrorMessage("Triangle hit groups cannot contain an intersection shader"));
             break;
-        case Shader::RayTracingHitGroupType::Procedural:
+        case ShaderRayTracingHitGroupType::Procedural:
             if (Intersection == vk::ShaderUnusedKHR)
                 return std::unexpected(ErrorMessage("Procedural hit groups require an intersection shader"));
             Type = vk::RayTracingShaderGroupTypeKHR::eProceduralHitGroup;
             break;
-        case Shader::RayTracingHitGroupType::Unknown:
+        case ShaderRayTracingHitGroupType::Unknown:
             return std::unexpected(ErrorMessage("Ray-tracing hit group has an unknown type"));
         }
 
@@ -243,7 +241,7 @@ struct RayTracingShaderStates {
 
     if (!Desc.ShaderGroups.empty()) {
         if (Desc.ShaderGroups.size() != Result.Groups.size()) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Ray-tracing pipeline descriptor specifies {} shader groups, but the linked program produces {} groups",
                 Desc.ShaderGroups.size(),
                 Result.Groups.size())));
@@ -252,13 +250,13 @@ struct RayTracingShaderStates {
             const auto Expected = Desc.ShaderGroups[GroupIndex].Type;
             const auto Actual = Result.Groups[GroupIndex].type;
             const bool bMatches =
-                (Expected == RHI::RayTracingShaderGroupType::General && Actual == vk::RayTracingShaderGroupTypeKHR::eGeneral) ||
-                (Expected == RHI::RayTracingShaderGroupType::TrianglesHit &&
+                (Expected == RHIRayTracingShaderGroupType::General && Actual == vk::RayTracingShaderGroupTypeKHR::eGeneral) ||
+                (Expected == RHIRayTracingShaderGroupType::TrianglesHit &&
                  Actual == vk::RayTracingShaderGroupTypeKHR::eTrianglesHitGroup) ||
-                (Expected == RHI::RayTracingShaderGroupType::ProceduralHit &&
+                (Expected == RHIRayTracingShaderGroupType::ProceduralHit &&
                  Actual == vk::RayTracingShaderGroupTypeKHR::eProceduralHitGroup);
             if (!bMatches) {
-                return std::unexpected(ErrorMessage(Core::Format(
+                return std::unexpected(ErrorMessage(Format(
                     "Ray-tracing shader group {} does not match the linked program's group category", GroupIndex)));
             }
         }
@@ -267,7 +265,7 @@ struct RayTracingShaderStates {
     return Result;
 }
 
-[[nodiscard]] auto MakeRegion(vk::DeviceAddress Address, const ShaderBindingTableRegionLayout& Layout)
+[[nodiscard]] auto MakeRegion(vk::DeviceAddress Address, const VulkanShaderBindingTableRegionLayout& Layout)
     -> vk::StridedDeviceAddressRegionKHR {
     if (Layout.RecordCount == 0)
         return {};
@@ -280,11 +278,11 @@ struct RayTracingShaderStates {
 
 [[nodiscard]] auto PopulateShaderBindingTableData(const std::vector<Uint8>&                       Handles,
                                                    Uint32                                            HandleSize,
-                                                   const RayTracingShaderGroupIndices&               Groups,
-                                                   const ShaderBindingTableLayout&                   Layout)
+                                                   const VulkanRayTracingShaderGroupIndices&               Groups,
+                                                   const VulkanShaderBindingTableLayout&                   Layout)
     -> std::expected<std::vector<Uint8>, ErrorMessage> {
     std::vector<Uint8> Data(Layout.TotalSize, 0);
-    const auto WriteRegion = [&](const std::vector<Uint32>& GroupIndices, const ShaderBindingTableRegionLayout& Region)
+    const auto WriteRegion = [&](const std::vector<Uint32>& GroupIndices, const VulkanShaderBindingTableRegionLayout& Region)
         -> std::expected<void, ErrorMessage> {
         if (GroupIndices.size() != Region.RecordCount)
             return std::unexpected(ErrorMessage("SBT group-index count does not match region record count"));
@@ -314,7 +312,7 @@ struct RayTracingShaderStates {
 
 } // namespace
 
-export auto CreateShaderBindingTableLayout(Uint32 HandleSize,
+export auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
                                            Uint32 HandleAlignment,
                                            Uint32 BaseAlignment,
                                            Uint32 MaxShaderGroupStride,
@@ -322,7 +320,7 @@ export auto CreateShaderBindingTableLayout(Uint32 HandleSize,
                                            Uint32 MissRecordCount,
                                            Uint32 HitRecordCount,
                                            Uint32 CallableRecordCount)
-    -> std::expected<ShaderBindingTableLayout, ErrorMessage> {
+    -> std::expected<VulkanShaderBindingTableLayout, ErrorMessage> {
     if (HandleSize == 0 || HandleAlignment == 0 || BaseAlignment == 0)
         return std::unexpected(ErrorMessage("Vulkan ray-tracing SBT properties must be non-zero"));
     if (RayGenerationRecordCount != 1)
@@ -332,11 +330,11 @@ export auto CreateShaderBindingTableLayout(Uint32 HandleSize,
     if (!RecordStride)
         return std::unexpected(RecordStride.error());
     if (*RecordStride > MaxShaderGroupStride) {
-        return std::unexpected(ErrorMessage(Core::Format(
+        return std::unexpected(ErrorMessage(Format(
             "SBT record stride {} exceeds device maxShaderGroupStride {}", *RecordStride, MaxShaderGroupStride)));
     }
 
-    ShaderBindingTableLayout Result{
+    VulkanShaderBindingTableLayout Result{
         .HandleSize   = HandleSize,
         .RecordStride = *RecordStride,
     };
@@ -354,14 +352,14 @@ export auto CreateShaderBindingTableLayout(Uint32 HandleSize,
 }
 
 /// Vulkan realization of a ray-tracing pipeline and its immutable shader-binding table.
-class RayTracingPipeline final : public RHI::RayTracingPipeline {
+class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
-    RayTracingPipeline() = default;
+    VulkanRayTracingPipeline() = default;
 
-    ~RayTracingPipeline() override {
+    ~VulkanRayTracingPipeline() override {
         if (m_DeletionQueue) {
             m_DeletionQueue->Enqueue(GetLastUsageToken(),
-                                     [Pipeline = m_Pipeline,
+                                     [RHIPipeline = m_Pipeline,
                                       PipelineLayout = m_PipelineLayout,
                                       SetLayouts = m_SetLayouts,
                                       ShaderBindingTable = m_ShaderBindingTable,
@@ -369,23 +367,23 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         }
     }
 
-    RayTracingPipeline(const RayTracingPipeline&)                    = delete;
-    auto operator=(const RayTracingPipeline&) -> RayTracingPipeline& = delete;
+    VulkanRayTracingPipeline(const VulkanRayTracingPipeline&)                    = delete;
+    auto operator=(const VulkanRayTracingPipeline&) -> VulkanRayTracingPipeline& = delete;
 
     [[nodiscard]] static auto Create(vk::raii::Device&                   Device,
                                      VmaAllocator                         Allocator,
-                                     const RHI::RayTracingPipelineDesc&   Desc,
+                                     const RHIRayTracingPipelineDesc&   Desc,
                                      Uint32                               MaxTextures,
-                                     DeletionQueue&                       Queue)
-        -> std::expected<UPtr<RayTracingPipeline>, ErrorMessage> {
-        const auto& Support = Capability::Get().GetRayTracingSupport();
+                                     VulkanDeletionQueue&                       Queue)
+        -> std::expected<UPtr<VulkanRayTracingPipeline>, ErrorMessage> {
+        const auto& Support = VulkanCapability::Get().GetRayTracingSupport();
         if (!Support.Available)
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Hardware ray tracing is unavailable: {}", Support.UnavailableReason)));
 
-        const auto& Properties = Capability::Get().GetProperties<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+        const auto& Properties = VulkanCapability::Get().GetProperties<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
         if (Desc.MaxRecursionDepth == 0 || Desc.MaxRecursionDepth > Properties.maxRayRecursionDepth) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Requested ray recursion depth {} exceeds device limit {}",
                 Desc.MaxRecursionDepth,
                 Properties.maxRayRecursionDepth)));
@@ -407,9 +405,9 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
             .maxPipelineRayRecursionDepth = Desc.MaxRecursionDepth,
             .layout                      = *LayoutObjects->second,
         };
-        auto [PipelineResult, Pipeline] = Device.createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
+        auto [PipelineResult, RHIPipeline] = Device.createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
         if (PipelineResult != vk::Result::eSuccess) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Failed to create ray-tracing pipeline: {}", vk::to_string(PipelineResult))));
         }
 
@@ -418,14 +416,14 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         if (HandleDataSize > std::numeric_limits<size_t>::max())
             return std::unexpected(ErrorMessage("Ray-tracing shader group handle query size exceeds host address space"));
         std::vector<Uint8> Handles(HandleDataSize);
-        const auto HandleResult = Pipeline.getRayTracingShaderGroupHandlesKHR(
+        const auto HandleResult = RHIPipeline.getRayTracingShaderGroupHandlesKHR(
             0, GroupCount, Handles.size(), Handles.data());
         if (HandleResult != vk::Result::eSuccess) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Failed to query ray-tracing shader group handles: {}", vk::to_string(HandleResult))));
         }
 
-        auto SbtLayout = CreateShaderBindingTableLayout(Properties.shaderGroupHandleSize,
+        auto SbtLayout = VulkanCreateShaderBindingTableLayout(Properties.shaderGroupHandleSize,
                                                         Properties.shaderGroupHandleAlignment,
                                                         Properties.shaderGroupBaseAlignment,
                                                         Properties.maxShaderGroupStride,
@@ -443,7 +441,7 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         if (!SbtData)
             return std::unexpected(SbtData.error().Append("Failed to populate shader-binding-table records"));
 
-        auto SbtBuffer = HostBuffer::Create(SbtLayout->TotalSize,
+        auto SbtBuffer = VulkanHostBuffer::Create(SbtLayout->TotalSize,
                                             vk::BufferUsageFlagBits::eShaderBindingTableKHR |
                                                 vk::BufferUsageFlagBits::eShaderDeviceAddress,
                                             Device,
@@ -456,14 +454,14 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         const vk::DeviceAddress SbtAddress =
             Device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = SbtBuffer->Get()});
         if (SbtAddress == 0 || SbtAddress % Properties.shaderGroupBaseAlignment != 0) {
-            return std::unexpected(ErrorMessage(Core::Format(
+            return std::unexpected(ErrorMessage(Format(
                 "Shader-binding-table buffer address {} is not aligned to required base alignment {}",
                 SbtAddress,
                 Properties.shaderGroupBaseAlignment)));
         }
 
-        auto Result = std::make_unique<RayTracingPipeline>();
-        Result->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
+        auto Result = std::make_unique<VulkanRayTracingPipeline>();
+        Result->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
         Result->m_SetLayouts =
             std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));
         Result->m_PipelineLayout = std::make_shared<vk::raii::PipelineLayout>(std::move(LayoutObjects->second));
@@ -474,13 +472,13 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         Result->m_Bindings = BuildReflectedBindings(Desc.Program.Reflection);
         Result->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
         Result->m_PushConstantSize = MaxPushConstantSize(Desc.Program.Reflection);
-        Result->m_ShaderBindingTable = std::make_shared<HostBuffer>(std::move(*SbtBuffer));
+        Result->m_ShaderBindingTable = std::make_shared<VulkanHostBuffer>(std::move(*SbtBuffer));
         Result->m_RayGenerationRegion = MakeRegion(SbtAddress, SbtLayout->RayGeneration);
         Result->m_MissRegion = MakeRegion(SbtAddress, SbtLayout->Miss);
         Result->m_HitRegion = MakeRegion(SbtAddress, SbtLayout->Hit);
         Result->m_CallableRegion = MakeRegion(SbtAddress, SbtLayout->Callable);
         Result->m_DeletionQueue = &Queue;
-        Result->SetShaderParameterLayout(RHI::ShaderParameterLayout::Create(Desc.Program.Reflection));
+        Result->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
         return Result;
     }
 
@@ -503,10 +501,10 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
     [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
                                                          Uint32             SetIndex,
                                                          Uint32             VariableDescriptorCount,
-                                                         DescriptorManager& Descriptors)
-        -> std::expected<DescriptorSetInstance*, ErrorMessage> {
+                                                         VulkanDescriptorManager& Descriptors)
+        -> std::expected<VulkanDescriptorSetInstance*, ErrorMessage> {
         if (SetIndex >= m_RawSetLayouts.size())
-            return std::unexpected(ErrorMessage(Core::Format("Parameter set uses missing descriptor set {}", SetIndex)));
+            return std::unexpected(ErrorMessage(Format("Parameter set uses missing descriptor set {}", SetIndex)));
 
         auto& Instances = m_ParameterSets->ByParameterId[ParameterId];
         if (Instances.size() < m_RawSetLayouts.size())
@@ -522,7 +520,7 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
         if (!Set)
             return std::unexpected(Set.error());
 
-        Versions.push_back(DescriptorSetInstance{
+        Versions.push_back(VulkanDescriptorSetInstance{
             .Set                     = std::move(*Set),
             .VariableDescriptorCount = VariableDescriptorCount,
         });
@@ -550,17 +548,17 @@ class RayTracingPipeline final : public RHI::RayTracingPipeline {
     SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout = nullptr;
     SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts = nullptr;
     std::vector<vk::DescriptorSetLayout>             m_RawSetLayouts = {};
-    std::vector<ReflectedDescriptorBinding>          m_Bindings = {};
-    SPtr<HostBuffer>                                 m_ShaderBindingTable = nullptr;
+    std::vector<VulkanReflectedDescriptorBinding>          m_Bindings = {};
+    SPtr<VulkanHostBuffer>                                 m_ShaderBindingTable = nullptr;
     vk::StridedDeviceAddressRegionKHR                m_RayGenerationRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_MissRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_HitRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_CallableRegion = {};
-    SPtr<PipelineParameterSetInstances>              m_ParameterSets = std::make_shared<PipelineParameterSetInstances>();
+    SPtr<VulkanPipelineParameterSetInstances>              m_ParameterSets = std::make_shared<VulkanPipelineParameterSetInstances>();
     Uint32                                           m_DescriptorSetCount = 0;
     Uint32                                           m_DynamicOffsetCount = 0;
     Uint32                                           m_PushConstantSize = 0;
-    DeletionQueue*                                   m_DeletionQueue = nullptr;
+    VulkanDeletionQueue*                                   m_DeletionQueue = nullptr;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

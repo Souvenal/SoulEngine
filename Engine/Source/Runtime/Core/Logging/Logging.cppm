@@ -14,7 +14,7 @@ extern "C" auto SoulEngineLoggingBackendWrite(int Level, const char* Message) ->
 extern "C" auto SoulEngineLoggingBackendSetSinkLevels(const char* FileLevel, const char* ConsoleLevel) -> void;
 extern "C" auto SoulEngineLoggingBackendWriteFile(const char* Filename, int Level, const char* Message) -> void;
 
-namespace SoulEngine::Core {
+namespace SoulEngine {
 export enum class LogLevel : Uint8 { Debug = 0, Info = 1, Warning = 2, Error = 3 };
 
 export enum class LogThreadRole : Uint8 {
@@ -116,9 +116,6 @@ auto LogToFileFormatted(StringView Filename, LogLevel Level, StringView FormatSt
     String Msg = std::vformat(FormatStr, std::make_format_args(InArgs...));
     LogManager::Get().LogToFile(Level, Filename, Msg);
 }
-} // namespace SoulEngine::Core
-
-using namespace SoulEngine::Core;
 
 export template <typename... Args>
 auto LogDebug(StringView Format, const Args&... InArgs) -> void {
@@ -144,3 +141,4 @@ export template <typename... Args>
 auto LogToFile(StringView Filename, LogLevel Level, StringView Format, const Args&... InArgs) -> void {
     LogToFileFormatted(Filename, Level, Format, InArgs...);
 }
+} // namespace SoulEngine

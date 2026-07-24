@@ -6,9 +6,7 @@ export import :IRenderer;
 export import :ForwardRenderer;
 export import :RayTracingRenderer;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Renderer {
+export namespace SoulEngine {
 
 /// @brief Create the renderer configured by `[Render].DefaultRenderer`.
 ///
@@ -36,4 +34,4 @@ export namespace SoulEngine::Renderer {
     return RendererFactory::Get().Create(Name);
 }
 
-} // namespace SoulEngine::Renderer
+} // namespace SoulEngine

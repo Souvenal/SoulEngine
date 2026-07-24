@@ -10,23 +10,21 @@ import std;
 import :Capability;
 import :DeletionQueue;
 
-using namespace SoulEngine::Core;
-
-namespace SoulEngine::RHI::Vulkan {
+namespace SoulEngine {
 namespace {
 
-struct SamplerProfileInfo {
+struct VulkanSamplerProfileInfo {
     bool bEnableAnisotropy = false;
 };
 
-[[nodiscard]] auto GetSamplerProfileInfo(RHI::SamplerProfile Profile)
-    -> std::expected<SamplerProfileInfo, ErrorMessage> {
+[[nodiscard]] auto GetSamplerProfileInfo(RHISamplerProfile Profile)
+    -> std::expected<VulkanSamplerProfileInfo, ErrorMessage> {
     switch (Profile) {
-    case RHI::SamplerProfile::LinearRepeat:
-        return SamplerProfileInfo{};
-    case RHI::SamplerProfile::AnisotropicRepeat:
-        return SamplerProfileInfo{.bEnableAnisotropy = true};
-    case RHI::SamplerProfile::Unknown:
+    case RHISamplerProfile::LinearRepeat:
+        return VulkanSamplerProfileInfo{};
+    case RHISamplerProfile::AnisotropicRepeat:
+        return VulkanSamplerProfileInfo{.bEnableAnisotropy = true};
+    case RHISamplerProfile::Unknown:
         break;
     }
     return std::unexpected(ErrorMessage("Unsupported sampler profile"));
@@ -34,33 +32,33 @@ struct SamplerProfileInfo {
 
 } // namespace
 
-class Sampler final : public RHI::Sampler {
+class VulkanSampler final : public RHISampler {
   public:
-    Sampler(const RHI::SamplerDesc& Desc, vk::raii::Sampler&& Sampler, DeletionQueue& Queue)
-        : RHI::Sampler(Desc) {
-        m_Sampler       = std::make_shared<vk::raii::Sampler>(std::move(Sampler));
+    VulkanSampler(const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler, VulkanDeletionQueue& Queue)
+        : RHISampler(Desc) {
+        m_Sampler       = std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler));
         m_DeletionQueue = &Queue;
     }
 
-    ~Sampler() override {
+    ~VulkanSampler() override {
         if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Sampler = m_Sampler]() {});
+            m_DeletionQueue->Enqueue(GetLastUsageToken(), [VulkanSampler = m_Sampler]() {});
     }
 
-    Sampler(const Sampler&)                    = delete;
-    auto operator=(const Sampler&) -> Sampler& = delete;
-    Sampler(Sampler&&)                         = delete;
-    auto operator=(Sampler&&) -> Sampler&      = delete;
+    VulkanSampler(const VulkanSampler&)                    = delete;
+    auto operator=(const VulkanSampler&) -> VulkanSampler& = delete;
+    VulkanSampler(VulkanSampler&&)                         = delete;
+    auto operator=(VulkanSampler&&) -> VulkanSampler&      = delete;
 
-    [[nodiscard]] static auto Create(const RHI::SamplerDesc& Desc, vk::raii::Device& Device, DeletionQueue& Queue)
-        -> std::expected<UPtr<RHI::Sampler>, ErrorMessage> {
+    [[nodiscard]] static auto Create(const RHISamplerDesc& Desc, vk::raii::Device& Device, VulkanDeletionQueue& Queue)
+        -> std::expected<UPtr<RHISampler>, ErrorMessage> {
         auto ProfileInfo = GetSamplerProfileInfo(Desc.Profile);
         if (!ProfileInfo)
-            return std::unexpected(ProfileInfo.error().Append("Sampler::Create: invalid sampler profile"));
-        if (ProfileInfo->bEnableAnisotropy && !Capability::Get().GetFeatures().samplerAnisotropy)
-            return std::unexpected(ErrorMessage("Sampler::Create: sampler anisotropy feature is not supported"));
+            return std::unexpected(ProfileInfo.error().Append("VulkanSampler::Create: invalid sampler profile"));
+        if (ProfileInfo->bEnableAnisotropy && !VulkanCapability::Get().GetFeatures().samplerAnisotropy)
+            return std::unexpected(ErrorMessage("VulkanSampler::Create: sampler anisotropy feature is not supported"));
 
-        const auto& Limits        = Capability::Get().GetProperties().limits;
+        const auto& Limits        = VulkanCapability::Get().GetProperties().limits;
         const auto  MaxAnisotropy = ProfileInfo->bEnableAnisotropy ? Limits.maxSamplerAnisotropy : 1.0f;
 
         vk::SamplerCreateInfo SamplerCI{
@@ -82,9 +80,9 @@ class Sampler final : public RHI::Sampler {
         };
         auto Result = Device.createSampler(SamplerCI);
         if (Result.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("Sampler::Create: failed to create VkSampler"));
+            return std::unexpected(ErrorMessage("VulkanSampler::Create: failed to create VkSampler"));
 
-        return std::make_unique<Sampler>(Desc, std::move(Result.value), Queue);
+        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value), Queue);
     }
 
     [[nodiscard]] auto GetVkSampler() const -> vk::Sampler {
@@ -93,7 +91,7 @@ class Sampler final : public RHI::Sampler {
 
   private:
     SPtr<vk::raii::Sampler> m_Sampler       = nullptr;
-    DeletionQueue*          m_DeletionQueue = nullptr;
+    VulkanDeletionQueue*          m_DeletionQueue = nullptr;
 };
 
-} // namespace SoulEngine::RHI::Vulkan
+} // namespace SoulEngine

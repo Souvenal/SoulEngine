@@ -1,7 +1,7 @@
 /// @file   SlangCompiler/SlangCompiler.cppm
 /// @brief  Slang-backed concrete shader compiler backend.
 ///
-/// Standalone module — self-registers with BackendFactory via static
+/// Standalone module — self-registers with ShaderBackendFactory via static
 /// AutoRegistrar when the shared library is loaded.
 /// Slang SDK dependencies live in this file and the :Reflection partition.
 ///
@@ -36,9 +36,7 @@ import std;
 import Core;
 import ShaderCompiler;
 
-namespace SoulEngine::ShaderCompiler::SlangCompiler {
-
-using namespace SoulEngine::Core;
+namespace SoulEngine {
 
 namespace {
 
@@ -225,19 +223,19 @@ namespace {
 ///
 /// Init is lazy: the constructor is cheap; the first pipeline compile triggers
 /// the one-time creation of the global session.
-class Backend final : public IBackend {
+class SlangBackend final : public IShaderBackend {
   public:
-    Backend() = default;
+    SlangBackend() = default;
 
-    Backend(const Backend&)                    = delete;
-    auto operator=(const Backend&) -> Backend& = delete;
-    Backend(Backend&&)                         = delete;
-    auto operator=(Backend&&) -> Backend&      = delete;
+    SlangBackend(const SlangBackend&)                    = delete;
+    auto operator=(const SlangBackend&) -> SlangBackend& = delete;
+    SlangBackend(SlangBackend&&)                         = delete;
+    auto operator=(SlangBackend&&) -> SlangBackend&      = delete;
 
-    ~Backend() override = default;
+    ~SlangBackend() override = default;
 
     [[nodiscard]] auto CompileGraphics(const GraphicsCompileDesc& Desc)
-        -> std::expected<Shader::GraphicsProgram, ErrorMessage> override {
+        -> std::expected<ShaderGraphicsProgram, ErrorMessage> override {
         if (!m_bInitialized)
             if (auto R = Init(); !R)
                 return std::unexpected(std::move(R.error()));
@@ -313,17 +311,17 @@ class Backend final : public IBackend {
         }
 
         String VertexEntryPointName = String(VertexInfo->getName());
-        if (ToShaderStage(VertexInfo->getStage()) != Shader::Stage::Vertex) {
+        if (ToShaderStage(VertexInfo->getStage()) != ShaderStage::Vertex) {
             return std::unexpected(ErrorMessage(Format("Entry point '{}' is not a vertex shader", VertexEntryPointName)));
         }
 
         String FragmentEntryPointName = String(FragmentInfo->getName());
-        if (ToShaderStage(FragmentInfo->getStage()) != Shader::Stage::Fragment) {
+        if (ToShaderStage(FragmentInfo->getStage()) != ShaderStage::Fragment) {
             return std::unexpected(
                 ErrorMessage(Format("Entry point '{}' is not a fragment shader", FragmentEntryPointName)));
         }
 
-        return Shader::GraphicsProgram{
+        return ShaderGraphicsProgram{
             .Code                   = std::move(*Code),
             .VertexEntryPointName   = std::move(VertexEntryPointName),
             .FragmentEntryPointName = std::move(FragmentEntryPointName),
@@ -332,7 +330,7 @@ class Backend final : public IBackend {
     }
 
     [[nodiscard]] auto CompileRayTracing(const RayTracingCompileDesc& Desc)
-        -> std::expected<Shader::RayTracingProgram, ErrorMessage> override {
+        -> std::expected<ShaderRayTracingProgram, ErrorMessage> override {
         if (!m_bInitialized)
             if (auto R = Init(); !R)
                 return std::unexpected(std::move(R.error()));
@@ -350,11 +348,11 @@ class Backend final : public IBackend {
                 return std::unexpected(
                     ErrorMessage(Format("Ray-tracing hit group {} requires a closest-hit entry point", GroupIndex)));
             }
-            if (Group.Type == Shader::RayTracingHitGroupType::Triangles && Group.Intersection.has_value()) {
+            if (Group.Type == ShaderRayTracingHitGroupType::Triangles && Group.Intersection.has_value()) {
                 return std::unexpected(ErrorMessage(
                     Format("Triangle ray-tracing hit group {} must not declare an intersection entry point", GroupIndex)));
             }
-            if (Group.Type == Shader::RayTracingHitGroupType::Procedural && !Group.Intersection.has_value()) {
+            if (Group.Type == ShaderRayTracingHitGroupType::Procedural && !Group.Intersection.has_value()) {
                 return std::unexpected(ErrorMessage(
                     Format("Procedural ray-tracing hit group {} requires an intersection entry point", GroupIndex)));
             }
@@ -370,12 +368,12 @@ class Backend final : public IBackend {
         };
         struct LoadedEntry {
             const ShaderEntry*                  Request      = nullptr;
-            Shader::Stage                       ExpectedStage = Shader::Stage::Unknown;
+            ShaderStage                       ExpectedStage = ShaderStage::Unknown;
             StringView                          StageName    = {};
             Slang::ComPtr<slang::IEntryPoint>   EntryPoint   = {};
         };
         struct LoadedHitGroup {
-            Shader::RayTracingHitGroupType Type         = Shader::RayTracingHitGroupType::Unknown;
+            ShaderRayTracingHitGroupType Type         = ShaderRayTracingHitGroupType::Unknown;
             std::optional<Uint32>          ClosestHit   = std::nullopt;
             std::optional<Uint32>          AnyHit       = std::nullopt;
             std::optional<Uint32>          Intersection = std::nullopt;
@@ -386,7 +384,7 @@ class Backend final : public IBackend {
         std::vector<LoadedModule>   Modules       = {};
         std::vector<LoadedEntry>    Entries       = {};
 
-        auto LoadEntry = [&](const ShaderEntry& Entry, Shader::Stage ExpectedStage, StringView StageName)
+        auto LoadEntry = [&](const ShaderEntry& Entry, ShaderStage ExpectedStage, StringView StageName)
             -> std::expected<Uint32, ErrorMessage> {
             const Path NormalizedPath = Entry.SourcePath.lexically_normal();
             slang::IModule* Module = nullptr;
@@ -418,14 +416,14 @@ class Backend final : public IBackend {
             return static_cast<Uint32>(Entries.size() - 1);
         };
 
-        auto RayGeneration = LoadEntry(Desc.RayGeneration, Shader::Stage::RayGeneration, "Ray-generation");
+        auto RayGeneration = LoadEntry(Desc.RayGeneration, ShaderStage::RayGeneration, "Ray-generation");
         if (!RayGeneration)
             return std::unexpected(std::move(RayGeneration.error()));
 
         std::vector<Uint32> MissEntries = {};
         MissEntries.reserve(Desc.MissEntries.size());
         for (const auto& Entry : Desc.MissEntries) {
-            auto Miss = LoadEntry(Entry, Shader::Stage::Miss, "Miss");
+            auto Miss = LoadEntry(Entry, ShaderStage::Miss, "Miss");
             if (!Miss)
                 return std::unexpected(std::move(Miss.error()));
             MissEntries.push_back(*Miss);
@@ -435,19 +433,19 @@ class Backend final : public IBackend {
         HitGroups.reserve(Desc.HitGroups.size());
         for (const auto& Group : Desc.HitGroups) {
             LoadedHitGroup LoadedGroup{.Type = Group.Type};
-            auto ClosestHit = LoadEntry(*Group.ClosestHit, Shader::Stage::ClosestHit, "Closest-hit");
+            auto ClosestHit = LoadEntry(*Group.ClosestHit, ShaderStage::ClosestHit, "Closest-hit");
             if (!ClosestHit)
                 return std::unexpected(std::move(ClosestHit.error()));
             LoadedGroup.ClosestHit = *ClosestHit;
 
             if (Group.AnyHit.has_value()) {
-                auto AnyHit = LoadEntry(*Group.AnyHit, Shader::Stage::AnyHit, "Any-hit");
+                auto AnyHit = LoadEntry(*Group.AnyHit, ShaderStage::AnyHit, "Any-hit");
                 if (!AnyHit)
                     return std::unexpected(std::move(AnyHit.error()));
                 LoadedGroup.AnyHit = *AnyHit;
             }
             if (Group.Intersection.has_value()) {
-                auto Intersection = LoadEntry(*Group.Intersection, Shader::Stage::Intersection, "Intersection");
+                auto Intersection = LoadEntry(*Group.Intersection, ShaderStage::Intersection, "Intersection");
                 if (!Intersection)
                     return std::unexpected(std::move(Intersection.error()));
                 LoadedGroup.Intersection = *Intersection;
@@ -458,7 +456,7 @@ class Backend final : public IBackend {
         std::vector<Uint32> CallableEntries = {};
         CallableEntries.reserve(Desc.CallableEntries.size());
         for (const auto& Entry : Desc.CallableEntries) {
-            auto Callable = LoadEntry(Entry, Shader::Stage::Callable, "Callable");
+            auto Callable = LoadEntry(Entry, ShaderStage::Callable, "Callable");
             if (!Callable)
                 return std::unexpected(std::move(Callable.error()));
             CallableEntries.push_back(*Callable);
@@ -514,10 +512,10 @@ class Backend final : public IBackend {
             MissNames.emplace_back(std::move(*Name));
         }
 
-        std::vector<Shader::RayTracingHitGroup> ProgramHitGroups = {};
+        std::vector<ShaderRayTracingHitGroup> ProgramHitGroups = {};
         ProgramHitGroups.reserve(HitGroups.size());
         for (const auto& Group : HitGroups) {
-            Shader::RayTracingHitGroup ProgramGroup{.Type = Group.Type};
+            ShaderRayTracingHitGroup ProgramGroup{.Type = Group.Type};
             auto ClosestName = ResolveEntry(*Group.ClosestHit);
             if (!ClosestName)
                 return std::unexpected(std::move(ClosestName.error()));
@@ -550,7 +548,7 @@ class Backend final : public IBackend {
         if (!PipelineReflection)
             return std::unexpected(PipelineReflection.error().Append("Failed to build ray-tracing pipeline reflection"));
 
-        return Shader::RayTracingProgram{
+        return ShaderRayTracingProgram{
             .Code                        = std::move(*Code),
             .RayGenerationEntryPointName = std::move(*RayGenerationName),
             .MissEntryPointNames          = std::move(MissNames),
@@ -580,6 +578,6 @@ class Backend final : public IBackend {
 };
 
 /// Auto-register the Slang backend with the compiler factory.
-BackendFactory::AutoRegistrar<Backend> RegSlang{magic_enum::enum_name(SoulEngine::ShaderCompiler::Backend::Slang)};
+ShaderBackendFactory::AutoRegistrar<SlangBackend> RegSlang{magic_enum::enum_name(ShaderBackend::Slang)};
 
-} // namespace SoulEngine::ShaderCompiler::SlangCompiler
+} // namespace SoulEngine

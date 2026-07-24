@@ -19,9 +19,7 @@ import TaskGraph;
 import Resource;
 export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Launch {
+export namespace SoulEngine {
 
 /// @brief Per-frame slot state in the triple-buffered Game→Render→RHI pipeline.
 enum class SlotState {
@@ -37,8 +35,8 @@ struct FrameSlot {
     std::mutex              Mutex;
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
-    Scene::SceneSnapshot    SceneData;
-    Renderer::RenderResult  RenderPacket;
+    SceneSnapshot    SceneData;
+    RenderResult  RenderPacket;
 };
 
 constexpr Uint32 kSlotCount = 3;
@@ -79,7 +77,7 @@ class EngineLoop {
             return std::unexpected(WinResult.error().Append("Failed to create window display"));
         WindowDisplay = std::move(*WinResult);
 
-        if (auto R = RHI::RenderDevice::Create(WindowDisplay.GetNativeHandle()); !R) {
+        if (auto R = RHIRenderDevice::Create(WindowDisplay.GetNativeHandle()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Failed to create RHI context"));
         }
@@ -89,7 +87,7 @@ class EngineLoop {
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
         m_TaskGraph.Init(WorkerCount);
 
-        Resource::Manager::Get().Init(m_TaskGraph);
+        ResourceManager::Get().Init(m_TaskGraph);
 
         auto& Cfg = ConfigManager::Get().GetConfig();
         if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
@@ -125,7 +123,7 @@ class EngineLoop {
         if (m_RHIThread.joinable())
             m_RHIThread.request_stop();
 
-        Resource::Manager::Get().BeginShutdown();
+        ResourceManager::Get().BeginShutdown();
         m_TaskGraph.Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
@@ -148,9 +146,9 @@ class EngineLoop {
         }
 
         // Release GPU textures before VMA allocator dies.
-        Resource::Manager::Get().Clear();
+        ResourceManager::Get().Clear();
 
-        RHI::RenderDevice::Destroy();
+        RHIRenderDevice::Destroy();
         WindowDisplay.Shutdown();
     }
 
@@ -160,7 +158,7 @@ class EngineLoop {
             m_Application.reset();
         }
 
-        auto NewApp = Application::Application::Create(Name);
+        auto NewApp = Application::Create(Name);
         if (!NewApp)
             return std::unexpected(NewApp.error().Append("SwitchApplication failed"));
 
@@ -290,9 +288,9 @@ class EngineLoop {
 
             // Resource handles are passive state reads; publish completed sampled-texture uploads here
             // on the RHI thread before the next command list can observe them.
-            Resource::Manager::Get().TickGpuPending();
+            ResourceManager::Get().TickGpuPending();
 
-            if (auto R = RHI::RenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
+            if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
                 break;
@@ -304,7 +302,7 @@ class EngineLoop {
             FrameMark;
 
             Slot.RenderPacket = {};
-            Resource::Manager::Get().CollectReleasedResources();
+            ResourceManager::Get().CollectReleasedResources();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
@@ -315,13 +313,13 @@ class EngineLoop {
             m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
         }
 
-        RHI::RenderDevice::Get().WaitIdle();
+        RHIRenderDevice::Get().WaitIdle();
     }
 
     // ── State ───────────────────────────────────────────────────────────────
 
     WindowDisplay                         WindowDisplay;
-    UPtr<Application::Application>        m_Application;
+    UPtr<Application>        m_Application;
     std::chrono::steady_clock::time_point m_LastTickTime;
 
     SoulEngine::TaskGraph             m_TaskGraph;
@@ -337,4 +335,4 @@ class EngineLoop {
     std::jthread m_RHIThread;
 };
 
-} // namespace SoulEngine::Launch
+} // namespace SoulEngine

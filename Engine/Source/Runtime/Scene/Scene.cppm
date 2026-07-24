@@ -10,9 +10,7 @@ export import Material;
 export import Resource;
 // export import std;
 
-using namespace SoulEngine::Core;
-
-export namespace SoulEngine::Scene {
+export namespace SoulEngine {
 
 using SceneEntity = entt::entity;
 
@@ -50,12 +48,12 @@ struct CameraComponent {
     float NearPlane = 0.1f;
     float FarPlane  = 100.0f;
     float AspectRatio = 16.0f / 9.0f;
-    Resource::ResourceRef<RHI::RenderTarget> ColorRT = {};
-    Resource::ResourceRef<RHI::RenderTarget> DepthRT = {};
+    ResourceRef<RHIRenderTarget> ColorRT = {};
+    ResourceRef<RHIRenderTarget> DepthRT = {};
     /// Must be unique among concurrently rendered cameras.
     String ViewConstantBufferKey = {};
     /// Logical constant buffer owned by this view.
-    Resource::ResourceRef<RHI::ConstantBuffer> ViewCB = {};
+    ResourceRef<RHIConstantBuffer> ViewCB = {};
 
     /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
     [[nodiscard]] auto GetProjectionMatrix() const -> hlslpp::float4x4 {
@@ -88,9 +86,9 @@ struct LightComponent {};
 struct RenderViewSnapshot {
     hlslpp::float4x4                              ViewProjection = hlslpp::float4x4::identity();
     hlslpp::float3                                CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    Resource::ResourceHandle<RHI::RenderTarget>   ColorRT        = {};
-    Resource::ResourceHandle<RHI::RenderTarget>   DepthRT        = {};
-    Resource::ResourceHandle<RHI::ConstantBuffer> ViewCB         = {};
+    ResourceHandle<RHIRenderTarget>   ColorRT        = {};
+    ResourceHandle<RHIRenderTarget>   DepthRT        = {};
+    ResourceHandle<RHIConstantBuffer> ViewCB         = {};
 
     [[nodiscard]] auto GetViewConstants() const -> ViewConstants {
         return ViewConstants{.ViewProjection = ViewProjection};
@@ -104,7 +102,7 @@ struct RenderViewSnapshot {
 struct RenderableInstance {
     String                        MeshAsset      = {};
     String                        TextureAsset   = {};
-    Material::PbrMetallicRoughnessMaterial  Material       = {};
+    PbrMetallicRoughnessMaterial  Material       = {};
     hlslpp::float4x4              WorldTransform = hlslpp::float4x4::identity();
 };
 
@@ -135,7 +133,7 @@ class Scene {
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
     UPtr<entt::registry>                                         m_Registry = nullptr;
     std::vector<SceneEntity>                                      m_Roots = {};
-    std::map<String, Material::PbrMetallicRoughnessMaterial, std::less<>>   m_MaterialInstances = {};
+    std::map<String, PbrMetallicRoughnessMaterial, std::less<>>   m_MaterialInstances = {};
     std::vector<String>                                           m_TexturePaths = {};
     float                                                         m_Time = 0.0f;
 
@@ -167,10 +165,10 @@ class Scene {
     }
 
     /// @brief Add or replace a scene-local PBR material instance.
-    auto SetMaterialInstance(String Id, Material::PbrMetallicRoughnessMaterial Material) -> void;
-    [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const Material::PbrMetallicRoughnessMaterial*;
+    auto SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material) -> void;
+    [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const PbrMetallicRoughnessMaterial*;
     [[nodiscard]] auto GetMaterialInstances() const
-        -> const std::map<String, Material::PbrMetallicRoughnessMaterial, std::less<>>&;
+        -> const std::map<String, PbrMetallicRoughnessMaterial, std::less<>>&;
 
     [[nodiscard]] auto GetRegistry() -> entt::registry&;
     [[nodiscard]] auto GetRegistry() const -> const entt::registry&;
@@ -196,9 +194,9 @@ class Scene {
     [[nodiscard]] auto SaveToFile(const Path& FilePath) const -> std::expected<void, ErrorMessage>;
 };
 
-} // namespace SoulEngine::Scene
+} // namespace SoulEngine
 
-namespace SoulEngine::Scene {
+namespace SoulEngine {
 
 // Keep these definitions inline: MSVC/Xmake emits LNK2005 duplicates when they are non-inline
 // in Scene's primary module interface. The implementation-boundary TODO above should remove this.
@@ -207,11 +205,11 @@ inline Scene::~Scene() = default;
 inline Scene::Scene(Scene&&) = default;
 inline auto Scene::operator=(Scene&&) -> Scene& = default;
 
-auto Scene::SetMaterialInstance(String Id, Material::PbrMetallicRoughnessMaterial Material) -> void {
+auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material) -> void {
     m_MaterialInstances.insert_or_assign(std::move(Id), Material);
 }
 
-[[nodiscard]] auto Scene::FindMaterialInstance(StringView Id) const -> const Material::PbrMetallicRoughnessMaterial* {
+[[nodiscard]] auto Scene::FindMaterialInstance(StringView Id) const -> const PbrMetallicRoughnessMaterial* {
     const auto It = m_MaterialInstances.find(String(Id));
     if (It == m_MaterialInstances.end())
         return nullptr;
@@ -219,7 +217,7 @@ auto Scene::SetMaterialInstance(String Id, Material::PbrMetallicRoughnessMateria
 }
 
 [[nodiscard]] auto Scene::GetMaterialInstances() const
-    -> const std::map<String, Material::PbrMetallicRoughnessMaterial, std::less<>>& {
+    -> const std::map<String, PbrMetallicRoughnessMaterial, std::less<>>& {
     return m_MaterialInstances;
 }
 
@@ -310,7 +308,7 @@ auto Scene::AllocateCameraRenderTargets(Uint32 Width, Uint32 Height) -> void {
         if (Camera.ViewConstantBufferKey.empty())
             Camera.ViewConstantBufferKey = Format("camera_viewcb_{}", entt::to_integral(Entity));
         if (!Camera.ViewCB)
-            Camera.ViewCB = Resource::Manager::Get().RequestConstantBufferRef(
+            Camera.ViewCB = ResourceManager::Get().RequestConstantBufferRef(
                 Camera.ViewConstantBufferKey, {.Size = sizeof(ViewConstants)});
 
         const auto ColorKey = Format("camera_{}_color_{}x{}", entt::to_integral(Entity), Width, Height);
@@ -323,21 +321,21 @@ auto Scene::AllocateCameraRenderTargets(Uint32 Width, Uint32 Height) -> void {
             continue;
         }
 
-        Camera.ColorRT = Resource::Manager::Get().RequestRenderTargetRef(
+        Camera.ColorRT = ResourceManager::Get().RequestRenderTargetRef(
             ColorKey,
-            RHI::RenderTargetDesc{
+            RHIRenderTargetDesc{
                 .Width  = Width,
                 .Height = Height,
-                .Format = RHI::Format::B8G8R8A8_UNORM,
-                .Usage  = RHI::TextureUsage::RenderTarget | RHI::TextureUsage::FrameOutput,
+                .Format = RHIFormat::B8G8R8A8_UNORM,
+                .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
             });
-        Camera.DepthRT = Resource::Manager::Get().RequestRenderTargetRef(
+        Camera.DepthRT = ResourceManager::Get().RequestRenderTargetRef(
             DepthKey,
-            RHI::RenderTargetDesc{
+            RHIRenderTargetDesc{
                 .Width  = Width,
                 .Height = Height,
-                .Format = RHI::Format::D32_SFLOAT,
-                .Usage  = RHI::TextureUsage::DepthStencil,
+                .Format = RHIFormat::D32_SFLOAT,
+                .Usage  = RHITextureUsage::DepthStencil,
             });
         Camera.AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
     }
@@ -416,7 +414,7 @@ auto Scene::UpdateWorldTransforms() -> void {
         if (Mesh.Asset.empty())
             continue;
 
-        Material::PbrMetallicRoughnessMaterial Material = {};
+        PbrMetallicRoughnessMaterial Material = {};
         if (!Mesh.Material.empty()) {
             const auto* MaterialInstance = FindMaterialInstance(Mesh.Material);
             if (!MaterialInstance)
@@ -435,4 +433,4 @@ auto Scene::UpdateWorldTransforms() -> void {
     return Snapshot;
 }
 
-} // namespace SoulEngine::Scene
+} // namespace SoulEngine

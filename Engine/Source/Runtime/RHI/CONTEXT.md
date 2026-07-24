@@ -1,6 +1,6 @@
 # Context: RHI
 
-**Namespace:** `SoulEngine::RHI`
+**Namespace:** `SoulEngine`
 
 Render Hardware Interface — abstract GPU abstraction layer with backends registered via a
 self-registering factory pattern.
@@ -16,7 +16,7 @@ self-registering factory pattern.
 | **Shader parameter set** | One partition of shader parameters matching exactly one reflected descriptor-set layout. Backend realization may associate it with a native descriptor set. |
 | **Resource usage tracking** | RHI-command-level enumeration of GPU resources referenced by a command list submission. |
 | **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `Init(GLFWwindow*)` is pure virtual — backends do setup there, not in the constructor. Process-wide singleton: `RenderDevice::Create(Window)` bootstraps, `RenderDevice::Get()` accesses, `RenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
-| **VertexBuffer** | Runtime polymorphic base in `SoulEngine::RHI`. Immutable after creation. `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (`UPtr` buffer + upload completion token) so the Resource layer can own the payload and track when staging → device copies complete. |
+| **VertexBuffer** | Runtime polymorphic base in `SoulEngine`. Immutable after creation. `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (`UPtr` buffer + upload completion token) so the Resource layer can own the payload and track when staging → device copies complete. |
 | **IndexBuffer** | Same role as VertexBuffer, for index data. `CreateIndexBuffer` returns `IndexBufferCreateResult`. |
 | **SampledTexture** | Shader-readable texture created from CPU pixel data through the dedicated transfer upload path. Its creation returns a unique `SampledTexture` payload plus a transfer upload completion token. Public RHI sampled-texture APIs use this name instead of the generic `Texture` name. |
 | **Resource array** | Mutable non-global `ResourceArray<T>` shader value representing one ordered array of resource observers. Resource-layer arrays retain matching `ResourceRef<T>` owners; RHI snapshots contain only resolved observers. It is distinct from a process-wide bindless registry. |
@@ -25,10 +25,10 @@ self-registering factory pattern.
 | **Swapchain image** | Backend-private presentation image acquired from the window surface. It is not exposed as a Resource-managed texture; final presentation copies, blits, resolves, or renders engine-owned output into it through RHI/RenderGraph presentation flow. Current Vulkan presentation blits `CommandList::PresentSource` into the acquired swapchain image. |
 | **GraphicsPipeline** | Empty polymorphic base class for graphics pipeline resources. Same pattern as VertexBuffer/IndexBuffer — backend casts down. |
 | **BufferUsage** | Bitmask enum for buffer creation hints. Not a type — backend uses it to decide VkBufferUsageFlags at allocation time. |
-| **Format, BufferUsage etc.** | Enums and trivial descriptor structs in `SoulEngine::RHI`. |
+| **Format, BufferUsage etc.** | Enums and trivial descriptor structs in `SoulEngine`. |
 | **ResourceState** | Per-resource GPU state for barrier tracking. Backend maintains implicit last-known state per handle. |
-| **GraphicsProgram** | Shader artifact consumed directly by graphics pipeline descriptors. It owns the selected stage programs plus pipeline-level reflection for the linked shader combination. Refers to `Shader::GraphicsProgram`. |
-| **Pipeline reflection** | Backend-agnostic shader-visible resource interface for one linked graphics pipeline shader combination. It records shader binding names plus set/binding/type metadata in `Shader::Reflection` and derives the public shader parameter layout. Backend-native pipeline-layout objects remain backend-private. |
+| **GraphicsProgram** | Shader artifact consumed directly by graphics pipeline descriptors. It owns the selected stage programs plus pipeline-level reflection for the linked shader combination. Refers to `ShaderGraphicsProgram`. |
+| **Pipeline reflection** | Backend-agnostic shader-visible resource interface for one linked graphics pipeline shader combination. It records shader binding names plus set/binding/type metadata in `ShaderReflection` and derives the public shader parameter layout. Backend-native pipeline-layout objects remain backend-private. |
 | **Shader binding name** | Reflected host-side lookup name for a shader resource binding inside one pipeline layout. Public RHI callers may use it to bind or update resources by shader intent, never by Vulkan set/binding. It is distinct from Resource names and Resource keys. |
 | **Draw shader binding** | Draw-scope association from a shader binding name to a typed RHI resource observer, such as a sampled texture, sampler, or constant buffer. Backends resolve it through the draw command's expected graphics pipeline reflection. |
 | **Push constant command** | Explicit command-list write of ordinary shader data into the currently bound graphics pipeline's reflected push-constant range. Renderer code uses it for tiny high-frequency values such as texture/material indices; it is not a resource binding and does not name Vulkan set/binding numbers. |
@@ -72,7 +72,7 @@ EngineLoop::Shutdown()
 
 ## Relationships
 
-- `GraphicsPipelineDesc` accepts `Shader::GraphicsProgram` directly; stage-combination validation is deferred and should be defined at the RHI contract level before backend pipeline creation.
+- `GraphicsPipelineDesc` accepts `ShaderGraphicsProgram` directly; stage-combination validation is deferred and should be defined at the RHI contract level before backend pipeline creation.
 - Pipeline reflection is produced by ShaderCompiler for the linked graphics shader combination. `GraphicsPipeline` exposes only its derived shader parameter layout; public RHI callers bind values by shader parameter path, never by Vulkan set/binding.
 - Reflected binding paths identify shader parameters within one pipeline layout. They must not be conflated with Resource cache keys or debug names: a shader parameter snapshot connects a path to an RHI resource observer for command recording.
 - Sampled textures, samplers, and constant buffers are assigned through **Shader parameters**. Resource arrays are assigned through `SetResourceArray`; runtime sampled texture arrays currently use `ResourceArray<SampledTexture>`, while individual slot selection belongs to material/object data.
@@ -97,7 +97,7 @@ EngineLoop::Shutdown()
 
 | Constraint | Detail |
 |------------|--------|
-| **Module layout** | Standalone `Vulkan` module in `Vulkan/` — self-registers with `RHI::BackendFactory`. Internal partitions: `Vulkan:Types`, `Vulkan:RenderDevice`, `Vulkan:Command`, `Vulkan:Swapchain` |
+| **Module layout** | Standalone `Vulkan` module in `Vulkan/` — self-registers with `RHIBackendFactory`. Internal partitions: `Vulkan:Types`, `Vulkan:RenderDevice`, `Vulkan:Command`, `Vulkan:Swapchain` |
 | **Rendering** | Dynamic rendering (VK_KHR_dynamic_rendering / Vulkan 1.3) — no RenderPass objects |
 | **vulkan-hpp** | With exceptions disabled (`VULKAN_HPP_NO_EXCEPTIONS`) |
 | **Memory** | VMA (VulkanMemoryAllocator) for GPU memory management |
@@ -110,7 +110,7 @@ RHI resources are not thread-safe by default. Callers must serialize access:
 |----------|---------------|
 | `RenderDevice::Get()` | Safe from any thread (singleton) |
 | `RenderDevice::Execute()` | Called from `RHILoop` only |
-| `CreateVertexBuffer` / `CreateIndexBuffer` / `CreateSampler` etc. | RHI-thread owned for backend-native object creation; historical `OnAttach` synchronous calls migrated to async Resource::Manager requests |
+| `CreateVertexBuffer` / `CreateIndexBuffer` / `CreateSampler` etc. | RHI-thread owned for backend-native object creation; historical `OnAttach` synchronous calls migrated to async ResourceManager requests |
 | `DrawParameter::WriteConstantBuffer` | Called by render code before `Execute()`; backend consumes the copied draw-scope writes on `RHILoop` through dynamic uniform-buffer descriptor binding. |
 | `ImmediateContext` | Not thread-safe (caller must serialize). Its completion queue and timeline must be owned by the same Vulkan queue on which it submits. The transfer immediate context uses the transfer completion queue; one-shot graphics work such as BLAS builds uses a separate graphics completion queue and signals completion at `eAccelerationStructureBuildKHR`. |
 
@@ -121,7 +121,7 @@ The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::
 ## Dependencies
 
 - `Core` — logging, config, `Singleton`, `Factory`
-- `Shader` — `Shader::GraphicsProgram` and compiled shader artifact types (consumes)
+- `Shader` — `ShaderGraphicsProgram` and compiled shader artifact types (consumes)
 - Third-party: vulkansdk, VMA
 
 ## BDA ray-tracing geometry

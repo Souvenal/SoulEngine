@@ -8,11 +8,9 @@ import Core;
 
 export import std;
 
-using namespace SoulEngine::Core;
-
 namespace {
 auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
-    LogError("GLFW Error [0x{:08X}]: {}", ErrorCode, Description);
+    SoulEngine::LogError("GLFW Error [0x{:08X}]: {}", ErrorCode, Description);
 }
 } // namespace
 
