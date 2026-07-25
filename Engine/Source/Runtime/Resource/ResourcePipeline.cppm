@@ -91,9 +91,9 @@ struct PreparedGraphicsPipeline {
 
     LogDebug("Graphics pipeline requested '{}'", Key);
 
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->EnqueueBackground([ContextPtr, Graph, Generation = Handle.GetGeneration(), Key, Req] {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
+        [ContextPtr, Generation = Handle.GetGeneration(), Key, Req] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested()) {
             LogDebug("Async graphics pipeline compile discarded after shutdown '{}'", Key);
@@ -111,7 +111,9 @@ struct PreparedGraphicsPipeline {
             return;
         }
 
-        Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation, Key, Prepared = std::move(*Prepared)] {
+        auto EnqueueResult = TaskGraph::Get().Enqueue(
+            ThreadQueue::RHI,
+            [ContextPtr, Generation, Key, Prepared = std::move(*Prepared)] {
             auto& Context = *ContextPtr;
             if (Context.IsShutdownRequested()) {
                 LogDebug("Async graphics pipeline publish discarded after shutdown '{}'", Key);
@@ -133,8 +135,24 @@ struct PreparedGraphicsPipeline {
 
             PublishResourceReady<RHIGraphicsPipeline>(
                 Context, Generation, Key, Resource<RHIGraphicsPipeline>{.Object = std::move(*PipeResult)});
+            });
+        if (!EnqueueResult) {
+            PublishResourceFailed<RHIGraphicsPipeline>(
+                Context,
+                Generation,
+                Key,
+                EnqueueResult.error().Append(
+                    Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIGraphicsPipeline>::Info.Label, Key)));
+        }
         });
-    });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHIGraphicsPipeline>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIGraphicsPipeline>::Info.Label, Key)));
+    }
 
     return Handle;
 }
@@ -159,9 +177,9 @@ struct PreparedGraphicsPipeline {
     if (!Work.ShouldStartWork)
         return Work.Handle;
 
-    auto* Graph = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->EnqueueBackground([ContextPtr, Graph, Generation = Work.Handle.GetGeneration(), Key, Req] {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
+        [ContextPtr, Generation = Work.Handle.GetGeneration(), Key, Req] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested())
             return;
@@ -177,7 +195,9 @@ struct PreparedGraphicsPipeline {
             PublishResourceFailed<RHIRayTracingPipeline>(Context, Generation, Key, Program.error());
             return;
         }
-        Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation, Key, Program = std::move(*Program), MaxDepth = Req.MaxRecursionDepth] mutable {
+        auto EnqueueResult = TaskGraph::Get().Enqueue(
+            ThreadQueue::RHI,
+            [ContextPtr, Generation, Key, Program = std::move(*Program), MaxDepth = Req.MaxRecursionDepth] mutable {
             auto& Context = *ContextPtr;
             if (Context.IsShutdownRequested() || !MarkResourceRhiCommitting<RHIRayTracingPipeline>(Context, Key, Generation))
                 return;
@@ -188,8 +208,24 @@ struct PreparedGraphicsPipeline {
                 return;
             }
             PublishResourceReady<RHIRayTracingPipeline>(Context, Generation, Key, {.Object = std::move(*Pipeline)});
+            });
+        if (!EnqueueResult) {
+            PublishResourceFailed<RHIRayTracingPipeline>(
+                Context,
+                Generation,
+                Key,
+                EnqueueResult.error().Append(
+                    Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIRayTracingPipeline>::Info.Label, Key)));
+        }
         });
-    });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHIRayTracingPipeline>(
+            Context,
+            Work.Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIRayTracingPipeline>::Info.Label, Key)));
+    }
     return Work.Handle;
 }
 

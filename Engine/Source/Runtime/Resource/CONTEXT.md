@@ -196,10 +196,10 @@ eventually require fewer central edits than it does today.
    - Derive a canonical resource key.
    - Call `BeginResourceWork<T>(Context, Key)`.
    - Start work only when `Work.ShouldStartWork` is true.
-   - Use `Work.Graph` to move CPU-only work to background tasks when it is
-     non-thread-affine.
-   - Use `Work.Graph` to move RHI object creation and upload submission to
-     `ThreadQueue::RHI`.
+   - Use `TaskGraph::Get().EnqueueBackground()` to move CPU-only work to
+     background tasks when it is non-thread-affine.
+   - Use `TaskGraph::Get().Enqueue()` to move RHI object creation and upload
+     submission to `ThreadQueue::RHI`.
    - Call `MarkResourceRhiCommitting<RHI::T>()` before RHI creation when the
      family owns an RHI payload.
    - Publish terminal failure through `PublishResourceFailed<T>()`.

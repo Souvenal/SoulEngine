@@ -4,7 +4,6 @@ export import Core;
 export import RHI;
 import :Context;
 export import :Types;
-import TaskGraph;
 export import std;
 
 export namespace SoulEngine {
@@ -49,7 +48,6 @@ auto PublishResourceFailed(ResourceContext& Context,
 template <ManagedResource T>
 struct ResourceWorkStart {
     ResourceHandle<T> Handle          = {};
-    TaskGraph*        Graph           = nullptr;
     bool              ShouldStartWork = false;
 };
 
@@ -69,19 +67,8 @@ template <ManagedResource T>
         };
     }
 
-    auto* Graph = Context.GetTaskGraph();
-    if (!Graph) {
-        PublishResourceFailed<T>(
-            Context, Handle.GetGeneration(), Key, ErrorMessage(Format("TaskGraph not initialized for '{}'", Key)));
-        return ResourceWorkStart<T>{
-            .Handle          = Handle,
-            .ShouldStartWork = false,
-        };
-    }
-
     return ResourceWorkStart<T>{
         .Handle          = Handle,
-        .Graph           = Graph,
         .ShouldStartWork = true,
     };
 }

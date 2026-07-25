@@ -85,9 +85,9 @@ class EngineLoop {
 
         // 3 reserved threads for Game/Render/RHI
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
-        m_TaskGraph.Init(WorkerCount);
+        TaskGraph::Get().Init(WorkerCount);
 
-        ResourceManager::Get().Init(m_TaskGraph);
+        ResourceManager::Get().Init();
 
         auto& Cfg = ConfigManager::Get().GetConfig();
         if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
@@ -124,7 +124,7 @@ class EngineLoop {
             m_RHIThread.request_stop();
 
         ResourceManager::Get().BeginShutdown();
-        m_TaskGraph.Shutdown();
+        TaskGraph::Get().Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
@@ -173,7 +173,7 @@ class EngineLoop {
     /// @brief Broadcast fatal error to all loops and trigger teardown.
     auto SignalFatalError() -> void {
         m_FatalError.store(true, std::memory_order_release);
-        m_TaskGraph.Shutdown();
+        TaskGraph::Get().Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
     }
@@ -241,7 +241,7 @@ class EngineLoop {
                 break;
 
             for (std::size_t i = 0; i < SoulEngine::TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = m_TaskGraph.TryDequeue(SoulEngine::ThreadQueue::Render);
+                auto Task = TaskGraph::Get().TryDequeue(SoulEngine::ThreadQueue::Render);
                 if (!Task)
                     break;
                 (*Task)();
@@ -280,7 +280,7 @@ class EngineLoop {
                 break;
 
             for (std::size_t i = 0; i < SoulEngine::TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = m_TaskGraph.TryDequeue(SoulEngine::ThreadQueue::RHI);
+                auto Task = TaskGraph::Get().TryDequeue(SoulEngine::ThreadQueue::RHI);
                 if (!Task)
                     break;
                 (*Task)();
@@ -322,7 +322,6 @@ class EngineLoop {
     UPtr<Application>        m_Application;
     std::chrono::steady_clock::time_point m_LastTickTime;
 
-    SoulEngine::TaskGraph             m_TaskGraph;
     std::array<FrameSlot, kSlotCount> m_Slots = {};
 
     Uint32 m_GameSlotIndex   = 0;

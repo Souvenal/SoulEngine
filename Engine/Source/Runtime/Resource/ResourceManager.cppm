@@ -24,9 +24,9 @@ class ResourceManager : public Singleton<ResourceManager> {
     friend class Singleton<ResourceManager>;
 
   public:
-    /// @brief Attach engine task graph for asynchronous resource work.
-    auto Init(TaskGraph& InTaskGraph) -> void {
-        m_Context.Init(InTaskGraph);
+    /// @brief Start accepting resource requests.
+    auto Init() -> void {
+        m_Context.Init();
     }
 
     /// @brief Stop accepting work and make pending callbacks discard results.

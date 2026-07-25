@@ -3,7 +3,6 @@ export module Resource:Context;
 export import Core;
 export import RHI;
 export import :Types;
-import TaskGraph;
 export import std;
 
 export namespace SoulEngine {
@@ -82,19 +81,14 @@ struct LockedResourceEntry {
 /// @brief Owns resource lifecycle state, typed entry registries, and GPU-pending queues.
 class ResourceContext {
   public:
-    auto Init(TaskGraph& InTaskGraph) -> void {
+    auto Init() -> void {
         m_ShutdownRequested.store(false, std::memory_order_release);
-        m_TaskGraph = &InTaskGraph;
     }
 
     auto BeginShutdown() -> void {
         std::lock_guard Lock(m_PublishMutex);
         m_ShutdownRequested.store(true, std::memory_order_release);
         LogDebug("Resource manager shutdown requested");
-    }
-
-    [[nodiscard]] auto GetTaskGraph() const -> TaskGraph* {
-        return m_TaskGraph;
     }
 
     [[nodiscard]] auto IsShutdownRequested() const -> bool {
@@ -450,7 +444,6 @@ class ResourceContext {
     }
 
     ResourceFamilies                       m_Families = {};
-    TaskGraph*                             m_TaskGraph = nullptr;
     std::atomic<bool>                      m_ShutdownRequested = false;
     std::mutex                             m_PublishMutex;
     std::mutex                             m_RhiDependencyMutex;

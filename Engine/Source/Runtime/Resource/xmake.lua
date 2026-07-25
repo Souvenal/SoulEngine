@@ -16,6 +16,5 @@ target("Resource")
     add_files("*.cppm")
 
 test_module("Resource", {
-    additional_deps     = {"TaskGraph", "RHIVulkan"},
-    additional_packages = {"glfw", "vulkan-headers"},
+    additional_deps = {"TaskGraph"},
 })
