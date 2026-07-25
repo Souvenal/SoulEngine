@@ -130,7 +130,8 @@ auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, Resource
         return Work.Handle;
 
     auto* ContextPtr = &Context;
-    Work.Graph->EnqueueBackground([ContextPtr, Generation = Work.Handle.GetGeneration(), Key] {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
+        [ContextPtr, Generation = Work.Handle.GetGeneration(), Key] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested())
             return;
@@ -145,7 +146,15 @@ auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, Resource
 
         UploadMeshBuffers(Context, Key, *ImportedMesh);
         PublishResourceReady<ResourceMesh>(Context, Generation, Key, {.Object = std::move(ImportedMesh)});
-    });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<ResourceMesh>(
+            Context,
+            Work.Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<ResourceMesh>::Info.Label, Key)));
+    }
 
     return Work.Handle;
 }

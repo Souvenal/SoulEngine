@@ -64,10 +64,10 @@ namespace {
     Uint64             Size = Desc.VertexCount * Desc.Stride;
     std::vector<Uint8> DataCopy(static_cast<const Uint8*>(Desc.Data), static_cast<const Uint8*>(Desc.Data) + Size);
 
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->Enqueue(ThreadQueue::RHI,
-                   [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc, DataCopy = std::move(DataCopy)] {
+    auto EnqueueResult = TaskGraph::Get().Enqueue(
+        ThreadQueue::RHI,
+        [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc, DataCopy = std::move(DataCopy)] {
                        auto& Context = *ContextPtr;
                        if (Context.IsShutdownRequested()) {
                            LogDebug("Async vertex buffer RHI commit discarded after shutdown '{}'", Key);
@@ -96,7 +96,15 @@ namespace {
                            Key,
                            Resource<RHIVertexBuffer>{.Object = std::move(Result->Buffer)},
                            Result->UploadCompletion);
-                   });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHIVertexBuffer>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIVertexBuffer>::Info.Label, Key)));
+    }
 
     return Handle;
 }
@@ -120,10 +128,10 @@ namespace {
     Uint64             Size = Desc.IndexCount * 4ULL;
     std::vector<Uint8> DataCopy(static_cast<const Uint8*>(Desc.Data), static_cast<const Uint8*>(Desc.Data) + Size);
 
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->Enqueue(ThreadQueue::RHI,
-                   [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc, DataCopy = std::move(DataCopy)] {
+    auto EnqueueResult = TaskGraph::Get().Enqueue(
+        ThreadQueue::RHI,
+        [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc, DataCopy = std::move(DataCopy)] {
                        auto& Context = *ContextPtr;
                        if (Context.IsShutdownRequested()) {
                            LogDebug("Async index buffer RHI commit discarded after shutdown '{}'", Key);
@@ -152,7 +160,15 @@ namespace {
                            Key,
                            Resource<RHIIndexBuffer>{.Object = std::move(Result->Buffer)},
                            Result->UploadCompletion);
-                   });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHIIndexBuffer>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIIndexBuffer>::Info.Label, Key)));
+    }
 
     return Handle;
 }
@@ -174,9 +190,10 @@ namespace {
 
     LogDebug("Constant buffer requested '{}'", Key);
 
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
+    auto EnqueueResult = TaskGraph::Get().Enqueue(
+        ThreadQueue::RHI,
+        [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested()) {
             LogDebug("Async constant buffer RHI commit discarded after shutdown '{}'", Key);
@@ -198,7 +215,15 @@ namespace {
 
         PublishResourceReady<RHIConstantBuffer>(
             Context, Generation, Key, Resource<RHIConstantBuffer>{.Object = std::move(*Result)});
-    });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHIConstantBuffer>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIConstantBuffer>::Info.Label, Key)));
+    }
 
     return Handle;
 }

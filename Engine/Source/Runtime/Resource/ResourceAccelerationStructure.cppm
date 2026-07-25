@@ -210,7 +210,9 @@ struct PendingBottomLevelAccelerationStructureRequest {
     }
 
     auto* ContextPtr = &Context;
-    Work.Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation = Work.Handle.GetGeneration(), Key, Desc] {
+    auto EnqueueResult = TaskGraph::Get().Enqueue(
+        ThreadQueue::RHI,
+        [ContextPtr, Generation = Work.Handle.GetGeneration(), Key, Desc] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested())
             return;
@@ -230,7 +232,17 @@ struct PendingBottomLevelAccelerationStructureRequest {
         auto ResourceValue = std::make_unique<ResourceTopLevelAccelerationStructure>(std::move(*Payload));
         PublishResourceReady<ResourceTopLevelAccelerationStructure>(
             Context, Generation, Key, {.Object = std::move(ResourceValue)});
-    });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<ResourceTopLevelAccelerationStructure>(
+            Context,
+            Work.Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'",
+                       ResourceTraits<ResourceTopLevelAccelerationStructure>::Info.Label,
+                       Key)));
+    }
     return Work.Handle;
 }
 

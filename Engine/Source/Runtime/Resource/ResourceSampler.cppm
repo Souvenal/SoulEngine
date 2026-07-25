@@ -40,9 +40,10 @@ namespace {
 
     LogDebug("Sampler requested '{}'", Key);
 
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
+    auto EnqueueResult = TaskGraph::Get().Enqueue(
+        ThreadQueue::RHI,
+        [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested()) {
             LogDebug("Async sampler RHI commit discarded after shutdown '{}'", Key);
@@ -60,7 +61,15 @@ namespace {
         }
 
         PublishResourceReady<RHISampler>(Context, Generation, Key, Resource<RHISampler>{.Object = std::move(*Result)});
-    });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHISampler>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHISampler>::Info.Label, Key)));
+    }
 
     return Handle;
 }

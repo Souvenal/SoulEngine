@@ -21,9 +21,10 @@ export namespace SoulEngine {
 
     // No background decode — render targets are created empty.
     // Enqueue RHI creation directly.
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
+    auto EnqueueResult = TaskGraph::Get().Enqueue(
+        ThreadQueue::RHI,
+        [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested()) {
             LogDebug("Async render target RHI commit discarded after shutdown '{}'", Key);
@@ -42,7 +43,15 @@ export namespace SoulEngine {
 
         PublishResourceReady<RHIRenderTarget>(
             Context, Generation, Key, Resource<RHIRenderTarget>{.Object = std::move(Result->Texture)});
-    });
+        });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHIRenderTarget>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIRenderTarget>::Info.Label, Key)));
+    }
 
     return Handle;
 }

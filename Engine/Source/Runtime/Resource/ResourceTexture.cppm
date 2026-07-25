@@ -58,9 +58,9 @@ struct DecodedTexture {
 
     LogDebug("Sampled texture requested '{}'", Key);
 
-    auto* Graph      = Work.Graph;
     auto* ContextPtr = &Context;
-    Graph->EnqueueBackground([ContextPtr, Graph, Generation = Handle.GetGeneration(), Key] {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
+        [ContextPtr, Generation = Handle.GetGeneration(), Key] {
         auto& Context = *ContextPtr;
         if (Context.IsShutdownRequested()) {
             LogDebug("Async texture decode discarded after shutdown '{}'", Key);
@@ -78,7 +78,9 @@ struct DecodedTexture {
             return;
         }
 
-        Graph->Enqueue(ThreadQueue::RHI, [ContextPtr, Generation, Key, Decoded = std::move(*DecodeResult)] {
+        auto EnqueueResult = TaskGraph::Get().Enqueue(
+            ThreadQueue::RHI,
+            [ContextPtr, Generation, Key, Decoded = std::move(*DecodeResult)] {
             auto& Context = *ContextPtr;
             if (Context.IsShutdownRequested()) {
                 LogDebug("Async texture publish discarded after shutdown '{}'", Key);
@@ -110,8 +112,24 @@ struct DecodedTexture {
                 Key,
                 Resource<RHISampledTexture>{.Object = std::move(TexResult->Texture)},
                 TexResult->UploadCompletion);
-        });
+            });
+        if (!EnqueueResult) {
+            PublishResourceFailed<RHISampledTexture>(
+                Context,
+                Generation,
+                Key,
+                EnqueueResult.error().Append(
+                    Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHISampledTexture>::Info.Label, Key)));
+        }
     });
+    if (!EnqueueResult) {
+        PublishResourceFailed<RHISampledTexture>(
+            Context,
+            Handle.GetGeneration(),
+            Key,
+            EnqueueResult.error().Append(
+                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHISampledTexture>::Info.Label, Key)));
+    }
 
     return Handle;
 }

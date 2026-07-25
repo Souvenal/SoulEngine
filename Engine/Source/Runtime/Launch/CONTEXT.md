@@ -10,7 +10,7 @@ Engine startup and main loop. The entry point binary loads this module and calls
 |------|------------|
 | **EngineLoop** | Main engine loop class. Lifecycle: `PreInit` (cmd args + config) -> `Init` (Window -> RHI singleton -> Application) -> `Run` (spawns workers + blocked main-thread loop) -> `Shutdown` (joins workers, tears down). |
 | **PreInit** | Processes command-line arguments (`CmdLineArgs`), loads config file (`ConfigManager::LoadFile`), applies log-level config. Currently only uses `CmdLineArgs[0]` (binary path) for config file resolution; argument parsing is extensible for future CLI flags. |
-| **Init** | Bootstraps subsystems in order: `WindowDisplay::Create` -> `RHIRenderDevice::Create(Window)` -> `SwitchApplication`. Any failure tears down prior work and returns `std::unexpected`. Does NOT spawn threads. |
+| **Init** | Bootstraps subsystems in order: `WindowDisplay::Create` -> `RHIRenderDevice::Create(Window)` -> `TaskGraph::Get().Init()` -> `SwitchApplication`. Any failure tears down prior work and returns `std::unexpected`. |
 | **Run** | Spawns Render and RHI `std::jthread`s, then calls `GameLoop()` on the calling (main) thread. Blocks until exit. After `GameLoop` returns, calls `Shutdown()`. |
 | **GameLoop** | Main-thread loop: `PollEvents` -> compute delta -> wait for slot -> `OnTick(dt, WindowDisplay)` -> build `SceneSnapshot` -> `GameReady`. Breaks when `PollEvents()` reports a close request or `m_FatalError` is set by another loop. |
 | **RenderLoop** | Worker `std::jthread`. Waits for `GameReady` on its slot, drains render task queue, calls `Renderer::Render(SceneSnapshot)`, stores the returned render packet, and sets `RenderReady`. On `Render` failure: broadcasts `FatalError` and exits. |
