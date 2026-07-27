@@ -13,7 +13,7 @@ Guidance for AI agents on this repo.
 - C++23 modules enabled (`import std;` throughout)
 - **Agent command output:** `rtk` is an optional command-output filter. When
   `rtk` is available on `PATH`, build and test commands MUST use `rtk err`
-  (for example, `rtk err xmake -y` and `rtk err xmake test -j1 -v`). When it
+  (for example, `rtk err xmake -y` and `rtk err xmake test -v`). When it
   is unavailable, run the equivalent xmake command directly.
 
 ## Project Structure

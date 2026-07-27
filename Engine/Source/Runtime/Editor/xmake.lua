@@ -1,7 +1,8 @@
 target("Editor")
     set_kind("moduleonly")
 
-    add_deps("Core", "RHI", "Resource", "TaskGraph", "WindowSystem")
+    add_deps("Core", "RHI", "Resource", "Scene", "TaskGraph", "WindowSystem")
+    add_packages("hlslpp", {public = true})
     -- public: consumers (Launch -> SoulEngine.exe) must link the imgui archive.
     add_packages("imgui", "imgui-club", {public = true})
 

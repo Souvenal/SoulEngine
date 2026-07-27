@@ -1,5 +1,5 @@
 module;
-
+#include <hlsl++.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -10,6 +10,7 @@ export module Editor;
 
 import Core;
 import RHI;
+import Scene;
 import WindowSystem;
 
 export import std;
@@ -108,6 +109,7 @@ class Editor {
             m_TextureQueue.Shutdown();
             m_TextureQueue.UpdateTexFunc = nullptr;
         }
+        m_SceneViewCamera = {};
         m_BoundRenderDevice = nullptr;
     }
 
@@ -128,6 +130,58 @@ class Editor {
     /// BuildFrame(). Main-thread only; not synchronized.
     auto RegisterPanel(String Name, UIPanelCallback Callback) -> void {
         m_Panels.push_back({.Name = std::move(Name), .Callback = std::move(Callback)});
+    }
+
+    /// @brief Resize the editor-owned Scene View output resources.
+    auto ResizeSceneViewport(Uint32 Width, Uint32 Height) -> void {
+        m_SceneViewCamera.ResizeViewport("editor_scene_view", Width, Height);
+    }
+
+    /// @brief Apply focused right-mouse navigation to the editor-local camera.
+    auto UpdateSceneCamera(float DeltaTime, IWindowSystem& Window) -> void {
+        if (!m_ImGuiContext)
+            return;
+
+        ImGui::SetCurrentContext(m_ImGuiContext);
+        const bool CameraInputActive =
+            !ImGui::GetIO().WantCaptureMouse && Window.IsMouseButtonPressed(WindowMouseButton::Right);
+        Window.SetCursorCaptured(CameraInputActive);
+        if (!CameraInputActive) {
+            static_cast<void>(Window.ConsumeScrollDelta());
+            static_cast<void>(Window.ConsumeCursorDelta());
+            return;
+        }
+
+        const float ForwardInput = (Window.IsKeyPressed(WindowKey::W) ? 1.0f : 0.0f) -
+                                   (Window.IsKeyPressed(WindowKey::S) ? 1.0f : 0.0f);
+        const float RightInput = (Window.IsKeyPressed(WindowKey::D) ? 1.0f : 0.0f) -
+                                 (Window.IsKeyPressed(WindowKey::A) ? 1.0f : 0.0f);
+        const float VerticalInput = (Window.IsKeyPressed(WindowKey::E) ? 1.0f : 0.0f) -
+                                    (Window.IsKeyPressed(WindowKey::Q) ? 1.0f : 0.0f);
+        const auto EditorTransform = GetSceneViewWorldTransform();
+        const auto Forward = m_SceneViewCamera.GetForward(EditorTransform);
+        const auto HorizontalForward = hlslpp::normalize(hlslpp::float3(Forward.x, 0.0f, Forward.z));
+        const auto Up = hlslpp::float3(0.0f, 1.0f, 0.0f);
+        const auto Right = hlslpp::normalize(hlslpp::cross(HorizontalForward, Up));
+        const auto MoveDirection = HorizontalForward * ForwardInput + Right * RightInput + Up * VerticalInput;
+        if (MoveDirection.x != 0.0f || MoveDirection.y != 0.0f || MoveDirection.z != 0.0f)
+            m_SceneViewTransform.Translation += hlslpp::normalize(MoveDirection) * (2.0f * DeltaTime);
+        m_SceneViewTransform.Translation += Forward * (Window.ConsumeScrollDelta() * 0.75f);
+
+        constexpr float Sensitivity = 0.0025f;
+        constexpr float MaxPitch    = 1.55334306f;
+        const auto CursorDelta = Window.ConsumeCursorDelta();
+        m_SceneViewTransform.Rotation.y += CursorDelta.X * Sensitivity * (180.0f / std::numbers::pi_v<float>);
+        m_SceneViewTransform.Rotation.x = std::clamp(
+            static_cast<float>(m_SceneViewTransform.Rotation.x) +
+                CursorDelta.Y * Sensitivity * (180.0f / std::numbers::pi_v<float>),
+            -MaxPitch * (180.0f / std::numbers::pi_v<float>),
+            MaxPitch * (180.0f / std::numbers::pi_v<float>));
+    }
+
+    /// @brief Build the editor-owned Scene View render request for this frame.
+    [[nodiscard]] auto BuildSceneView() const -> std::optional<RenderViewSnapshot> {
+        return m_SceneViewCamera.BuildRenderView(GetSceneViewWorldTransform());
     }
 
     /// @brief Main-thread entry point: build the ImGui frame for this game
@@ -193,12 +247,23 @@ class Editor {
     }
 
   private:
+    [[nodiscard]] auto GetSceneViewWorldTransform() const -> Transform {
+        auto Result = m_SceneViewTransform;
+        Result.WorldTransform = Result.GetLocalMatrix();
+        return Result;
+    }
+
     ImGuiContext*          m_ImGuiContext = nullptr;
     std::vector<UIPanel>   m_Panels;
 
     ImTextureQueue m_TextureQueue;
     std::mutex      m_TextureQueueMutex;
 
+    Camera m_SceneViewCamera = {};
+    Transform m_SceneViewTransform{
+        .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
+        .Rotation = hlslpp::float3(28.0f, -32.0f, 0.0f),
+    };
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
     IWindowSystem* m_BoundWindowSystem = nullptr;
     RHIRenderDevice* m_BoundRenderDevice = nullptr;

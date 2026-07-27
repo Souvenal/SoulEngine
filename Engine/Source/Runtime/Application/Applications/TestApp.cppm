@@ -19,25 +19,7 @@ class TestApplication final : public Application {
   public:
     TestApplication() = default;
 
-    auto OnTick(float DeltaTime, IWindowSystem& Window) -> void override {
-        const bool CameraInputActive = Window.IsMouseButtonPressed(WindowMouseButton::Right);
-        Window.SetCursorCaptured(CameraInputActive);
-        if (!CameraInputActive) {
-            (void)Window.ConsumeScrollDelta();
-            (void)Window.ConsumeCursorDelta();
-            return;
-        }
-
-        const float Forward = (Window.IsKeyPressed(WindowKey::W) ? 1.0f : 0.0f) -
-                              (Window.IsKeyPressed(WindowKey::S) ? 1.0f : 0.0f);
-        const float Right = (Window.IsKeyPressed(WindowKey::D) ? 1.0f : 0.0f) -
-                            (Window.IsKeyPressed(WindowKey::A) ? 1.0f : 0.0f);
-        const float Vertical = (Window.IsKeyPressed(WindowKey::E) ? 1.0f : 0.0f) -
-                               (Window.IsKeyPressed(WindowKey::Q) ? 1.0f : 0.0f);
-        m_Scene.MoveFirstCamera(Forward, Right, Vertical, Window.ConsumeScrollDelta(), DeltaTime);
-        const auto CursorDelta = Window.ConsumeCursorDelta();
-        m_Scene.RotateFirstCamera(CursorDelta.X, CursorDelta.Y);
-    }
+    auto OnTick(float, IWindowSystem&) -> void override {}
 };
 
 /// Auto-register with the application factory.

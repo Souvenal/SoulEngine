@@ -53,15 +53,15 @@ template <typename T>
         Error = "Camera component metadata does not contain CameraComponent";
         return false;
     }
-    if (Camera->FOV <= 0.0f || Camera->FOV >= 179.0f) {
+    if (Camera->Settings.FOV <= 0.0f || Camera->Settings.FOV >= 179.0f) {
         Error = "fov_degrees must be in the range (0, 179)";
         return false;
     }
-    if (Camera->NearPlane <= 0.0f) {
+    if (Camera->Settings.NearPlane <= 0.0f) {
         Error = "near_plane must be greater than zero";
         return false;
     }
-    if (Camera->FarPlane <= Camera->NearPlane) {
+    if (Camera->Settings.FarPlane <= Camera->Settings.NearPlane) {
         Error = "far_plane must be greater than near_plane";
         return false;
     }
@@ -116,9 +116,9 @@ auto RegisterBuiltInComponentSchemas() -> void {
             .Has = &HasComponent<CameraComponent>, .Get = &GetComponent<CameraComponent>,
             .Validate = &ValidateCamera, .Name = "camera", .Fields = CameraFields,
         })
-        .data<&CameraComponent::FOV>(CameraFields[0].Id)
-        .data<&CameraComponent::NearPlane>(CameraFields[1].Id)
-        .data<&CameraComponent::FarPlane>(CameraFields[2].Id);
+        .data<&CameraComponent::SetFOV, &CameraComponent::GetFOV>(CameraFields[0].Id)
+        .data<&CameraComponent::SetNearPlane, &CameraComponent::GetNearPlane>(CameraFields[1].Id)
+        .data<&CameraComponent::SetFarPlane, &CameraComponent::GetFarPlane>(CameraFields[2].Id);
 
     entt::meta_factory<MeshComponent>{}
         .type(entt::hashed_string{"mesh"}.value())
@@ -141,6 +141,17 @@ auto RegisterBuiltInComponentSchemas() -> void {
     if (Parent.empty())
         return String(Child);
     return Format("{}.{}", Parent, Child);
+}
+
+[[nodiscard]] auto ValidateSingleCamera(const Scene& Scene, StringView Path) -> std::expected<void, ErrorMessage> {
+    std::size_t CameraCount = 0;
+    for (const auto Entity : Scene.GetRegistry().view<CameraComponent>()) {
+        static_cast<void>(Entity);
+        ++CameraCount;
+    }
+    if (CameraCount != 1)
+        return MakeStructuralError(Path, Format("must contain exactly one camera component; found {}", CameraCount));
+    return {};
 }
 
 [[nodiscard]] auto ReadFloat3(const YAML::Node& Node, StringView Path) -> std::expected<hlslpp::float3, ErrorMessage> {
@@ -241,11 +252,11 @@ auto RegisterBuiltInComponentSchemas() -> void {
             if (!Value)
                 return std::unexpected(Value.error());
             Result.Translation = Value.value();
-        } else if (Key == "rotation_degrees") {
+        } else if (Key == "rotation") {
             auto Value = ReadFloat3(Entry.second, FieldPath);
             if (!Value)
                 return std::unexpected(Value.error());
-            Result.RotationDegrees = Value.value();
+            Result.Rotation = Value.value();
         } else if (Key == "scale") {
             auto Value = ReadFloat3(Entry.second, FieldPath);
             if (!Value)
@@ -447,7 +458,7 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
 
     YAML::Node TransformNode{YAML::NodeType::Map};
     TransformNode["translation"] = SaveFloat3(Node.Transform.Translation);
-    TransformNode["rotation_degrees"] = SaveFloat3(Node.Transform.RotationDegrees);
+    TransformNode["rotation"] = SaveFloat3(Node.Transform.Rotation);
     TransformNode["scale"] = SaveFloat3(Node.Transform.Scale);
     Result["transform"] = TransformNode;
 
@@ -524,6 +535,8 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
         if (auto Result = LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report); !Result)
             return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     }
+    if (auto Result = ValidateSingleCamera(Temporary, FilePath.string()); !Result)
+        return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     Temporary.UpdateWorldTransforms();
     *this = std::move(Temporary);
     return Report;
@@ -531,6 +544,8 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
 
 [[nodiscard]] auto Scene::SaveToFile(const Path& FilePath) const -> std::expected<void, ErrorMessage> {
     RegisterBuiltInComponentSchemas();
+    if (auto Result = ValidateSingleCamera(*this, FilePath.string()); !Result)
+        return std::unexpected(Result.error().Append(Format("Failed to save Scene document '{}'", FilePath.string())));
 
     YAML::Node Document{YAML::NodeType::Map};
     if (!m_MaterialInstances.empty()) {

@@ -16,7 +16,7 @@ entities:
   - name: Main Camera
     transform:
       translation: [1.25, 1.25, 2.0]
-      rotation_degrees: [28.0, -32.0, 0.0]
+      rotation: [28.0, -32.0, 0.0]
       scale: [1.0, 1.0, 1.0]
     components:
       camera:
@@ -26,13 +26,13 @@ entities:
   - name: Teapot Cluster
     transform:
       translation: [0.0, 0.0, 0.0]
-      rotation_degrees: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]
       scale: [1.0, 1.0, 1.0]
     children:
       - name: Teapot Center
         transform:
           translation: [0.0, 0.0, 0.0]
-          rotation_degrees: [0.0, 0.0, 0.0]
+          rotation: [0.0, 0.0, 0.0]
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
@@ -41,7 +41,7 @@ entities:
       - name: Teapot Left
         transform:
           translation: [-1.25, 0.0, 0.0]
-          rotation_degrees: [0.0, 25.0, 0.0]
+          rotation: [0.0, 25.0, 0.0]
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
@@ -50,7 +50,7 @@ entities:
       - name: Teapot Right
         transform:
           translation: [1.25, 0.0, 0.0]
-          rotation_degrees: [0.0, -25.0, 0.0]
+          rotation: [0.0, -25.0, 0.0]
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
@@ -59,7 +59,7 @@ entities:
       - name: Teapot Back Left
         transform:
           translation: [-1.25, 0.0, -1.25]
-          rotation_degrees: [0.0, 45.0, 0.0]
+          rotation: [0.0, 45.0, 0.0]
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
@@ -68,7 +68,7 @@ entities:
       - name: Teapot Back Center
         transform:
           translation: [0.0, 0.0, -1.25]
-          rotation_degrees: [0.0, 90.0, 0.0]
+          rotation: [0.0, 90.0, 0.0]
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
@@ -77,7 +77,7 @@ entities:
       - name: Teapot Back Right
         transform:
           translation: [1.25, 0.0, -1.25]
-          rotation_degrees: [0.0, -45.0, 0.0]
+          rotation: [0.0, -45.0, 0.0]
           scale: [0.25, 0.25, 0.25]
         components:
           mesh:
