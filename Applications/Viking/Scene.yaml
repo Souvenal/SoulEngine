@@ -8,7 +8,7 @@ entities:
   - name: Main Camera
     transform:
       translation: [0.5, -0.4, 0.55]
-      rotation_degrees: [-14.0, 42.0, 0.0]
+      rotation: [-14.0, 42.0, 0.0]
       scale: [1.0, 1.0, 1.0]
     components:
       camera:
@@ -18,7 +18,7 @@ entities:
   - name: Viking Room
     transform:
       translation: [0.0, 0.0, 0.0]
-      rotation_degrees: [90.0, 0.0, 0.0]
+      rotation: [90.0, 0.0, 0.0]
       scale: [1.0, 1.0, 1.0]
     components:
       mesh:

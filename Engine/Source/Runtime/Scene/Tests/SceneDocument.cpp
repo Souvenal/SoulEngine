@@ -25,6 +25,7 @@ entities:
     transform:
       translation: [1.0, 2.0, 3.0]
     components:
+      camera: {}
       unknown_component: {}
     children:
       - name: Child
@@ -84,6 +85,13 @@ entities:
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.y), 0.71f);
     EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Metallic, 1.0f);
     EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Roughness, 0.18f);
+    const auto Cameras = Scene.GetRegistry().view<CameraComponent>();
+    const auto CameraIterator = Cameras.begin();
+    ASSERT_NE(CameraIterator, Cameras.end());
+    const auto& Camera = Cameras.get<CameraComponent>(*CameraIterator);
+    EXPECT_FLOAT_EQ(Camera.Settings.FOV, 60.0f);
+    EXPECT_FLOAT_EQ(Camera.Settings.NearPlane, 0.1f);
+    EXPECT_FLOAT_EQ(Camera.Settings.FarPlane, 100.0f);
 
     std::filesystem::remove(FilePath);
 }
@@ -91,6 +99,8 @@ entities:
 TEST(SceneDocument, SkipsMeshWithUnknownMaterialInstance) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
+  - components:
+      camera: {}
   - components:
       mesh:
         asset: teapot.obj
@@ -101,7 +111,7 @@ entities:
     const auto Loaded = Scene.LoadFromFile(FilePath);
     ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
     ASSERT_EQ(Loaded->Warnings.size(), 1u);
-    EXPECT_EQ(Loaded->Warnings.front().Path, "entities[0].components.mesh");
+    EXPECT_EQ(Loaded->Warnings.front().Path, "entities[1].components.mesh");
     EXPECT_TRUE(Scene.BuildSnapshot().Renderables.empty());
 
     std::filesystem::remove(FilePath);
@@ -112,7 +122,7 @@ entities:
   - name: Main Camera
     transform:
       translation: [1.25, 1.25, 2.0]
-      rotation_degrees: [28.0, -32.0, 0.0]
+      rotation: [28.0, -32.0, 0.0]
     components:
       camera: {}
   - name: Teapot Cluster
@@ -145,7 +155,7 @@ entities:
 
     std::filesystem::remove(FilePath);
 }
-TEST(SceneDocument, CursorUpRotatesFirstCameraTowardPositiveWorldY) {
+TEST(SceneDocument, DoesNotCreateViewsFromSceneCamera) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
   - components:
@@ -156,16 +166,36 @@ entities:
     ASSERT_TRUE(Scene.LoadFromFile(FilePath).has_value());
     ASSERT_EQ(Scene.GetRoots().size(), 1u);
 
-    Scene.RotateFirstCamera(0.0f, -10.0f);
-    const auto* CameraNode = Scene.TryGetSceneNode(Scene.GetRoots().front());
+    EXPECT_TRUE(Scene.BuildSnapshot().Views.empty());
+    std::filesystem::remove(FilePath);
+}
 
-    ASSERT_NE(CameraNode, nullptr);
-    EXPECT_LT(static_cast<float>(CameraNode->Transform.RotationDegrees.x), 0.0f);
+TEST(SceneDocument, UsesExplicitRenderViews) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - components:
+      camera: {}
+)");
+
+    Scene Scene = {};
+    ASSERT_TRUE(Scene.LoadFromFile(FilePath).has_value());
+
+    const std::array Views{
+        RenderViewSnapshot{
+            .CameraPosition = hlslpp::float3(4.0f, 5.0f, 6.0f),
+        },
+    };
+    const auto Snapshot = Scene.BuildSnapshot(Views);
+
+    ASSERT_EQ(Snapshot.Views.size(), 1u);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Views.front().CameraPosition.x), 4.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Views.front().CameraPosition.y), 5.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Views.front().CameraPosition.z), 6.0f);
     std::filesystem::remove(FilePath);
 }
 
 TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
-    const auto ValidPath = WriteSceneFile("entities:\n  - name: Valid\n");
+    const auto ValidPath = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
     Scene Scene = {};
     ASSERT_TRUE(Scene.LoadFromFile(ValidPath).has_value());
     ASSERT_EQ(Scene.GetRoots().size(), 1u);
@@ -176,6 +206,34 @@ TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
     EXPECT_EQ(Scene.GetRoots().size(), 1u);
 
     std::filesystem::remove(ValidPath);
+}
+
+TEST(SceneDocument, RejectsSceneWithoutCamera) {
+    const auto FilePath = WriteSceneFile("entities:\n  - name: Root\n");
+
+    Scene Scene = {};
+    const auto Loaded = Scene.LoadFromFile(FilePath);
+
+    ASSERT_FALSE(Loaded.has_value());
+    EXPECT_TRUE(Loaded.error().ToString().contains("exactly one camera component; found 0"));
+    std::filesystem::remove(FilePath);
+}
+
+TEST(SceneDocument, RejectsSceneWithMultipleCameras) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - components:
+      camera: {}
+  - components:
+      camera: {}
+)");
+
+    Scene Scene = {};
+    const auto Loaded = Scene.LoadFromFile(FilePath);
+
+    ASSERT_FALSE(Loaded.has_value());
+    EXPECT_TRUE(Loaded.error().ToString().contains("exactly one camera component; found 2"));
+    std::filesystem::remove(FilePath);
 }
 
 } // namespace

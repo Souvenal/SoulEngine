@@ -23,9 +23,33 @@ static_assert(sizeof(ViewConstants) == 64, "ViewConstants must match Common.slan
 
 struct Transform {
     hlslpp::float3   Translation     = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    hlslpp::float3   RotationDegrees = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    hlslpp::float3   Rotation        = hlslpp::float3(0.0f, 0.0f, 0.0f);
     hlslpp::float3   Scale           = hlslpp::float3(1.0f, 1.0f, 1.0f);
     hlslpp::float4x4 WorldTransform  = hlslpp::float4x4::identity();
+
+    [[nodiscard]] auto GetLocalMatrix() const -> hlslpp::float4x4 {
+        const auto RotationRadians = Rotation * (std::numbers::pi_v<float> / 180.0f);
+        return hlslpp::mul(
+            hlslpp::mul(
+                hlslpp::mul(
+                    hlslpp::mul(hlslpp::float4x4::scale(Scale), hlslpp::float4x4::rotation_x(RotationRadians.x)),
+                    hlslpp::float4x4::rotation_y(RotationRadians.y)),
+                hlslpp::float4x4::rotation_z(RotationRadians.z)),
+            hlslpp::float4x4::translation(Translation));
+    }
+};
+
+/// @brief Immutable render data and resources for one camera/view.
+struct RenderViewSnapshot {
+    hlslpp::float4x4                 ViewProjection = hlslpp::float4x4::identity();
+    hlslpp::float3                   CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    ResourceHandle<RHIRenderTarget>  ColorRT        = {};
+    ResourceHandle<RHIRenderTarget>  DepthRT        = {};
+    ResourceHandle<RHIConstantBuffer> ViewCB        = {};
+
+    [[nodiscard]] auto GetViewConstants() const -> ViewConstants {
+        return ViewConstants{.ViewProjection = ViewProjection};
+    }
 };
 
 struct SceneNode {
@@ -43,26 +67,119 @@ struct SceneNode {
 // projection policies become concrete. Expected variants include gameplay
 // cameras, editor viewport cameras, and shadow cameras. Keep this base type
 // minimal for now: view parameters plus view-scoped resource refs only.
-struct CameraComponent {
+/// @brief Reusable lens and view-matrix policy for scene and editor cameras.
+struct Camera {
     float FOV       = 60.0f;
     float NearPlane = 0.1f;
     float FarPlane  = 100.0f;
-    float AspectRatio = 16.0f / 9.0f;
     ResourceRef<RHIRenderTarget> ColorRT = {};
     ResourceRef<RHIRenderTarget> DepthRT = {};
-    /// Must be unique among concurrently rendered cameras.
-    String ViewConstantBufferKey = {};
-    /// Logical constant buffer owned by this view.
     ResourceRef<RHIConstantBuffer> ViewCB = {};
+    Uint32 ViewportWidth = 0;
+    Uint32 ViewportHeight = 0;
+
+    /// @brief Resize the camera-owned output resources.
+    auto ResizeViewport(StringView ResourceKey, Uint32 Width, Uint32 Height) -> void {
+        if (Width == 0 || Height == 0) {
+            ColorRT = {};
+            DepthRT = {};
+            ViewCB = {};
+            ViewportWidth = 0;
+            ViewportHeight = 0;
+            return;
+        }
+
+        if (ViewportWidth == Width && ViewportHeight == Height && ColorRT && DepthRT && ViewCB)
+            return;
+
+        ViewportWidth = Width;
+        ViewportHeight = Height;
+        ColorRT = ResourceManager::Get().RequestRenderTargetRef(
+            Format("{}_color_{}x{}", ResourceKey, Width, Height),
+            RHIRenderTargetDesc{
+                .Width  = Width,
+                .Height = Height,
+                .Format = RHIFormat::B8G8R8A8_UNORM,
+                .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
+            });
+        DepthRT = ResourceManager::Get().RequestRenderTargetRef(
+            Format("{}_depth_{}x{}", ResourceKey, Width, Height),
+            RHIRenderTargetDesc{
+                .Width  = Width,
+                .Height = Height,
+                .Format = RHIFormat::D32_SFLOAT,
+                .Usage  = RHITextureUsage::DepthStencil,
+            });
+        ViewCB = ResourceManager::Get().RequestConstantBufferRef(
+            Format("{}_constants", ResourceKey), {.Size = sizeof(ViewConstants)});
+    }
 
     /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
-    [[nodiscard]] auto GetProjectionMatrix() const -> hlslpp::float4x4 {
+    [[nodiscard]] auto GetProjectionMatrix(float AspectRatio) const -> hlslpp::float4x4 {
         const float FovRad = FOV * (std::numbers::pi_v<float> / 180.0f);
         return hlslpp::float4x4::perspective(
             hlslpp::projection(hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, NearPlane, FarPlane),
                                hlslpp::zclip::zero,
                                hlslpp::zdirection::forward,
                                hlslpp::zplane::finite));
+    }
+
+    [[nodiscard]] auto GetForward(const Transform& CameraTransform) const -> hlslpp::float3 {
+        const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
+        const auto WorldForward = hlslpp::mul(LocalForward, CameraTransform.WorldTransform);
+        return hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+    }
+
+    [[nodiscard]] auto GetViewMatrix(const Transform& CameraTransform) const -> hlslpp::float4x4 {
+        const auto& World = CameraTransform.WorldTransform;
+        const auto Position = hlslpp::float3(World[3].x, World[3].y, World[3].z);
+        return hlslpp::float4x4::look_at(
+            Position, Position + GetForward(CameraTransform), hlslpp::float3(0.0f, 1.0f, 0.0f));
+    }
+
+    [[nodiscard]] auto BuildRenderView(const Transform& CameraTransform) const -> std::optional<RenderViewSnapshot> {
+        if (!ColorRT || !DepthRT || !ViewCB || ViewportWidth == 0 || ViewportHeight == 0)
+            return std::nullopt;
+
+        const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
+        const auto& World = CameraTransform.WorldTransform;
+        return RenderViewSnapshot{
+            .ViewProjection = hlslpp::mul(GetViewMatrix(CameraTransform), GetProjectionMatrix(AspectRatio)),
+            .CameraPosition = hlslpp::float3(World[3].x, World[3].y, World[3].z),
+            .ColorRT        = ColorRT.GetHandle(),
+            .DepthRT        = DepthRT.GetHandle(),
+            .ViewCB         = ViewCB.GetHandle(),
+        };
+    }
+};
+
+// CameraComponent persists only the camera lens parameters. Camera output
+// resources are non-persisted runtime state.
+struct CameraComponent {
+    Camera Settings = {};
+
+    [[nodiscard]] auto GetFOV() const -> float {
+        return Settings.FOV;
+    }
+
+    auto SetFOV(float Value) -> void {
+        Settings.FOV = Value;
+    }
+
+    [[nodiscard]] auto GetNearPlane() const -> float {
+        return Settings.NearPlane;
+    }
+
+    auto SetNearPlane(float Value) -> void {
+        Settings.NearPlane = Value;
+    }
+
+    [[nodiscard]] auto GetFarPlane() const -> float {
+        return Settings.FarPlane;
+    }
+
+    auto SetFarPlane(float Value) -> void {
+        Settings.FarPlane = Value;
     }
 };
 
@@ -81,19 +198,6 @@ struct MeshComponent {
 };
 
 struct LightComponent {};
-
-/// @brief Immutable render data and resources for one camera/view.
-struct RenderViewSnapshot {
-    hlslpp::float4x4                              ViewProjection = hlslpp::float4x4::identity();
-    hlslpp::float3                                CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    ResourceHandle<RHIRenderTarget>   ColorRT        = {};
-    ResourceHandle<RHIRenderTarget>   DepthRT        = {};
-    ResourceHandle<RHIConstantBuffer> ViewCB         = {};
-
-    [[nodiscard]] auto GetViewConstants() const -> ViewConstants {
-        return ViewConstants{.ViewProjection = ViewProjection};
-    }
-};
 
 /// @brief Immutable CPU render record for one mesh asset instance.
 ///
@@ -177,18 +281,16 @@ class Scene {
     [[nodiscard]] auto TryGetSceneNode(SceneEntity Entity) -> SceneNode*;
     [[nodiscard]] auto TryGetSceneNode(SceneEntity Entity) const -> const SceneNode*;
 
-    auto AllocateCameraRenderTargets(Uint32 Width, Uint32 Height) -> void;
-
     /// @brief Move relative to the camera's horizontal facing direction and world up.
-    auto MoveFirstCamera(float ForwardInput, float RightInput, float VerticalInput, float ZoomInput, float DeltaTime)
-        -> void;
-
     /// @brief Rotate from relative cursor movement using yaw and pitch angles.
-    auto RotateFirstCamera(float CursorDeltaX, float CursorDeltaY) -> void;
+    ///
+    /// Editor navigation is owned by Editor and never mutates a Scene Camera.
+    /// These historical prototype API descriptions are retained while the
+    /// implementation moves camera navigation out of Scene.
 
     auto UpdateWorldTransforms() -> void;
 
-    [[nodiscard]] auto BuildSnapshot() -> SceneSnapshot;
+    [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views = {}) -> SceneSnapshot;
 
     [[nodiscard]] auto LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage>;
     [[nodiscard]] auto SaveToFile(const Path& FilePath) const -> std::expected<void, ErrorMessage>;
@@ -254,130 +356,16 @@ auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material
 
 namespace {
 
-[[nodiscard]] auto MakeLocalTransform(const Transform& InTransform) -> hlslpp::float4x4 {
-    const auto RotationRadians = InTransform.RotationDegrees * (std::numbers::pi_v<float> / 180.0f);
-    return hlslpp::mul(
-        hlslpp::mul(
-            hlslpp::mul(
-                hlslpp::mul(hlslpp::float4x4::scale(InTransform.Scale),
-                             hlslpp::float4x4::rotation_x(RotationRadians.x)),
-                hlslpp::float4x4::rotation_y(RotationRadians.y)),
-            hlslpp::float4x4::rotation_z(RotationRadians.z)),
-        hlslpp::float4x4::translation(InTransform.Translation));
-}
-
 auto UpdateWorldTransformRecursive(entt::registry& Registry,
                                    SceneEntity Entity,
                                    const hlslpp::float4x4& ParentTransform) -> void {
     auto& Node = Registry.get<SceneNode>(Entity);
-    Node.Transform.WorldTransform = hlslpp::mul(MakeLocalTransform(Node.Transform), ParentTransform);
+    Node.Transform.WorldTransform = hlslpp::mul(Node.Transform.GetLocalMatrix(), ParentTransform);
     for (const auto Child : Node.Children)
         UpdateWorldTransformRecursive(Registry, Child, Node.Transform.WorldTransform);
 }
 
-[[nodiscard]] auto GetWorldPosition(const SceneNode& Node) -> hlslpp::float3 {
-    const auto& World = Node.Transform.WorldTransform;
-    return hlslpp::float3(World[3].x, World[3].y, World[3].z);
-}
-
-[[nodiscard]] auto GetWorldForward(const SceneNode& Node) -> hlslpp::float3 {
-    const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
-    const auto WorldForward = hlslpp::mul(LocalForward, Node.Transform.WorldTransform);
-    return hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-}
-
-[[nodiscard]] auto GetFirstCameraEntity(const entt::registry& Registry) -> SceneEntity {
-    const auto View = Registry.view<CameraComponent, SceneNode>();
-    for (const auto Entity : View)
-        return Entity;
-    return entt::null;
-}
-
 } // namespace
-
-auto Scene::AllocateCameraRenderTargets(Uint32 Width, Uint32 Height) -> void {
-    const auto Cameras = m_Registry->view<CameraComponent>();
-    for (const auto Entity : Cameras) {
-        auto& Camera = Cameras.get<CameraComponent>(Entity);
-        if (Width == 0 || Height == 0) {
-            Camera.ColorRT.Reset();
-            Camera.DepthRT.Reset();
-            return;
-        }
-
-        if (Camera.ViewConstantBufferKey.empty())
-            Camera.ViewConstantBufferKey = Format("camera_viewcb_{}", entt::to_integral(Entity));
-        if (!Camera.ViewCB)
-            Camera.ViewCB = ResourceManager::Get().RequestConstantBufferRef(
-                Camera.ViewConstantBufferKey, {.Size = sizeof(ViewConstants)});
-
-        const auto ColorKey = Format("camera_{}_color_{}x{}", entt::to_integral(Entity), Width, Height);
-        const auto DepthKey = Format("camera_{}_depth_{}x{}", entt::to_integral(Entity), Width, Height);
-        const auto& ColorHandle = Camera.ColorRT.GetHandle();
-        const auto& DepthHandle = Camera.DepthRT.GetHandle();
-        if (ColorHandle.IsValid() && ColorHandle.GetKey() == ColorKey && DepthHandle.IsValid() &&
-            DepthHandle.GetKey() == DepthKey) {
-            Camera.AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
-            continue;
-        }
-
-        Camera.ColorRT = ResourceManager::Get().RequestRenderTargetRef(
-            ColorKey,
-            RHIRenderTargetDesc{
-                .Width  = Width,
-                .Height = Height,
-                .Format = RHIFormat::B8G8R8A8_UNORM,
-                .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
-            });
-        Camera.DepthRT = ResourceManager::Get().RequestRenderTargetRef(
-            DepthKey,
-            RHIRenderTargetDesc{
-                .Width  = Width,
-                .Height = Height,
-                .Format = RHIFormat::D32_SFLOAT,
-                .Usage  = RHITextureUsage::DepthStencil,
-            });
-        Camera.AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
-    }
-}
-
-auto Scene::MoveFirstCamera(float ForwardInput,
-                            float RightInput,
-                            float VerticalInput,
-                            float ZoomInput,
-                            float DeltaTime) -> void {
-    UpdateWorldTransforms();
-    const auto Entity = GetFirstCameraEntity(*m_Registry);
-    if (Entity == entt::null)
-        return;
-
-    auto& Node = m_Registry->get<SceneNode>(Entity);
-    const auto Forward = GetWorldForward(Node);
-    const auto HorizontalForward = hlslpp::normalize(hlslpp::float3(Forward.x, 0.0f, Forward.z));
-    const auto Up = hlslpp::float3(0.0f, 1.0f, 0.0f);
-    const auto Right = hlslpp::normalize(hlslpp::cross(HorizontalForward, Up));
-    auto MoveDirection = HorizontalForward * ForwardInput + Right * RightInput + Up * VerticalInput;
-    if (MoveDirection.x != 0.0f || MoveDirection.y != 0.0f || MoveDirection.z != 0.0f)
-        Node.Transform.Translation += hlslpp::normalize(MoveDirection) * (2.0f * DeltaTime);
-
-    Node.Transform.Translation += Forward * (ZoomInput * 0.75f);
-}
-
-auto Scene::RotateFirstCamera(float CursorDeltaX, float CursorDeltaY) -> void {
-    const auto Entity = GetFirstCameraEntity(*m_Registry);
-    if (Entity == entt::null)
-        return;
-
-    constexpr float Sensitivity = 0.0025f;
-    constexpr float MaxPitch    = 1.55334306f;
-    auto& Node = m_Registry->get<SceneNode>(Entity);
-    auto& Rotation = Node.Transform.RotationDegrees;
-    Rotation.y += CursorDeltaX * Sensitivity * (180.0f / std::numbers::pi_v<float>);
-    Rotation.x = std::clamp(
-        static_cast<float>(Rotation.x) + CursorDeltaY * Sensitivity * (180.0f / std::numbers::pi_v<float>),
-        -MaxPitch * (180.0f / std::numbers::pi_v<float>),
-        MaxPitch * (180.0f / std::numbers::pi_v<float>));
-}
 
 auto Scene::UpdateWorldTransforms() -> void {
     for (const auto Root : m_Roots) {
@@ -386,27 +374,12 @@ auto Scene::UpdateWorldTransforms() -> void {
     }
 }
 
-[[nodiscard]] auto Scene::BuildSnapshot() -> SceneSnapshot {
+[[nodiscard]] auto Scene::BuildSnapshot(std::span<const RenderViewSnapshot> Views) -> SceneSnapshot {
     UpdateWorldTransforms();
     SceneSnapshot Snapshot{
+        .Views = std::vector<RenderViewSnapshot>(Views.begin(), Views.end()),
         .Time = m_Time,
     };
-
-    const auto Cameras = m_Registry->view<CameraComponent, SceneNode>();
-    for (const auto Entity : Cameras) {
-        const auto& Camera = Cameras.get<CameraComponent>(Entity);
-        const auto& Node = Cameras.get<SceneNode>(Entity);
-        const auto Position = GetWorldPosition(Node);
-        const auto Forward = GetWorldForward(Node);
-        const auto View = hlslpp::float4x4::look_at(Position, Position + Forward, hlslpp::float3(0.0f, 1.0f, 0.0f));
-        Snapshot.Views.emplace_back(RenderViewSnapshot{
-            .ViewProjection = hlslpp::mul(View, Camera.GetProjectionMatrix()),
-            .CameraPosition = Position,
-            .ColorRT        = Camera.ColorRT.GetHandle(),
-            .DepthRT        = Camera.DepthRT.GetHandle(),
-            .ViewCB         = Camera.ViewCB.GetHandle(),
-        });
-    }
 
     const auto Meshes = m_Registry->view<MeshComponent, SceneNode>();
     for (const auto Entity : Meshes) {

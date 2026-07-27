@@ -126,6 +126,9 @@ class EngineLoop {
             Shutdown();
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
+        const auto InitialExtent = m_WindowSystem->GetFramebufferExtent();
+        m_Editor.ResizeSceneViewport(
+            static_cast<Uint32>(std::max(0, InitialExtent.Width)), static_cast<Uint32>(std::max(0, InitialExtent.Height)));
 
         // ── Create application from config ───────────────────────────────
         auto& Cfg = ConfigManager::Get().GetConfig();
@@ -255,19 +258,24 @@ class EngineLoop {
                 break;
 
             if (Resize) {
-                auto& Scene = m_Application->GetScene();
                 const auto Width  = static_cast<Uint32>(std::max(0, Resize->Width));
                 const auto Height = static_cast<Uint32>(std::max(0, Resize->Height));
-                Scene.AllocateCameraRenderTargets(Width, Height);
+                m_Editor.ResizeSceneViewport(Width, Height);
             }
 
             m_Application->OnTick(Delta, *m_WindowSystem);
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
             m_Editor.BeginFrame(Slot.ImGuiSnapshot);
+            m_Editor.UpdateSceneCamera(Delta, *m_WindowSystem);
             auto& AppScene = m_Application->GetScene();
             AppScene.UpdateTime();
-            Slot.SceneData = AppScene.BuildSnapshot();
+            if (auto SceneView = m_Editor.BuildSceneView()) {
+                const std::array Views{std::move(*SceneView)};
+                Slot.SceneData = AppScene.BuildSnapshot(Views);
+            } else {
+                Slot.SceneData = AppScene.BuildSnapshot();
+            }
 
             {
                 std::lock_guard Lock(Slot.Mutex);
