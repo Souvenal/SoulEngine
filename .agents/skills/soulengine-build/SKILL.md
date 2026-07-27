@@ -7,15 +7,22 @@ description: Diagnose, fix, and document SoulEngine build, configuration, packag
 
 Use this skill for every project build failure and update it after a verified, reusable diagnosis. Use `coding-spec` as well whenever a repair changes project source or Xmake files.
 
+## Command output
+
+`rtk` is an optional command-output filter. When it is available on `PATH`,
+all build, run, and test commands in this skill MUST use `rtk err` so the
+relevant diagnostics are retained while routine output is suppressed. When
+`rtk` is unavailable, run the equivalent command directly.
+
 ## Build loop
 
 1. Inspect the current root `xmake.lua` and the configured platform/toolchain; do not rely on stale comments or historical configuration.
 2. Reproduce from clean generated artifacts:
 
    ```powershell
-   xmake clean --all -y
-   xmake f -m debug -y
-   xmake -y
+   rtk err xmake clean --all -y
+   rtk err xmake f -m debug -y
+   rtk err xmake -y
    ```
 
 3. Treat the first compiler or linker error as the active failure. Preserve the command and diagnostic before changing policies, toolchains, scanners, or source.
@@ -23,10 +30,10 @@ Use this skill for every project build failure and update it after a verified, r
 5. Run tests through Xmake so target `runenvs` are applied:
 
    ```powershell
-   xmake test -j1 -v
+   rtk err xmake test -v
    ```
 
-   Use `xmake run` only when the executable does not require test-specific environment setup.
+   Use `rtk err xmake run` only when the executable does not require test-specific environment setup.
 
 ## Diagnose by platform and toolchain
 

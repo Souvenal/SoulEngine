@@ -1,14 +1,11 @@
-module;
-
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
 export module Vulkan:Swapchain;
 
 import RHI;
 
 import std;
 import vulkan;
+
+import :SurfaceProvider;
 
 namespace SoulEngine {
 
@@ -44,7 +41,7 @@ namespace SoulEngine {
     return vk::PresentModeKHR::eFifo;
 }
 
-[[nodiscard]] auto ResolveExtent(GLFWwindow* Window, const vk::SurfaceCapabilitiesKHR& Caps) -> vk::Extent2D {
+[[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps) -> vk::Extent2D {
     // currentExtent is the window size in pixels, clamped to surface limits.
     // When it equals UINT32_MAX the surface doesn't dictate a size (e.g. some
     // compositors) — we must query the framebuffer dimensions.
@@ -61,12 +58,11 @@ namespace SoulEngine {
     if (Caps.currentExtent.width != std::numeric_limits<Uint32>::max())
         return Caps.currentExtent;
 
-    int Width = 0, Height = 0;
-    glfwGetFramebufferSize(Window, &Width, &Height);
+    const auto Extent = Provider.GetFramebufferExtent();
 
     return vk::Extent2D{
-        .width  = std::clamp(static_cast<uint32_t>(Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
-        .height = std::clamp(static_cast<uint32_t>(Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
+        .width  = std::clamp(static_cast<uint32_t>(Extent.Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
+        .height = std::clamp(static_cast<uint32_t>(Extent.Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
     };
 }
 
@@ -102,12 +98,13 @@ class VulkanSwapchain {
     [[nodiscard]] static auto Create(vk::raii::Device&         Device,
                                      vk::raii::PhysicalDevice& PhysDevice,
                                      vk::raii::SurfaceKHR&     Surface,
-                                     GLFWwindow*               Window) -> std::expected<VulkanSwapchain, ErrorMessage> {
+                                     IVulkanSurfaceProvider&   SurfaceProvider)
+        -> std::expected<VulkanSwapchain, ErrorMessage> {
         VulkanSwapchain Result;
-        Result.m_Device     = &Device;
-        Result.m_PhysDevice = &PhysDevice;
-        Result.m_Surface    = &Surface;
-        Result.m_Window     = Window;
+        Result.m_Device          = &Device;
+        Result.m_PhysDevice      = &PhysDevice;
+        Result.m_Surface         = &Surface;
+        Result.m_SurfaceProvider = &SurfaceProvider;
 
         // ── Query surface capabilities ──────────────────────────────────
         auto CapsResult = Result.m_PhysDevice->getSurfaceCapabilitiesKHR(*Result.m_Surface);
@@ -132,7 +129,7 @@ class VulkanSwapchain {
         vk::PresentModeKHR PresentMode    = ResolvePresentMode(PresentModes);
 
         // ── Resolve extent ────────────────────────────────────────────
-        Result.m_Extent = ResolveExtent(Result.m_Window, Caps);
+        Result.m_Extent = ResolveExtent(*Result.m_SurfaceProvider, Caps);
 
         // ── Resolve image count ────────────────────────────────────────
         uint32_t ImageCount = ResolveSwapImageCount(Caps);
@@ -145,8 +142,9 @@ class VulkanSwapchain {
                 Result.m_Extent.height,
                 ImageCount);
 
-        if ((Caps.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferDst) == vk::ImageUsageFlags{})
-            return std::unexpected(ErrorMessage("VulkanSwapchain does not support transfer-destination presentation"));
+        const auto RequiredUsage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eColorAttachment;
+        if ((Caps.supportedUsageFlags & RequiredUsage) != RequiredUsage)
+            return std::unexpected(ErrorMessage("VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
 
         // ── Create swapchain ────────────────────────────────────────────
         vk::SwapchainCreateInfoKHR SwapchainCI{
@@ -160,7 +158,9 @@ class VulkanSwapchain {
             .imageArrayLayers = 1,
             // The engine renders to its own color RT and blits that output to
             // swapchain; render passes must not use swapchain images directly.
-            .imageUsage       = vk::ImageUsageFlagBits::eTransferDst,
+            // Presentation overlays are the exception: they load the blitted
+            // image and render UI directly before presentation.
+            .imageUsage       = RequiredUsage,
             // eExclusive means that an image is owned by one queue family at a time,
             // and ownership must be explicitly transferred before using the image in another queue family.
             //
@@ -196,6 +196,27 @@ class VulkanSwapchain {
                 Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
         Result.m_Images = std::move(ImagesResult.value);
 
+        Result.m_ImageViews.reserve(Result.m_Images.size());
+        for (const auto Image : Result.m_Images) {
+            vk::ImageViewCreateInfo ImageViewCI{
+                .image            = Image,
+                .viewType         = vk::ImageViewType::e2D,
+                .format           = Result.m_Format.format,
+                .subresourceRange = {
+                    .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                    .baseMipLevel   = 0,
+                    .levelCount     = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount     = 1,
+                },
+            };
+            auto ViewResult = Result.m_Device->createImageView(ImageViewCI);
+            if (ViewResult.result != vk::Result::eSuccess)
+                return std::unexpected(
+                    ErrorMessage(Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
+            Result.m_ImageViews.emplace_back(std::move(ViewResult.value));
+        }
+
         // ── Create render-complete binary semaphores (one per swapchain image) ──
         Result.m_RenderComplete.reserve(Result.m_Images.size());
         for (size_t i = 0; i < Result.m_Images.size(); ++i) {
@@ -215,6 +236,7 @@ class VulkanSwapchain {
     }
 
     auto Cleanup() -> void {
+        m_ImageViews.clear();
         m_Images.clear();
         m_RenderComplete.clear();
         m_Swapchain    = nullptr;
@@ -225,7 +247,7 @@ class VulkanSwapchain {
     [[nodiscard]] auto Recreate() -> std::expected<void, ErrorMessage> {
         m_Device->waitIdle();
         Cleanup();
-        auto NewSc = Create(*m_Device, *m_PhysDevice, *m_Surface, m_Window);
+        auto NewSc = Create(*m_Device, *m_PhysDevice, *m_Surface, *m_SurfaceProvider);
         if (!NewSc)
             return std::unexpected(NewSc.error());
         *this = std::move(*NewSc);
@@ -282,6 +304,10 @@ class VulkanSwapchain {
         return (Index < m_Images.size()) ? m_Images[Index] : vk::Image{};
     }
 
+    [[nodiscard]] auto GetCurrentImageView() const -> vk::ImageView {
+        return (m_CurrentIndex < m_ImageViews.size()) ? *m_ImageViews[m_CurrentIndex] : vk::ImageView{};
+    }
+
     /// Returns the render-complete semaphore for the currently acquired
     /// swapchain image.  Used by VulkanRenderDevice::EndFrame to build the
     /// semaphore-submit info for queue submit.
@@ -295,7 +321,7 @@ class VulkanSwapchain {
     vk::raii::Device*         m_Device     = nullptr;
     vk::raii::PhysicalDevice* m_PhysDevice = nullptr;
     vk::raii::SurfaceKHR*     m_Surface    = nullptr;
-    GLFWwindow*               m_Window     = nullptr;
+    IVulkanSurfaceProvider*   m_SurfaceProvider = nullptr;
 
     // ── Owned resources ──────────────────────────────────────────────────
 
@@ -303,6 +329,7 @@ class VulkanSwapchain {
     vk::SurfaceFormatKHR             m_Format    = {};
     vk::Extent2D                     m_Extent    = {1, 1};
     std::vector<vk::Image>           m_Images;
+    std::vector<vk::raii::ImageView> m_ImageViews;
     std::vector<vk::raii::Semaphore> m_RenderComplete;
     uint32_t                         m_CurrentIndex = 0;
 };

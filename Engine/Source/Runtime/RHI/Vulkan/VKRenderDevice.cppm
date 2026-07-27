@@ -6,9 +6,9 @@ module;
 // dynamically fetching pointers using `vkGetInstanceProcAddr` and `vkGetDeviceProcAddr`
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #include <vk_mem_alloc.h>
-
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+#include <imgui_threaded_rendering.h>
 
 export module Vulkan:RenderDevice;
 
@@ -17,6 +17,7 @@ import vulkan;
 import std;
 
 import :Swapchain;
+import :SurfaceProvider;
 import :Command;
 import :Types;
 import :Semaphore;
@@ -43,13 +44,16 @@ namespace SoulEngine {
 class VulkanRenderDevice final : public RHIRenderDevice {
   public:
     VulkanRenderDevice() {}
-    ~VulkanRenderDevice() {}
+    ~VulkanRenderDevice() {
+        Shutdown();
+    }
 
-    [[nodiscard]] auto Init(GLFWwindow* Window) -> std::expected<void, ErrorMessage> override {
-        // Off-screen rendering is not on the roadmap; every frame is presented
-        // to a GLFW window, so a valid window handle is mandatory.
-        if (!Window)
-            return std::unexpected(ErrorMessage("Window is null — off-screen rendering is not supported"));
+    [[nodiscard]] auto Initialize(IWindowSystem* WindowSys)
+        -> std::expected<void, ErrorMessage> override {
+        auto SurfaceProvider = CreateVulkanSurfaceProvider(WindowSys);
+        if (!SurfaceProvider)
+            return std::unexpected(SurfaceProvider.error().Append("Failed to create Vulkan surface provider"));
+        m_SurfaceProvider = std::move(*SurfaceProvider);
 
         // Read configuration from engine config
         const auto& Cfg  = ConfigManager::Get().GetConfig();
@@ -69,13 +73,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         //       Consider using `volk` instead.
         vk::raii::Context Context;
 
-        if (auto Res = CreateInstance(Context); !Res.has_value())
+        if (auto Res = CreateInstance(Context, *m_SurfaceProvider); !Res.has_value())
             return std::unexpected(Res.error());
 
         // Surface must exist before PickPhysicalDevice so we can verify
         // surface presentation support via getSurfaceSupportKHR.
-        if (auto Res = CreateSurface(Window); !Res.has_value())
-            return std::unexpected(Res.error());
+        auto Surface = m_SurfaceProvider->CreateSurface(m_Instance);
+        if (!Surface)
+            return std::unexpected(Surface.error().Append("Failed to create Vulkan presentation surface"));
+        m_Surface = std::move(*Surface);
 
         if (auto Res = PickPhysicalDevice(); !Res.has_value())
             return std::unexpected(Res.error());
@@ -119,10 +125,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_GraphicsImmediateContext = std::move(*GraphicsImmCtx);
 
         // ── VulkanSwapchain ─────────────────────────────────────────────────────
-        auto NewSwapchain = VulkanSwapchain::Create(m_Device, m_PhysicalDevice, m_Surface, Window);
-        if (!NewSwapchain)
-            return std::unexpected(NewSwapchain.error());
-        m_Swapchain = std::move(*NewSwapchain);
+        auto Swapchain = VulkanSwapchain::Create(m_Device, m_PhysicalDevice, m_Surface, *m_SurfaceProvider);
+        if (!Swapchain)
+            return std::unexpected(Swapchain.error());
+        m_Swapchain = std::move(*Swapchain);
 
         // ── Timeline Semaphore ───────────────────────────────────────────
         auto Semaphore = VulkanTimelineSemaphore::Create(m_Device);
@@ -182,7 +188,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             m_DescriptorManager = std::make_unique<VulkanDescriptorManager>(std::move(*Heap));
         }
 
+        if (auto Res = InitializeImGui(WindowSys); !Res)
+            return std::unexpected(Res.error().Append("Vulkan Dear ImGui renderer initialization failed"));
+
+        m_NeedsShutdown = true;
         return {};
+    }
+
+    [[nodiscard]] auto GetBackendType() const -> RHIBackendType override {
+        return RHIBackendType::Vulkan;
     }
 
     // ── Frame lifecycle — private ─────────────────────────────────────
@@ -388,29 +402,87 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     auto Shutdown() -> void override {
-        WaitIdle();
-        auto TransferDrain = m_TransferCompletionQueue.Drain();
-        if (!TransferDrain)
-            LogError("{}", TransferDrain.error().ToString());
-        auto GraphicsDrain = m_GraphicsCompletionQueue.Drain();
-        if (!GraphicsDrain)
-            LogError("{}", GraphicsDrain.error().ToString());
-        auto DeletionDrain = m_DeletionQueue.Drain();
-        if (!DeletionDrain)
-            LogError("{}", DeletionDrain.error().ToString());
-        WaitIdle();
+        if (std::exchange(m_NeedsShutdown, false)) {
+            WaitIdle();
+            ImGui_ImplVulkan_Shutdown();
+            auto TransferDrain = m_TransferCompletionQueue.Drain();
+            if (!TransferDrain)
+                LogError("{}", TransferDrain.error().ToString());
+            auto GraphicsDrain = m_GraphicsCompletionQueue.Drain();
+            if (!GraphicsDrain)
+                LogError("{}", GraphicsDrain.error().ToString());
+            auto DeletionDrain = m_DeletionQueue.Drain();
+            if (!DeletionDrain)
+                LogError("{}", DeletionDrain.error().ToString());
+            WaitIdle();
+        }
+
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
         m_RayTracingGeometryTable.reset();
         m_DrawConstantArena = {};
         m_ConstantArena = {};
         m_FrameContext.clear();
         m_DescriptorManager.reset();
-        if (m_Allocator)
+        if (m_Allocator) {
             vmaDestroyAllocator(m_Allocator);
+            m_Allocator = nullptr;
+        }
     }
 
   private:
-    [[nodiscard]] auto CreateInstance(vk::raii::Context& Context) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto InitializeImGui(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> {
+        switch (WindowSys->GetType()) {
+        case WindowSystemType::Glfw: {
+            auto* Window = static_cast<GlfwWindowSystem*>(WindowSys)->GetNativeHandle();
+            if (!ImGui_ImplGlfw_InitForVulkan(Window, true))
+                return std::unexpected(ErrorMessage("ImGui GLFW platform backend initialization failed"));
+            break;
+        }
+        case WindowSystemType::Unknown:
+            return std::unexpected(ErrorMessage("Vulkan Dear ImGui renderer cannot use an unknown window system"));
+        default:
+            return std::unexpected(ErrorMessage("Vulkan Dear ImGui renderer does not support this window system"));
+        }
+
+        // Dear ImGui exposes a C Vulkan API. These raw values are confined to
+        // this third-party adapter boundary.
+        const VkFormat ColorAttachmentFormat = static_cast<VkFormat>(m_Swapchain.GetFormat().format);
+        VkPipelineRenderingCreateInfo PipelineRenderingCI{
+            .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount    = 1,
+            .pColorAttachmentFormats = &ColorAttachmentFormat,
+        };
+        ImGui_ImplVulkan_InitInfo InitInfo{};
+        InitInfo.ApiVersion                                  = VK_API_VERSION_1_4;
+        InitInfo.Instance                                    = static_cast<VkInstance>(*m_Instance);
+        InitInfo.PhysicalDevice                              = static_cast<VkPhysicalDevice>(*m_PhysicalDevice);
+        InitInfo.Device                                      = static_cast<VkDevice>(*m_Device);
+        InitInfo.QueueFamily                                 = m_GraphicsFamily;
+        InitInfo.Queue                                       = static_cast<VkQueue>(*m_GraphicsQueue);
+        InitInfo.DescriptorPool                              =
+            static_cast<VkDescriptorPool>(m_DescriptorManager->GetDescriptorPool());
+        InitInfo.MinImageCount                               = m_Swapchain.GetImageCount();
+        InitInfo.ImageCount                                  = m_Swapchain.GetImageCount();
+        InitInfo.UseDynamicRendering                         = true;
+        InitInfo.PipelineInfoMain.PipelineRenderingCreateInfo = PipelineRenderingCI;
+
+        if (!ImGui_ImplVulkan_LoadFunctions(
+                VK_API_VERSION_1_4,
+                [](const char* FunctionName, void* UserData) -> PFN_vkVoidFunction {
+                    auto* Instance              = static_cast<vk::raii::Instance*>(UserData);
+                    const VkInstance RawInstance = static_cast<VkInstance>(**Instance);
+                    return Instance->getDispatcher()->vkGetInstanceProcAddr(RawInstance, FunctionName);
+                },
+                &m_Instance))
+            return std::unexpected(ErrorMessage("ImGui_ImplVulkan_LoadFunctions failed"));
+        if (!ImGui_ImplVulkan_Init(&InitInfo))
+            return std::unexpected(ErrorMessage("ImGui_ImplVulkan_Init failed"));
+
+        return {};
+    }
+
+    [[nodiscard]] auto CreateInstance(vk::raii::Context& Context, IVulkanSurfaceProvider& SurfaceProvider)
+        -> std::expected<void, ErrorMessage> {
         vk::ApplicationInfo AppInfo{
             .pApplicationName   = "SoulEngine Application",
             .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -421,7 +493,12 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         std::vector<const char*> Layers;
 
-        auto EnabledInstanceExts = VulkanCapability::Get().ResolveInstanceExtensions(Context);
+        auto RequiredInstanceExtensions = SurfaceProvider.GetRequiredInstanceExtensions();
+        if (!RequiredInstanceExtensions)
+            return std::unexpected(RequiredInstanceExtensions.error().Append("Failed to query window-system Vulkan extensions"));
+
+        auto EnabledInstanceExts =
+            VulkanCapability::Get().ResolveInstanceExtensions(Context, *RequiredInstanceExtensions);
         if (!EnabledInstanceExts.has_value())
             return std::unexpected(EnabledInstanceExts.error());
 
@@ -551,11 +628,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_TransferQueue = m_Device.getQueue(m_TransferFamily, 0);
 
         VulkanCapability::Get().ResolveDeviceProperties(m_PhysicalDevice);
-        const auto& RayTracing = VulkanCapability::Get().GetRayTracingSupport();
-        if (RayTracing.Available)
+        const auto& RHIRayTracing = VulkanCapability::Get().GetRayTracingSupport();
+        if (RHIRayTracing.Available)
             LogInfo("Hardware ray tracing capability is available on the selected GPU");
         else
-            LogInfo("Hardware ray tracing capability is unavailable: {}", RayTracing.UnavailableReason);
+            LogInfo("Hardware ray tracing capability is unavailable: {}", RHIRayTracing.UnavailableReason);
 
         return {};
     }
@@ -583,21 +660,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (Result != VK_SUCCESS)
             return std::unexpected(ErrorMessage(
                 Format("Failed to create VMA allocator: {}", vk::to_string(static_cast<vk::Result>(Result)))));
-        return {};
-    }
-
-    [[nodiscard]] auto CreateSurface(GLFWwindow* Window) -> std::expected<void, ErrorMessage> {
-        VkSurfaceKHR RawSurface = VK_NULL_HANDLE;
-        VkResult Result = glfwCreateWindowSurface(static_cast<VkInstance>(*m_Instance), Window, nullptr, &RawSurface);
-        if (Result != VK_SUCCESS) {
-            const char* Desc = nullptr;
-            glfwGetError(&Desc);
-            return std::unexpected(ErrorMessage(Format("glfwCreateWindowSurface failed ({}): {}",
-                                                             vk::to_string(static_cast<vk::Result>(Result)),
-                                                             Desc ? Desc : "unknown error")));
-        }
-
-        m_Surface = vk::raii::SurfaceKHR(m_Instance, RawSurface);
         return {};
     }
 
@@ -682,7 +744,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     [[nodiscard]] auto ValidateCommandList(const RHICommandList& CmdList) const -> std::expected<void, ErrorMessage> {
-        if (CmdList.Scopes.empty() && !CmdList.PresentSource)
+        if (CmdList.Scopes.empty() && !CmdList.PresentSource && !CmdList.ImGuiPresentationOverlay)
             return {};
 
         if (!CmdList.PresentSource)
@@ -804,7 +866,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return {};
     }
 
-    auto RecordPresentBlit(vk::raii::CommandBuffer& Buf, RHIRenderTarget* Source) -> void {
+    auto RecordPresentBlit(vk::raii::CommandBuffer& Buf, RHIRenderTarget* Source, bool TransitionForPresent) -> void {
         auto& SrcRT = static_cast<const VulkanRenderTarget&>(*Source);
 
         const auto SrcImage = SrcRT.GetVkImage();
@@ -860,13 +922,61 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                       {BlitRegion},
                       vk::Filter::eNearest);
 
+        if (TransitionForPresent) {
+            VulkanTransitionImage(Buf,
+                                  m_CommittedImageStates,
+                                  DstImage,
+                                  vk::PipelineStageFlagBits2::eBottomOfPipe,
+                                  vk::AccessFlagBits2::eNone,
+                                  vk::ImageLayout::ePresentSrcKHR,
+                                  false);
+        }
+    }
+
+    [[nodiscard]] auto RecordImGuiPresentationOverlay(vk::raii::CommandBuffer&                 Buf,
+                                                       const RHIImGuiPresentationOverlayCmd& Overlay)
+        -> std::expected<void, ErrorMessage> {
+        if (!Overlay.Snapshot || !Overlay.TextureQueue || !Overlay.TextureMutex)
+            return std::unexpected(ErrorMessage("ImGui presentation overlay has incomplete state"));
+        {
+            std::lock_guard Lock(*Overlay.TextureMutex);
+            Overlay.TextureQueue->ProcessRequests(&Overlay.Snapshot->DrawData);
+        }
+
+        const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
         VulkanTransitionImage(Buf,
-                        m_CommittedImageStates,
-                        DstImage,
-                        vk::PipelineStageFlagBits2::eBottomOfPipe,
-                        vk::AccessFlagBits2::eNone,
-                        vk::ImageLayout::ePresentSrcKHR,
-                        false);
+                              m_CommittedImageStates,
+                              DstImage,
+                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              vk::AccessFlagBits2::eColorAttachmentWrite,
+                              vk::ImageLayout::eColorAttachmentOptimal,
+                              false);
+
+        const auto Extent = m_Swapchain.GetExtent();
+        vk::RenderingAttachmentInfo ColorAttachment{
+            .imageView   = m_Swapchain.GetCurrentImageView(),
+            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .loadOp      = vk::AttachmentLoadOp::eLoad,
+            .storeOp     = vk::AttachmentStoreOp::eStore,
+        };
+        vk::RenderingInfo RenderingInfo{
+            .renderArea           = vk::Rect2D{{0, 0}, Extent},
+            .layerCount           = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments    = &ColorAttachment,
+        };
+        Buf.beginRendering(RenderingInfo);
+        ImGui_ImplVulkan_RenderDrawData(&Overlay.Snapshot->DrawData, static_cast<VkCommandBuffer>(*Buf));
+        Buf.endRendering();
+
+        VulkanTransitionImage(Buf,
+                              m_CommittedImageStates,
+                              DstImage,
+                              vk::PipelineStageFlagBits2::eBottomOfPipe,
+                              vk::AccessFlagBits2::eNone,
+                              vk::ImageLayout::ePresentSrcKHR,
+                              false);
+        return {};
     }
 
     // VulkanCommandVisitor lives in VKCommand.cppm — imported via :Command partition.
@@ -878,7 +988,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto Execute(const RHICommandList& CmdList) -> std::expected<void, ErrorMessage> override {
         if (auto R = ValidateCommandList(CmdList); !R)
             return std::unexpected(R.error());
-        if (CmdList.Scopes.empty() && !CmdList.PresentSource)
+        if (CmdList.Scopes.empty() && !CmdList.PresentSource && !CmdList.ImGuiPresentationOverlay)
             return {};
 
         if (auto R = BeginFrame(); !R)
@@ -976,7 +1086,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         if (!Secondaries.empty())
             Primary.executeCommands(Secondaries);
-        RecordPresentBlit(Primary, CmdList.PresentSource);
+        RecordPresentBlit(Primary, CmdList.PresentSource, !CmdList.ImGuiPresentationOverlay.has_value());
+        if (CmdList.ImGuiPresentationOverlay) {
+            if (auto R = RecordImGuiPresentationOverlay(Primary, *CmdList.ImGuiPresentationOverlay); !R)
+                return std::unexpected(R.error());
+        }
         if (auto R = Primary.end(); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Execute: primary end failed"));
 
@@ -1026,10 +1140,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     // ── RAII resources ─────────────────────────────────────────────────────
 
-    vk::raii::Instance       m_Instance       = nullptr;
-    vk::raii::SurfaceKHR     m_Surface        = nullptr;
-    vk::raii::PhysicalDevice m_PhysicalDevice = nullptr;
-    vk::raii::Device         m_Device         = nullptr;
+    UPtr<IVulkanSurfaceProvider> m_SurfaceProvider = nullptr;
+    vk::raii::Instance            m_Instance       = nullptr;
+    vk::raii::SurfaceKHR          m_Surface        = nullptr;
+    vk::raii::PhysicalDevice      m_PhysicalDevice = nullptr;
+    vk::raii::Device              m_Device         = nullptr;
 
     uint32_t m_GraphicsFamily = vk::QueueFamilyIgnored;
     uint32_t m_ComputeFamily  = vk::QueueFamilyIgnored;
@@ -1054,7 +1169,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     VmaAllocator      m_Allocator = nullptr;
     VulkanTimelineSemaphore m_Timeline;
 
-    VulkanDeletionQueue m_DeletionQueue; // re-initialized after m_Timeline created
+    VulkanDeletionQueue        m_DeletionQueue       = {}; // re-initialized after m_Timeline created
 
     std::vector<VulkanFrameContext>      m_FrameContext;
     VulkanUniformBufferArena              m_ConstantArena     = {};
@@ -1064,6 +1179,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // ── Global descriptor manager ─────────────────────────────────────────
     UPtr<VulkanDescriptorManager> m_DescriptorManager = nullptr;
     Uint32                        m_MaxTextures        = 4096;
+    bool                          m_NeedsShutdown      = false;
 
     // ── Barrier state tracking ───────────────────────────────────────────
 

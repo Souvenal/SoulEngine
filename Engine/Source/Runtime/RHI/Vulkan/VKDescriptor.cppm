@@ -66,17 +66,28 @@ class VulkanDescriptorManager {
         Mgr.m_FramesInFlight = FramesInFlight;
 
         // ── Descriptor pool ─────────────────────────────────────────────
-        constexpr Uint32 ScratchDescriptorCount = 4096;
+        constexpr Uint32 ScratchDescriptorCount           = 4096;
+        constexpr Uint32 ImGuiDescriptorCount             = 4096;
+        constexpr Uint32 SharedDescriptorCount            = ScratchDescriptorCount + ImGuiDescriptorCount;
+        constexpr Uint32 PersistentSampledImageSetBudget = 4;
+        constexpr Uint32 SampledImageDescriptorCount =
+            ScratchDescriptorCount * (PersistentSampledImageSetBudget + 1) + ImGuiDescriptorCount;
         std::vector<vk::DescriptorPoolSize> PoolSizes{
-            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, ScratchDescriptorCount},
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, ScratchDescriptorCount},
-            vk::DescriptorPoolSize{vk::DescriptorType::eSampler, ScratchDescriptorCount},
-            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, ScratchDescriptorCount},
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, ScratchDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eSampler, SharedDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, ImGuiDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, SampledImageDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, SharedDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformTexelBuffer, ImGuiDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageTexelBuffer, ImGuiDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, ImGuiDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, SharedDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, SharedDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, ImGuiDescriptorCount},
+            vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, ImGuiDescriptorCount},
         };
         if (VulkanCapability::Get().GetRayTracingSupport().Available)
             PoolSizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, ScratchDescriptorCount);
-        Uint32 MaxSets = ScratchDescriptorCount + 1;
+        Uint32 MaxSets = SharedDescriptorCount + 1;
         vk::DescriptorPoolCreateInfo PoolCI{
             // eFreeDescriptorSet is required because scratch sets are
             // vk::raii::DescriptorSet, whose destructors call vkFreeDescriptorSets.
@@ -100,6 +111,10 @@ class VulkanDescriptorManager {
     auto BeginFrame(Uint32 FrameIndex) -> void {
         if (FrameIndex < m_ScratchSets.size())
             m_ScratchSets[FrameIndex].clear();
+    }
+
+    [[nodiscard]] auto GetDescriptorPool() const -> vk::DescriptorPool {
+        return *m_Pool;
     }
 
     [[nodiscard]] auto AllocateDescriptorSets(Uint32 FrameIndex, std::span<const vk::DescriptorSetLayout> SetLayouts)
@@ -240,7 +255,7 @@ class VulkanDescriptorManager {
     vk::raii::Device* m_Device         = nullptr;
     Uint32            m_FramesInFlight = 2;
 
-    vk::raii::DescriptorPool              m_Pool       = nullptr;
+    vk::raii::DescriptorPool                          m_Pool = nullptr;
     std::vector<std::vector<vk::raii::DescriptorSet>> m_ScratchSets;
 };
 

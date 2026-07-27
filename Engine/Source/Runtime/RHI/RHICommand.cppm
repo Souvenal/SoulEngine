@@ -1,3 +1,7 @@
+module;
+
+#include <imgui_threaded_rendering.h>
+
 export module RHI:Command;
 
 export import :Types;
@@ -267,12 +271,23 @@ struct RHINonRenderingPass {
 /// submission order because trace output can subsequently be rendered or presented.
 using RHICommandScope = std::variant<RHIPass, RHINonRenderingPass>;
 
+/// @brief One Dear ImGui overlay to record over the acquired presentation image.
+///
+/// All pointers are non-owning. The producer's frame slot retains the snapshot,
+/// texture queue, and mutex until RHIRenderDevice::Execute() returns.
+struct RHIImGuiPresentationOverlayCmd {
+    ImDrawDataSnapshot* Snapshot     = nullptr;
+    ImTextureQueue*     TextureQueue = nullptr;
+    std::mutex*           TextureMutex = nullptr;
+};
+
 /// @brief Complete frame's worth of GPU commands, produced by RenderLoop,
 /// consumed by RHIRenderDevice::Execute().
 struct RHICommandList {
     std::vector<RHICommandScope> Scopes = {};
     /// Final frame output. Backend presents this engine-owned RT to swapchain.
     RHIRenderTarget*             PresentSource = nullptr;
+    std::optional<RHIImGuiPresentationOverlayCmd> ImGuiPresentationOverlay = std::nullopt;
 };
 
 } // namespace SoulEngine

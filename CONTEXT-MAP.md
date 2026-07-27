@@ -5,8 +5,9 @@ Each module has its own `CONTEXT.md` with module-specific terms, architecture, a
 | Context | Module dir | `CONTEXT.md` |
 |---------|-----------|--------------|
 | Core | `Engine/Source/Runtime/Core/` | [Core](Engine/Source/Runtime/Core/CONTEXT.md) |
-| Window | `Engine/Source/Runtime/Window/` | [Window](Engine/Source/Runtime/Window/CONTEXT.md) |
+| WindowSystem | `Engine/Source/Runtime/WindowSystem/` | [WindowSystem](Engine/Source/Runtime/WindowSystem/CONTEXT.md) |
 | Application | `Engine/Source/Runtime/Application/` | [Application](Engine/Source/Runtime/Application/CONTEXT.md) |
+| Editor | `Engine/Source/Runtime/Editor/` | [Editor](Engine/Source/Runtime/Editor/CONTEXT.md) |
 | Launch | `Engine/Source/Runtime/Launch/` | [Launch](Engine/Source/Runtime/Launch/CONTEXT.md) |
 | RHI | `Engine/Source/Runtime/RHI/` | [RHI](Engine/Source/Runtime/RHI/CONTEXT.md) |
 | Shader | `Engine/Source/Runtime/Shader/` | [Shader](Engine/Source/Runtime/Shader/CONTEXT.md) |

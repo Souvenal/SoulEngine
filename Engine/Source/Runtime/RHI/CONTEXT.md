@@ -15,7 +15,7 @@ self-registering factory pattern.
 | **Shader parameters** | Copyable CPU-side snapshot of values assigned by shader parameter path. It is automatically partitioned into reflected shader parameter sets and recorded through `BindShaderParametersCmd`. |
 | **Shader parameter set** | One partition of shader parameters matching exactly one reflected descriptor-set layout. Backend realization may associate it with a native descriptor set. |
 | **Resource usage tracking** | RHI-command-level enumeration of GPU resources referenced by a command list submission. |
-| **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `Init(GLFWwindow*)` is pure virtual — backends do setup there, not in the constructor. Process-wide singleton: `RenderDevice::Create(Window)` bootstraps, `RenderDevice::Get()` accesses, `RenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
+| **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `BindWindowSystem(IWindowSystem&)` is pure virtual — it binds the main presentation window after backend construction. Process-wide singleton: `RHIRenderDevice::Create()` constructs the backend, `RHIRenderDevice::Get().BindWindowSystem(WindowSys)` prepares presentation, `RHIRenderDevice::Get()` accesses, and `RHIRenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
 | **VertexBuffer** | Runtime polymorphic base in `SoulEngine`. Immutable after creation. `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (`UPtr` buffer + upload completion token) so the Resource layer can own the payload and track when staging → device copies complete. |
 | **IndexBuffer** | Same role as VertexBuffer, for index data. `CreateIndexBuffer` returns `IndexBufferCreateResult`. |
 | **SampledTexture** | Shader-readable texture created from CPU pixel data through the dedicated transfer upload path. Its creation returns a unique `SampledTexture` payload plus a transfer upload completion token. Public RHI sampled-texture APIs use this name instead of the generic `Texture` name. |
@@ -40,8 +40,9 @@ self-registering factory pattern.
 ## Architecture
 
 The module defines abstract interfaces (`RenderDevice`, `CommandList`) and a process-wide singleton
-accessed via `RenderDevice::Get()`.  `RenderDevice::Create(GLFWwindow*)` selects a backend via
-`BackendFactory::Get().Create(name)` and stores the result.
+accessed via `RHIRenderDevice::Get()`. `RHIRenderDevice::Create()` selects a
+backend via `BackendFactory::Get().Create(name)` and stores the result;
+`BindWindowSystem(IWindowSystem&)` subsequently prepares the main presentation target.
 
 Backends are standalone modules (`export module Vulkan;`) compiled into the same `.dylib`.
 Each backend registers itself at static-init time via a namespace-scope
@@ -55,8 +56,9 @@ Consumers of the RHI module never see backend types directly. All interaction go
 
 ```
 EngineLoop::Init()
-  ├── WindowDisplay::Create()
-  ├── RenderDevice::Create(Window)   // bootstrap — factory + Init + store
+  ├── CreateWindowSystem()
+  ├── RenderDevice::Create()          // backend factory + singleton store
+  ├── RenderDevice::BindWindowSystem(WindowSys)
   └── SwitchApplication()
         └── App->OnAttach()           // renderer creates resources via RenderDevice::Get()
 
@@ -67,7 +69,7 @@ EngineLoop::Shutdown()
   ├── clear FrameSlot.RenderPacket   // release command observer pointers
   ├── ResourceManager::Clear()       // release Manager-owned payloads
   ├── RenderDevice::Destroy()        // teardown singleton (VMA)
-  └── WindowDisplay::Shutdown()
+  └── IWindowSystem::Shutdown()
 ```
 
 ## Relationships
@@ -116,12 +118,13 @@ RHI resources are not thread-safe by default. Callers must serialize access:
 
 Backend-native RHI object creation, descriptor writes, GPU upload submission, and GPU completion publication belong to the RHI thread. Game, Render, and background worker threads may prepare CPU-side request data or observe published handles/status, but must not directly mutate backend-native RHI state.
 
-The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::Launch::EngineLoop` — see [`Launch/CONTEXT.md`](../Launch/CONTEXT.md).
+The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::EngineLoop` — see [`Launch/CONTEXT.md`](../Launch/CONTEXT.md).
 
 ## Dependencies
 
 - `Core` — logging, config, `Singleton`, `Factory`
 - `Shader` — `ShaderGraphicsProgram` and compiled shader artifact types (consumes)
+- `WindowSystem` — main-window binding and framebuffer extent
 - Third-party: vulkansdk, VMA
 
 ## BDA ray-tracing geometry

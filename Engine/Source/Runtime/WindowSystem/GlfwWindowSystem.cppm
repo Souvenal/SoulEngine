@@ -1,58 +1,82 @@
 module;
 
 #include <GLFW/glfw3.h>
+#include <imgui_impl_glfw.h>
 
-export module Window;
+export module WindowSystem:Glfw;
 
 import Core;
+import :Types;
+import :Interface;
 
 export import std;
 
-namespace {
-auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
-    SoulEngine::LogError("GLFW Error [0x{:08X}]: {}", ErrorCode, Description);
-}
-} // namespace
-
 namespace SoulEngine {
 
-/// @brief Drawable framebuffer size in physical pixels.
+namespace {
+    
+constexpr Int32 DefaultWindowWidth  = 1280;
+constexpr Int32 DefaultWindowHeight = 720;
+
+auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
+    LogError("GLFW Error [0x{:08X}]: {}", ErrorCode, Description);
+}
+
+[[nodiscard]] auto ToGLFWKey(WindowKey Key) -> int {
+    switch (Key) {
+    case WindowKey::A:
+        return GLFW_KEY_A;
+    case WindowKey::D:
+        return GLFW_KEY_D;
+    case WindowKey::E:
+        return GLFW_KEY_E;
+    case WindowKey::Q:
+        return GLFW_KEY_Q;
+    case WindowKey::S:
+        return GLFW_KEY_S;
+    case WindowKey::W:
+        return GLFW_KEY_W;
+    case WindowKey::Unknown:
+        break;
+    }
+    return GLFW_KEY_UNKNOWN;
+}
+
+[[nodiscard]] auto ToGLFWMouseButton(WindowMouseButton Button) -> int {
+    switch (Button) {
+    case WindowMouseButton::Left:
+        return GLFW_MOUSE_BUTTON_LEFT;
+    case WindowMouseButton::Middle:
+        return GLFW_MOUSE_BUTTON_MIDDLE;
+    case WindowMouseButton::Right:
+        return GLFW_MOUSE_BUTTON_RIGHT;
+    case WindowMouseButton::Unknown:
+        break;
+    }
+    return -1;
+}
+
+} // namespace
+
+/// @brief GLFW implementation of IWindowSystem.
 ///
-/// Vulkan swapchains and render targets must use framebuffer pixels, not GLFW
-/// window coordinates. On HiDPI/Retina displays these can differ, for example
-/// a 1920x1080 window may have a larger framebuffer backing store.
-export struct FramebufferExtent {
-    int Width  = 0;
-    int Height = 0;
-};
-
-/// @brief Relative cursor movement accumulated between game ticks.
-export struct CursorDelta {
-    float X = 0.0f;
-    float Y = 0.0f;
-};
-
-/// @brief Keyboard keys exposed by the window input surface.
-export enum class WindowKey {
-    Unknown = 0,
-    A,
-    D,
-    E,
-    Q,
-    S,
-    W,
-};
-
-export class WindowDisplay final {
+/// Owns the GLFW library lifetime and one native window: surface creation,
+/// event polling, supported-key state queries, scroll accumulation, and
+/// relative cursor accumulation. Non-copyable and movable.
+///
+/// Backend-native consumers (Vulkan surface creation, the ImGui GLFW
+/// backend) obtain the raw GLFWwindow* via GetNativeHandle() after
+/// dispatching on IWindowSystem::GetType().
+export class GlfwWindowSystem final : public IWindowSystem {
   public:
-    WindowDisplay() = default;
-    ~WindowDisplay() {
+    GlfwWindowSystem() = default;
+    ~GlfwWindowSystem() override {
         Shutdown();
     }
 
-    WindowDisplay(const WindowDisplay&)                    = delete;
-    auto operator=(const WindowDisplay&) -> WindowDisplay& = delete;
-    WindowDisplay(WindowDisplay&& Other) noexcept
+    GlfwWindowSystem(const GlfwWindowSystem&)                    = delete;
+    auto operator=(const GlfwWindowSystem&) -> GlfwWindowSystem& = delete;
+    GlfwWindowSystem(GlfwWindowSystem&& Other) noexcept
         : m_Window(std::exchange(Other.m_Window, nullptr)),
           m_bInitialized(std::exchange(Other.m_bInitialized, false)),
           m_bFramebufferResized(std::exchange(Other.m_bFramebufferResized, false)),
@@ -62,15 +86,16 @@ export class WindowDisplay final {
           m_CursorDelta(std::exchange(Other.m_CursorDelta, {})),
           m_LastCursorX(std::exchange(Other.m_LastCursorX, 0.0)),
           m_LastCursorY(std::exchange(Other.m_LastCursorY, 0.0)),
-          m_HasCursorPosition(std::exchange(Other.m_HasCursorPosition, false)) {
+          m_HasCursorPosition(std::exchange(Other.m_HasCursorPosition, false)),
+          m_CursorCaptured(std::exchange(Other.m_CursorCaptured, false)) {
         if (m_Window) {
             glfwSetWindowUserPointer(m_Window, this);
-            glfwSetFramebufferSizeCallback(m_Window, &WindowDisplay::OnFramebufferResize);
-            glfwSetScrollCallback(m_Window, &WindowDisplay::OnScroll);
-            glfwSetCursorPosCallback(m_Window, &WindowDisplay::OnCursorPosition);
+            glfwSetFramebufferSizeCallback(m_Window, &GlfwWindowSystem::OnFramebufferResize);
+            glfwSetScrollCallback(m_Window, &GlfwWindowSystem::OnScroll);
+            glfwSetCursorPosCallback(m_Window, &GlfwWindowSystem::OnCursorPosition);
         }
     }
-    auto operator=(WindowDisplay&& Other) noexcept -> WindowDisplay& {
+    auto operator=(GlfwWindowSystem&& Other) noexcept -> GlfwWindowSystem& {
         if (this != &Other) {
             std::swap(m_Window, Other.m_Window);
             std::swap(m_bInitialized, Other.m_bInitialized);
@@ -82,18 +107,19 @@ export class WindowDisplay final {
             std::swap(m_LastCursorX, Other.m_LastCursorX);
             std::swap(m_LastCursorY, Other.m_LastCursorY);
             std::swap(m_HasCursorPosition, Other.m_HasCursorPosition);
+            std::swap(m_CursorCaptured, Other.m_CursorCaptured);
             if (m_Window) {
                 glfwSetWindowUserPointer(m_Window, this);
-                glfwSetFramebufferSizeCallback(m_Window, &WindowDisplay::OnFramebufferResize);
-                glfwSetScrollCallback(m_Window, &WindowDisplay::OnScroll);
-                glfwSetCursorPosCallback(m_Window, &WindowDisplay::OnCursorPosition);
+                glfwSetFramebufferSizeCallback(m_Window, &GlfwWindowSystem::OnFramebufferResize);
+                glfwSetScrollCallback(m_Window, &GlfwWindowSystem::OnScroll);
+                glfwSetCursorPosCallback(m_Window, &GlfwWindowSystem::OnCursorPosition);
             }
         }
         return *this;
     }
 
-    [[nodiscard]] static auto Create() -> std::expected<WindowDisplay, ErrorMessage> {
-        WindowDisplay Result;
+    [[nodiscard]] static auto Create() -> std::expected<GlfwWindowSystem, ErrorMessage> {
+        GlfwWindowSystem Result;
         glfwSetErrorCallback(&GLFWErrorCallback);
 
         if (!glfwInit()) {
@@ -108,8 +134,8 @@ export class WindowDisplay final {
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         auto&      Cfg          = ConfigManager::Get().GetConfig();
-        const auto WindowWidth  = Cfg.Window.ResolutionX.value_or(1280);
-        const auto WindowHeight = Cfg.Window.ResolutionY.value_or(720);
+        const auto WindowWidth  = Cfg.Window.ResolutionX.value_or(DefaultWindowWidth);
+        const auto WindowHeight = Cfg.Window.ResolutionY.value_or(DefaultWindowHeight);
         Result.m_Title          = Cfg.Application.Name.value_or("SoulEngine");
 
         Result.m_Window = glfwCreateWindow(WindowWidth, WindowHeight, Result.m_Title.c_str(), nullptr, nullptr);
@@ -122,10 +148,9 @@ export class WindowDisplay final {
         }
 
         glfwSetWindowUserPointer(Result.m_Window, &Result);
-        glfwSetFramebufferSizeCallback(Result.m_Window, &WindowDisplay::OnFramebufferResize);
-        glfwSetScrollCallback(Result.m_Window, &WindowDisplay::OnScroll);
-        glfwSetCursorPosCallback(Result.m_Window, &WindowDisplay::OnCursorPosition);
-        glfwSetInputMode(Result.m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwSetFramebufferSizeCallback(Result.m_Window, &GlfwWindowSystem::OnFramebufferResize);
+        glfwSetScrollCallback(Result.m_Window, &GlfwWindowSystem::OnScroll);
+        glfwSetCursorPosCallback(Result.m_Window, &GlfwWindowSystem::OnCursorPosition);
 
         // Use framebuffer size rather than window size because Vulkan renders
         // to drawable pixels. GLFW window size is logical screen coordinates
@@ -145,9 +170,13 @@ export class WindowDisplay final {
         return Result;
     }
 
-    auto Shutdown() -> void {
+    auto Shutdown() -> void override {
         if (!m_bInitialized)
             return;
+
+        if (ImGui::GetCurrentContext() && ImGui::GetIO().BackendPlatformUserData) {
+            ImGui_ImplGlfw_Shutdown();
+        }
 
         if (m_Window) {
             glfwDestroyWindow(m_Window);
@@ -156,17 +185,22 @@ export class WindowDisplay final {
 
         glfwTerminate();
 
-        m_Title        = {};
-        m_Extent       = {};
-        m_ScrollDelta  = 0.0f;
-        m_CursorDelta  = {};
-        m_LastCursorX  = 0.0;
-        m_LastCursorY  = 0.0;
+        m_Title             = {};
+        m_Extent            = {};
+        m_ScrollDelta       = 0.0f;
+        m_CursorDelta       = {};
+        m_LastCursorX       = 0.0;
+        m_LastCursorY       = 0.0;
         m_HasCursorPosition = false;
-        m_bInitialized = false;
+        m_CursorCaptured    = false;
+        m_bInitialized      = false;
     }
 
-    [[nodiscard]] auto IsValid() const -> bool {
+    [[nodiscard]] auto GetType() const -> WindowSystemType override {
+        return WindowSystemType::Glfw;
+    }
+
+    [[nodiscard]] auto IsValid() const -> bool override {
         return m_Window != nullptr;
     }
 
@@ -174,7 +208,7 @@ export class WindowDisplay final {
         return m_Window;
     }
 
-    [[nodiscard]] auto ConsumeFramebufferResize() -> std::optional<FramebufferExtent> {
+    [[nodiscard]] auto ConsumeFramebufferResize() -> std::optional<FramebufferExtent> override {
         if (!m_bFramebufferResized)
             return std::nullopt;
 
@@ -182,14 +216,18 @@ export class WindowDisplay final {
         return m_Extent;
     }
 
-    [[nodiscard]] auto PollEvents() -> bool {
+    [[nodiscard]] auto GetFramebufferExtent() const -> FramebufferExtent override {
+        return m_Extent;
+    }
+
+    [[nodiscard]] auto PollEvents() -> bool override {
         glfwPollEvents();
 
         return glfwWindowShouldClose(m_Window);
     }
 
     /// @brief Return whether a supported keyboard key is currently pressed.
-    [[nodiscard]] auto IsKeyPressed(WindowKey Key) const -> bool {
+    [[nodiscard]] auto IsKeyPressed(WindowKey Key) const -> bool override {
         if (!m_Window)
             return false;
 
@@ -197,54 +235,52 @@ export class WindowDisplay final {
         return GLFWKey != GLFW_KEY_UNKNOWN && glfwGetKey(m_Window, GLFWKey) == GLFW_PRESS;
     }
 
+    [[nodiscard]] auto IsMouseButtonPressed(WindowMouseButton Button) const -> bool override {
+        if (!m_Window)
+            return false;
+
+        const auto GLFWButton = ToGLFWMouseButton(Button);
+        return GLFWButton >= 0 && glfwGetMouseButton(m_Window, GLFWButton) == GLFW_PRESS;
+    }
+
+    auto SetCursorCaptured(bool Captured) -> void override {
+        if (!m_Window || m_CursorCaptured == Captured)
+            return;
+
+        glfwSetInputMode(m_Window, GLFW_CURSOR, Captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        m_CursorCaptured    = Captured;
+        m_CursorDelta       = {};
+        m_HasCursorPosition = false;
+    }
+
     /// @brief Return and clear the vertical scroll amount received since the last call.
-    auto ConsumeScrollDelta() -> float {
+    auto ConsumeScrollDelta() -> float override {
         return std::exchange(m_ScrollDelta, 0.0f);
     }
 
     /// @brief Return and clear the relative cursor movement received since the last call.
-    auto ConsumeCursorDelta() -> CursorDelta {
+    auto ConsumeCursorDelta() -> CursorDelta override {
         return std::exchange(m_CursorDelta, {});
     }
 
   private:
-    [[nodiscard]] static auto ToGLFWKey(WindowKey Key) -> int {
-        switch (Key) {
-        case WindowKey::A:
-            return GLFW_KEY_A;
-        case WindowKey::D:
-            return GLFW_KEY_D;
-        case WindowKey::E:
-            return GLFW_KEY_E;
-        case WindowKey::Q:
-            return GLFW_KEY_Q;
-        case WindowKey::S:
-            return GLFW_KEY_S;
-        case WindowKey::W:
-            return GLFW_KEY_W;
-        case WindowKey::Unknown:
-            break;
-        }
-        return GLFW_KEY_UNKNOWN;
-    }
-
     static auto OnFramebufferResize(GLFWwindow* Win, int NewW, int NewH) -> void {
-        auto* Self = static_cast<WindowDisplay*>(glfwGetWindowUserPointer(Win));
+        auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
         if (Self) {
-            Self->m_Extent.Width  = NewW;
-            Self->m_Extent.Height = NewH;
+            Self->m_Extent.Width        = NewW;
+            Self->m_Extent.Height       = NewH;
             Self->m_bFramebufferResized = true;
         }
     }
 
     static auto OnScroll(GLFWwindow* Win, double /*XOffset*/, double YOffset) -> void {
-        auto* Self = static_cast<WindowDisplay*>(glfwGetWindowUserPointer(Win));
+        auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
         if (Self)
             Self->m_ScrollDelta += static_cast<float>(YOffset);
     }
 
     static auto OnCursorPosition(GLFWwindow* Win, double XPosition, double YPosition) -> void {
-        auto* Self = static_cast<WindowDisplay*>(glfwGetWindowUserPointer(Win));
+        auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
         if (!Self)
             return;
         if (!Self->m_HasCursorPosition) {
@@ -265,11 +301,12 @@ export class WindowDisplay final {
     bool              m_bFramebufferResized = false;
     String            m_Title;
     FramebufferExtent m_Extent; ///< Current framebuffer extent (kept in sync on resize)
-    float             m_ScrollDelta         = 0.0f;
-    CursorDelta       m_CursorDelta         = {};
-    double            m_LastCursorX         = 0.0;
-    double            m_LastCursorY         = 0.0;
-    bool              m_HasCursorPosition   = false;
+    float             m_ScrollDelta       = 0.0f;
+    CursorDelta       m_CursorDelta       = {};
+    double            m_LastCursorX       = 0.0;
+    double            m_LastCursorY       = 0.0;
+    bool              m_HasCursorPosition = false;
+    bool              m_CursorCaptured    = false;
 };
 
 } // namespace SoulEngine

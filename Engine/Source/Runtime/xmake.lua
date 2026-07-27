@@ -34,7 +34,7 @@ end
 
 includes("Core")
 includes("Platform")
-includes("Window")
+includes("WindowSystem")
 includes("Shader")
 includes("RHI")
 includes("ShaderCompiler")
@@ -44,6 +44,7 @@ includes("Scene")
 includes("TaskGraph")
 includes("Application")
 includes("Renderer")
+includes("Editor")
 includes("Launch")
 
 target("SoulEngine")

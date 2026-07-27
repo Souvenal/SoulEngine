@@ -116,6 +116,8 @@ namespace SoulEngine {
         return vk::Format::eR32G32B32Sfloat;
     case RHIFormat::R32G32B32A32_SFLOAT:
         return vk::Format::eR32G32B32A32Sfloat;
+    case RHIFormat::R8G8B8A8_UNORM:
+        return vk::Format::eR8G8B8A8Unorm;
     default:
         return std::unexpected(
             ErrorMessage(Format("Unsupported explicit vertex input format: {}", magic_enum::enum_name(Fmt))));

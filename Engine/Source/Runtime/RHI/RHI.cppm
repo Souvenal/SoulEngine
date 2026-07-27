@@ -8,7 +8,7 @@ export import :Command;      // RHICommandList, RHIPass, RHICommand variant
 export import :UsageVisitor; // RHIUsageVisitor for command resource tracking
 
 // RHI singleton lifecycle is now on RHIRenderDevice:
-//   RHIRenderDevice::Create(Window)   — bootstrap
+//   RHIRenderDevice::Create(WindowSys) — select and initialize the backend
 //   RHIRenderDevice::Get()            — access
 //   RHIRenderDevice::Destroy()        — teardown
 //
