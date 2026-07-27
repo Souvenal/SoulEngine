@@ -1,8 +1,3 @@
-module;
-
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
 export module Vulkan:Capability;
 
 import Core;
@@ -52,25 +47,17 @@ class VulkanCapability : public Singleton<VulkanCapability> {
   public:
     // ── Phase 1: Resolve instance extensions ─────────────────────────────
 
-    [[nodiscard]] auto ResolveInstanceExtensions(vk::raii::Context& Ctx)
+    [[nodiscard]] auto ResolveInstanceExtensions(vk::raii::Context&      Ctx,
+                                                 std::span<const char*> RequiredExtensions)
         -> std::expected<std::vector<const char*>, ErrorMessage> {
-        // Merge GLFW-required extensions — all are required.
-        uint32_t GlfwCount = 0;
-        auto*    GlfwExts  = glfwGetRequiredInstanceExtensions(&GlfwCount);
-        if (!GlfwExts) {
-            const char* Desc = nullptr;
-            glfwGetError(&Desc);
-            return std::unexpected(
-                ErrorMessage(Format("glfwGetRequiredInstanceExtensions failed: {}",
-                                          Desc ? Desc : "GLFW not initialized or no Vulkan support")));
-        }
-        for (auto* GlfwExt : std::span(GlfwExts, GlfwCount)) {
-            auto It = std::ranges::find_if(m_InstanceExts,
-                                           [&](const auto& E) { return E.Name && std::strcmp(E.Name, GlfwExt) == 0; });
+        for (const auto* RequiredExtension : RequiredExtensions) {
+            auto It = std::ranges::find_if(m_InstanceExts, [&](const auto& E) {
+                return E.Name && std::strcmp(E.Name, RequiredExtension) == 0;
+            });
             if (It != m_InstanceExts.end())
-                It->Enabled = false; // re-enabled below if found in driver
+                It->Enabled = false;
             else
-                m_InstanceExts.emplace_back(GlfwExt, true, false);
+                m_InstanceExts.emplace_back(RequiredExtension, true, false);
         }
 
         // Enumerate available instance extensions
@@ -272,15 +259,15 @@ class VulkanCapability : public Singleton<VulkanCapability> {
             }
         }
 
-        if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRBufferDeviceAddressExtensionName)) {
+        if (ApiVersion < vk::ApiVersion12 && !HasExtension(vk::KHRBufferDeviceAddressExtensionName)) {
             m_RayTracingSupport.UnavailableReason = "VK_KHR_buffer_device_address is required before Vulkan 1.2";
             return;
         }
-        if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRSpirv14ExtensionName)) {
+        if (ApiVersion < vk::ApiVersion12 && !HasExtension(vk::KHRSpirv14ExtensionName)) {
             m_RayTracingSupport.UnavailableReason = "VK_KHR_spirv_1_4 is required before Vulkan 1.2";
             return;
         }
-        if (ApiVersion < VK_API_VERSION_1_2 && !HasExtension(vk::KHRShaderFloatControlsExtensionName)) {
+        if (ApiVersion < vk::ApiVersion12 && !HasExtension(vk::KHRShaderFloatControlsExtensionName)) {
             m_RayTracingSupport.UnavailableReason = "VK_KHR_shader_float_controls is required before Vulkan 1.2";
             return;
         }

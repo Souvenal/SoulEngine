@@ -5,13 +5,15 @@ module;
 // Required while Scene exposes entt::registry in its object layout. EngineLoop owns
 // Application and can instantiate the Scene lifetime chain when replacing applications.
 #include <entt/entt.hpp>
+#include <imgui_threaded_rendering.h>
 
 export module Launch;
 
 import Core;
 import Platform;
-import Window;
+import WindowSystem;
 import Application;
+import Editor;
 import RHI;
 import Scene;
 import Renderer;
@@ -37,33 +39,58 @@ struct FrameSlot {
     SlotState               State = SlotState::Empty;
     SceneSnapshot    SceneData;
     RenderResult  RenderPacket;
+    ImDrawDataSnapshot ImGuiSnapshot;
 };
 
 constexpr Uint32 kSlotCount = 3;
 
 class EngineLoop {
   public:
+    /// @brief Process command-line arguments and load engine configuration.
+    /// @details Currently only loads the engine configuration file; no
+    /// command-line argument handling is implemented yet.
     [[nodiscard]] auto PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, ErrorMessage> {
+        // Directory layout:
+        //   Engine/
+        //     Configs/
+        //       SoulEngine.toml
+        //     Binaries/
+        //       SoulEngine         <- binary (CmdLineArgs[0])
         auto EngineDir = Path(CmdLineArgs.front()).parent_path().parent_path();
 
+        // Validate the directory layout before proceeding.  If the binary
+        // has been moved, the hard-coded parent_path chain yields garbage.
+        // Logging isn't initialized yet, so we write directly to stderr.
         if (EngineDir.filename() != "Engine") {
             std::println(stderr, "FATAL: Invalid engine directory layout.");
             std::println(stderr, "  Expected root directory name: Engine");
             std::println(stderr, "  Resolved root:               {}", EngineDir.string());
             std::println(stderr, "  Binary path:                 {}", CmdLineArgs.front());
+            // Exit directly: the logging system hasn't been initialized yet,
+            // so returning an error would end up in LogError with no logger.
+            // No resources have been allocated at this point, so exit is safe.
             std::exit(1);
         }
 
+        // Initialize ConfigManager with the engine root — infallible, no I/O.
         ConfigManager::Get().Init(EngineDir);
+
+        // Initialize spdlog sinks and logger rooted at Engine/Logs/.
         LogManager::Get().Init(ConfigManager::Get().LogsDirPath());
 
+        // Load the config file from Engine/Configs/SoulEngine.toml.
         auto LoadResult = ConfigManager::Get().LoadConfig();
         if (!LoadResult)
             return std::unexpected(LoadResult.error().Append("Failed to load config file"));
 
+        // Apply log-level configuration from the [Log] section.
         auto& LogCfg = ConfigManager::Get().GetConfig().Log;
         LogManager::Get().SetSinkLevels(LogCfg.FileLevel, LogCfg.ConsoleLevel);
 
+        // LogInfo intentionally deferred to here: LogManager::Init() is
+        // called above and must run first so the spdlog logger is ready.
+        // Any log calls before that point silently produce no output
+        // (Log() returns early when the logger is null).
         LogInfo("Soul Engine PreInitializing... ({} args)", CmdLineArgs.size());
         Platform::InstallCrashHandler();
         return {};
@@ -72,12 +99,18 @@ class EngineLoop {
     [[nodiscard]] auto Init() -> std::expected<void, ErrorMessage> {
         LogInfo("Soul Engine Initializing...");
 
-        auto WinResult = WindowDisplay::Create();
-        if (!WinResult)
-            return std::unexpected(WinResult.error().Append("Failed to create window display"));
-        WindowDisplay = std::move(*WinResult);
+        if (auto R = m_Editor.Create(); !R) {
+            Shutdown();
+            return std::unexpected(R.error().Append("Editor creation failed"));
+        }
 
-        if (auto R = RHIRenderDevice::Create(WindowDisplay.GetNativeHandle()); !R) {
+        auto WinResult = CreateWindowSystem();
+        if (!WinResult)
+            return std::unexpected(WinResult.error().Append("Failed to create window system"));
+        m_WindowSystem = std::move(*WinResult);
+
+        // ── RHI context — process-wide singleton ──────────────────────────
+        if (auto R = RHIRenderDevice::Create(m_WindowSystem.get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Failed to create RHI context"));
         }
@@ -89,6 +122,12 @@ class EngineLoop {
 
         ResourceManager::Get().Init();
 
+        if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
+            Shutdown();
+            return std::unexpected(R.error().Append("Editor presentation binding failed"));
+        }
+
+        // ── Create application from config ───────────────────────────────
         auto& Cfg = ConfigManager::Get().GetConfig();
         if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
             Shutdown();
@@ -145,19 +184,29 @@ class EngineLoop {
             Slot.RenderPacket = {};
         }
 
+        // Release editor GPU resources before ResourceManager::Clear() and
+        // RenderDevice::Destroy() tear down the backend.
+        m_Editor.ReleaseRHIResources();
+
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
 
         RHIRenderDevice::Destroy();
-        WindowDisplay.Shutdown();
+        if (m_WindowSystem) {
+            m_WindowSystem->Shutdown();
+            m_WindowSystem.reset();
+        }
+        m_Editor.Shutdown();
     }
 
     [[nodiscard]] auto SwitchApplication(StringView Name) -> std::expected<void, ErrorMessage> {
+        // Detach previous application (renderer shut down along with it)
         if (m_Application) {
             m_Application->OnDetach();
             m_Application.reset();
         }
 
+        // Create and attach new application
         auto NewApp = Application::Create(Name);
         if (!NewApp)
             return std::unexpected(NewApp.error().Append("SwitchApplication failed"));
@@ -184,10 +233,10 @@ class EngineLoop {
         tracy::SetThreadName("GameLoop");
         SetLogThreadRole(LogThreadRole::Game);
         while (!m_FatalError.load(std::memory_order_acquire)) {
-            if (WindowDisplay.PollEvents())
+            if (m_WindowSystem->PollEvents())
                 break;
 
-            auto Resize = WindowDisplay.ConsumeFramebufferResize();
+            auto Resize = m_WindowSystem->ConsumeFramebufferResize();
 
             auto  Now      = std::chrono::steady_clock::now();
             float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
@@ -212,7 +261,10 @@ class EngineLoop {
                 Scene.AllocateCameraRenderTargets(Width, Height);
             }
 
-            m_Application->OnTick(Delta, WindowDisplay);
+            m_Application->OnTick(Delta, *m_WindowSystem);
+            // UI builds on the main thread so ImGui input stays on the same
+            // thread as event polling; the render thread consumes snapshots.
+            m_Editor.BeginFrame(Slot.ImGuiSnapshot);
             auto& AppScene = m_Application->GetScene();
             AppScene.UpdateTime();
             Slot.SceneData = AppScene.BuildSnapshot();
@@ -240,8 +292,8 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < SoulEngine::TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(SoulEngine::ThreadQueue::Render);
+            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
+                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::Render);
                 if (!Task)
                     break;
                 (*Task)();
@@ -253,6 +305,9 @@ class EngineLoop {
                 SignalFatalError();
                 break;
             }
+
+            // Editor UI overlays the scene output on the same render thread.
+            m_Editor.AttachPresentationOverlay(RenderResult->CmdList, Slot.ImGuiSnapshot);
 
             Slot.RenderPacket = std::move(*RenderResult);
 
@@ -269,6 +324,7 @@ class EngineLoop {
     auto RHILoop(std::stop_token Stop) -> void {
         tracy::SetThreadName("RHILoop");
         SetLogThreadRole(LogThreadRole::RHI);
+
         while (!Stop.stop_requested()) {
             auto& Slot = m_Slots[m_RHISlotIndex];
 
@@ -279,8 +335,8 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < SoulEngine::TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(SoulEngine::ThreadQueue::RHI);
+            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
+                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::RHI);
                 if (!Task)
                     break;
                 (*Task)();
@@ -313,12 +369,17 @@ class EngineLoop {
             m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
         }
 
+        // GPU must finish all in-flight work before resources are destroyed.
+        // Application resources (VertexBuffer, etc.) are freed when the app
+        // resets; their DeviceBuffer destructors call vmaDestroyBuffer, which
+        // fails if the GPU still references them.
         RHIRenderDevice::Get().WaitIdle();
     }
 
     // ── State ───────────────────────────────────────────────────────────────
 
-    WindowDisplay                         WindowDisplay;
+    Editor                   m_Editor;
+    UPtr<IWindowSystem>      m_WindowSystem;
     UPtr<Application>        m_Application;
     std::chrono::steady_clock::time_point m_LastTickTime;
 

@@ -129,9 +129,9 @@ struct VulkanCommandVisitor {
 
     template <typename PipelineType>
     auto BindShaderParameters(const RHIBindShaderParametersCmd& Cmd,
-                              PipelineType&                       Pipeline,
-                              vk::PipelineBindPoint                BindPoint,
-                              vk::PipelineStageFlags2              ShaderStage) -> void {
+                              PipelineType&                     Pipeline,
+                              vk::PipelineBindPoint             BindPoint,
+                              vk::PipelineStageFlags2           ShaderStage) -> void {
         if (Cmd.Parameters.GetLayoutId() != Pipeline.GetShaderParameterLayout().GetId()) {
             Error = ErrorMessage("Shader parameters were created from a different pipeline layout");
             return;
@@ -269,37 +269,37 @@ struct VulkanCommandVisitor {
                     continue;
                 }
 
-                if (const auto* VertexBufferPtr = std::get_if<RHIVertexBuffer*>(&Value)) {
-                    if (!*VertexBufferPtr) {
+                if (const auto* VertexBuffer = std::get_if<RHIVertexBuffer*>(&Value)) {
+                    if (!*VertexBuffer) {
                         Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null storage vertex buffer", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkBuffer = static_cast<const VulkanVertexBuffer&>(**VertexBufferPtr);
+                    const auto& VkBuffer = static_cast<const VulkanVertexBuffer&>(**VertexBuffer);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *VertexBufferPtr) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *VertexBuffer) {
                         Descriptors->WriteStorageBufferDescriptor(
                             *(*Instance)->Set,
                             Binding.Binding,
                             VkBuffer.GetVkBuffer(),
                             VkBuffer.GetStride() * VkBuffer.GetVertexCount());
-                        ResourceBindings[Binding.Binding] = *VertexBufferPtr;
+                        ResourceBindings[Binding.Binding] = *VertexBuffer;
                     }
                     continue;
                 }
 
-                if (const auto* IndexBufferPtr = std::get_if<RHIIndexBuffer*>(&Value)) {
-                    if (!*IndexBufferPtr) {
+                if (const auto* IndexBuffer = std::get_if<RHIIndexBuffer*>(&Value)) {
+                    if (!*IndexBuffer) {
                         Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null storage index buffer", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkBuffer = static_cast<const VulkanIndexBuffer&>(**IndexBufferPtr);
+                    const auto& VkBuffer = static_cast<const VulkanIndexBuffer&>(**IndexBuffer);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *IndexBufferPtr) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *IndexBuffer) {
                         Descriptors->WriteStorageBufferDescriptor(
                             *(*Instance)->Set, Binding.Binding, VkBuffer.GetVkBuffer(), VkBuffer.GetIndexCount() * sizeof(Uint32));
-                        ResourceBindings[Binding.Binding] = *IndexBufferPtr;
+                        ResourceBindings[Binding.Binding] = *IndexBuffer;
                     }
                     continue;
                 }
@@ -360,34 +360,34 @@ struct VulkanCommandVisitor {
                     continue;
                 }
 
-                if (const auto* TlasPtr = std::get_if<RHITopLevelAccelerationStructure*>(&Value)) {
-                    if (!*TlasPtr) {
+                if (const auto* RHIAccelerationStructure = std::get_if<RHITopLevelAccelerationStructure*>(&Value)) {
+                    if (!*RHIAccelerationStructure) {
                         Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null top-level acceleration structure", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkTlas = static_cast<const VulkanTopLevelAccelerationStructure&>(**TlasPtr);
+                    const auto& VkTlas = static_cast<const VulkanTopLevelAccelerationStructure&>(**RHIAccelerationStructure);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *TlasPtr) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *RHIAccelerationStructure) {
                         Descriptors->WriteAccelerationStructureDescriptor(
                             *(*Instance)->Set, Binding.Binding, VkTlas.GetAccelerationStructure());
-                        ResourceBindings[Binding.Binding] = *TlasPtr;
+                        ResourceBindings[Binding.Binding] = *RHIAccelerationStructure;
                     }
                     continue;
                 }
 
-                if (const auto* SamplerPtr = std::get_if<RHISampler*>(&Value)) {
-                    if (!*SamplerPtr) {
+                if (const auto* Sampler = std::get_if<RHISampler*>(&Value)) {
+                    if (!*Sampler) {
                         Error = ErrorMessage(Format(
                             "Shader parameter '{}' has a null sampler", Binding.ParameterPath));
                         return;
                     }
-                    const auto& VkSampler = static_cast<const VulkanSampler&>(**SamplerPtr);
+                    const auto& VkSampler = static_cast<const VulkanSampler&>(**Sampler);
                     auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *SamplerPtr) {
+                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Sampler) {
                         Descriptors->WriteSamplerDescriptor(
                             *(*Instance)->Set, Binding.Binding, VkSampler.GetVkSampler());
-                        ResourceBindings[Binding.Binding] = *SamplerPtr;
+                        ResourceBindings[Binding.Binding] = *Sampler;
                     }
                     continue;
                 }
@@ -616,7 +616,6 @@ struct VulkanCommandVisitor {
         if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0] || !Cmd.IndexBufferPtr)
             return;
 
-        const auto& VkIB   = static_cast<const VulkanIndexBuffer&>(*Cmd.IndexBufferPtr);
         for (Uint32 Binding = 0; Binding < Cmd.VertexBuffers.size(); ++Binding) {
             auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
             if (!VertexBufferPtr)
@@ -624,6 +623,8 @@ struct VulkanCommandVisitor {
             const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
             Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
         }
+
+        const auto& VkIB = static_cast<const VulkanIndexBuffer&>(*Cmd.IndexBufferPtr);
         Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
         Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
     }

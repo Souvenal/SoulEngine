@@ -1,14 +1,13 @@
-/// @file   RayTracingPipeline.cpp
+/// @file   RHIRayTracingPipeline.cpp
 /// @brief  Unit tests for Vulkan ray-tracing shader-binding-table layout arithmetic.
 
 #include <gtest/gtest.h>
-
-#include <GLFW/glfw3.h>
 
 import RHI;
 import Shader;
 import ShaderCompiler;
 import Vulkan;
+import WindowSystem;
 import std;
 
 using namespace SoulEngine;
@@ -66,23 +65,17 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
     ConfigManager::Get().Init(EngineDir);
     ASSERT_TRUE(ConfigManager::Get().LoadConfig().has_value());
 
-    ASSERT_TRUE(glfwInit()) << "glfwInit failed";
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    GLFWwindow* Window = glfwCreateWindow(1, 1, "SoulEngine RT pipeline test", nullptr, nullptr);
-    ASSERT_NE(Window, nullptr) << "glfwCreateWindow failed";
+    auto WindowSys = CreateWindowSystem();
+    ASSERT_TRUE(WindowSys.has_value()) << WindowSys.error().ToString();
 
-    auto DeviceResult = RHIRenderDevice::Create(Window);
+    auto DeviceResult = RHIRenderDevice::Create(WindowSys->get());
     if (!DeviceResult) {
-        glfwDestroyWindow(Window);
-        glfwTerminate();
         GTEST_SKIP() << DeviceResult.error().ToString();
     }
 
-    const auto Cleanup = [Window]() -> void {
+    const auto Cleanup = [&WindowSys]() -> void {
         RHIRenderDevice::Destroy();
-        glfwDestroyWindow(Window);
-        glfwTerminate();
+        (*WindowSys)->Shutdown();
     };
 
     const std::array<Float32, 9> TriangleVertices{
@@ -91,17 +84,17 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
          0.0f,  0.5f, 0.0f,
     };
     const std::array<Uint32, 3> TriangleIndices{0, 1, 2};
-    auto VertexBuffer = RHIRenderDevice::Get().CreateVertexBuffer(RHIVertexBufferDesc{
+    auto RHIVertexBuffer = RHIRenderDevice::Get().CreateVertexBuffer(RHIVertexBufferDesc{
         .Data        = TriangleVertices.data(),
         .VertexCount = 3,
         .Stride      = sizeof(Float32) * 3,
     });
-    auto IndexBuffer = RHIRenderDevice::Get().CreateIndexBuffer(RHIIndexBufferDesc{
+    auto RHIIndexBuffer = RHIRenderDevice::Get().CreateIndexBuffer(RHIIndexBufferDesc{
         .Data       = TriangleIndices.data(),
         .IndexCount = 3,
     });
-    if (!VertexBuffer || !IndexBuffer) {
-        const auto Error = !VertexBuffer ? VertexBuffer.error().ToString() : IndexBuffer.error().ToString();
+    if (!RHIVertexBuffer || !RHIIndexBuffer) {
+        const auto Error = !RHIVertexBuffer ? RHIVertexBuffer.error().ToString() : RHIIndexBuffer.error().ToString();
         Cleanup();
         ADD_FAILURE() << Error;
         return;
@@ -109,11 +102,11 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
     auto Blas = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructureDesc{
         .Geometries = {
             RHITriangleAccelerationStructureGeometryDesc{
-                .VertexBufferPtr = VertexBuffer->Buffer.get(),
+                .VertexBufferPtr = RHIVertexBuffer->Buffer.get(),
                 .VertexCount     = 3,
                 .VertexStride    = sizeof(Float32) * 3,
                 .VertexFormat    = RHIFormat::R32G32B32_SFLOAT,
-                .IndexBufferPtr  = IndexBuffer->Buffer.get(),
+                .IndexBufferPtr  = RHIIndexBuffer->Buffer.get(),
                 .IndexCount      = 3,
             },
         },
@@ -131,8 +124,9 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
         .MissEntries   = {ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang}},
         .HitGroups = {
             RayTracingHitGroupCompileDesc{
-                .Type       = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
+                .Type       = SoulEngine::ShaderRayTracingHitGroupType::Triangles,
+                .ClosestHit = ShaderEntry{
+                    .SourcePath = ShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
             },
         },
     });
@@ -215,17 +209,17 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
     };
     const RHIRayTracingGeometryTableUpdate GeometryUpdate{
         .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}, {.FirstGeometry = 1, .GeometryCount = 1}},
-        .Geometries = {{.PositionBuffer = VertexBuffer->Buffer.get(),
-                        .NormalBuffer = VertexBuffer->Buffer.get(),
-                        .IndexBuffer = IndexBuffer->Buffer.get(),
+        .Geometries = {{.PositionBuffer = RHIVertexBuffer->Buffer.get(),
+                        .NormalBuffer = RHIVertexBuffer->Buffer.get(),
+                        .IndexBuffer = RHIIndexBuffer->Buffer.get(),
                         .PositionStride = sizeof(Float32) * 3,
                         .NormalStride = sizeof(Float32) * 3,
                         .IndexStride = sizeof(Uint32),
                         .VertexCount = 3,
                         .IndexCount = 3},
-                       {.PositionBuffer = VertexBuffer->Buffer.get(),
-                        .NormalBuffer = VertexBuffer->Buffer.get(),
-                        .IndexBuffer = IndexBuffer->Buffer.get(),
+                       {.PositionBuffer = RHIVertexBuffer->Buffer.get(),
+                        .NormalBuffer = RHIVertexBuffer->Buffer.get(),
+                        .IndexBuffer = RHIIndexBuffer->Buffer.get(),
                         .PositionStride = sizeof(Float32) * 3,
                         .NormalStride = sizeof(Float32) * 3,
                         .IndexStride = sizeof(Uint32),
@@ -291,7 +285,7 @@ TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlan
     (*Tlas).reset();
     (*RHIPipeline).reset();
     (*Blas).reset();
-    VertexBuffer->Buffer.reset();
-    IndexBuffer->Buffer.reset();
+    RHIVertexBuffer->Buffer.reset();
+    RHIIndexBuffer->Buffer.reset();
     Cleanup();
 }

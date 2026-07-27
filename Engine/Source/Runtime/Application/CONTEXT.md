@@ -24,12 +24,12 @@ Application logic lifecycle. Owns the mutable scene and renderer.
 - `Core` — logging, config, `Factory`, `Singleton`
 - `Renderer` — `IRenderer` (owns via UPtr)
 - `Scene` — `Scene::Scene` (owns by value)
-- `Window` — borrowed `WindowDisplay` passed to `OnTick`
+- `WindowSystem` — borrowed `IWindowSystem` passed to `OnTick`
 
 ## Relationships
 
 - **Application** does not own the window, RHI context, or GPU resources.
-- **Application** may consume the borrowed `WindowDisplay` during `OnTick`, but
+- **Application** may consume the borrowed `IWindowSystem` during `OnTick`, but
   must not retain it beyond that call.
 - **EngineLoop** creates the RHI singleton, creates applications via `Application::Create()`, and calls `OnAttach()`/`OnDetach()` at the right points.
 - **Application** owns the mutable scene that is converted into a per-frame `SceneSnapshot`.

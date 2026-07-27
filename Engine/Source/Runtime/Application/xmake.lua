@@ -1,7 +1,7 @@
 target("Application")
     set_kind("moduleonly")
 
-    add_deps("Core", "Renderer", "Scene", "Resource", "Window")
+    add_deps("Core", "Renderer", "Scene", "Resource", "WindowSystem")
 
     add_files("Application.cppm")
     add_files("Applications/*.cppm")

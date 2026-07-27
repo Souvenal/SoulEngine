@@ -63,13 +63,13 @@ Code form and readability only, not behavior.
 
 - Use Doxygen-style comments (`///`) for public API documentation.
 
-- All data member default values MUST be written at the declaration site
-  (`Type m_Member = Default;`), never in constructor initializer lists or
-  constructor body assignments.  Rationale: jump-to-definition shows the
-  default immediately, and there is exactly one place to look.
-  Constructor initializer lists are banned — a member has no default at
-  that point, which forces the reader to cross-reference two locations.
-  For configurable values that may be overridden by a config file, use
+- All data member default values SHOULD be written at the declaration site
+  (`Type m_Member = Default;`) so the default is visible at the definition.
+  Use constructor initializer lists for simple, infallible value assignment
+  and dependency injection, including base-class construction. Use a factory
+  returning `std::expected` when construction requires validation, allocation,
+  resource creation, or any other fallible work. For configurable values that
+  may be overridden by a config file, use
   `m_Member = Cfg.SomeField.value_or(m_Member);` in Init/constructor body;
   the member's declaration-site default serves as the backup.
 

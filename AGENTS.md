@@ -11,11 +11,15 @@ Guidance for AI agents on this repo.
 - Binary: `Engine/Binaries/SoulEngine`
 - Compiler: Clang 20+
 - C++23 modules enabled (`import std;` throughout)
+- **Agent command output:** `rtk` is an optional command-output filter. When
+  `rtk` is available on `PATH`, build and test commands MUST use `rtk err`
+  (for example, `rtk err xmake -y` and `rtk err xmake test -j1 -v`). When it
+  is unavailable, run the equivalent xmake command directly.
 
 ## Project Structure
 
 - `Engine/Source/Runtime/Core/` — Foundation module. Utility types, logging (spdlog), toml++ config. Every module depends on this.
-- `Engine/Source/Runtime/Window/` — SDL/GLFW windowing abstraction.
+- `Engine/Source/Runtime/WindowSystem/` — Window-system (WIS) abstraction. GLFW implementation behind `IWindowSystem`; dispatch on `WindowSystemType` for native handles.
 - `Engine/Source/Runtime/RHI/` — Vulkan rendering hardware interface.
 - `Engine/Source/Runtime/Shader/` — Shader type system (descriptor bindings, resource types).
 - `Engine/Source/Runtime/Material/` — Renderer-neutral material data model.
@@ -57,6 +61,7 @@ Before reading, modifying, reviewing, or generating project code, read root `CON
 ## Build System Notes
 
 - **Build System:** xmake `set_languages()` needs string quoting (e.g., `set_languages('c++23')`, NOT `set_languages(c++23)`). Clean generated build artifacts (`xmake clean --all`) when C++ module compilation gives inexplicable errors.
+- **Dear ImGui:** built from a local source checkout (core and the `imgui_impl_glfw` backend must share one version), not xrepo. Path configurable via `xmake f --imgui_dir=<path>` (default `C:/Users/22067/Projects/imgui`).
 - **Package Dependencies:** When using local xmake package repos, prefer inline `package()` definitions in `xmake.lua` over `add_repositories()` — xmake may silently ignore local repos for official ones.
 
 ## Vulkan / RHI Conventions

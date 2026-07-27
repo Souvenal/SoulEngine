@@ -1,15 +1,17 @@
-module;
-
-#include <glfw/glfw3.h>
-
 export module RHI:RenderDevice;
 
-import std;
+export import WindowSystem;
+export import std;
 import :Types;
 import :RayTracing;
 import :Command; // RHICommandList
 
 export namespace SoulEngine {
+
+enum class RHIBackendType {
+    Unknown = 0,
+    Vulkan,
+};
 
 class RHIRenderDevice {
   public:
@@ -21,11 +23,12 @@ class RHIRenderDevice {
 
     virtual ~RHIRenderDevice() = default;
 
-    /// @brief One-time initialization with the application window.
-    /// Must be called exactly once after construction, before any other method.
-    /// @param Window  GLFW window handle for surface creation.
-    /// @return Error on failure (e.g., no suitable GPU found).
-    [[nodiscard]] virtual auto Init(GLFWwindow* Window) -> std::expected<void, ErrorMessage> = 0;
+    /// @brief Initialize backend-native GPU device and presentation state.
+    [[nodiscard]] virtual auto Initialize(IWindowSystem* WindowSys)
+        -> std::expected<void, ErrorMessage> = 0;
+
+    /// @brief Return the concrete RHI backend tag for integration dispatch.
+    [[nodiscard]] virtual auto GetBackendType() const -> RHIBackendType = 0;
 
     // ── Resource creation ────────────────────────────────────────────────────
 
@@ -91,9 +94,9 @@ class RHIRenderDevice {
     /// which GPU backend to bootstrap.  Must be called exactly once during
     /// engine initialization, before any other RHI access.
     ///
-    /// @param Window  GLFW window handle for surface creation.
-    /// @return Error on failure (backend not found, init failed, etc.).
-    [[nodiscard]] static auto Create(GLFWwindow* Window) -> std::expected<void, ErrorMessage>;
+    /// @return Error on failure (e.g., backend not found).
+    [[nodiscard]] static auto Create(IWindowSystem* WindowSys)
+        -> std::expected<void, ErrorMessage>;
 
     /// @brief Destroy the process-wide RHI singleton.
     ///
@@ -128,7 +131,8 @@ using RHIBackendFactory = Factory<RHIRenderDevice>;
 
 inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
 
-[[nodiscard]] inline auto RHIRenderDevice::Create(GLFWwindow* Window) -> std::expected<void, ErrorMessage> {
+[[nodiscard]] inline auto RHIRenderDevice::Create(IWindowSystem* WindowSys)
+    -> std::expected<void, ErrorMessage> {
     const auto& Cfg = ConfigManager::Get().GetConfig();
 
     if (!Cfg.Render.RHI.has_value())
@@ -153,10 +157,13 @@ inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
     // Create the backend via self-registering factory — no switch,
     // no concrete backend imports needed.
     auto Ctx = RHIBackendFactory::Get().Create(Backend);
-
-    // Initialize the backend with the application window.
-    if (auto R = Ctx->Init(Window); !R)
+    if (!Ctx)
+        return std::unexpected(ErrorMessage(Format("Failed to create '{}' RHI backend", Backend)));
+    if (!WindowSys)
+        return std::unexpected(ErrorMessage("RHI backend requires a window system"));
+    if (auto R = Ctx->Initialize(WindowSys); !R) {
         return std::unexpected(R.error().Append(Format("Failed to initialize '{}' RHI backend", Backend)));
+    }
 
     s_Instance = std::move(Ctx);
     return {};
