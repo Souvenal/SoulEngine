@@ -527,6 +527,7 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
         return MakeStructuralError(MakeYamlPath(FilePath.string(), "entities"), "must be a sequence");
 
     Scene Temporary = {};
+    Temporary.m_AssetRoot = (FilePath.parent_path() / "Assets").lexically_normal();
     if (auto Result = LoadMaterialInstances(Temporary, MaterialInstances, "material_instances"); !Result)
         return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
 

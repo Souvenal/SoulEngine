@@ -11,15 +11,12 @@ export module VikingApp;
 
 import Application;
 import Scene;
-import WindowSystem;
 
 namespace SoulEngine {
 
 class VikingApplication final : public Application {
   public:
     VikingApplication() = default;
-
-    auto OnTick(float, IWindowSystem&) -> void override {}
 };
 
 /// Auto-register with the application factory.

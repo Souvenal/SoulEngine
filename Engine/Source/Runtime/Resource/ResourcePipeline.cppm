@@ -47,10 +47,7 @@ struct PreparedGraphicsPipeline {
 [[nodiscard]] auto PrepareGraphicsPipeline(const GraphicsPipelineRequest& Req)
     -> std::expected<PreparedGraphicsPipeline, ErrorMessage> {
     const auto&       Cfg = ConfigManager::Get();
-    std::vector<Path> IncludeDirs{
-        Cfg.EngineShadersDirPath(),
-        Cfg.CurrentApplicationDir() / "Shaders",
-    };
+    std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
 
     auto Program = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
         .Vertex      = Req.VertEntry,
@@ -184,7 +181,7 @@ struct PreparedGraphicsPipeline {
         if (Context.IsShutdownRequested())
             return;
         const auto& Cfg = ConfigManager::Get();
-        std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath(), Cfg.CurrentApplicationDir() / "Shaders"};
+        std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
         auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
             .RayGeneration = Req.RayGeneration,
             .MissEntries = Req.MissEntries,

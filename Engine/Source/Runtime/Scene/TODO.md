@@ -1,5 +1,37 @@
 # Scene TODO
 
+## ECS tick and system scheduling
+
+**Status:** Deferred
+
+`Application` owns project identity and the mutable `Scene`, but it does not
+own a per-frame tick hook. Frame simulation belongs to the scene's ECS system
+layer rather than to a virtual function on a project-specific Application
+subclass.
+
+Future design:
+
+- GameLoop gathers frame time and input into an immutable `FrameContext`, then
+  calls `Scene::Tick(const FrameContext&)` before it builds `SceneSnapshot`.
+- `Scene` owns a `SystemScheduler` whose system ordering is explicit and
+  deterministic. System-local runtime state is reset when its Scene is
+  replaced.
+- Each system queries the Scene Registry for the components it needs. Do not
+  add a per-entity virtual `Tick()` or make GameLoop enumerate component
+  combinations.
+- Input must enter through `FrameContext` or a dedicated input service; Scene
+  must not retain `IWindowSystem` or depend directly on WindowSystem.
+- Rendering remains snapshot-based: ECS systems mutate the Scene on the game
+  thread, then GameLoop publishes the resulting immutable snapshot to the
+  render thread.
+
+Non-goals for the initial implementation:
+
+- Do not add `Scene::Tick`, `FrameContext`, or `SystemScheduler` until the
+  system registration, ordering, and input boundary are designed together.
+- Do not restore an Application lifecycle callback as a temporary ECS dispatch
+  mechanism.
+
 ## Hide EnTT implementation details from Scene importers
 
 **Status:** Deferred

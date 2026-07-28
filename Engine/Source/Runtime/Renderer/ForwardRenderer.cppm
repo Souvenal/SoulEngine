@@ -308,13 +308,6 @@ class ForwardRenderer final : public IRenderer {
         return {};
     }
 
-    [[nodiscard]] static auto ResolveAssetPath(StringView AssetPath) -> Path {
-        const Path Asset{String(AssetPath)};
-        if (Asset.is_absolute())
-            return Asset.lexically_normal();
-        return (ConfigManager::Get().CurrentApplicationDir() / "Assets" / Asset).lexically_normal();
-    }
-
     [[nodiscard]] auto GetOrRequestMesh(StringView Asset) -> ResourceRef<ResourceMesh>& {
         for (auto& Entry : m_MeshCache) {
             if (Entry.Asset == Asset)
@@ -323,7 +316,7 @@ class ForwardRenderer final : public IRenderer {
 
         auto& Entry = m_MeshCache.emplace_back(ForwardMeshCacheEntry{
             .Asset = String(Asset),
-            .Mesh  = ResourceManager::Get().RequestMeshRef(ResolveAssetPath(Asset).string()),
+            .Mesh  = ResourceManager::Get().RequestMeshRef(Asset),
         });
         return Entry.Mesh;
     }
@@ -336,7 +329,7 @@ class ForwardRenderer final : public IRenderer {
 
         auto& Entry = m_TextureCache.emplace_back(ForwardTextureCacheEntry{
             .Asset   = String(Asset),
-            .Texture = ResourceManager::Get().RequestSampledTextureRef(ResolveAssetPath(Asset).string()),
+            .Texture = ResourceManager::Get().RequestSampledTextureRef(Asset),
         });
         return Entry.Texture;
     }

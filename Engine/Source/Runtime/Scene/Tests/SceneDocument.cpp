@@ -79,8 +79,8 @@ entities:
 
     const auto Snapshot = Scene.BuildSnapshot();
     ASSERT_EQ(Snapshot.Renderables.size(), 1u);
-    EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, "teapot.obj");
-    EXPECT_EQ(Snapshot.Renderables.front().TextureAsset, "wood.png");
+    EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, (FilePath.parent_path() / "Assets" / "teapot.obj").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().TextureAsset, (FilePath.parent_path() / "Assets" / "wood.png").lexically_normal().string());
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.x), 1.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.y), 0.71f);
     EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Metallic, 1.0f);

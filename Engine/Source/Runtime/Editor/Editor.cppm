@@ -8,6 +8,8 @@ module;
 
 export module Editor;
 
+import :MainMenu;
+
 import Core;
 import RHI;
 import Scene;
@@ -213,9 +215,9 @@ class Editor {
             }
         }
         ImGui::NewFrame();
+        DrawMainMenu();
         for (auto& Panel : m_Panels)
             Panel.Callback();
-        ImGui::ShowDemoWindow();
         ImGui::Render();
         ImDrawData* DrawData = ImGui::GetDrawData();
         if (!DrawData || !DrawData->Valid)

@@ -10,25 +10,24 @@ Engine startup and main loop. The entry point binary loads this module and calls
 |------|------------|
 | **EngineLoop** | Main engine loop class. Lifecycle: `PreInit` (cmd args + config) -> `Init` (Window -> RHI singleton -> Application) -> `Run` (spawns workers + blocked main-thread loop) -> `Shutdown` (joins workers, tears down). |
 | **PreInit** | Processes command-line arguments (`CmdLineArgs`), loads config file (`ConfigManager::LoadFile`), applies log-level config. Currently only uses `CmdLineArgs[0]` (binary path) for config file resolution; argument parsing is extensible for future CLI flags. |
-| **Init** | Bootstraps subsystems in order: `CreateWindowSystem` -> `RHIRenderDevice::Create()` -> `RHIRenderDevice::Get().BindWindowSystem(WindowSys)` -> `TaskGraph::Get().Init()` -> `ResourceManager::Init()` -> `Editor::Create()` -> `Editor::BindWindowSystem(WindowSys)` -> `SwitchApplication`. Any failure tears down prior work and returns `std::unexpected`. Does NOT spawn threads. |
+| **Init** | Bootstraps subsystems in order: `CreateWindowSystem` -> `RHIRenderDevice::Create()` -> `TaskGraph::Get().Init()` -> `ResourceManager::Init()` -> `SelectRenderer()` -> `Editor::Create()` / presentation bind -> `OpenApplication`. Any failure tears down prior work and returns `std::unexpected`. Does NOT spawn threads. |
 | **Run** | Spawns Render and RHI `std::jthread`s, then calls `GameLoop()` on the calling (main) thread. Blocks until exit. After `GameLoop` returns, calls `Shutdown()`. |
-| **GameLoop** | Main-thread loop: `PollEvents` -> compute delta -> wait for slot -> `OnTick(dt, IWindowSystem)` -> `Editor::BuildFrame(dt)` (ImGui frame + draw-data snapshot) -> build `SceneSnapshot` -> `GameReady`. Breaks when `PollEvents()` reports a close request or `m_FatalError` is set by another loop. |
-| **RenderLoop** | Worker `std::jthread`. Waits for `GameReady` on its slot, drains render task queue, calls `IRenderer::Render(SceneSnapshot)`, stores the returned render packet, and sets `RenderReady`. On `Render` failure: broadcasts `FatalError` and exits. |
+| **GameLoop** | Main-thread loop: `PollEvents` -> compute delta -> wait for slot -> build ImGui frame (which may directly switch Application or Renderer) -> capture the current Renderer -> build `SceneSnapshot` -> `GameReady`. Breaks when `PollEvents()` reports a close request or `m_FatalError` is set by another loop. |
+| **RenderLoop** | Worker `std::jthread`. Waits for `GameReady` on its slot, drains render task queue, calls the slot's `IRenderer::Render(SceneSnapshot)`, stores the returned render packet, and sets `RenderReady`. On `Render` failure: broadcasts `FatalError` and exits. |
 | **RHILoop** | Worker `std::jthread`. Waits for `RenderReady` on its slot, drains RHI task queue, executes the slot render packet, releases command observers, then sets `RHIDone`. On exit: calls `RHIRenderDevice::WaitIdle()` before returning. |
-| **FrameSlot** | Triple-buffered slot (3 fixed). Contains `mutex`, `condition_variable`, `SlotState`, a `SceneSnapshot` copy for Game→Render handoff, and a `RenderResult` packet for Render→RHI handoff. |
+| **FrameSlot** | Triple-buffered slot (3 fixed). Contains `mutex`, `condition_variable`, `SlotState`, a `SceneSnapshot` copy and shared Renderer for Game→Render handoff, and a `RenderResult` packet for Render→RHI handoff. |
 | **Render packet** | `RenderResult`, containing the `RHICommandList` held in `FrameSlot` until RHILoop has completed `RHIRenderDevice::Execute()`. |
 | **SlotState** | State machine: `Empty -> GameReady -> RenderReady -> RHIDone -> Empty`. |
 | **FatalError** | `std::atomic<bool>` set by any loop on unrecoverable error. Wakes all waiting threads via `notify_all`. Causes `GameLoop` to break and `Run` to fall through to `Shutdown`. |
-| **SwitchApplication** | Replaces the current application. Calls `OnDetach()` on the old app, then `Application::Create(Name)` + `OnAttach()` for the new one. |
 
 ## Dependencies
 
 - `Core` — logging, config (`ConfigManager`, `LogManager`)
 - `WindowSystem` — window system creation (`CreateWindowSystem`, borrowed `IWindowSystem`)
-- `Application` — factory + lifecycle (`Application::Create`, `OnAttach`, `OnDetach`, `OnTick`)
+- `Application` — factory + direct current-application lifecycle (`OpenApplication`, `GetCurrentApplication`, `CloseApplication`)
 - `RHI` — RHI singleton lifecycle (`RHIRenderDevice::Create`, `Get`, `Destroy`)
 - `Scene` — `Scene` mutable world state + `SceneSnapshot` frame slot data
-- `Renderer` — `IRenderer::Render()` called from `RenderLoop`
+- `Renderer` — engine-global selection/cache (`SelectRenderer`, `GetCurrentRenderer`, `CloseRenderers`) and `IRenderer::Render()` called from `RenderLoop`
 - `TaskGraph` — cross-thread task dispatch (`TaskGraph`)
 - `Editor` — `Editor` UI frame building (main thread) and UI pass emission (render thread)
 
@@ -41,7 +40,7 @@ renderer are responsible for keeping logical resource demand alive until the
 frame packet is consumed by RHILoop. `SceneSnapshot` carries passive handles
 only.
 
-Shutdown releases slots in this order: stop and join threads, detach/reset the
+Shutdown releases slots in this order: stop and join threads, reset the
 application, clear frame snapshots/render packets, call `ResourceManager::Clear()`,
 then destroy `RHIRenderDevice`.
 
