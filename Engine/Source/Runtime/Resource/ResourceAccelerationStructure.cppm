@@ -1,3 +1,7 @@
+module;
+
+#include <hlsl++.h>
+
 export module Resource:AccelerationStructure;
 
 export import Core;
