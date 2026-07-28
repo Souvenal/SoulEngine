@@ -275,7 +275,7 @@ class RayTracingRenderer final : public IRenderer {
 
         auto& Entry = m_MeshCache.emplace_back(RayTracingMeshCacheEntry{
             .Asset = String(Asset),
-            .Mesh = ResourceManager::Get().RequestMeshRef(ResolveMeshPath(Asset).string()),
+            .Mesh = ResourceManager::Get().RequestMeshRef(Asset),
         });
         Entry.Blas = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(Entry.Mesh);
         return Entry;
@@ -316,13 +316,6 @@ class RayTracingRenderer final : public IRenderer {
             return true;
         }
         return false;
-    }
-
-    [[nodiscard]] static auto ResolveMeshPath(StringView AssetPath) -> Path {
-        const Path Candidate{String(AssetPath)};
-        if (Candidate.is_absolute())
-            return Candidate;
-        return (ConfigManager::Get().CurrentApplicationDir() / "Assets" / Candidate).lexically_normal();
     }
 
     [[nodiscard]] static auto HashCombine(Uint64 Seed, Uint64 Value) -> Uint64 {

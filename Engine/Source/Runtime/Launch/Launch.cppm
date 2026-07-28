@@ -37,8 +37,9 @@ struct FrameSlot {
     std::mutex              Mutex;
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
-    SceneSnapshot    SceneData;
-    RenderResult  RenderPacket;
+    SceneSnapshot      SceneData;
+    SPtr<IRenderer>    Renderer = nullptr;
+    RenderResult       RenderPacket;
     ImDrawDataSnapshot ImGuiSnapshot;
 };
 
@@ -122,6 +123,14 @@ class EngineLoop {
 
         ResourceManager::Get().Init();
 
+        auto& Cfg = ConfigManager::Get().GetConfig();
+        const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Forward");
+        if (auto R = SelectRenderer(InitialRenderer); !R) {
+            Shutdown();
+            return std::unexpected(R.error().Append("Default renderer selection failed"));
+        }
+        LogInfo("Renderer '{}' initialized successfully", InitialRenderer);
+
         if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
@@ -131,10 +140,9 @@ class EngineLoop {
             static_cast<Uint32>(std::max(0, InitialExtent.Width)), static_cast<Uint32>(std::max(0, InitialExtent.Height)));
 
         // ── Create application from config ───────────────────────────────
-        auto& Cfg = ConfigManager::Get().GetConfig();
-        if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
+        if (auto R = OpenApplication(Cfg.Application.Name.value_or("Test")); !R) {
             Shutdown();
-            return std::unexpected(R.error().Append("SwitchApplication failed"));
+            return std::unexpected(R.error().Append("Application opening failed"));
         }
         LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
 
@@ -175,21 +183,21 @@ class EngineLoop {
         if (m_RHIThread.joinable())
             m_RHIThread.join();
 
-        if (m_Application) {
-            m_Application->OnDetach();
-            m_Application.reset();
-        }
+        CloseApplication();
 
         // Release frame slot snapshots and command observers before
         // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
         for (auto& Slot : m_Slots) {
             Slot.SceneData = {};
+            Slot.Renderer = nullptr;
             Slot.RenderPacket = {};
         }
 
         // Release editor GPU resources before ResourceManager::Clear() and
         // RenderDevice::Destroy() tear down the backend.
         m_Editor.ReleaseRHIResources();
+
+        CloseRenderers();
 
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
@@ -200,25 +208,6 @@ class EngineLoop {
             m_WindowSystem.reset();
         }
         m_Editor.Shutdown();
-    }
-
-    [[nodiscard]] auto SwitchApplication(StringView Name) -> std::expected<void, ErrorMessage> {
-        // Detach previous application (renderer shut down along with it)
-        if (m_Application) {
-            m_Application->OnDetach();
-            m_Application.reset();
-        }
-
-        // Create and attach new application
-        auto NewApp = Application::Create(Name);
-        if (!NewApp)
-            return std::unexpected(NewApp.error().Append("SwitchApplication failed"));
-
-        if (auto R = (*NewApp)->OnAttach(); !R)
-            return std::unexpected(R.error().Append("Application OnAttach failed"));
-
-        m_Application = std::move(*NewApp);
-        return {};
     }
 
   private:
@@ -263,12 +252,24 @@ class EngineLoop {
                 m_Editor.ResizeSceneViewport(Width, Height);
             }
 
-            m_Application->OnTick(Delta, *m_WindowSystem);
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
             m_Editor.BeginFrame(Slot.ImGuiSnapshot);
             m_Editor.UpdateSceneCamera(Delta, *m_WindowSystem);
-            auto& AppScene = m_Application->GetScene();
+
+            auto* CurrentApplication = GetCurrentApplication();
+            if (!CurrentApplication) {
+                LogError("Game loop has no active application");
+                SignalFatalError();
+                break;
+            }
+            Slot.Renderer = GetCurrentRenderer();
+            if (!Slot.Renderer) {
+                LogError("Game loop has no active renderer");
+                SignalFatalError();
+                break;
+            }
+            auto& AppScene = CurrentApplication->GetScene();
             AppScene.UpdateTime();
             if (auto SceneView = m_Editor.BuildSceneView()) {
                 const std::array Views{std::move(*SceneView)};
@@ -307,7 +308,12 @@ class EngineLoop {
                 (*Task)();
             }
 
-            auto RenderResult = m_Application->GetRenderer().Render(Slot.SceneData);
+            if (!Slot.Renderer) {
+                LogError("Render loop received a frame without a renderer");
+                SignalFatalError();
+                break;
+            }
+            auto RenderResult = Slot.Renderer->Render(Slot.SceneData);
             if (!RenderResult) {
                 LogError("Render fatal error:\n{}", RenderResult.error().ToString());
                 SignalFatalError();
@@ -388,7 +394,6 @@ class EngineLoop {
 
     Editor                   m_Editor;
     UPtr<IWindowSystem>      m_WindowSystem;
-    UPtr<Application>        m_Application;
     std::chrono::steady_clock::time_point m_LastTickTime;
 
     std::array<FrameSlot, kSlotCount> m_Slots = {};

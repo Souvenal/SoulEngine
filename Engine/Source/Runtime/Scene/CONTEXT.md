@@ -33,7 +33,7 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **Transform** | Mandatory Scene Node data: local translation, rotation, and scale. Scene Documents express rotation as Euler angles in degrees, applied in local X → Y → Z order; the world transform is derived through the Scene Hierarchy. |
 | **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views and value-semantic `RenderableInstance` records. Renderer consumes this snapshot, not the mutable `Scene`. |
 | **RenderViewSnapshot** | One immutable camera/view record: view-projection data plus passive handles for color/depth targets and that view's logical constant buffer. |
-| **RenderableInstance** | Value-semantic SceneSnapshot record for one mesh asset instance. It carries the mesh asset identity, the optional base-color texture asset identity, and the derived world transform, but no renderer-specific GPU resource or draw representation. |
+| **RenderableInstance** | Value-semantic SceneSnapshot record for one mesh asset instance. It carries normalized absolute mesh and optional base-color texture asset identities plus the derived world transform, but no renderer-specific GPU resource or draw representation. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
 
@@ -47,8 +47,8 @@ transforms.
 `SceneSnapshot` is the immutable render-facing view copied into the frame slot
 at the end of the GameLoop. The renderer consumes `SceneSnapshot` each frame
 via `IRenderer::Render()`. Mesh instances are represented as Renderable Instances,
-which pair an asset identity with an entity-derived world transform. Each renderer
-resolves that identity into its own draw-instance representation.
+which pair an absolute asset identity with an entity-derived world transform.
+Each renderer resolves that identity into its own draw-instance representation.
 
 Scene Persistence is an internal Scene implementation. It uses YAML without
 exposing parser-specific types through the Scene API. V1 loads a complete

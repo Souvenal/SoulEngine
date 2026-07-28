@@ -137,6 +137,10 @@ listed family behaves. A type with traits but not in its managed list is
 deliberately not a `ManagedResource`, because Context would not have storage
 for it.
 
+Graphics and ray-tracing pipeline compilation use engine shader include roots
+only. Application-specific shader include roots are intentionally outside the
+current renderer-selection model.
+
 ## Extension Guide
 
 This section documents the current Resource module extension surface. It is

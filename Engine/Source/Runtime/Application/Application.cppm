@@ -1,5 +1,5 @@
 /// @file   Application/Application.cppm
-/// @brief  Application abstraction layer — lifecycle, game tick, scene ownership.
+/// @brief  Application abstraction layer — project identity and scene ownership.
 ///
 /// Applications self-register with ApplicationFactory via AutoRegistrar in
 /// standalone modules (under Applications/).  The facade never imports or
@@ -19,11 +19,7 @@ module;
 export module Application;
 
 import Core;
-import RHI;
-import Renderer;
-import Resource;
 import Scene;
-import WindowSystem;
 
 export import std;
 
@@ -46,26 +42,12 @@ class Application {
     /// @brief Static factory — creates an application by name.
     ///
     /// Looks up @p Name in the self-registering ApplicationFactory, constructs
-    /// the application.  Does NOT call OnAttach() — EngineLoop controls the
-    /// attach/detach lifecycle.
+    /// the application, and loads its default scene document.
     ///
     /// @param Name  Application name matching an AutoRegistrar key (e.g. "Test").
     /// @return An owning pointer to the constructed application,
     ///         or an error description on failure.
     [[nodiscard]] static auto Create(StringView Name) -> std::expected<UPtr<Application>, ErrorMessage>;
-
-    /// @brief Called when this application is attached to the engine loop.
-    /// Derived classes construct the scene and renderer here.
-    /// The base class owns the default scene and renderer lifecycle.
-    [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage>;
-
-    /// @brief Called when this application is detached from the engine loop.
-    /// Derived classes destroy the renderer and release owned resources here.
-    /// The base class detaches and releases the default renderer.
-    auto OnDetach() -> void;
-
-    /// @brief Per-frame application update (game logic, simulation).
-    virtual auto OnTick(float DeltaTime, IWindowSystem& Window) -> void = 0;
 
     /// @brief The factory key this application was registered under.
     [[nodiscard]] auto GetName() const -> StringView {
@@ -84,20 +66,10 @@ class Application {
         return m_Scene;
     }
 
-    /// @brief Access the renderer.
-    /// Valid after OnAttach() succeeds and before OnDetach() returns.
-    [[nodiscard]] auto GetRenderer() -> IRenderer& {
-        return *m_Renderer;
-    }
-
-    /// @brief Render the current scene.  Non-virtual — fixed pipeline.
-    /// Calls m_Renderer->Render(m_Scene.BuildSnapshot()) and logs on failure.
-    auto OnRender() -> void;
-
   protected:
-    String                    m_Name;
-    Scene              m_Scene;
-    UPtr<IRenderer> m_Renderer = nullptr;
+    String m_Name;
+    Path   m_RootDirectory = {};
+    Scene  m_Scene;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -105,6 +77,20 @@ class Application {
 // ═════════════════════════════════════════════════════════════════════════════
 
 using ApplicationFactory = Factory<Application>;
+
+} // namespace SoulEngine
+
+namespace SoulEngine {
+
+namespace {
+
+UPtr<Application>     g_CurrentApplication = nullptr;
+
+} // namespace
+
+} // namespace SoulEngine
+
+export namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Application::Create — static factory
@@ -123,50 +109,36 @@ using ApplicationFactory = Factory<Application>;
         return std::unexpected(ErrorMessage(Format("Unknown application: '{}'. Available: {}", Name, Supported)));
     }
     App->m_Name = String(Name);
-    ConfigManager::Get().SetCurrentApplicationDir(ConfigManager::Get().ApplicationsRootDirPath() / Name);
-    return App;
-}
-
-// ════════════════════════════════════════════════════════════════
-// Application::OnAttach / OnDetach — default lifecycle
-// ═════════════════════════════════════════════════════════════════
-
-inline auto Application::OnAttach() -> std::expected<void, ErrorMessage> {
-    const auto ScenePath = ConfigManager::Get().CurrentApplicationDir() / "Scene.yaml";
-    auto Loaded = m_Scene.LoadFromFile(ScenePath);
+    App->m_RootDirectory = (ConfigManager::Get().ApplicationsRootDirPath() / Name).lexically_normal();
+    const auto ScenePath = App->m_RootDirectory / "Scene.yaml";
+    auto Loaded = App->m_Scene.LoadFromFile(ScenePath);
     if (!Loaded)
         return std::unexpected(Loaded.error().Append("Default Scene document load failed"));
     for (const auto& Warning : Loaded->Warnings)
         LogWarning("Default Scene warning at '{}': {}", Warning.Path, Warning.Message);
+    return App;
+}
 
-    auto CreatedRenderer = CreateDefault();
-    if (!CreatedRenderer)
-        return std::unexpected(CreatedRenderer.error().Append("Default renderer creation failed"));
-    m_Renderer = std::move(*CreatedRenderer);
-    if (auto R = m_Renderer->OnAttach(); !R) {
-        OnDetach();
-        return std::unexpected(R.error().Append("Default renderer OnAttach failed"));
-    }
+/// @brief Open an application immediately, preserving the current application
+/// when the requested application cannot be created or loaded.
+[[nodiscard]] auto OpenApplication(StringView Name) -> std::expected<void, ErrorMessage> {
+    auto NewApplication = Application::Create(Name);
+    if (!NewApplication)
+        return std::unexpected(NewApplication.error().Append("Application creation failed"));
 
+    g_CurrentApplication = std::move(*NewApplication);
     return {};
 }
 
-inline auto Application::OnDetach() -> void {
-    if (!m_Renderer)
-        return;
-    m_Renderer->OnDetach();
-    m_Renderer.reset();
+/// @brief Return the currently active application, or null before startup and
+/// after shutdown.
+[[nodiscard]] auto GetCurrentApplication() -> Application* {
+    return g_CurrentApplication.get();
 }
 
-// Application::OnRender — non-virtual render pipeline
-// ═════════════════════════════════════════════════════════════════════════════
-
-inline auto Application::OnRender() -> void {
-    if (!m_Renderer)
-        return;
-
-    if (auto R = m_Renderer->Render(m_Scene.BuildSnapshot()); !R)
-        LogError("Render failed:\n{}", R.error().ToString());
+/// @brief Destroy the current application.
+auto CloseApplication() -> void {
+    g_CurrentApplication.reset();
 }
-
+ 
 } // namespace SoulEngine

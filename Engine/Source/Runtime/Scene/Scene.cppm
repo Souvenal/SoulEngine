@@ -236,10 +236,18 @@ class Scene {
     // both the downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
     UPtr<entt::registry>                                         m_Registry = nullptr;
+    Path                                                         m_AssetRoot = {};
     std::vector<SceneEntity>                                      m_Roots = {};
     std::map<String, PbrMetallicRoughnessMaterial, std::less<>>   m_MaterialInstances = {};
     std::vector<String>                                           m_TexturePaths = {};
     float                                                         m_Time = 0.0f;
+
+    [[nodiscard]] auto ResolveAssetPath(StringView AssetPath) const -> String {
+        const Path Asset{String(AssetPath)};
+        if (Asset.is_absolute() || m_AssetRoot.empty())
+            return Asset.lexically_normal().string();
+        return (m_AssetRoot / Asset).lexically_normal().string();
+    }
 
   public:
     Scene();
@@ -397,8 +405,8 @@ auto Scene::UpdateWorldTransforms() -> void {
 
         const auto& Node = Meshes.get<SceneNode>(Entity);
         Snapshot.Renderables.emplace_back(RenderableInstance{
-            .MeshAsset      = Mesh.Asset,
-            .TextureAsset   = Mesh.Texture,
+            .MeshAsset      = ResolveAssetPath(Mesh.Asset),
+            .TextureAsset   = Mesh.Texture.empty() ? String{} : ResolveAssetPath(Mesh.Texture),
             .Material       = Material,
             .WorldTransform = Node.Transform.WorldTransform,
         });

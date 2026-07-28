@@ -11,15 +11,12 @@ export module TestApp;
 
 import Application;
 import Scene;
-import WindowSystem;
 
 namespace SoulEngine {
 
 class TestApplication final : public Application {
   public:
     TestApplication() = default;
-
-    auto OnTick(float, IWindowSystem&) -> void override {}
 };
 
 /// Auto-register with the application factory.
