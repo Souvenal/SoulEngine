@@ -1,0 +1,19 @@
+entities:
+  - name: Main Camera
+    transform:
+      translation: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+    components:
+      camera:
+        fov_degrees: 60.0
+        near_plane: 0.1
+        far_plane: 1000.0
+  - name: Zero-Day Measure Seven
+    transform:
+      translation: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+    components:
+      mesh:
+        asset: ZeroDay_v1/MEASURE_SEVEN/MEASURE_SEVEN.fbx
