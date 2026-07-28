@@ -27,7 +27,11 @@ class VulkanHostBuffer {
   public:
     VulkanHostBuffer() = default;
 
-    [[nodiscard]] static auto Create(Uint64 Size, vk::BufferUsageFlags Usage, vk::Device Dev, VmaAllocator Alloc)
+    [[nodiscard]] static auto Create(Uint64                Size,
+                                     vk::BufferUsageFlags Usage,
+                                     vk::Device           Dev,
+                                     VmaAllocator         Alloc,
+                                     bool                 bRequireHostCoherent = false)
         -> std::expected<VulkanHostBuffer, ErrorMessage> {
         VulkanHostBuffer Buf;
         Buf.m_Allocator = Alloc;
