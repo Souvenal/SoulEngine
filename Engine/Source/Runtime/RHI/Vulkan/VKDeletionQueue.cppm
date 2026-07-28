@@ -69,14 +69,15 @@ class VulkanDeletionQueue {
         }
     }
 
-    /// Drain all pending records — blocks CPU until the last token is
-    /// signaled.  Call only from RHI thread (Shutdown).
-    [[nodiscard]] auto Drain() -> std::expected<void, ErrorMessage> {
+    /// Drain all pending records. When @p bForce is false, blocks CPU until
+    /// the last token is signaled. When true, caller must have completed
+    /// RHIRenderDevice::WaitIdle() before calling.
+    [[nodiscard]] auto Drain(bool bForce = false) -> std::expected<void, ErrorMessage> {
         if (!m_FrameTimeline) {
             return std::unexpected(ErrorMessage("VulkanDeletionQueue::Drain called with null m_FrameTimeline"));
         }
         std::lock_guard Lock(m_Mutex);
-        if (!m_Records.empty()) {
+        if (!bForce && !m_Records.empty()) {
             if (auto R = m_FrameTimeline->Wait(m_Records.back().RetireToken.Id); !R)
                 return std::unexpected(R.error().Append("VulkanDeletionQueue::Drain failed"));
         }
