@@ -411,7 +411,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             auto GraphicsDrain = m_GraphicsCompletionQueue.Drain();
             if (!GraphicsDrain)
                 LogError("{}", GraphicsDrain.error().ToString());
-            auto DeletionDrain = m_DeletionQueue.Drain();
+            auto DeletionDrain = m_DeletionQueue.Drain(true);
             if (!DeletionDrain)
                 LogError("{}", DeletionDrain.error().ToString());
             WaitIdle();
@@ -1120,7 +1120,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         };
         if (auto R = m_GraphicsQueue.submit2({SubmitInfo2}); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Format("Queue submit failed: {}", vk::to_string(R))));
-
         for (auto* Table : GeometryTables)
             Table->UpdateLastUsageToken(FrameToken);
         m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = FrameTokenValue;
