@@ -36,10 +36,6 @@ class RHIRenderDevice {
         -> std::expected<RHIVertexBufferCreateResult, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
         -> std::expected<RHIIndexBufferCreateResult, ErrorMessage> = 0;
-    /// Create a logical shader-visible constant block identity.
-    /// Constant data is supplied through draw-scope shader bindings.
-    [[nodiscard]] virtual auto CreateConstantBuffer(const RHIConstantBufferDesc& Desc)
-        -> std::expected<UPtr<RHIConstantBuffer>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateSampler(const RHISamplerDesc& Desc)
         -> std::expected<UPtr<RHISampler>, ErrorMessage> = 0;
     [[nodiscard]] virtual auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
@@ -57,6 +53,23 @@ class RHIRenderDevice {
 
     /// Return the RHIRenderDevice-owned BDA metadata table, or null when hardware ray tracing is unavailable.
     [[nodiscard]] virtual auto GetRayTracingGeometryTable() -> RHIRayTracingGeometryTable* = 0;
+    /// Allocate a logical transient constant-buffer handle.
+    /// The handle is written through a command list and resolved by the backend during Execute().
+    [[nodiscard]] auto AllocateTransientConstantBuffer(Uint64 Size)
+        -> std::expected<RHITransientConstantBuffer, ErrorMessage> {
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("Transient constant buffer size must be greater than zero"));
+        return RHITransientConstantBuffer{NextTransientBufferId(), Size};
+    }
+
+    /// Allocate a logical transient shader-storage-buffer handle.
+    /// The handle is written through a command list and resolved by the backend during Execute().
+    [[nodiscard]] auto AllocateTransientShaderStorageBuffer(Uint64 Size)
+        -> std::expected<RHITransientShaderStorageBuffer, ErrorMessage> {
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("Transient shader storage buffer size must be greater than zero"));
+        return RHITransientShaderStorageBuffer{NextTransientBufferId(), Size};
+    }
 
     // ── RHICommand execution ────────────────────────────────────
 
@@ -111,6 +124,11 @@ class RHIRenderDevice {
     [[nodiscard]] static auto Get() -> RHIRenderDevice&;
 
   private:
+    [[nodiscard]] static auto NextTransientBufferId() -> Uint64 {
+        static std::atomic<Uint64> NextId = 1;
+        return NextId.fetch_add(1, std::memory_order_relaxed);
+    }
+
     static UPtr<RHIRenderDevice> s_Instance;
 };
 

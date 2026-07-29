@@ -24,8 +24,8 @@ Runtime asset/resource loading context. This context names resource lifecycle st
 | **Sampler resource** | Resource-system identity for a small RHI sampler profile such as linear-repeat or anisotropic-repeat; its ready payload is an RHI `Sampler`. |
 | **Buffer resource** | Resource-system identity for a buffer request; its ready payload is an RHI buffer. |
 | **Pipeline resource** | Resource-system identity for a graphics pipeline request; its ready payload is an RHI graphics pipeline. |
-| **Mesh resource** | Cached high-level asset imported through Assimp. It owns parsed submesh metadata, CPU vertex/index arrays, and passive handles for the requested SOA GPU buffers. |
-| **Async Resource v1** | Current asynchronous scope covering sampled textures, vertex/index buffers, graphics pipelines, samplers, render targets, constant buffers, and imported meshes. |
+| **Mesh resource** | Cached high-level asset imported through Assimp. It owns parsed submesh metadata, imported PBR material defaults, CPU vertex/index arrays, and passive handles for the requested SOA GPU buffers. |
+| **Async Resource v1** | Current asynchronous scope covering sampled textures, vertex/index buffers, graphics pipelines, samplers, render targets, and imported meshes. |
 | **Resource state** | Exported lifecycle enum returned by a resource handle. Consumers inspect this state directly to understand whether a resource is CPU-preparing, RHI-committing, GPU-pending, ready, failed, stale, or invalid. |
 | **CPU-preparing resource** | Resource whose non-thread-affine CPU work is still running, such as file IO, image decode, shader compilation, or request metadata preparation. |
 | **RHI-committing resource** | Resource whose RHI-thread work is running, such as backend object creation, descriptor publication, or GPU work submission. |

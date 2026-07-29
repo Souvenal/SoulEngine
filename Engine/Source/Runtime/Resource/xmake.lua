@@ -12,7 +12,7 @@ target("Resource")
     add_packages("stb", {public = true })
     add_packages("hlslpp", {public = true })
     add_packages("assimp", { public = true })
-    add_deps("Core", "RHI", "ShaderCompiler", "TaskGraph", "STBImage")
+    add_deps("Core", "Material", "RHI", "ShaderCompiler", "TaskGraph", "STBImage")
     add_files("*.cppm")
 
 test_module("Resource", {

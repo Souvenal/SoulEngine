@@ -66,12 +66,6 @@ class ResourceManager : public Singleton<ResourceManager> {
         return AcquireResourceRef(m_Context, SubmitRenderTargetRequest(m_Context, std::move(Key), Desc));
     }
 
-    /// @brief Request constant buffer and retain an owner ref.
-    [[nodiscard]] auto RequestConstantBufferRef(String Key, const RHIConstantBufferDesc& Desc)
-        -> ResourceRef<RHIConstantBuffer> {
-        return AcquireResourceRef(m_Context, SubmitConstantBufferRequest(m_Context, std::move(Key), Desc));
-    }
-
     /// @brief Request sampler state and retain an owner ref.
     [[nodiscard]] auto RequestSamplerRef(const RHISamplerDesc& Desc) -> ResourceRef<RHISampler> {
         return AcquireResourceRef(m_Context, SubmitSamplerRequest(m_Context, Desc));

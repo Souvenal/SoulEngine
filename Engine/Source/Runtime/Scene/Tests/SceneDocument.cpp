@@ -60,6 +60,14 @@ material_instances:
     base_color: [1.0, 0.71, 0.22]
     metallic: 1.0
     roughness: 0.18
+    base_color_texture: wood.png
+    normal_texture: textures/wood_normal.png
+    metallic_roughness_texture: textures/wood_mr.png
+    metallic_texture: textures/wood_metallic.png
+    roughness_texture: textures/wood_roughness.png
+    occlusion_texture: textures/wood_occlusion.png
+    emissive: [0.1, 0.2, 0.3]
+    emissive_texture: textures/wood_emissive.png
 entities:
   - components:
       camera:
@@ -69,7 +77,6 @@ entities:
       mesh:
         asset: teapot.obj
         material: gold
-        texture: wood.png
 )");
 
     Scene Scene = {};
@@ -80,7 +87,24 @@ entities:
     const auto Snapshot = Scene.BuildSnapshot();
     ASSERT_EQ(Snapshot.Renderables.size(), 1u);
     EXPECT_EQ(Snapshot.Renderables.front().MeshAsset, (FilePath.parent_path() / "Assets" / "teapot.obj").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().TextureAsset, (FilePath.parent_path() / "Assets" / "wood.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().MaterialId, "gold");
+    EXPECT_EQ(Snapshot.Renderables.front().Material.BaseColorTexture,
+              (FilePath.parent_path() / "Assets" / "wood.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().Material.NormalTexture,
+              (FilePath.parent_path() / "Assets" / "textures" / "wood_normal.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().Material.MetallicRoughnessTexture,
+              (FilePath.parent_path() / "Assets" / "textures" / "wood_mr.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().Material.MetallicTexture,
+              (FilePath.parent_path() / "Assets" / "textures" / "wood_metallic.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().Material.RoughnessTexture,
+              (FilePath.parent_path() / "Assets" / "textures" / "wood_roughness.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().Material.OcclusionTexture,
+              (FilePath.parent_path() / "Assets" / "textures" / "wood_occlusion.png").lexically_normal().string());
+    EXPECT_EQ(Snapshot.Renderables.front().Material.EmissiveTexture,
+              (FilePath.parent_path() / "Assets" / "textures" / "wood_emissive.png").lexically_normal().string());
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.Emissive.x), 0.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.Emissive.y), 0.2f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.Emissive.z), 0.3f);
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.x), 1.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.y), 0.71f);
     EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Metallic, 1.0f);
@@ -94,6 +118,51 @@ entities:
     EXPECT_FLOAT_EQ(Camera.Settings.FarPlane, 100.0f);
 
     std::filesystem::remove(FilePath);
+}
+
+TEST(SceneDocument, SavesMaterialBaseColorTextureAndRejectsLegacyMeshTexture) {
+    const auto FilePath = WriteSceneFile(R"(
+material_instances:
+  wood:
+    base_color_texture: textures/wood.png
+entities:
+  - components:
+      camera: {}
+  - components:
+      mesh:
+        asset: teapot.obj
+        material: wood
+)");
+
+    Scene Scene = {};
+    ASSERT_TRUE(Scene.LoadFromFile(FilePath).has_value());
+    const auto SavedPath = FilePath.parent_path() / "soulengine_scene_saved_test.yaml";
+    ASSERT_TRUE(Scene.SaveToFile(SavedPath).has_value());
+    const auto Saved = ReadFile(SavedPath);
+    ASSERT_TRUE(Saved.has_value()) << Saved.error().ToString();
+    EXPECT_TRUE(Saved->contains("base_color_texture"));
+    EXPECT_TRUE(Saved->contains("emissive"));
+    EXPECT_FALSE(Saved->contains("\n        texture:"));
+
+    const auto LegacyPath = WriteSceneFile(R"(
+entities:
+  - components:
+      camera: {}
+  - components:
+      mesh:
+        asset: teapot.obj
+        texture: legacy.png
+)");
+    SoulEngine::Scene LegacyScene = {};
+    const auto LegacyLoaded = LegacyScene.LoadFromFile(LegacyPath);
+    ASSERT_TRUE(LegacyLoaded.has_value()) << LegacyLoaded.error().ToString();
+    ASSERT_EQ(LegacyLoaded->Warnings.size(), 1u);
+    EXPECT_EQ(LegacyLoaded->Warnings.front().Path, "entities[1].components.mesh.texture");
+    EXPECT_TRUE(LegacyScene.BuildSnapshot().Renderables.empty());
+
+    std::filesystem::remove(FilePath);
+    std::filesystem::remove(SavedPath);
+    std::filesystem::remove(LegacyPath);
 }
 
 TEST(SceneDocument, SkipsMeshWithUnknownMaterialInstance) {

@@ -18,13 +18,22 @@ import :AccelerationStructure;
 
 namespace SoulEngine {
 
+/// Backend-private physical range resolved from a logical transient buffer handle.
+struct VulkanTransientBufferSlice {
+    Uint64 Offset = 0;
+    Uint64 Size   = 0;
+};
+
 /// Callable for std::visit over RHICommand variants.
 struct VulkanCommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
     std::unordered_map<vk::Image, VulkanImageState>& LocalStates;
     VulkanDescriptorManager*                         Descriptors                = nullptr;
-    VulkanUniformBufferArena*                        ConstantArena              = nullptr;
-    VulkanTransientUniformBufferArena*               DrawConstantArena          = nullptr;
+    VulkanTransientUniformArena*                     TransientUniformArena     = nullptr;
+    VulkanTransientShaderStorageArena*               TransientShaderStorageArena = nullptr;
+    std::vector<std::pair<RHITransientConstantBuffer, VulkanTransientBufferSlice>>* TransientConstantBuffers = nullptr;
+    std::vector<std::pair<RHITransientShaderStorageBuffer, VulkanTransientBufferSlice>>*
+        TransientShaderStorageBuffers = nullptr;
     Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
     enum class BoundPipelineType : Uint8 {
@@ -178,44 +187,34 @@ struct VulkanCommandVisitor {
                 const auto& Binding = Bindings[Index];
                 const auto& Value   = Values[Index];
 
-                if (const auto* Constant = std::get_if<RHIShaderParameterConstant>(&Value)) {
-                    if (!Constant->Buffer || Constant->Data.empty()) {
-                        Error = ErrorMessage(Format(
-                            "Shader parameter '{}' has an invalid constant buffer value", Binding.ParameterPath));
+                if (const auto* TransientConstant = std::get_if<RHITransientConstantBuffer>(&Value)) {
+                    if (!TransientConstantBuffers) {
+                        Error = ErrorMessage("Transient constant buffer table is unavailable during shader parameter binding");
                         return;
                     }
-                    auto& VkBuffer = static_cast<const VulkanConstantBuffer&>(*Constant->Buffer);
-                    Uint32 Offset = 0;
-                    vk::Buffer DescriptorBuffer = nullptr;
-                    const void* DescriptorSource = Constant->Buffer;
-                    if (Constant->bPerDraw) {
-                        auto DrawOffset = DrawConstantArena->Allocate(FrameIndex, Constant->Data.size());
-                        if (!DrawOffset) {
-                            Error = DrawOffset.error().Append("Shader parameter draw constant allocation failed");
-                            return;
-                        }
-                        Offset = *DrawOffset;
-                        if (auto R = DrawConstantArena->Write(Constant->Data.data(), Constant->Data.size(), Offset); !R) {
-                            Error = R.error().Append("Shader parameter draw constant arena write failed");
-                            return;
-                        }
-                        DescriptorBuffer = DrawConstantArena->GetVkBuffer();
-                        DescriptorSource = DrawConstantArena;
-                    } else {
-                        Offset = VkBuffer.GetArenaOffset(FrameIndex);
-                        if (auto R = ConstantArena->Write(Constant->Data.data(), Constant->Data.size(), Offset); !R) {
-                            Error = R.error().Append("Shader parameter constant arena write failed");
-                            return;
-                        }
-                        DescriptorBuffer = ConstantArena->GetVkBuffer();
+                    const auto It = std::ranges::find_if(
+                        *TransientConstantBuffers,
+                        [&TransientConstant](const auto& Entry) -> bool {
+                            return Entry.first == *TransientConstant;
+                        });
+                    if (It == TransientConstantBuffers->end()) {
+                        Error = ErrorMessage(Format(
+                            "Shader parameter '{}' references an unresolved transient constant buffer",
+                            Binding.ParameterPath));
+                        return;
                     }
-                    auto& ResourceBindings = (*Instance)->ResourceBindings;
-                    if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != DescriptorSource) {
+                    if (It->second.Offset > std::numeric_limits<Uint32>::max()) {
+                        Error = ErrorMessage("Transient constant buffer offset exceeds dynamic offset range");
+                        return;
+                    }
+                    if (bUpdateDescriptors) {
                         Descriptors->WriteConstantDescriptor(
-                            *(*Instance)->Set, Binding.Binding, DescriptorBuffer, Constant->Buffer->GetSize());
-                        ResourceBindings[Binding.Binding] = DescriptorSource;
+                            *(*Instance)->Set,
+                            Binding.Binding,
+                            TransientUniformArena->GetVkBuffer(),
+                            It->second.Size);
                     }
-                    DynamicOffsetWrites.push_back({Binding.Binding, Offset});
+                    DynamicOffsetWrites.push_back({Binding.Binding, static_cast<Uint32>(It->second.Offset)});
                     continue;
                 }
 
@@ -266,6 +265,29 @@ struct VulkanCommandVisitor {
                             *(*Instance)->Set, Binding.Binding, VkTable.GetVkBuffer(), VkTable.GetCapacity());
                         ResourceBindings[Binding.Binding] = *GeometryTable;
                     }
+                    continue;
+                }
+
+                if (const auto* TransientStorage = std::get_if<RHITransientShaderStorageBuffer>(&Value)) {
+                    if (!TransientShaderStorageArena || !TransientShaderStorageBuffers) {
+                        Error = ErrorMessage("Transient shader storage arena is unavailable during shader parameter binding");
+                        return;
+                    }
+                    const auto It = std::ranges::find_if(
+                        *TransientShaderStorageBuffers,
+                        [&TransientStorage](const auto& Entry) -> bool {
+                            return Entry.first == *TransientStorage;
+                        });
+                    if (It == TransientShaderStorageBuffers->end()) {
+                        Error = ErrorMessage(
+                            Format("Shader parameter '{}' references an unresolved transient storage buffer", Binding.ParameterPath));
+                        return;
+                    }
+                    Descriptors->WriteStorageBufferDescriptor(*(*Instance)->Set,
+                                                              Binding.Binding,
+                                                              TransientShaderStorageArena->GetVkBuffer(),
+                                                              It->second.Size,
+                                                              It->second.Offset);
                     continue;
                 }
 
@@ -454,6 +476,97 @@ struct VulkanCommandVisitor {
         Buf.pipelineBarrier2(Dependency);
     }
 
+    auto operator()(const RHIWriteTransientConstantBufferCmd& Cmd) -> void {
+        if (!Cmd.Buffer.IsValid()) {
+            Error = ErrorMessage("Transient constant buffer write has an invalid buffer");
+            return;
+        }
+        if (Cmd.Data.empty()) {
+            Error = ErrorMessage("Transient constant buffer write has no data");
+            return;
+        }
+        if (!TransientUniformArena || !TransientConstantBuffers) {
+            Error = ErrorMessage("Transient constant arena is unavailable during command execution");
+            return;
+        }
+        auto Offset = TransientUniformArena->Allocate(FrameIndex, Cmd.Data.size());
+        if (!Offset) {
+            Error = Offset.error().Append("Transient constant buffer allocation failed");
+            return;
+        }
+        if (auto R = TransientUniformArena->Write(Cmd.Data.data(), Cmd.Data.size(), *Offset); !R) {
+            Error = R.error().Append("Transient constant buffer upload failed");
+            return;
+        }
+        if (std::ranges::find_if(
+                *TransientConstantBuffers,
+                [&Cmd](const auto& Entry) -> bool {
+                    return Entry.first == Cmd.Buffer;
+                }) != TransientConstantBuffers->end()) {
+            Error = ErrorMessage("Transient constant buffer was written more than once");
+            return;
+        }
+        TransientConstantBuffers->emplace_back(
+            Cmd.Buffer,
+            VulkanTransientBufferSlice{
+                .Offset = *Offset,
+                .Size   = Cmd.Data.size(),
+            });
+        const vk::MemoryBarrier2 Barrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
+            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eUniformRead,
+        };
+        const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
+        Buf.pipelineBarrier2(Dependency);
+    }
+
+    auto operator()(const RHIWriteTransientShaderStorageBufferCmd& Cmd) -> void {
+        if (!Cmd.Buffer.IsValid()) {
+            Error = ErrorMessage("Transient shader storage buffer write has an invalid buffer");
+            return;
+        }
+        if (Cmd.Data.empty()) {
+            Error = ErrorMessage("Transient shader storage buffer write has no data");
+            return;
+        }
+        if (!TransientShaderStorageArena || !TransientShaderStorageBuffers) {
+            Error = ErrorMessage("Transient shader storage arena is unavailable during command execution");
+            return;
+        }
+        auto Offset = TransientShaderStorageArena->Allocate(FrameIndex, Cmd.Data.size());
+        if (!Offset) {
+            Error = Offset.error().Append("Transient shader storage buffer allocation failed");
+            return;
+        }
+        if (auto R = TransientShaderStorageArena->Write(Cmd.Data.data(), Cmd.Data.size(), *Offset); !R) {
+            Error = R.error().Append("Transient shader storage buffer upload failed");
+            return;
+        }
+        if (std::ranges::find_if(
+                *TransientShaderStorageBuffers,
+                [&Cmd](const auto& Entry) -> bool {
+                    return Entry.first == Cmd.Buffer;
+                }) != TransientShaderStorageBuffers->end()) {
+            Error = ErrorMessage("Transient shader storage buffer was written more than once");
+            return;
+        }
+        TransientShaderStorageBuffers->emplace_back(
+            Cmd.Buffer,
+            VulkanTransientBufferSlice{
+                .Offset = *Offset,
+                .Size   = Cmd.Data.size(),
+            });
+        const vk::MemoryBarrier2 Barrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
+            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        };
+        const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
+        Buf.pipelineBarrier2(Dependency);
+    }
     auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
         if (!Cmd.TargetPtr)
             return;
@@ -550,8 +663,9 @@ struct VulkanCommandVisitor {
     auto operator()(const RHIBindShaderParametersCmd& Cmd) -> void {
         if (!Cmd.PipelinePtr)
             return;
-        if (!Descriptors || !ConstantArena || !DrawConstantArena) {
-            Error = ErrorMessage("VulkanCommandVisitor: descriptor manager or constant arena is missing");
+        if (!Descriptors || !TransientUniformArena || !TransientShaderStorageArena ||
+            !TransientConstantBuffers || !TransientShaderStorageBuffers) {
+            Error = ErrorMessage("VulkanCommandVisitor: descriptor manager or transient arena is missing");
             return;
         }
         if (m_BoundPipeline != Cmd.PipelinePtr) {

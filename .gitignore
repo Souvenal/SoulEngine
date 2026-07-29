@@ -29,5 +29,8 @@ vsxmake2026
 Engine/Configs/SoulEngine.toml
 Engine/Logs/
 
+# imgui Configs
+imgui.ini
+
 # Local ray-tracing phase acceptance plans (intentionally not versioned)
 Docs/Phase/

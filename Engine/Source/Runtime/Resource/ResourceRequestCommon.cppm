@@ -23,7 +23,7 @@ auto PublishResourceReady(ResourceContext& Context,
         return;
     }
 
-    LogInfo("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Key);
+    LogDebug("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Key);
 }
 
 template <ManagedResource T>

@@ -97,11 +97,7 @@ class RayTracingRenderer final : public IRenderer {
         m_Tlas = Resources.RequestTopLevelAccelerationStructureRef(
             "ray_tracing_renderer_main", {.InitialInstanceCapacity = 16,
                                             .BuildFlags = RHIAccelerationStructureBuildFlags::AllowUpdate});
-        m_ViewConstants = Resources.RequestConstantBufferRef(
-            "ray_tracing_renderer_view_constants", {.Size = sizeof(RayTracingViewConstants)});
-        m_MaterialConstants = Resources.RequestConstantBufferRef(
-            "ray_tracing_renderer_material_constants", {.Size = sizeof(RayTracingMaterialConstants)});
-        if (!m_Pipeline || !m_Tlas || !m_ViewConstants || !m_MaterialConstants)
+        if (!m_Pipeline || !m_Tlas)
             return std::unexpected(ErrorMessage("RayTracingRenderer resource request failed"));
         m_GeometryTable = RHIRenderDevice::Get().GetRayTracingGeometryTable();
         if (!m_GeometryTable)
@@ -112,8 +108,6 @@ class RayTracingRenderer final : public IRenderer {
     auto OnDetach() -> void override {
         m_Pipeline = {};
         m_Tlas = {};
-        m_ViewConstants = {};
-        m_MaterialConstants = {};
         m_GeometryTable = nullptr;
         m_Output = {};
         m_Accumulation = {};
@@ -125,6 +119,7 @@ class RayTracingRenderer final : public IRenderer {
         m_SampleIndex = 0;
         m_HasAccumulation = false;
         m_LoggedFirstTrace = false;
+        m_LoggedTextureFallbacks.clear();
     }
 
     [[nodiscard]] auto Render(const SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
@@ -197,7 +192,23 @@ class RayTracingRenderer final : public IRenderer {
                 .MaterialIndex = InstanceIndex,
             });
 
-            const auto& Material = Renderable.Material;
+            const auto* ImportedMaterial = [&]() -> const PbrMetallicRoughnessMaterial* {
+                if (!Renderable.MaterialId.empty())
+                    return nullptr;
+                for (const auto& Group : Mesh->GetMeshGroups()) {
+                    if (!Group.SubMeshes.empty())
+                        return Mesh->GetImportedMaterial(Group.SubMeshes.front().MaterialSlot);
+                }
+                return nullptr;
+            }();
+            const auto& Material = ImportedMaterial ? *ImportedMaterial : Renderable.Material;
+            if (ImportedMaterial && (!Material.BaseColorTexture.empty() || !Material.NormalTexture.empty() ||
+                                     !Material.MetallicRoughnessTexture.empty() || !Material.MetallicTexture.empty() ||
+                                     !Material.RoughnessTexture.empty() || !Material.OcclusionTexture.empty() ||
+                                     !Material.EmissiveTexture.empty()) &&
+                m_LoggedTextureFallbacks.insert(Renderable.MeshAsset).second) {
+                LogWarning("Ray tracing material fallback for '{}': imported texture maps are ignored in V0", Renderable.MeshAsset);
+            }
             MaterialData.BaseColorMetallic[InstanceIndex] = hlslpp::interop::float4{
                 hlslpp::float4{Material.BaseColor.x, Material.BaseColor.y, Material.BaseColor.z, Material.Metallic}};
             MaterialData.RoughnessGeometryBase[InstanceIndex] = hlslpp::interop::float4{
@@ -218,9 +229,7 @@ class RayTracingRenderer final : public IRenderer {
         const bool bTargetsChanged = EnsureOutputTargets(Resources, ViewOutput->GetWidth(), ViewOutput->GetHeight());
         auto* Output = Resources.TryGetReady(m_Output);
         auto* Accumulation = Resources.TryGetReady(m_Accumulation);
-        auto* ViewCB = Resources.TryGetReady(m_ViewConstants);
-        auto* MaterialCB = Resources.TryGetReady(m_MaterialConstants);
-        if (!Output || !Accumulation || !ViewCB || !MaterialCB)
+        if (!Output || !Accumulation)
             return Result;
 
         const auto SceneSignature = BuildSceneSignature(Scene, View, Instances.size(), GeometryUpdate.Geometries.size());
@@ -240,16 +249,24 @@ class RayTracingRenderer final : public IRenderer {
             return std::unexpected(R.error().Append("RayTracingRenderer accumulation parameter binding failed"));
         if (auto R = m_Parameters.SetRayTracingGeometryTable("g_rayTracingGeometryMetadata.metadata", m_GeometryTable); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer BDA geometry-table parameter binding failed"));
-        if (auto R = m_Parameters.SetConstantBuffer(
-                "g_rayTracing.materials", MaterialCB, &MaterialData, sizeof(MaterialData));
-            !R) {
+        auto MaterialBuffer = RHIRenderDevice::Get().AllocateTransientConstantBuffer(sizeof(MaterialData));
+        if (!MaterialBuffer)
+            return std::unexpected(MaterialBuffer.error().Append("RayTracingRenderer material transient constant allocation failed"));
+        if (auto R = m_Parameters.SetTransientConstantBuffer("g_rayTracing.materials", *MaterialBuffer); !R) {
             return std::unexpected(R.error().Append("RayTracingRenderer material parameter binding failed"));
         }
         const auto ViewData = BuildViewConstants(View, m_SampleIndex);
-        if (auto R = m_Parameters.SetConstantBuffer("g_rayTracing.view", ViewCB, &ViewData, sizeof(ViewData)); !R)
+        auto ViewBuffer = RHIRenderDevice::Get().AllocateTransientConstantBuffer(sizeof(ViewData));
+        if (!ViewBuffer)
+            return std::unexpected(ViewBuffer.error().Append("RayTracingRenderer view transient constant allocation failed"));
+        if (auto R = m_Parameters.SetTransientConstantBuffer("g_rayTracing.view", *ViewBuffer); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer view parameter binding failed"));
 
         RHINonRenderingPass Pass = {};
+        if (auto R = Pass.WriteTransientConstantBuffer(*MaterialBuffer, std::as_bytes(std::span{&MaterialData, 1})); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer material transient constant write failed"));
+        if (auto R = Pass.WriteTransientConstantBuffer(*ViewBuffer, std::as_bytes(std::span{&ViewData, 1})); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer view transient constant write failed"));
         Pass.UpdateRayTracingGeometryTable(m_GeometryTable, std::move(GeometryUpdate));
         Pass.BuildOrUpdateTopLevelAccelerationStructure(Tlas->GetRhiPayload(), Instances);
         Pass.SetRayTracingPipeline(Pipeline);
@@ -368,8 +385,6 @@ class RayTracingRenderer final : public IRenderer {
 
     ResourceRef<RHIRayTracingPipeline> m_Pipeline = {};
     ResourceRef<ResourceTopLevelAccelerationStructure> m_Tlas = {};
-    ResourceRef<RHIConstantBuffer> m_ViewConstants = {};
-    ResourceRef<RHIConstantBuffer> m_MaterialConstants = {};
     RHIRayTracingGeometryTable* m_GeometryTable = nullptr;
     ResourceRef<RHIRenderTarget> m_Output = {};
     ResourceRef<RHIRenderTarget> m_Accumulation = {};
@@ -381,6 +396,7 @@ class RayTracingRenderer final : public IRenderer {
     Uint32 m_SampleIndex = 0;
     bool m_HasAccumulation = false;
     bool m_LoggedFirstTrace = false;
+    std::set<String, std::less<>> m_LoggedTextureFallbacks = {};
 };
 
 RendererFactory::AutoRegistrar<RayTracingRenderer> RegRayTracingRenderer{"RayTracing"};

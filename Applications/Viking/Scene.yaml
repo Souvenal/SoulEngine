@@ -3,6 +3,7 @@ material_instances:
     base_color: [1.0, 1.0, 1.0]
     metallic: 0.0
     roughness: 0.9
+    base_color_texture: viking_room.png
 
 entities:
   - name: Main Camera
@@ -24,4 +25,3 @@ entities:
       mesh:
         asset: viking_room.obj
         material: viking_room
-        texture: viking_room.png

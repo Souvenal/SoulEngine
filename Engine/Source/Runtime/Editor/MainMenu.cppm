@@ -5,6 +5,7 @@ module;
 export module Editor:MainMenu;
 
 import std;
+import Core;
 import Application;
 import Renderer;
 

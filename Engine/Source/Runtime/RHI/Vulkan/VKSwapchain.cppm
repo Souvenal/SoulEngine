@@ -1,3 +1,7 @@
+module;
+
+#include <cstdint>
+
 export module Vulkan:Swapchain;
 
 import RHI;

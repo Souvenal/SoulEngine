@@ -14,13 +14,6 @@ export namespace SoulEngine {
 
 using SceneEntity = entt::entity;
 
-/// @brief GPU data layout for one render view's constant buffer.
-/// Matches Common.slang ViewData std140 layout.
-struct alignas(16) ViewConstants {
-    alignas(16) hlslpp::float4x4 ViewProjection = hlslpp::float4x4::identity();
-};
-static_assert(sizeof(ViewConstants) == 64, "ViewConstants must match Common.slang ViewData std140 layout");
-
 struct Transform {
     hlslpp::float3   Translation     = hlslpp::float3(0.0f, 0.0f, 0.0f);
     hlslpp::float3   Rotation        = hlslpp::float3(0.0f, 0.0f, 0.0f);
@@ -43,13 +36,8 @@ struct Transform {
 struct RenderViewSnapshot {
     hlslpp::float4x4                 ViewProjection = hlslpp::float4x4::identity();
     hlslpp::float3                   CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    ResourceHandle<RHIRenderTarget>  ColorRT        = {};
-    ResourceHandle<RHIRenderTarget>  DepthRT        = {};
-    ResourceHandle<RHIConstantBuffer> ViewCB        = {};
-
-    [[nodiscard]] auto GetViewConstants() const -> ViewConstants {
-        return ViewConstants{.ViewProjection = ViewProjection};
-    }
+    ResourceHandle<RHIRenderTarget> ColorRT = {};
+    ResourceHandle<RHIRenderTarget> DepthRT = {};
 };
 
 struct SceneNode {
@@ -74,7 +62,6 @@ struct Camera {
     float FarPlane  = 100.0f;
     ResourceRef<RHIRenderTarget> ColorRT = {};
     ResourceRef<RHIRenderTarget> DepthRT = {};
-    ResourceRef<RHIConstantBuffer> ViewCB = {};
     Uint32 ViewportWidth = 0;
     Uint32 ViewportHeight = 0;
 
@@ -83,13 +70,12 @@ struct Camera {
         if (Width == 0 || Height == 0) {
             ColorRT = {};
             DepthRT = {};
-            ViewCB = {};
             ViewportWidth = 0;
             ViewportHeight = 0;
             return;
         }
 
-        if (ViewportWidth == Width && ViewportHeight == Height && ColorRT && DepthRT && ViewCB)
+        if (ViewportWidth == Width && ViewportHeight == Height && ColorRT && DepthRT)
             return;
 
         ViewportWidth = Width;
@@ -110,8 +96,6 @@ struct Camera {
                 .Format = RHIFormat::D32_SFLOAT,
                 .Usage  = RHITextureUsage::DepthStencil,
             });
-        ViewCB = ResourceManager::Get().RequestConstantBufferRef(
-            Format("{}_constants", ResourceKey), {.Size = sizeof(ViewConstants)});
     }
 
     /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
@@ -138,7 +122,7 @@ struct Camera {
     }
 
     [[nodiscard]] auto BuildRenderView(const Transform& CameraTransform) const -> std::optional<RenderViewSnapshot> {
-        if (!ColorRT || !DepthRT || !ViewCB || ViewportWidth == 0 || ViewportHeight == 0)
+        if (!ColorRT || !DepthRT || ViewportWidth == 0 || ViewportHeight == 0)
             return std::nullopt;
 
         const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
@@ -148,7 +132,6 @@ struct Camera {
             .CameraPosition = hlslpp::float3(World[3].x, World[3].y, World[3].z),
             .ColorRT        = ColorRT.GetHandle(),
             .DepthRT        = DepthRT.GetHandle(),
-            .ViewCB         = ViewCB.GetHandle(),
         };
     }
 };
@@ -192,9 +175,6 @@ struct MeshComponent {
     String Asset = {};
     /// Scene-local PBR material instance ID. Empty uses the built-in material defaults.
     String Material = {};
-    /// Optional base-color texture path relative to the current application Assets directory.
-    /// Empty renders with material factors only.
-    String Texture = {};
 };
 
 struct LightComponent {};
@@ -205,7 +185,8 @@ struct LightComponent {};
 /// state. Each renderer resolves it to its own GPU representation.
 struct RenderableInstance {
     String                        MeshAsset      = {};
-    String                        TextureAsset   = {};
+    /// Scene-local material instance ID. Empty identifies the shared built-in material.
+    String                        MaterialId     = {};
     PbrMetallicRoughnessMaterial  Material       = {};
     hlslpp::float4x4              WorldTransform = hlslpp::float4x4::identity();
 };
@@ -404,10 +385,22 @@ auto Scene::UpdateWorldTransforms() -> void {
         }
 
         const auto& Node = Meshes.get<SceneNode>(Entity);
+        const auto ResolveTextureAsset = [this](String& Texture) -> void {
+            if (!Texture.empty())
+                Texture = ResolveAssetPath(Texture);
+        };
+        ResolveTextureAsset(Material.BaseColorTexture);
+        ResolveTextureAsset(Material.NormalTexture);
+        ResolveTextureAsset(Material.MetallicRoughnessTexture);
+        ResolveTextureAsset(Material.MetallicTexture);
+        ResolveTextureAsset(Material.RoughnessTexture);
+        ResolveTextureAsset(Material.OcclusionTexture);
+        ResolveTextureAsset(Material.EmissiveTexture);
+
         Snapshot.Renderables.emplace_back(RenderableInstance{
             .MeshAsset      = ResolveAssetPath(Mesh.Asset),
-            .TextureAsset   = Mesh.Texture.empty() ? String{} : ResolveAssetPath(Mesh.Texture),
-            .Material       = Material,
+            .MaterialId     = Mesh.Material,
+            .Material       = std::move(Material),
             .WorldTransform = Node.Transform.WorldTransform,
         });
     }

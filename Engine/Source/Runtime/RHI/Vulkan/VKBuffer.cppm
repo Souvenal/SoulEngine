@@ -27,11 +27,7 @@ class VulkanHostBuffer {
   public:
     VulkanHostBuffer() = default;
 
-    [[nodiscard]] static auto Create(Uint64                Size,
-                                     vk::BufferUsageFlags Usage,
-                                     vk::Device           Dev,
-                                     VmaAllocator         Alloc,
-                                     bool                 bRequireHostCoherent = false)
+    [[nodiscard]] static auto Create(Uint64 Size, vk::BufferUsageFlags Usage, vk::Device Dev, VmaAllocator Alloc)
         -> std::expected<VulkanHostBuffer, ErrorMessage> {
         VulkanHostBuffer Buf;
         Buf.m_Allocator = Alloc;
@@ -448,194 +444,74 @@ class VulkanIndexBuffer final : public RHIIndexBuffer {
     Uint64             m_IndexCount    = 0;
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanConstantBuffer — logical RHI constant block with arena offset
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// Vulkan backend constant-buffer handle.
-/// Owns no VkBuffer; it records the per-frame offsets reserved in the shared
-/// VulkanUniformBufferArena.
-class VulkanConstantBuffer final : public RHIConstantBuffer {
-  public:
-    VulkanConstantBuffer(const RHIConstantBufferDesc& Desc, std::vector<Uint32> ArenaOffsets)
-        : RHIConstantBuffer(Desc) {
-        m_ArenaOffsets = std::move(ArenaOffsets);
-    }
-
-    [[nodiscard]] auto GetArenaOffset(Uint32 FrameIndex) const -> Uint32 {
-        return m_ArenaOffsets[FrameIndex];
-    }
-
-  private:
-    std::vector<Uint32> m_ArenaOffsets = {};
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanUniformBufferArena — shared dynamic uniform storage
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// Shared uniform-buffer arena used by dynamic UBO descriptors.
-class VulkanUniformBufferArena final {
-  public:
-    VulkanUniformBufferArena() = default;
-
-    explicit VulkanUniformBufferArena(VulkanHostBuffer&& Buffer) {
-        m_Buffer = std::move(Buffer);
-        m_Size   = m_Buffer.GetSize();
-    }
-
-    [[nodiscard]] static auto Create(Uint64 Size, vk::Device Dev, VmaAllocator Alloc)
-        -> std::expected<VulkanUniformBufferArena, ErrorMessage> {
-        if (Size == 0)
-            return std::unexpected(ErrorMessage("VulkanUniformBufferArena::Create: size must be greater than zero"));
-
-        auto Buffer = VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
-        if (!Buffer)
-            return std::unexpected(Buffer.error().Append("VulkanUniformBufferArena::Create: VulkanHostBuffer creation failed"));
-        return VulkanUniformBufferArena(std::move(*Buffer));
-    }
-
-    VulkanUniformBufferArena(const VulkanUniformBufferArena&)                       = delete;
-    auto operator=(const VulkanUniformBufferArena&) -> VulkanUniformBufferArena&    = delete;
-    VulkanUniformBufferArena(VulkanUniformBufferArena&&) noexcept                   = default;
-    auto operator=(VulkanUniformBufferArena&&) noexcept -> VulkanUniformBufferArena& = default;
-
-    [[nodiscard]] auto Allocate(Uint64 Size) -> std::expected<Uint32, ErrorMessage> {
-        const auto MaxRange =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxUniformBufferRange);
-        if (Size > MaxRange) {
-            return std::unexpected(
-                ErrorMessage(Format("VulkanUniformBufferArena allocation exceeds maxUniformBufferRange ({} bytes > {})",
-                                          Size,
-                                          MaxRange)));
-        }
-
-        const auto Alignment =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minUniformBufferOffsetAlignment);
-
-        auto LogicalOffset = AlignUp(m_NextLogicalOffset, Alignment);
-        if (!LogicalOffset)
-            return std::unexpected(
-                LogicalOffset.error().Append("VulkanUniformBufferArena::Allocate: offset alignment failed"));
-        if (*LogicalOffset > std::numeric_limits<Uint64>::max() - Size)
-            return std::unexpected(ErrorMessage("VulkanUniformBufferArena allocation size overflow"));
-        if (*LogicalOffset + Size > m_Size) {
-            return std::unexpected(ErrorMessage(
-                Format("VulkanUniformBufferArena allocation exceeds capacity (offset {} + size {} > {})",
-                             *LogicalOffset,
-                             Size,
-                             m_Size)));
-        }
-        if (*LogicalOffset > std::numeric_limits<Uint32>::max())
-            return std::unexpected(ErrorMessage("VulkanUniformBufferArena offset exceeds dynamic offset range"));
-
-        m_NextLogicalOffset = *LogicalOffset + Size;
-        return static_cast<Uint32>(*LogicalOffset);
-    }
-
-    [[nodiscard]] auto Write(const void* Data, Uint64 Size, Uint32 Offset) -> std::expected<void, ErrorMessage> {
-        if (static_cast<Uint64>(Offset) + Size > m_Size) {
-            return std::unexpected(ErrorMessage(
-                Format("VulkanUniformBufferArena: write exceeds capacity (offset {} + size {} > capacity {})",
-                             Offset,
-                             Size,
-                             m_Size)));
-        }
-        if (auto R = m_Buffer.Upload(Data, Size, Offset); !R)
-            return std::unexpected(R.error().Append("VulkanUniformBufferArena::Write failed"));
-        return {};
-    }
-
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer.Get();
-    }
-
-    [[nodiscard]] auto GetSize() const -> Uint64 {
-        return m_Size;
-    }
-
-  private:
-    [[nodiscard]] static auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
-        if (Alignment == 0)
-            return Value;
-        if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1))
-            return std::unexpected(ErrorMessage("VulkanUniformBufferArena alignment overflow"));
-        return ((Value + Alignment - 1) / Alignment) * Alignment;
-    }
-
-    VulkanHostBuffer m_Buffer            = {};
-    Uint64     m_Size              = 0;
-    Uint64     m_NextLogicalOffset = 0;
-};
-
-
 /// Shared per-frame uniform-buffer arena for values that must remain distinct
 /// between individual draw commands.
-class VulkanTransientUniformBufferArena final {
+class VulkanTransientUniformArena final {
   public:
-    VulkanTransientUniformBufferArena() = default;
+    VulkanTransientUniformArena() = default;
 
-    explicit VulkanTransientUniformBufferArena(VulkanHostBuffer&& Buffer, Uint64 FrameCapacity, Uint32 FramesInFlight)
+    explicit VulkanTransientUniformArena(VulkanHostBuffer&& Buffer, Uint64 FrameCapacity, Uint32 FramesInFlight)
         : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_NextOffsets(FramesInFlight) {}
 
     [[nodiscard]] static auto Create(Uint64 CapacityPerFrame, vk::Device Dev, VmaAllocator Alloc, Uint32 FramesInFlight)
-        -> std::expected<VulkanTransientUniformBufferArena, ErrorMessage> {
+        -> std::expected<VulkanTransientUniformArena, ErrorMessage> {
         if (CapacityPerFrame == 0)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena::Create: capacity must be greater than zero"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Create: capacity must be greater than zero"));
         if (FramesInFlight == 0)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena::Create: frames-in-flight must be greater than zero"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Create: frames-in-flight must be greater than zero"));
         if (CapacityPerFrame > std::numeric_limits<Uint64>::max() / FramesInFlight)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena::Create: total buffer size overflow"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Create: total buffer size overflow"));
 
-        auto Buffer = VulkanHostBuffer::Create(CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
+        auto Buffer = VulkanHostBuffer::Create(
+            CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
         if (!Buffer)
-            return std::unexpected(Buffer.error().Append("VulkanTransientUniformBufferArena::Create: VulkanHostBuffer creation failed"));
-        return VulkanTransientUniformBufferArena(std::move(*Buffer), CapacityPerFrame, FramesInFlight);
+            return std::unexpected(Buffer.error().Append("VulkanTransientUniformArena::Create: VulkanHostBuffer creation failed"));
+        return VulkanTransientUniformArena(std::move(*Buffer), CapacityPerFrame, FramesInFlight);
     }
 
-    VulkanTransientUniformBufferArena(const VulkanTransientUniformBufferArena&)                       = delete;
-    auto operator=(const VulkanTransientUniformBufferArena&) -> VulkanTransientUniformBufferArena&    = delete;
-    VulkanTransientUniformBufferArena(VulkanTransientUniformBufferArena&&) noexcept                   = default;
-    auto operator=(VulkanTransientUniformBufferArena&&) noexcept -> VulkanTransientUniformBufferArena& = default;
+    VulkanTransientUniformArena(const VulkanTransientUniformArena&)                       = delete;
+    auto operator=(const VulkanTransientUniformArena&) -> VulkanTransientUniformArena&    = delete;
+    VulkanTransientUniformArena(VulkanTransientUniformArena&&) noexcept                   = default;
+    auto operator=(VulkanTransientUniformArena&&) noexcept -> VulkanTransientUniformArena& = default;
 
     [[nodiscard]] auto BeginFrame(Uint32 FrameIndex) -> std::expected<void, ErrorMessage> {
         if (FrameIndex >= m_NextOffsets.size())
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena::BeginFrame: frame index is out of range"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::BeginFrame: frame index is out of range"));
         m_NextOffsets[FrameIndex] = static_cast<Uint64>(FrameIndex) * m_FrameCapacity;
         return {};
     }
 
     [[nodiscard]] auto Allocate(Uint32 FrameIndex, Uint64 Size) -> std::expected<Uint32, ErrorMessage> {
         if (FrameIndex >= m_NextOffsets.size())
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena::Allocate: frame index is out of range"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Allocate: frame index is out of range"));
         if (Size == 0)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena::Allocate: size must be greater than zero"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Allocate: size must be greater than zero"));
 
         const auto MaxRange =
             static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxUniformBufferRange);
         if (Size > MaxRange) {
             return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientUniformBufferArena allocation exceeds maxUniformBufferRange ({} bytes > {})", Size, MaxRange)));
+                "VulkanTransientUniformArena allocation exceeds maxUniformBufferRange ({} bytes > {})", Size, MaxRange)));
         }
 
         const auto Alignment =
             static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minUniformBufferOffsetAlignment);
         auto Offset = AlignUp(m_NextOffsets[FrameIndex], Alignment);
         if (!Offset)
-            return std::unexpected(Offset.error().Append("VulkanTransientUniformBufferArena::Allocate: offset alignment failed"));
+            return std::unexpected(Offset.error().Append("VulkanTransientUniformArena::Allocate: offset alignment failed"));
         if (*Offset > std::numeric_limits<Uint64>::max() - Size)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena allocation size overflow"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena allocation size overflow"));
 
         const auto FrameEnd = (static_cast<Uint64>(FrameIndex) + 1) * m_FrameCapacity;
         if (*Offset + Size > FrameEnd) {
             return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientUniformBufferArena allocation exceeds frame capacity (offset {} + size {} > frame end {})",
+                "VulkanTransientUniformArena allocation exceeds frame capacity (offset {} + size {} > frame end {})",
                 *Offset,
                 Size,
                 FrameEnd)));
         }
         if (*Offset > std::numeric_limits<Uint32>::max())
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena offset exceeds dynamic offset range"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena offset exceeds dynamic offset range"));
 
         m_NextOffsets[FrameIndex] = *Offset + Size;
         return static_cast<Uint32>(*Offset);
@@ -643,7 +519,7 @@ class VulkanTransientUniformBufferArena final {
 
     [[nodiscard]] auto Write(const void* Data, Uint64 Size, Uint32 Offset) -> std::expected<void, ErrorMessage> {
         if (auto R = m_Buffer.Upload(Data, Size, Offset); !R)
-            return std::unexpected(R.error().Append("VulkanTransientUniformBufferArena::Write failed"));
+            return std::unexpected(R.error().Append("VulkanTransientUniformArena::Write failed"));
         return {};
     }
 
@@ -656,13 +532,119 @@ class VulkanTransientUniformBufferArena final {
         if (Alignment == 0)
             return Value;
         if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1))
-            return std::unexpected(ErrorMessage("VulkanTransientUniformBufferArena alignment overflow"));
+            return std::unexpected(ErrorMessage("VulkanTransientUniformArena alignment overflow"));
         return ((Value + Alignment - 1) / Alignment) * Alignment;
     }
 
     VulkanHostBuffer          m_Buffer        = {};
     Uint64              m_FrameCapacity = 0;
     std::vector<Uint64> m_NextOffsets   = {};
+};
+
+/// Shared per-frame storage-buffer arena for shader data rebuilt during command execution.
+class VulkanTransientShaderStorageArena final {
+  public:
+    VulkanTransientShaderStorageArena() = default;
+
+    explicit VulkanTransientShaderStorageArena(VulkanHostBuffer&& Buffer, Uint64 FrameCapacity, Uint32 FramesInFlight)
+        : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_NextOffsets(FramesInFlight) {}
+
+    [[nodiscard]] static auto Create(Uint64 CapacityPerFrame, vk::Device Dev, VmaAllocator Alloc, Uint32 FramesInFlight)
+        -> std::expected<VulkanTransientShaderStorageArena, ErrorMessage> {
+        if (CapacityPerFrame == 0)
+            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena::Create: capacity must be greater than zero"));
+        if (FramesInFlight == 0)
+            return std::unexpected(
+                ErrorMessage("VulkanTransientShaderStorageArena::Create: frames-in-flight must be greater than zero"));
+        if (CapacityPerFrame > std::numeric_limits<Uint64>::max() / FramesInFlight)
+            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena::Create: total buffer size overflow"));
+
+        auto Buffer = VulkanHostBuffer::Create(
+            CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eStorageBuffer, Dev, Alloc);
+        if (!Buffer) {
+            return std::unexpected(
+                Buffer.error().Append("VulkanTransientShaderStorageArena::Create: VulkanHostBuffer creation failed"));
+        }
+        return VulkanTransientShaderStorageArena(std::move(*Buffer), CapacityPerFrame, FramesInFlight);
+    }
+
+    VulkanTransientShaderStorageArena(const VulkanTransientShaderStorageArena&)                       = delete;
+    auto operator=(const VulkanTransientShaderStorageArena&) -> VulkanTransientShaderStorageArena&    = delete;
+    VulkanTransientShaderStorageArena(VulkanTransientShaderStorageArena&&) noexcept                   = default;
+    auto operator=(VulkanTransientShaderStorageArena&&) noexcept -> VulkanTransientShaderStorageArena& = default;
+
+    [[nodiscard]] auto BeginFrame(Uint32 FrameIndex) -> std::expected<void, ErrorMessage> {
+        if (FrameIndex >= m_NextOffsets.size()) {
+            return std::unexpected(
+                ErrorMessage("VulkanTransientShaderStorageArena::BeginFrame: frame index is out of range"));
+        }
+        m_NextOffsets[FrameIndex] = static_cast<Uint64>(FrameIndex) * m_FrameCapacity;
+        return {};
+    }
+
+    [[nodiscard]] auto Allocate(Uint32 FrameIndex, Uint64 Size) -> std::expected<Uint64, ErrorMessage> {
+        if (FrameIndex >= m_NextOffsets.size()) {
+            return std::unexpected(
+                ErrorMessage("VulkanTransientShaderStorageArena::Allocate: frame index is out of range"));
+        }
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena::Allocate: size must be greater than zero"));
+
+        const auto MaxRange =
+            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxStorageBufferRange);
+        if (Size > MaxRange) {
+            return std::unexpected(ErrorMessage(Format(
+                "VulkanTransientShaderStorageArena allocation exceeds maxStorageBufferRange ({} bytes > {})",
+                Size,
+                MaxRange)));
+        }
+
+        const auto Alignment =
+            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minStorageBufferOffsetAlignment);
+        auto Offset = AlignUp(m_NextOffsets[FrameIndex], Alignment);
+        if (!Offset) {
+            return std::unexpected(
+                Offset.error().Append("VulkanTransientShaderStorageArena::Allocate: offset alignment failed"));
+        }
+        if (*Offset > std::numeric_limits<Uint64>::max() - Size)
+            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena allocation size overflow"));
+
+        const auto FrameEnd = (static_cast<Uint64>(FrameIndex) + 1) * m_FrameCapacity;
+        if (*Offset + Size > FrameEnd) {
+            return std::unexpected(ErrorMessage(Format(
+                "VulkanTransientShaderStorageArena allocation exceeds frame capacity (offset {} + size {} > frame end {})",
+                *Offset,
+                Size,
+                FrameEnd)));
+        }
+
+        m_NextOffsets[FrameIndex] = *Offset + Size;
+        return *Offset;
+    }
+
+    [[nodiscard]] auto Write(const void* Data, Uint64 Size, Uint64 Offset) -> std::expected<void, ErrorMessage> {
+        if (auto R = m_Buffer.Upload(Data, Size, Offset); !R)
+            return std::unexpected(R.error().Append("VulkanTransientShaderStorageArena::Write failed"));
+        return {};
+    }
+
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        return m_Buffer.Get();
+    }
+
+  private:
+    [[nodiscard]] static auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
+        if (Alignment == 0)
+            return Value;
+        if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1)) {
+            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena alignment overflow"));
+        }
+        return ((Value + Alignment - 1) / Alignment) * Alignment;
+    }
+
+    VulkanHostBuffer     m_Buffer        = {};
+    Uint64               m_FrameCapacity = 0;
+    std::vector<Uint64>  m_NextOffsets   = {};
 };
 
 } // namespace SoulEngine

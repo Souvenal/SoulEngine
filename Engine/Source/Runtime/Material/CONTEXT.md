@@ -11,7 +11,7 @@ loading, GPU objects, shader compilation, or Vulkan bindings.
 | Term | Definition |
 |------|------------|
 | **Material** | Renderer-neutral description of surface appearance. It contains authoring/runtime CPU values, never backend handles. |
-| **PbrMetallicRoughnessMaterial** | Current built-in material value. It contains only RGB base color, metallic, and roughness values. |
+| **PbrMetallicRoughnessMaterial** | Current built-in material value. It contains base-color, metallic, roughness, and emissive factors plus optional renderer-neutral texture asset references for the V0 PBR maps. |
 | **Material Instance** | A named or referenced use of a material value. V0 IDs and lifetime are scene-owned: a Scene Document maps IDs in `material_instances` to `PbrMetallicRoughnessMaterial` values. |
 | **Material Template** | Future shared definition of shader/pass interfaces and default values from which material instances override data. It is not represented in V0 because the only supported template is implicit PBR metallic-roughness. |
 
