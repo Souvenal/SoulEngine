@@ -41,6 +41,66 @@ class MockRenderTarget final : public RHIRenderTarget {
     }
 };
 
+/// Minimal RenderDevice implementation used to exercise logical transient-handle allocation.
+class MockRenderDevice final : public RHIRenderDevice {
+  public:
+    [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto GetBackendType() const -> RHIBackendType override {
+        return RHIBackendType::Unknown;
+    }
+    [[nodiscard]] auto CreateVertexBuffer(const RHIVertexBufferDesc&)
+        -> std::expected<RHIVertexBufferCreateResult, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create vertex buffers"));
+    }
+    [[nodiscard]] auto CreateIndexBuffer(const RHIIndexBufferDesc&)
+        -> std::expected<RHIIndexBufferCreateResult, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create index buffers"));
+    }
+    [[nodiscard]] auto CreateSampler(const RHISamplerDesc&) -> std::expected<UPtr<RHISampler>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create samplers"));
+    }
+    [[nodiscard]] auto CreateSampledTexture(const RHISampledTextureDesc&)
+        -> std::expected<RHISampledTextureCreateResult, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create sampled textures"));
+    }
+    [[nodiscard]] auto CreateRenderTarget(const RHIRenderTargetDesc&)
+        -> std::expected<RHIRenderTargetCreateResult, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create render targets"));
+    }
+    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc&)
+        -> std::expected<UPtr<RHIGraphicsPipeline>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create graphics pipelines"));
+    }
+    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc&)
+        -> std::expected<UPtr<RHIRayTracingPipeline>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create ray-tracing pipelines"));
+    }
+    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc&)
+        -> std::expected<UPtr<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create BLAS resources"));
+    }
+    [[nodiscard]] auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc&)
+        -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("MockRenderDevice does not create TLAS resources"));
+    }
+    [[nodiscard]] auto GetRayTracingGeometryTable() -> RHIRayTracingGeometryTable* override {
+        return nullptr;
+    }
+    [[nodiscard]] auto Execute(const RHICommandList&) -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override {
+        return 0;
+    }
+    [[nodiscard]] auto IsGpuComplete(RHIGpuCompletionToken) -> bool override {
+        return true;
+    }
+    auto WaitIdle() -> void override {}
+    auto Shutdown() -> void override {}
+};
+
 /// Concrete RT pipeline exposing the protected reflection-layout setup for testing.
 class MockRayTracingGeometryTable final : public RHIRayTracingGeometryTable {};
 
@@ -371,7 +431,7 @@ TEST(ShaderParametersTest, ReflectionAutomaticallyPartitionsParameterSets) {
     EXPECT_EQ(Parameters.GetSets()[1].GetRevision(), SamplerSetRevision);
 }
 
-TEST(ShaderParametersTest, PerDrawConstantUsesTransientAllocation) {
+TEST(ShaderParametersTest, TransientConstantBufferUsesRenderDeviceHandle) {
     auto Layout = RHIShaderParameterLayout::Create(ShaderReflection{
         .Bindings =
             {
@@ -384,15 +444,28 @@ TEST(ShaderParametersTest, PerDrawConstantUsesTransientAllocation) {
             },
     });
     auto Parameters = RHIShaderParameters::Create(Layout);
-    RHIConstantBuffer Buffer{RHIConstantBufferDesc{.Size = 64}};
+    MockRenderDevice Device;
+    auto Buffer = Device.AllocateTransientConstantBuffer(64);
+    ASSERT_TRUE(Buffer);
     std::array<std::byte, 64> Data = {};
 
-    ASSERT_TRUE(Parameters.SetConstantBuffer("g_object.data", &Buffer, Data.data(), Data.size(), true));
-    const auto* Constant = std::get_if<RHIShaderParameterConstant>(&Parameters.GetSets()[0].GetValues()[0]);
+    ASSERT_TRUE(Parameters.SetTransientConstantBuffer("g_object.data", *Buffer));
+    const auto* Constant = std::get_if<RHITransientConstantBuffer>(&Parameters.GetSets()[0].GetValues()[0]);
 
     ASSERT_NE(Constant, nullptr);
-    EXPECT_EQ(Constant->Buffer, &Buffer);
-    EXPECT_TRUE(Constant->bPerDraw);
+    EXPECT_EQ(*Constant, *Buffer);
+    EXPECT_EQ(Constant->GetSize(), Data.size());
+
+    RHIPass Pass = {};
+    ASSERT_TRUE(Pass.WriteTransientConstantBuffer(*Buffer, Data));
+    ASSERT_EQ(Pass.Commands.size(), 1);
+    const auto* Write = std::get_if<RHIWriteTransientConstantBufferCmd>(&Pass.Commands.front());
+    ASSERT_NE(Write, nullptr);
+    EXPECT_EQ(Write->Buffer, *Buffer);
+    EXPECT_EQ(Write->Data.size(), Data.size());
+
+    EXPECT_FALSE(Device.AllocateTransientConstantBuffer(0));
+    EXPECT_FALSE(Parameters.SetTransientConstantBuffer("g_object.data", {}));
 }
 
 TEST_F(UsageVisitorTest, DrawIndexedCmdUpdatesReferencedResources) {

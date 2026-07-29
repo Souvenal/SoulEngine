@@ -275,7 +275,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
 [[nodiscard]] auto MergePushConstantRanges(std::vector<ShaderPushConstantRange> Ranges)
     -> std::vector<ShaderPushConstantRange> {
-    std::ranges::sort(Ranges, {}, &ShaderPushConstantRange::Offset);
+    std::sort(Ranges.begin(),
+              Ranges.end(),
+              [](const ShaderPushConstantRange& Left, const ShaderPushConstantRange& Right) -> bool {
+                  return Left.Offset < Right.Offset;
+              });
 
     std::vector<ShaderPushConstantRange> Merged;
     for (const auto& Range : Ranges) {
@@ -341,7 +345,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 [[nodiscard]] auto ExtractVertexInputsFromVarLayout(slang::VariableLayoutReflection*           VarLayout,
                                                     std::vector<ShaderVertexInputAttribute>& VertexInputs)
     -> std::expected<void, ErrorMessage> {
-    if (!VarLayout)
+    if (!VarLayout || HasCategory(VarLayout, slang::ParameterCategory::Uniform))
         return {};
 
     auto* TypeLayout = VarLayout->getTypeLayout();

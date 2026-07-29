@@ -158,22 +158,22 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             m_FrameContext.push_back(std::move(*FCRes));
         }
 
-        // ── Constant arena ───────────────────────────────────────────────
+        // ── Transient constant arena ─────────────────────────────────────
         const auto ConstantArenaCapacity = Cfg.RhiVulkan.ConstantArenaBufferSize.value_or(4096);
-        if (ConstantArenaCapacity > std::numeric_limits<Uint64>::max() / m_FramesInFlight)
-            return std::unexpected(ErrorMessage("VulkanUniformBufferArena total buffer size overflow"));
+        auto TransientUniformArena =
+            VulkanTransientUniformArena::Create(ConstantArenaCapacity, *m_Device, m_Allocator, m_FramesInFlight);
+        if (!TransientUniformArena)
+            return std::unexpected(TransientUniformArena.error().Append("VulkanTransientUniformArena creation failed"));
+        m_TransientUniformArena = std::move(*TransientUniformArena);
 
-        auto ConstantArena =
-            VulkanUniformBufferArena::Create(static_cast<Uint64>(ConstantArenaCapacity) * m_FramesInFlight, *m_Device, m_Allocator);
-        if (!ConstantArena)
-            return std::unexpected(ConstantArena.error().Append("VulkanUniformBufferArena creation failed"));
-        m_ConstantArena = std::move(*ConstantArena);
-
-        auto DrawConstantArena =
-            VulkanTransientUniformBufferArena::Create(ConstantArenaCapacity, *m_Device, m_Allocator, m_FramesInFlight);
-        if (!DrawConstantArena)
-            return std::unexpected(DrawConstantArena.error().Append("VulkanTransientUniformBufferArena creation failed"));
-        m_DrawConstantArena = std::move(*DrawConstantArena);
+        constexpr Uint64 TransientShaderStorageArenaCapacity = 4ULL * 1024ULL * 1024ULL;
+        auto TransientShaderStorageArena = VulkanTransientShaderStorageArena::Create(
+            TransientShaderStorageArenaCapacity, *m_Device, m_Allocator, m_FramesInFlight);
+        if (!TransientShaderStorageArena) {
+            return std::unexpected(
+                TransientShaderStorageArena.error().Append("VulkanTransientShaderStorageArena creation failed"));
+        }
+        m_TransientShaderStorageArena = std::move(*TransientShaderStorageArena);
 
         // ── Pre-register swapchain images in the committed state map ─────────
         RegisterSwapchainImages();
@@ -327,26 +327,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             Desc, m_Allocator, *m_Device, m_ImmediateContext, m_TransferCompletionQueue, m_DeletionQueue);
     }
 
-    [[nodiscard]] auto CreateConstantBuffer(const RHIConstantBufferDesc& Desc)
-        -> std::expected<UPtr<RHIConstantBuffer>, ErrorMessage> override {
-        if (Desc.Size == 0)
-            return std::unexpected(ErrorMessage("CreateConstantBuffer: size must be greater than zero"));
-
-        std::vector<Uint32> Offsets;
-        Offsets.reserve(m_FramesInFlight);
-        // One logical VulkanConstantBuffer needs one backing arena slot per
-        // frame-in-flight so writes for the current frame never overwrite
-        // constant data still referenced by older GPU submissions.
-        for (Uint32 FrameIndex = 0; FrameIndex < m_FramesInFlight; ++FrameIndex) {
-            auto Offset = m_ConstantArena.Allocate(Desc.Size);
-            if (!Offset)
-                return std::unexpected(Offset.error().Append("CreateConstantBuffer: arena offset allocation failed"));
-            Offsets.push_back(*Offset);
-        }
-
-        return std::make_unique<VulkanConstantBuffer>(Desc, std::move(Offsets));
-    }
-
     [[nodiscard]] auto CreateSampler(const RHISamplerDesc& Desc)
         -> std::expected<UPtr<RHISampler>, ErrorMessage> override {
         return VulkanSampler::Create(Desc, m_Device, m_DeletionQueue);
@@ -419,8 +399,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
         m_RayTracingGeometryTable.reset();
-        m_DrawConstantArena = {};
-        m_ConstantArena = {};
+        m_TransientShaderStorageArena = {};
+        m_TransientUniformArena = {};
         m_FrameContext.clear();
         m_DescriptorManager.reset();
         if (m_Allocator) {
@@ -811,6 +791,22 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                         }
                         if (!TypedCmd.VertexBuffers[0])
                             return std::unexpected(ErrorMessage("Execute: draw is missing vertex buffer"));
+                    } else if constexpr (std::is_same_v<CommandType, RHIWriteTransientConstantBufferCmd>) {
+                        if (!TypedCmd.Buffer.IsValid())
+                            return std::unexpected(ErrorMessage("Execute: transient constant buffer write has an invalid buffer"));
+                        if (TypedCmd.Data.size() != TypedCmd.Buffer.GetSize()) {
+                            return std::unexpected(
+                                ErrorMessage("Execute: transient constant buffer write size does not match buffer size"));
+                        }
+                    } else if constexpr (std::is_same_v<CommandType, RHIWriteTransientShaderStorageBufferCmd>) {
+                        if (!TypedCmd.Buffer.IsValid()) {
+                            return std::unexpected(
+                                ErrorMessage("Execute: transient shader storage buffer write has an invalid buffer"));
+                        }
+                        if (TypedCmd.Data.size() != TypedCmd.Buffer.GetSize()) {
+                            return std::unexpected(
+                                ErrorMessage("Execute: transient shader storage buffer write size does not match buffer size"));
+                        }
                     } else if constexpr (std::is_same_v<CommandType, RHIBuildOrUpdateTopLevelAccelerationStructureCmd>) {
                         if (bRenderingScope) {
                             return std::unexpected(ErrorMessage(
@@ -993,8 +989,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         if (auto R = BeginFrame(); !R)
             return R;
-        if (auto R = m_DrawConstantArena.BeginFrame(m_CurrentFrame); !R)
+        if (auto R = m_TransientUniformArena.BeginFrame(m_CurrentFrame); !R)
             return std::unexpected(R.error().Append("Execute: transient constant arena reset failed"));
+        if (auto R = m_TransientShaderStorageArena.BeginFrame(m_CurrentFrame); !R)
+            return std::unexpected(R.error().Append("Execute: transient shader storage arena reset failed"));
         // Frame token for usage tracking — this frame's signal value on the timeline
         const Uint64                  FrameTokenValue = m_Timeline.NextValue();
         const RHIGpuCompletionToken FrameToken{.Id = FrameTokenValue};
@@ -1004,6 +1002,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         std::vector<vk::CommandBuffer> Secondaries;
         Secondaries.reserve(CmdList.Scopes.size());
         std::vector<RHIRayTracingGeometryTable*> GeometryTables;
+        std::vector<std::pair<RHITransientConstantBuffer, VulkanTransientBufferSlice>> TransientConstantBuffers;
+        std::vector<std::pair<RHITransientShaderStorageBuffer, VulkanTransientBufferSlice>>
+            TransientShaderStorageBuffers;
 
         for (const auto& Scope : CmdList.Scopes) {
             const auto StampScopeUsage = [&UsageTracker, &GeometryTables](const auto& TypedScope) -> void {
@@ -1053,8 +1054,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     .Buf              = SecBuf,
                     .LocalStates      = ImageStateCopy,
                     .Descriptors      = m_DescriptorManager.get(),
-                    .ConstantArena    = &m_ConstantArena,
-                    .DrawConstantArena = &m_DrawConstantArena,
+                    .TransientUniformArena = &m_TransientUniformArena,
+                    .TransientShaderStorageArena = &m_TransientShaderStorageArena,
+                    .TransientConstantBuffers = &TransientConstantBuffers,
+                    .TransientShaderStorageBuffers = &TransientShaderStorageBuffers,
                     .FrameIndex       = m_CurrentFrame,
                 };
                 const auto RecordScope = [&Visitor](const auto& TypedScope) -> std::expected<void, ErrorMessage> {
@@ -1171,8 +1174,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     VulkanDeletionQueue        m_DeletionQueue       = {}; // re-initialized after m_Timeline created
 
     std::vector<VulkanFrameContext>      m_FrameContext;
-    VulkanUniformBufferArena              m_ConstantArena     = {};
-    VulkanTransientUniformBufferArena     m_DrawConstantArena = {};
+    VulkanTransientUniformArena            m_TransientUniformArena       = {};
+    VulkanTransientShaderStorageArena      m_TransientShaderStorageArena = {};
     UPtr<VulkanBdaRayTracingGeometryTable> m_RayTracingGeometryTable = nullptr;
 
     // ── Global descriptor manager ─────────────────────────────────────────

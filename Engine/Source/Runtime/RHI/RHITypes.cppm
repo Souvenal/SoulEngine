@@ -28,10 +28,6 @@ struct RHIIndexBufferDesc {
     Uint64      IndexCount = 0;
 };
 
-struct RHIConstantBufferDesc {
-    Uint64 Size = 0;
-};
-
 enum class RHISamplerProfile : Uint8 {
     Unknown = 0,
     LinearRepeat,
@@ -99,28 +95,57 @@ class RHIIndexBuffer : public RHIGpuResource {
     virtual ~RHIIndexBuffer()                             = default;
 };
 
-/// Logical shader-visible constant block identity.
-///
-/// This object declares the size and stable RHI identity of a constant block.
-/// It does not imply a dedicated backend buffer allocation. Backends lower
-/// command-list constant writes into their own in-flight-safe storage.
-class RHIConstantBuffer {
+/// @brief RenderDevice-allocated logical constant-buffer range for one command-list execution.
+class RHITransientConstantBuffer final {
   public:
-    explicit RHIConstantBuffer(const RHIConstantBufferDesc& Desc) {
-        m_Size = Desc.Size;
-    }
-    RHIConstantBuffer(const RHIConstantBuffer&)                    = delete;
-    auto operator=(const RHIConstantBuffer&) -> RHIConstantBuffer& = delete;
-    RHIConstantBuffer(RHIConstantBuffer&&)                         = delete;
-    auto operator=(RHIConstantBuffer&&) -> RHIConstantBuffer&      = delete;
-    virtual ~RHIConstantBuffer()                                = default;
+    RHITransientConstantBuffer() = default;
 
-    /// Return the declared size in bytes.
     [[nodiscard]] auto GetSize() const -> Uint64 {
         return m_Size;
     }
 
+    [[nodiscard]] auto IsValid() const -> bool {
+        return m_Id != 0;
+    }
+
+    auto operator==(const RHITransientConstantBuffer& Other) const -> bool {
+        return m_Id == Other.m_Id;
+    }
+
   private:
+    friend class RHIRenderDevice;
+
+    RHITransientConstantBuffer(Uint64 Id, Uint64 Size)
+        : m_Id(Id), m_Size(Size) {}
+
+    Uint64 m_Id   = 0;
+    Uint64 m_Size = 0;
+};
+
+/// @brief RenderDevice-allocated logical shader-storage range for one command-list execution.
+class RHITransientShaderStorageBuffer final {
+  public:
+    RHITransientShaderStorageBuffer() = default;
+
+    [[nodiscard]] auto GetSize() const -> Uint64 {
+        return m_Size;
+    }
+
+    [[nodiscard]] auto IsValid() const -> bool {
+        return m_Id != 0;
+    }
+
+    auto operator==(const RHITransientShaderStorageBuffer& Other) const -> bool {
+        return m_Id == Other.m_Id;
+    }
+
+  private:
+    friend class RHIRenderDevice;
+
+    RHITransientShaderStorageBuffer(Uint64 Id, Uint64 Size)
+        : m_Id(Id), m_Size(Size) {}
+
+    Uint64 m_Id   = 0;
     Uint64 m_Size = 0;
 };
 
@@ -209,8 +234,14 @@ class RHIShaderParameterLayout {
             });
         }
 
-        for (auto& Set : Result.m_Sets)
-            std::ranges::sort(Set.m_Bindings, {}, &RHIShaderParameterBindingLayout::Binding);
+        for (auto& Set : Result.m_Sets) {
+            std::sort(Set.m_Bindings.begin(),
+                      Set.m_Bindings.end(),
+                      [](const RHIShaderParameterBindingLayout& Left,
+                         const RHIShaderParameterBindingLayout& Right) -> bool {
+                          return Left.Binding < Right.Binding;
+                      });
+        }
 
         return Result;
     }
@@ -351,24 +382,18 @@ concept ShaderParameterArrayResource = requires {
     { RHIShaderParameterResourceTraits<T>::Type } -> std::convertible_to<ShaderResourceType>;
 };
 
-/// @brief CPU-side snapshot for one reflected constant-buffer binding.
-struct RHIShaderParameterConstant {
-    RHIConstantBuffer*        Buffer   = nullptr;
-    std::vector<std::byte> Data     = {};
-    bool                   bPerDraw = false;
-};
-
 /// @brief One value assigned to a reflected shader parameter binding.
 using RHIShaderParameterValue = std::variant<std::monostate,
                                           RHISampledTexture*,
                                           RHIVertexBuffer*,
                                           RHIIndexBuffer*,
+                                          RHITransientConstantBuffer,
+                                          RHITransientShaderStorageBuffer,
                                           RHIResourceArray<RHISampledTexture>,
                                           RHISampler*,
                                           RHITopLevelAccelerationStructure*,
                                           RHIRayTracingGeometryTable*,
-                                          RHIRenderTarget*,
-                                          RHIShaderParameterConstant>;
+                                          RHIRenderTarget*>;
 
 /// @brief Runtime values for one reflected shader descriptor set.
 class RHIShaderParameterSet {
@@ -422,8 +447,6 @@ class RHIShaderParameterSet {
                     return true;
                 } else if constexpr (std::same_as<LeftType, RHIResourceArray<RHISampledTexture>>) {
                     return std::ranges::equal(LeftValue.GetResources(), RightValue.GetResources());
-                } else if constexpr (std::same_as<LeftType, RHIShaderParameterConstant>) {
-                    return LeftValue.Buffer == RightValue.Buffer && LeftValue.Data == RightValue.Data;
                 } else {
                     return LeftValue == RightValue;
                 }
@@ -486,6 +509,22 @@ class RHIShaderParameters {
         return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }
 
+    [[nodiscard]] auto SetTransientConstantBuffer(StringView                  ParameterPath,
+                                                   RHITransientConstantBuffer Buffer)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer.IsValid())
+            return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
+        return Set(ParameterPath, ShaderResourceType::ConstantBuffer, false, Buffer);
+    }
+
+    [[nodiscard]] auto SetTransientShaderStorageBuffer(StringView                         ParameterPath,
+                                                        RHITransientShaderStorageBuffer Buffer)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer.IsValid())
+            return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
+        return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
+    }
+
     [[nodiscard]] auto SetTopLevelAccelerationStructure(StringView                         ParameterPath,
                                                          RHITopLevelAccelerationStructure* RHIAccelerationStructure)
         -> std::expected<void, ErrorMessage> {
@@ -510,33 +549,6 @@ class RHIShaderParameters {
 
     [[nodiscard]] auto SetSampler(StringView ParameterPath, RHISampler* SamplerPtr) -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, ShaderResourceType::Sampler, false, SamplerPtr);
-    }
-
-    [[nodiscard]] auto SetConstantBuffer(StringView            ParameterPath,
-                                         RHIConstantBuffer*       Buffer,
-                                         const void*           Data,
-                                         Uint64                Size,
-                                         bool                  bPerDraw = false)
-        -> std::expected<void, ErrorMessage> {
-        if (!Buffer)
-            return std::unexpected(ErrorMessage("Shader parameter constant buffer is null"));
-        if (!Data || Size == 0)
-            return std::unexpected(ErrorMessage("Shader parameter constant buffer data is empty"));
-        if (Size > Buffer->GetSize()) {
-            return std::unexpected(ErrorMessage(
-                Format("Shader parameter '{}' exceeds declared RHIConstantBuffer size ({} bytes > {} bytes)",
-                       ParameterPath,
-                       Size,
-                       Buffer->GetSize())));
-        }
-
-        RHIShaderParameterConstant Constant{
-            .Buffer   = Buffer,
-            .bPerDraw = bPerDraw,
-        };
-        Constant.Data.resize(Size);
-        std::memcpy(Constant.Data.data(), Data, Size);
-        return Set(ParameterPath, ShaderResourceType::ConstantBuffer, false, std::move(Constant));
     }
 
   private:

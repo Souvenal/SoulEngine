@@ -173,8 +173,12 @@ class VulkanDescriptorManager {
         VulkanWriteConstantArenaDescriptor(*m_Device, Buffer, Set, Binding, Range);
     }
 
-    auto WriteStorageBufferDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
-        vk::DescriptorBufferInfo BufferInfo{.buffer = Buffer, .offset = 0, .range = Range};
+    auto WriteStorageBufferDescriptor(vk::DescriptorSet Set,
+                                      Uint32            Binding,
+                                      vk::Buffer        Buffer,
+                                      Uint64            Range,
+                                      Uint64            Offset = 0) -> void {
+        vk::DescriptorBufferInfo BufferInfo{.buffer = Buffer, .offset = Offset, .range = Range};
         vk::WriteDescriptorSet Write{
             .dstSet = Set, .dstBinding = Binding, .dstArrayElement = 0, .descriptorCount = 1,
             .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &BufferInfo};

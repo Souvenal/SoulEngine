@@ -438,7 +438,7 @@ class ResourceContext {
                 LogDebug("Stale async {} ready discarded '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
                 continue;
             }
-            LogInfo("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
+            LogDebug("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
         }
         Family.GpuPending = std::move(Next);
     }

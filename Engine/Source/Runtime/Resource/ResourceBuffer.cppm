@@ -35,13 +35,6 @@ namespace {
     return {};
 }
 
-[[nodiscard]] auto ValidateConstantBufferDesc(const RHIConstantBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
-    if (Desc.Size == 0)
-        return std::unexpected(ErrorMessage("Constant buffer size is zero"));
-
-    return {};
-}
-
 } // namespace
 
 
@@ -168,61 +161,6 @@ namespace {
             Key,
             EnqueueResult.error().Append(
                 Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIIndexBuffer>::Info.Label, Key)));
-    }
-
-    return Handle;
-}
-
-[[nodiscard]] auto SubmitConstantBufferRequest(ResourceContext& Context,
-                                               String           Key,
-                                               const RHIConstantBufferDesc& Desc)
-    -> ResourceHandle<RHIConstantBuffer> {
-    auto Work   = BeginResourceWork<RHIConstantBuffer>(Context, Key);
-    auto Handle = Work.Handle;
-    if (!Work.ShouldStartWork)
-        return Handle;
-
-    if (auto R = ValidateConstantBufferDesc(Desc); !R) {
-        PublishResourceFailed<RHIConstantBuffer>(
-            Context, Handle.GetGeneration(), Key, R.error().Append(Format("Invalid constant buffer request '{}'", Key)));
-        return Handle;
-    }
-
-    LogDebug("Constant buffer requested '{}'", Key);
-
-    auto* ContextPtr = &Context;
-    auto EnqueueResult = TaskGraph::Get().Enqueue(
-        ThreadQueue::RHI,
-        [ContextPtr, Generation = Handle.GetGeneration(), Key = String(Key), Desc] {
-        auto& Context = *ContextPtr;
-        if (Context.IsShutdownRequested()) {
-            LogDebug("Async constant buffer RHI commit discarded after shutdown '{}'", Key);
-            return;
-        }
-
-        if (!MarkResourceRhiCommitting<RHIConstantBuffer>(Context, Key, Generation))
-            return;
-
-        auto Result = RHIRenderDevice::Get().CreateConstantBuffer(Desc);
-        if (!Result) {
-            PublishResourceFailed<RHIConstantBuffer>(
-                Context,
-                Generation,
-                Key,
-                Result.error().Append(Format("Failed to create constant buffer '{}'", Key)));
-            return;
-        }
-
-        PublishResourceReady<RHIConstantBuffer>(
-            Context, Generation, Key, Resource<RHIConstantBuffer>{.Object = std::move(*Result)});
-        });
-    if (!EnqueueResult) {
-        PublishResourceFailed<RHIConstantBuffer>(
-            Context,
-            Handle.GetGeneration(),
-            Key,
-            EnqueueResult.error().Append(
-                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIConstantBuffer>::Info.Label, Key)));
     }
 
     return Handle;

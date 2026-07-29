@@ -94,6 +94,18 @@ struct RHIUpdateRayTracingGeometryTableCmd {
     RHIRayTracingGeometryTableUpdate Update  = {};
 };
 
+/// @brief Upload a CPU snapshot into a RenderDevice-allocated transient constant buffer.
+struct RHIWriteTransientConstantBufferCmd {
+    RHITransientConstantBuffer Buffer = {};
+    std::vector<std::byte>    Data   = {};
+};
+
+/// @brief Upload a CPU snapshot into a RenderDevice-allocated transient storage buffer.
+struct RHIWriteTransientShaderStorageBufferCmd {
+    RHITransientShaderStorageBuffer Buffer = {};
+    std::vector<std::byte>          Data   = {};
+};
+
 /// @brief Build or update a persistent TLAS from renderer-provided logical instances.
 struct RHIBuildOrUpdateTopLevelAccelerationStructureCmd {
     RHITopLevelAccelerationStructure*          TargetPtr = nullptr;
@@ -121,6 +133,8 @@ using RHICommand = std::variant<RHISetViewportCmd,
                              RHIDrawIndexedCmd,
                              RHIDrawCmd,
                              RHIUpdateRayTracingGeometryTableCmd,
+                             RHIWriteTransientConstantBufferCmd,
+                             RHIWriteTransientShaderStorageBufferCmd,
                              RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
                              RHITraceRaysCmd>;
 
@@ -171,6 +185,31 @@ struct RHIPass {
     }
     auto UpdateRayTracingGeometryTable(RHIRayTracingGeometryTable* TablePtr, RHIRayTracingGeometryTableUpdate Update) -> void {
         Commands.emplace_back(RHIUpdateRayTracingGeometryTableCmd{.TablePtr = TablePtr, .Update = std::move(Update)});
+    }
+    [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer.IsValid())
+            return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
+        if (Data.size_bytes() != Buffer.GetSize())
+            return std::unexpected(ErrorMessage("Transient constant buffer write size does not match allocation size"));
+        Commands.emplace_back(RHIWriteTransientConstantBufferCmd{
+            .Buffer = Buffer,
+            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
+        });
+        return {};
+    }
+    [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
+                                                          std::span<const std::byte>           Data)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer.IsValid())
+            return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
+        if (Data.size_bytes() != Buffer.GetSize())
+            return std::unexpected(ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
+        Commands.emplace_back(RHIWriteTransientShaderStorageBufferCmd{
+            .Buffer = Buffer,
+            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
+        });
+        return {};
     }
     auto BuildOrUpdateTopLevelAccelerationStructure(RHITopLevelAccelerationStructure*               TargetPtr,
                                                      std::span<const RHIAccelerationStructureInstance> Instances,
@@ -246,6 +285,31 @@ struct RHINonRenderingPass {
     }
     auto UpdateRayTracingGeometryTable(RHIRayTracingGeometryTable* TablePtr, RHIRayTracingGeometryTableUpdate Update) -> void {
         Commands.emplace_back(RHIUpdateRayTracingGeometryTableCmd{.TablePtr = TablePtr, .Update = std::move(Update)});
+    }
+    [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer.IsValid())
+            return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
+        if (Data.size_bytes() != Buffer.GetSize())
+            return std::unexpected(ErrorMessage("Transient constant buffer write size does not match allocation size"));
+        Commands.emplace_back(RHIWriteTransientConstantBufferCmd{
+            .Buffer = Buffer,
+            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
+        });
+        return {};
+    }
+    [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
+                                                          std::span<const std::byte>           Data)
+        -> std::expected<void, ErrorMessage> {
+        if (!Buffer.IsValid())
+            return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
+        if (Data.size_bytes() != Buffer.GetSize())
+            return std::unexpected(ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
+        Commands.emplace_back(RHIWriteTransientShaderStorageBufferCmd{
+            .Buffer = Buffer,
+            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
+        });
+        return {};
     }
     auto BuildOrUpdateTopLevelAccelerationStructure(RHITopLevelAccelerationStructure*               TargetPtr,
                                                      std::span<const RHIAccelerationStructureInstance> Instances,

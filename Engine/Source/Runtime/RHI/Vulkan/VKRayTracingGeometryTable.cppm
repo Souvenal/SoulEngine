@@ -1,6 +1,7 @@
 module;
 
 #include <cstddef>
+#include <vk_mem_alloc.h>
 
 export module Vulkan:RayTracingGeometryTable;
 

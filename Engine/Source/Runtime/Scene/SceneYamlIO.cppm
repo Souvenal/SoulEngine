@@ -86,10 +86,6 @@ template <typename T>
         Error = Format("material instance '{}' does not exist", Mesh->Material);
         return false;
     }
-    if (!Mesh->Texture.empty() && Path(Mesh->Texture).is_absolute()) {
-        Error = "texture must be relative to the current application Assets directory";
-        return false;
-    }
     return true;
 }
 
@@ -106,7 +102,6 @@ auto RegisterBuiltInComponentSchemas() -> void {
     static const std::array MeshFields{
         SceneFieldSchema{.Name = "asset", .Id = entt::hashed_string{"asset"}.value()},
         SceneFieldSchema{.Name = "material", .Id = entt::hashed_string{"material"}.value()},
-        SceneFieldSchema{.Name = "texture", .Id = entt::hashed_string{"texture"}.value()},
     };
 
     entt::meta_factory<CameraComponent>{}
@@ -128,8 +123,7 @@ auto RegisterBuiltInComponentSchemas() -> void {
             .Validate = &ValidateMesh, .Name = "mesh", .Fields = MeshFields,
         })
         .data<&MeshComponent::Asset>(MeshFields[0].Id)
-        .data<&MeshComponent::Material>(MeshFields[1].Id)
-        .data<&MeshComponent::Texture>(MeshFields[2].Id);
+        .data<&MeshComponent::Material>(MeshFields[1].Id);
 
     Registered = true;
 }
@@ -190,6 +184,33 @@ auto RegisterBuiltInComponentSchemas() -> void {
                 if (!Entry.second.IsScalar())
                     return MakeStructuralError(FieldPath, "must be a scalar number");
                 Result.Roughness = Entry.second.as<float>();
+            } else if (Key == "emissive") {
+                auto Value = ReadFloat3(Entry.second, FieldPath);
+                if (!Value)
+                    return std::unexpected(Value.error());
+                Result.Emissive = Value.value();
+            } else if (Key == "base_color_texture" || Key == "normal_texture" ||
+                       Key == "metallic_roughness_texture" || Key == "metallic_texture" ||
+                       Key == "roughness_texture" || Key == "occlusion_texture" || Key == "emissive_texture") {
+                if (!Entry.second.IsScalar())
+                    return MakeStructuralError(FieldPath, "must be a scalar string");
+                const auto Texture = Entry.second.as<String>();
+                if (std::filesystem::path(Texture).is_absolute())
+                    return MakeStructuralError(FieldPath, "must be relative to the current application Assets directory");
+                if (Key == "base_color_texture")
+                    Result.BaseColorTexture = Texture;
+                else if (Key == "normal_texture")
+                    Result.NormalTexture = Texture;
+                else if (Key == "metallic_roughness_texture")
+                    Result.MetallicRoughnessTexture = Texture;
+                else if (Key == "metallic_texture")
+                    Result.MetallicTexture = Texture;
+                else if (Key == "roughness_texture")
+                    Result.RoughnessTexture = Texture;
+                else if (Key == "occlusion_texture")
+                    Result.OcclusionTexture = Texture;
+                else
+                    Result.EmissiveTexture = Texture;
             } else {
                 return MakeStructuralError(FieldPath, "is not a recognized PBR material field");
             }
@@ -199,6 +220,7 @@ auto RegisterBuiltInComponentSchemas() -> void {
     }
 
     if (!std::isfinite(Result.BaseColor.x) || !std::isfinite(Result.BaseColor.y) || !std::isfinite(Result.BaseColor.z) ||
+        !std::isfinite(Result.Emissive.x) || !std::isfinite(Result.Emissive.y) || !std::isfinite(Result.Emissive.z) ||
         !std::isfinite(Result.Metallic) || !std::isfinite(Result.Roughness)) {
         return MakeStructuralError(Path, "contains a non-finite value");
     }
@@ -206,6 +228,8 @@ auto RegisterBuiltInComponentSchemas() -> void {
         Result.BaseColor.y > 1.0f || Result.BaseColor.z < 0.0f || Result.BaseColor.z > 1.0f) {
         return MakeStructuralError(MakeYamlPath(Path, "base_color"), "components must be in the range [0, 1]");
     }
+    if (Result.Emissive.x < 0.0f || Result.Emissive.y < 0.0f || Result.Emissive.z < 0.0f)
+        return MakeStructuralError(MakeYamlPath(Path, "emissive"), "components must be non-negative");
     if (Result.Metallic < 0.0f || Result.Metallic > 1.0f)
         return MakeStructuralError(MakeYamlPath(Path, "metallic"), "must be in the range [0, 1]");
     if (Result.Roughness < 0.0f || Result.Roughness > 1.0f)
@@ -556,6 +580,21 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
             MaterialNode["base_color"] = SaveFloat3(Material.BaseColor);
             MaterialNode["metallic"] = Material.Metallic;
             MaterialNode["roughness"] = Material.Roughness;
+            MaterialNode["emissive"] = SaveFloat3(Material.Emissive);
+            if (!Material.BaseColorTexture.empty())
+                MaterialNode["base_color_texture"] = Material.BaseColorTexture;
+            if (!Material.NormalTexture.empty())
+                MaterialNode["normal_texture"] = Material.NormalTexture;
+            if (!Material.MetallicRoughnessTexture.empty())
+                MaterialNode["metallic_roughness_texture"] = Material.MetallicRoughnessTexture;
+            if (!Material.MetallicTexture.empty())
+                MaterialNode["metallic_texture"] = Material.MetallicTexture;
+            if (!Material.RoughnessTexture.empty())
+                MaterialNode["roughness_texture"] = Material.RoughnessTexture;
+            if (!Material.OcclusionTexture.empty())
+                MaterialNode["occlusion_texture"] = Material.OcclusionTexture;
+            if (!Material.EmissiveTexture.empty())
+                MaterialNode["emissive_texture"] = Material.EmissiveTexture;
             MaterialInstances[Id] = MaterialNode;
         }
         Document["material_instances"] = MaterialInstances;

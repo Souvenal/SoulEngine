@@ -5,6 +5,7 @@ module;
 export module Resource:Types;
 
 export import Core;
+export import Material;
 export import RHI;
 export import ShaderCompiler;
 export import std;
@@ -126,15 +127,6 @@ struct ResourceTraits<RHIIndexBuffer> {
 };
 
 template <>
-struct ResourceTraits<RHIConstantBuffer> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
-        "constant buffer",
-        ResourceLifetimePolicy::Transient,
-    };
-};
-
-template <>
 struct ResourceTraits<RHISampler> {
     static constexpr ResourceTraitInfo Info{
         ResourceGpuPendingPolicy::None,
@@ -182,7 +174,6 @@ using ManagedRHIResourceTypes = std::tuple<RHISampledTexture,
                                            RHIRayTracingPipeline,
                                            RHIVertexBuffer,
                                            RHIIndexBuffer,
-                                           RHIConstantBuffer,
                                            RHISampler>;
 
 /// @brief Central list of high-level asset families managed by Resource.
@@ -231,7 +222,6 @@ static_assert(ManagedRHIResource<RHIGraphicsPipeline>);
 static_assert(ManagedRHIResource<RHIRayTracingPipeline>);
 static_assert(ManagedRHIResource<RHIVertexBuffer>);
 static_assert(ManagedRHIResource<RHIIndexBuffer>);
-static_assert(ManagedRHIResource<RHIConstantBuffer>);
 static_assert(ManagedRHIResource<RHISampler>);
 static_assert(ManagedAssetResource<ResourceMesh>);
 static_assert(ManagedResource<ResourceMesh>);
@@ -529,6 +519,14 @@ struct SubMesh {
 
     Uint32 VertexCount  = 0;
     Uint32 MaterialSlot = 0;
+    bool   HasUV0       = false;
+    bool   HasTangents  = false;
+};
+
+/// @brief PBR material imported with a mesh asset and addressed by Assimp material slot.
+struct ImportedPbrMaterial {
+    String                       Name     = {};
+    PbrMetallicRoughnessMaterial Material = {};
 };
 
 struct MeshGroup {
@@ -541,9 +539,9 @@ class ResourceMesh {
   private:
     friend auto ParseAssimpMeshes(StringView, ResourceMesh&) -> std::expected<void, ErrorMessage>;
 
-    std::vector<MeshGroup> m_MeshGroups    = {};
-    std::vector<String>    m_MaterialNames = {};
-    String                 m_Name          = {};
+    std::vector<MeshGroup>           m_MeshGroups        = {};
+    std::vector<ImportedPbrMaterial> m_ImportedMaterials = {};
+    String                           m_Name              = {};
 
   public:
     ResourceMesh() = default;
@@ -554,6 +552,8 @@ class ResourceMesh {
 
     [[nodiscard]] auto GetMeshGroups() -> std::vector<MeshGroup>&;
     [[nodiscard]] auto GetMeshGroups() const -> const std::vector<MeshGroup>&;
+    [[nodiscard]] auto GetImportedMaterials() const -> const std::vector<ImportedPbrMaterial>&;
+    [[nodiscard]] auto GetImportedMaterial(Uint32 MaterialSlot) const -> const PbrMetallicRoughnessMaterial*;
 };
 
 /// Policy for lowering a mesh asset into one reusable BLAS payload.

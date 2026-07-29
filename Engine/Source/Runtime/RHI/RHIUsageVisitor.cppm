@@ -62,6 +62,8 @@ struct RHIUsageVisitor {
                 Geometry.IndexBuffer->UpdateLastUsageToken(CurrentToken);
         }
     }
+    auto operator()(const RHIWriteTransientConstantBufferCmd&) -> void {}
+    auto operator()(const RHIWriteTransientShaderStorageBufferCmd&) -> void {}
     auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
         if (Cmd.TargetPtr)
             Cmd.TargetPtr->UpdateLastUsageToken(CurrentToken);

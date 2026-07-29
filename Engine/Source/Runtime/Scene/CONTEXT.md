@@ -32,7 +32,7 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **World Coordinate System** | The Scene uses a right-handed, Y-up coordinate system. Asset-format coordinate differences are converted at an asset-import boundary. |
 | **Transform** | Mandatory Scene Node data: local translation, rotation, and scale. Scene Documents express rotation as Euler angles in degrees, applied in local X → Y → Z order; the world transform is derived through the Scene Hierarchy. |
 | **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views and value-semantic `RenderableInstance` records. Renderer consumes this snapshot, not the mutable `Scene`. |
-| **RenderViewSnapshot** | One immutable camera/view record: view-projection data plus passive handles for color/depth targets and that view's logical constant buffer. |
+| **RenderViewSnapshot** | One immutable camera/view record: view-projection data plus passive handles for color/depth targets. Renderers allocate their own transient constant buffers while recording the frame. |
 | **RenderableInstance** | Value-semantic SceneSnapshot record for one mesh asset instance. It carries normalized absolute mesh and optional base-color texture asset identities plus the derived world transform, but no renderer-specific GPU resource or draw representation. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |

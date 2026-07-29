@@ -141,7 +141,11 @@ namespace SoulEngine {
     for (const auto& Binding : Reflection.Bindings)
         BindingsBySet[Binding.Set].push_back(Binding);
     for (auto& SetBindings : BindingsBySet) {
-        std::ranges::sort(SetBindings, {}, &ShaderBinding::BindingIndex);
+        std::sort(SetBindings.begin(),
+                  SetBindings.end(),
+                  [](const ShaderBinding& Left, const ShaderBinding& Right) -> bool {
+                      return Left.BindingIndex < Right.BindingIndex;
+                  });
     }
 
     std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
