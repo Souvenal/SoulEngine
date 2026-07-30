@@ -12,7 +12,7 @@ import :Types;
 import :Shader;
 import :Capability;
 import :Descriptor;
-import :DeletionQueue;
+import :Context;
 
 namespace SoulEngine {
 
@@ -38,9 +38,14 @@ namespace SoulEngine {
         ErrorMessage(Format("Unsupported reflected resource type for '{}'", Binding.ParameterPath)));
 }
 
+[[nodiscard]] auto GetMaxRuntimeSampledTextureCount() -> Uint32 {
+    const auto& DescriptorIndexingProperties =
+        VulkanCapability::Get().GetProperties<vk::PhysicalDeviceVulkan12Properties>();
+    return std::min(DescriptorIndexingProperties.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                    DescriptorIndexingProperties.maxDescriptorSetUpdateAfterBindSampledImages);
+}
 [[nodiscard]] auto CreateDescriptorSetLayout(vk::raii::Device&                Device,
                                              std::span<const ShaderBinding> Bindings,
-                                             Uint32                            MaxTextures,
                                              vk::ShaderStageFlags              ShaderStages)
     -> std::expected<vk::raii::DescriptorSetLayout, ErrorMessage> {
     // RHIPipeline layouts are generated from linked shader reflection. The reflected
@@ -65,7 +70,7 @@ namespace SoulEngine {
                 "Reflected runtime array '{}' must be the final sampled-texture binding in its descriptor set",
                 Binding.ParameterPath)));
         }
-        const Uint32 DescriptorCount = bUnboundedArray ? MaxTextures : Binding.ArrayCount;
+        const Uint32 DescriptorCount = bUnboundedArray ? GetMaxRuntimeSampledTextureCount() : Binding.ArrayCount;
         if (DescriptorCount == 0)
             return std::unexpected(
                 ErrorMessage(Format("Reflected binding '{}' has zero descriptor count", Binding.ParameterPath)));
@@ -122,7 +127,6 @@ namespace SoulEngine {
 
 [[nodiscard]] auto CreatePipelineLayout(vk::raii::Device&             Device,
                                         const ShaderReflection&     Reflection,
-                                        Uint32                        MaxTextures,
                                         vk::ShaderStageFlags          ShaderStages = vk::ShaderStageFlagBits::eAllGraphics)
     -> std::expected<std::pair<std::vector<vk::raii::DescriptorSetLayout>, vk::raii::PipelineLayout>, ErrorMessage> {
     const Uint32 MaxBoundDescriptorSets = VulkanCapability::Get().GetProperties().limits.maxBoundDescriptorSets;
@@ -151,7 +155,7 @@ namespace SoulEngine {
     std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
     SetLayouts.reserve(BindingsBySet.size());
     for (const auto& SetBindings : BindingsBySet) {
-        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, MaxTextures, ShaderStages);
+        auto SetLayout = CreateDescriptorSetLayout(Device, SetBindings, ShaderStages);
         if (!SetLayout)
             return std::unexpected(SetLayout.error());
         SetLayouts.push_back(std::move(*SetLayout));
@@ -276,18 +280,16 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     ///
     /// Uses a pipeline layout generated from pipeline-level shader reflection. Shader
     /// modules are transient — destroyed when this function returns.
-    [[nodiscard]] static auto Create(vk::raii::Device&             Device,
-                                     const RHIGraphicsPipelineDesc&   Desc,
-                                     Uint32                        MaxTextures,
-                                     VulkanDeletionQueue&                Queue)
+    [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
+                                     const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanGraphicsPipeline>, ErrorMessage> {
 
-        auto LayoutObjects = CreatePipelineLayout(Device, Desc.Program.Reflection, MaxTextures);
+        auto LayoutObjects = CreatePipelineLayout(Context.Device, Desc.Program.Reflection);
         if (!LayoutObjects)
             return std::unexpected(LayoutObjects.error().Append("Failed to create graphics pipeline layout"));
 
         // ── Shader stages ──────────────────────────────────────────────
-        auto ShaderStates = VulkanGraphicsShaderStates::Create(Device, Desc);
+        auto ShaderStates = VulkanGraphicsShaderStates::Create(Context.Device, Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error());
         Uint32 StageCount    = static_cast<Uint32>(ShaderStates->StageInfos.size());
@@ -460,7 +462,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             RenderingCI};
 
         auto [PipelineResult, RHIPipeline] =
-            Device.createGraphicsPipeline(nullptr, PipelineChain.get<vk::GraphicsPipelineCreateInfo>());
+            Context.Device.createGraphicsPipeline(nullptr, PipelineChain.get<vk::GraphicsPipelineCreateInfo>());
         if (PipelineResult != vk::Result::eSuccess)
             return std::unexpected(
                 ErrorMessage(Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
@@ -478,7 +480,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
         Ret->m_PushConstantSize   = MaxPushConstantSize(Desc.Program.Reflection);
         Ret->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
-        Ret->m_DeletionQueue      = &Queue;
+        Ret->m_DeletionQueue      = &Context.DeletionQueue;
         return Ret;
     }
 

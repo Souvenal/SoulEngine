@@ -197,10 +197,7 @@ TEST_F(ResourceManagerTest, EquivalentMeshBlasRequestsDeduplicateBeforeDependenc
 }
 
 TEST_F(ResourceManagerTest, RendererScopedTlasRequestsDeduplicateAndReleaseAsTransient) {
-    const RHITopLevelAccelerationStructureDesc Desc{
-        .InitialInstanceCapacity = 4,
-        .BuildFlags = RHIAccelerationStructureBuildFlags::AllowUpdate,
-    };
+    const RHITopLevelAccelerationStructureDesc Desc{.InitialInstanceCapacity = 4};
     auto FirstRef = ResourceManager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
     auto SecondRef = ResourceManager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererMain", Desc);
     auto OtherScopeRef = ResourceManager::Get().RequestTopLevelAccelerationStructureRef("RayTracingRendererReflection", Desc);

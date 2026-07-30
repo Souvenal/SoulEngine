@@ -136,11 +136,14 @@ TEST_F(RayTracingCompilerTest, CompilesRuntimePathTracingShaderWithFixedBdaMetad
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
-    const auto* Metadata = FindBinding(Result->Reflection, "g_rayTracingGeometryMetadata.metadata");
-    ASSERT_NE(Metadata, nullptr);
-    EXPECT_EQ(Metadata->Type, ShaderResourceType::StorageBuffer);
-    EXPECT_EQ(Metadata->ArrayCount, 1U);
-    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracing.geometry"), nullptr);
+    const auto* Instances = FindBinding(Result->Reflection, "g_rayTracing.instances");
+    ASSERT_NE(Instances, nullptr);
+    EXPECT_EQ(Instances->Type, ShaderResourceType::StorageBuffer);
+    EXPECT_EQ(Instances->ArrayCount, 1U);
+    const auto* Geometries = FindBinding(Result->Reflection, "g_rayTracing.geometries");
+    ASSERT_NE(Geometries, nullptr);
+    EXPECT_EQ(Geometries->Type, ShaderResourceType::StorageBuffer);
+    EXPECT_EQ(Geometries->ArrayCount, 1U);
     EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.materials"), nullptr);
     EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.accumulation"), nullptr);
 }

@@ -564,8 +564,7 @@ enum class BottomLevelAccelerationStructureGeometryPolicy : Uint8 {
 
 /// Request options contributing to a reusable BLAS identity.
 struct BottomLevelAccelerationStructureRequest {
-    RHIAccelerationStructureBuildFlags                     BuildFlags = RHIAccelerationStructureBuildFlags::None;
-    BottomLevelAccelerationStructureGeometryPolicy           GeometryPolicy =
+    BottomLevelAccelerationStructureGeometryPolicy GeometryPolicy =
         BottomLevelAccelerationStructureGeometryPolicy::AllMeshSubMeshes;
 };
 

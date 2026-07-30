@@ -8,7 +8,7 @@ import vulkan;
 import std;
 
 import :Capability;
-import :DeletionQueue;
+import :Context;
 
 namespace SoulEngine {
 namespace {
@@ -50,7 +50,7 @@ class VulkanSampler final : public RHISampler {
     VulkanSampler(VulkanSampler&&)                         = delete;
     auto operator=(VulkanSampler&&) -> VulkanSampler&      = delete;
 
-    [[nodiscard]] static auto Create(const RHISamplerDesc& Desc, vk::raii::Device& Device, VulkanDeletionQueue& Queue)
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHISamplerDesc& Desc)
         -> std::expected<UPtr<RHISampler>, ErrorMessage> {
         auto ProfileInfo = GetSamplerProfileInfo(Desc.Profile);
         if (!ProfileInfo)
@@ -78,11 +78,11 @@ class VulkanSampler final : public RHISampler {
             .borderColor             = vk::BorderColor::eIntOpaqueBlack,
             .unnormalizedCoordinates = vk::False,
         };
-        auto Result = Device.createSampler(SamplerCI);
+        auto Result = Context.Device.createSampler(SamplerCI);
         if (Result.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanSampler::Create: failed to create VkSampler"));
 
-        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value), Queue);
+        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value), Context.DeletionQueue);
     }
 
     [[nodiscard]] auto GetVkSampler() const -> vk::Sampler {

@@ -7,17 +7,18 @@ module;
 export module Renderer:RayTracingRenderer;
 
 import Core;
+import Material;
 import RHI;
 import Resource;
 import Scene;
 
 import :IRenderer;
+import :MaterialResolver;
 
 export import std;
 
 export namespace SoulEngine {
 
-constexpr Uint32 kMaxRayTracingInstances = 64;
 constexpr Uint32 kPathTracingMaxBounces = 6;
 
 /// Constant-buffer ABI mirror for RayTracing.slang camera unprojection data.
@@ -40,23 +41,6 @@ static_assert(offsetof(RayTracingViewConstants, CameraPosition) == 64,
               "RayTracingViewConstants::CameraPosition must match RayTracingViewData.cameraPosition");
 static_assert(offsetof(RayTracingViewConstants, PathSettings) == 112,
               "RayTracingViewConstants::PathSettings must match RayTracingViewData.pathSettings");
-
-struct alignas(16) RayTracingMaterialConstants {
-    alignas(16) std::array<hlslpp::interop::float4, kMaxRayTracingInstances> BaseColorMetallic = {};
-    alignas(16) std::array<hlslpp::interop::float4, kMaxRayTracingInstances> RoughnessGeometryBase = {};
-};
-static_assert(sizeof(RayTracingMaterialConstants) == kMaxRayTracingInstances * 32,
-              "RayTracingMaterialConstants must match RayTracing.slang RayTracingMaterialData std140 layout");
-static_assert(offsetof(RayTracingMaterialConstants, BaseColorMetallic) == 0,
-              "RayTracingMaterialConstants::BaseColorMetallic must match RayTracingMaterialData.baseColorMetallic");
-static_assert(offsetof(RayTracingMaterialConstants, RoughnessGeometryBase) == kMaxRayTracingInstances * 16,
-              "RayTracingMaterialConstants::RoughnessGeometryBase must match RayTracingMaterialData.roughnessGeometryBase");
-
-struct RayTracingMeshCacheEntry {
-    String Asset = {};
-    ResourceRef<ResourceMesh> Mesh = {};
-    ResourceRef<ResourceBottomLevelAccelerationStructure> Blas = {};
-};
 
 /// @brief Convert a Scene row-vector transform to an RHI TLAS instance transform.
 ///
@@ -95,31 +79,28 @@ class RayTracingRenderer final : public IRenderer {
             },
         });
         m_Tlas = Resources.RequestTopLevelAccelerationStructureRef(
-            "ray_tracing_renderer_main", {.InitialInstanceCapacity = 16,
-                                            .BuildFlags = RHIAccelerationStructureBuildFlags::AllowUpdate});
-        if (!m_Pipeline || !m_Tlas)
+            "ray_tracing_renderer_main", {.InitialInstanceCapacity = 16});
+        m_SamplerLinear = Resources.RequestSamplerRef({.Profile = RHISamplerProfile::LinearRepeat});
+        m_SamplerAniso = Resources.RequestSamplerRef({.Profile = RHISamplerProfile::AnisotropicRepeat});
+        if (!m_Pipeline || !m_Tlas || !m_SamplerLinear || !m_SamplerAniso)
             return std::unexpected(ErrorMessage("RayTracingRenderer resource request failed"));
-        m_GeometryTable = RHIRenderDevice::Get().GetRayTracingGeometryTable();
-        if (!m_GeometryTable)
-            return std::unexpected(ErrorMessage("RayTracingRenderer requires Vulkan BDA geometry-table support"));
         return {};
     }
 
     auto OnDetach() -> void override {
         m_Pipeline = {};
         m_Tlas = {};
-        m_GeometryTable = nullptr;
+        m_SamplerLinear = {};
+        m_SamplerAniso = {};
+        m_MaterialResolver.Clear();
         m_Output = {};
         m_Accumulation = {};
         m_OutputKey = {};
         m_AccumulationKey = {};
-        m_MeshCache.clear();
         m_Parameters = {};
         m_LastSceneSignature = 0;
         m_SampleIndex = 0;
         m_HasAccumulation = false;
-        m_LoggedFirstTrace = false;
-        m_LoggedTextureFallbacks.clear();
     }
 
     [[nodiscard]] auto Render(const SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> override {
@@ -130,23 +111,25 @@ class RayTracingRenderer final : public IRenderer {
         auto& Resources = ResourceManager::Get();
         auto* Pipeline = Resources.TryGetReady(m_Pipeline);
         auto* Tlas = Resources.TryGetReady(m_Tlas);
-        if (!Pipeline || !Tlas)
+        auto* SamplerLinear = Resources.TryGetReady(m_SamplerLinear);
+        auto* SamplerAniso = Resources.TryGetReady(m_SamplerAniso);
+        if (!Pipeline || !Tlas || !SamplerLinear || !SamplerAniso)
             return Result;
-        if (!m_GeometryTable)
-            return std::unexpected(ErrorMessage("RayTracingRenderer BDA geometry table is unavailable"));
 
         std::vector<RHIAccelerationStructureInstance> Instances = {};
         Instances.reserve(Scene.Renderables.size());
-        RHIRayTracingGeometryTableUpdate GeometryUpdate = {};
-        GeometryUpdate.Instances.reserve(Scene.Renderables.size());
-        RayTracingMaterialConstants MaterialData = {};
+        std::vector<RHIRayTracingInstanceData> GeometryInstances = {};
+        GeometryInstances.reserve(Scene.Renderables.size());
+        std::vector<RHIRayTracingGeometryDesc> GeometrySources = {};
+        m_MaterialResolver.BeginFrame();
         for (const auto& Renderable : Scene.Renderables) {
             if (Renderable.MeshAsset.empty())
                 continue;
 
-            auto& Entry = GetOrRequestMeshEntry(Renderable.MeshAsset);
-            auto* Blas = Resources.TryGetReady(Entry.Blas);
-            auto* Mesh = Resources.TryGetReady(Entry.Mesh);
+            auto MeshRef = Resources.RequestMeshRef(Renderable.MeshAsset);
+            auto BlasRef = Resources.RequestBottomLevelAccelerationStructureRef(MeshRef);
+            auto* Blas = Resources.TryGetReady(BlasRef);
+            auto* Mesh = Resources.TryGetReady(MeshRef);
             if (!Blas || !Blas->GetRhiPayload() || !Mesh)
                 continue;
 
@@ -155,20 +138,37 @@ class RayTracingRenderer final : public IRenderer {
                 for (const auto& SubMesh : Group.SubMeshes) {
                     auto* Position = Resources.TryGetReady(SubMesh.PositionVB);
                     auto* Normal = Resources.TryGetReady(SubMesh.NormalVB);
+                    auto* Tangent = SubMesh.TangentVB.IsValid() ? Resources.TryGetReady(SubMesh.TangentVB) : nullptr;
+                    auto* TexCoord = SubMesh.UVVB.IsValid() ? Resources.TryGetReady(SubMesh.UVVB) : nullptr;
                     auto* Index = Resources.TryGetReady(SubMesh.IB);
-                    if (!Position || !Normal || !Index || SubMesh.VertexCount == 0 || SubMesh.Indices.empty()) {
+                    const bool HasReadyTangents = SubMesh.HasTangents && Tangent != nullptr;
+                    const bool HasReadyUV0 = SubMesh.HasUV0 && TexCoord != nullptr;
+                    if (!Tangent)
+                        Tangent = Position;
+                    if (!TexCoord)
+                        TexCoord = Position;
+                    if (!Position || !Normal || !Tangent || !TexCoord || !Index || SubMesh.VertexCount == 0 || SubMesh.Indices.empty()) {
                         MeshGeometries.clear();
                         break;
                     }
+                    const auto* ImportedMaterial = Renderable.MaterialId.empty()
+                        ? Mesh->GetImportedMaterial(SubMesh.MaterialSlot)
+                        : nullptr;
+                    const auto& Material = ImportedMaterial ? *ImportedMaterial : Renderable.Material;
                     MeshGeometries.push_back(RHIRayTracingGeometryDesc{
                         .PositionBuffer = Position,
                         .NormalBuffer = Normal,
+                        .TangentBuffer = Tangent,
+                        .TexCoordBuffer = TexCoord,
                         .IndexBuffer = Index,
                         .PositionStride = sizeof(hlslpp::interop::float3),
                         .NormalStride = sizeof(hlslpp::interop::float3),
+                        .TangentStride = sizeof(hlslpp::interop::float4),
+                        .TexCoordStride = sizeof(hlslpp::interop::float2),
                         .IndexStride = sizeof(Uint32),
                         .VertexCount = SubMesh.VertexCount,
                         .IndexCount = static_cast<Uint32>(SubMesh.Indices.size()),
+                        .MaterialIndex = m_MaterialResolver.Resolve(Material, HasReadyUV0, HasReadyTangents),
                     });
                 }
                 if (MeshGeometries.empty())
@@ -176,43 +176,14 @@ class RayTracingRenderer final : public IRenderer {
             }
             if (MeshGeometries.empty())
                 continue;
-            if (Instances.size() >= kMaxRayTracingInstances) {
-                return std::unexpected(ErrorMessage(Format(
-                    "RayTracingRenderer supports at most {} ready scene instances per frame",
-                    kMaxRayTracingInstances)));
-            }
-
             const auto InstanceIndex = static_cast<Uint32>(Instances.size());
-            const auto FirstGeometry = static_cast<Uint32>(GeometryUpdate.Geometries.size());
-            GeometryUpdate.Geometries.insert(
-                GeometryUpdate.Geometries.end(), MeshGeometries.begin(), MeshGeometries.end());
-            GeometryUpdate.Instances.push_back(RHIRayTracingGeometryInstanceDesc{
+            const auto FirstGeometry = static_cast<Uint32>(GeometrySources.size());
+            GeometrySources.insert(GeometrySources.end(), MeshGeometries.begin(), MeshGeometries.end());
+            GeometryInstances.push_back(RHIRayTracingInstanceData{
                 .FirstGeometry = FirstGeometry,
                 .GeometryCount = static_cast<Uint32>(MeshGeometries.size()),
-                .MaterialIndex = InstanceIndex,
             });
 
-            const auto* ImportedMaterial = [&]() -> const PbrMetallicRoughnessMaterial* {
-                if (!Renderable.MaterialId.empty())
-                    return nullptr;
-                for (const auto& Group : Mesh->GetMeshGroups()) {
-                    if (!Group.SubMeshes.empty())
-                        return Mesh->GetImportedMaterial(Group.SubMeshes.front().MaterialSlot);
-                }
-                return nullptr;
-            }();
-            const auto& Material = ImportedMaterial ? *ImportedMaterial : Renderable.Material;
-            if (ImportedMaterial && (!Material.BaseColorTexture.empty() || !Material.NormalTexture.empty() ||
-                                     !Material.MetallicRoughnessTexture.empty() || !Material.MetallicTexture.empty() ||
-                                     !Material.RoughnessTexture.empty() || !Material.OcclusionTexture.empty() ||
-                                     !Material.EmissiveTexture.empty()) &&
-                m_LoggedTextureFallbacks.insert(Renderable.MeshAsset).second) {
-                LogWarning("Ray tracing material fallback for '{}': imported texture maps are ignored in V0", Renderable.MeshAsset);
-            }
-            MaterialData.BaseColorMetallic[InstanceIndex] = hlslpp::interop::float4{
-                hlslpp::float4{Material.BaseColor.x, Material.BaseColor.y, Material.BaseColor.z, Material.Metallic}};
-            MaterialData.RoughnessGeometryBase[InstanceIndex] = hlslpp::interop::float4{
-                hlslpp::float4{Material.Roughness, 0.0f, 0.0f, 0.0f}};
             Instances.push_back(RHIAccelerationStructureInstance{
                 .BottomLevelPtr = Blas->GetRhiPayload(),
                 .Transform = ToAccelerationStructureInstanceTransform(Renderable.WorldTransform),
@@ -232,7 +203,7 @@ class RayTracingRenderer final : public IRenderer {
         if (!Output || !Accumulation)
             return Result;
 
-        const auto SceneSignature = BuildSceneSignature(Scene, View, Instances.size(), GeometryUpdate.Geometries.size());
+        const auto SceneSignature = BuildSceneSignature(Scene, View, Instances.size(), GeometrySources.size(), m_MaterialResolver.GetMaterials());
         if (bTargetsChanged || !m_HasAccumulation || SceneSignature != m_LastSceneSignature) {
             m_SampleIndex = 0;
             m_LastSceneSignature = SceneSignature;
@@ -241,18 +212,40 @@ class RayTracingRenderer final : public IRenderer {
 
         if (m_Parameters.GetLayoutId() != Pipeline->GetShaderParameterLayout().GetId())
             m_Parameters = RHIShaderParameters::Create(*Pipeline);
+        const auto Textures = m_MaterialResolver.BuildTextureArray();
+        if (auto R = m_Parameters.SetResourceArray("g_textures.uTextures", Textures); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer texture parameter binding failed"));
+        if (auto R = m_Parameters.SetSampler("g_samplers.uSamplerLinear", SamplerLinear); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer linear sampler parameter binding failed"));
+        if (auto R = m_Parameters.SetSampler("g_samplers.uSamplerAniso", SamplerAniso); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer anisotropic sampler parameter binding failed"));
         if (auto R = m_Parameters.SetTopLevelAccelerationStructure("g_rayTracing.tlas", Tlas->GetRhiPayload()); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer TLAS parameter binding failed"));
         if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.output", Output); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer output parameter binding failed"));
         if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.accumulation", Accumulation); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer accumulation parameter binding failed"));
-        if (auto R = m_Parameters.SetRayTracingGeometryTable("g_rayTracingGeometryMetadata.metadata", m_GeometryTable); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer BDA geometry-table parameter binding failed"));
-        auto MaterialBuffer = RHIRenderDevice::Get().AllocateTransientConstantBuffer(sizeof(MaterialData));
+        const auto GeometryInstanceDataBytes = std::as_bytes(std::span{GeometryInstances});
+        auto GeometryInstanceBuffer =
+            RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(GeometryInstanceDataBytes.size_bytes());
+        if (!GeometryInstanceBuffer)
+            return std::unexpected(
+                GeometryInstanceBuffer.error().Append("RayTracingRenderer geometry-instance transient storage allocation failed"));
+        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.instances", *GeometryInstanceBuffer); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer geometry-instance parameter binding failed"));
+
+        auto GeometryBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(
+            GeometrySources.size() * sizeof(RHIRayTracingGeometryData));
+        if (!GeometryBuffer)
+            return std::unexpected(GeometryBuffer.error().Append("RayTracingRenderer geometry transient storage allocation failed"));
+        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.geometries", *GeometryBuffer); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer geometry parameter binding failed"));
+
+        const auto MaterialDataBytes = std::as_bytes(m_MaterialResolver.GetMaterials());
+        auto MaterialBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(MaterialDataBytes.size_bytes());
         if (!MaterialBuffer)
-            return std::unexpected(MaterialBuffer.error().Append("RayTracingRenderer material transient constant allocation failed"));
-        if (auto R = m_Parameters.SetTransientConstantBuffer("g_rayTracing.materials", *MaterialBuffer); !R) {
+            return std::unexpected(MaterialBuffer.error().Append("RayTracingRenderer material transient storage allocation failed"));
+        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.materials", *MaterialBuffer); !R) {
             return std::unexpected(R.error().Append("RayTracingRenderer material parameter binding failed"));
         }
         const auto ViewData = BuildViewConstants(View, m_SampleIndex);
@@ -263,11 +256,12 @@ class RayTracingRenderer final : public IRenderer {
             return std::unexpected(R.error().Append("RayTracingRenderer view parameter binding failed"));
 
         RHINonRenderingPass Pass = {};
-        if (auto R = Pass.WriteTransientConstantBuffer(*MaterialBuffer, std::as_bytes(std::span{&MaterialData, 1})); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer material transient constant write failed"));
+        if (auto R = Pass.WriteTransientShaderStorageBuffer(*MaterialBuffer, MaterialDataBytes); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer material transient storage write failed"));
         if (auto R = Pass.WriteTransientConstantBuffer(*ViewBuffer, std::as_bytes(std::span{&ViewData, 1})); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer view transient constant write failed"));
-        Pass.UpdateRayTracingGeometryTable(m_GeometryTable, std::move(GeometryUpdate));
+        Pass.WriteRayTracingGeometryData(
+            *GeometryInstanceBuffer, *GeometryBuffer, std::move(GeometryInstances), std::move(GeometrySources));
         Pass.BuildOrUpdateTopLevelAccelerationStructure(Tlas->GetRhiPayload(), Instances);
         Pass.SetRayTracingPipeline(Pipeline);
         Pass.BindShaderParameters(Pipeline, m_Parameters);
@@ -275,28 +269,10 @@ class RayTracingRenderer final : public IRenderer {
         Result.CmdList.Scopes.push_back(std::move(Pass));
         Result.CmdList.PresentSource = Output;
         ++m_SampleIndex;
-        if (!m_LoggedFirstTrace) {
-            LogInfo("RayTracingRenderer emitted progressive path tracing for {} instances at {}x{}",
-                    Instances.size(), Output->GetWidth(), Output->GetHeight());
-            m_LoggedFirstTrace = true;
-        }
         return Result;
     }
 
   private:
-    [[nodiscard]] auto GetOrRequestMeshEntry(StringView Asset) -> RayTracingMeshCacheEntry& {
-        for (auto& Entry : m_MeshCache) {
-            if (Entry.Asset == Asset)
-                return Entry;
-        }
-
-        auto& Entry = m_MeshCache.emplace_back(RayTracingMeshCacheEntry{
-            .Asset = String(Asset),
-            .Mesh = ResourceManager::Get().RequestMeshRef(Asset),
-        });
-        Entry.Blas = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(Entry.Mesh);
-        return Entry;
-    }
 
     auto EnsureOutputTargets(ResourceManager& Resources, Uint32 Width, Uint32 Height) -> bool {
         const auto OutputKey = Format("ray_tracing_output_{}x{}", Width, Height);
@@ -356,7 +332,8 @@ class RayTracingRenderer final : public IRenderer {
     [[nodiscard]] static auto BuildSceneSignature(const SceneSnapshot& Scene,
                                                    const RenderViewSnapshot& View,
                                                    std::size_t InstanceCount,
-                                                   std::size_t GeometryCount) -> Uint64 {
+                                                   std::size_t GeometryCount,
+                                                   std::span<const PbrMaterialGpuData> MaterialData) -> Uint64 {
         Uint64 Signature = HashMatrix(1469598103934665603ULL, View.ViewProjection);
         Signature = HashCombine(Signature, InstanceCount);
         Signature = HashCombine(Signature, GeometryCount);
@@ -368,6 +345,14 @@ class RayTracingRenderer final : public IRenderer {
             Signature = HashCombine(Signature, HashFloat(Renderable.Material.BaseColor.z));
             Signature = HashCombine(Signature, HashFloat(Renderable.Material.Metallic));
             Signature = HashCombine(Signature, HashFloat(Renderable.Material.Roughness));
+        }
+        for (const auto& Material : MaterialData) {
+            Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.x));
+            Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.y));
+            Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.z));
+            Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.w));
+            Signature = HashCombine(Signature, HashFloat(Material.RoughnessFactor));
+            Signature = HashCombine(Signature, HashFloat(static_cast<float>(Material.BaseColorTextureIndex)));
         }
         return Signature;
     }
@@ -385,18 +370,17 @@ class RayTracingRenderer final : public IRenderer {
 
     ResourceRef<RHIRayTracingPipeline> m_Pipeline = {};
     ResourceRef<ResourceTopLevelAccelerationStructure> m_Tlas = {};
-    RHIRayTracingGeometryTable* m_GeometryTable = nullptr;
+    ResourceRef<RHISampler> m_SamplerLinear = {};
+    ResourceRef<RHISampler> m_SamplerAniso = {};
+    PbrMaterialResolver m_MaterialResolver = {};
     ResourceRef<RHIRenderTarget> m_Output = {};
     ResourceRef<RHIRenderTarget> m_Accumulation = {};
     String m_OutputKey = {};
     String m_AccumulationKey = {};
-    std::vector<RayTracingMeshCacheEntry> m_MeshCache = {};
     RHIShaderParameters m_Parameters = {};
     Uint64 m_LastSceneSignature = 0;
     Uint32 m_SampleIndex = 0;
     bool m_HasAccumulation = false;
-    bool m_LoggedFirstTrace = false;
-    std::set<String, std::less<>> m_LoggedTextureFallbacks = {};
 };
 
 RendererFactory::AutoRegistrar<RayTracingRenderer> RegRayTracingRenderer{"RayTracing"};

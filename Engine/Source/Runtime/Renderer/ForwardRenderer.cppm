@@ -13,6 +13,7 @@ import Resource;
 import Scene;
 
 import :IRenderer;
+import :MaterialResolver;
 
 export import std;
 
@@ -53,30 +54,6 @@ static_assert(offsetof(InstanceData, WorldTransform) == 0);
 static_assert(offsetof(InstanceData, BoundingSphere) == 64);
 static_assert(offsetof(InstanceData, MaterialIndex) == 80);
 
-/// @brief Storage-buffer layout matching ForwardPbr.slang ForwardMaterialData.
-struct alignas(16) ForwardMaterialData {
-    alignas(16) hlslpp::interop::float4 BaseColorFactor =
-        hlslpp::interop::float4{hlslpp::float4{0.62f, 0.28f, 0.10f, 1.0f}};
-    alignas(16) hlslpp::interop::float4 EmissiveFactor =
-        hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
-    Float32 MetallicFactor = 0.0f;
-    Float32 RoughnessFactor = 0.42f;
-    /// Index into the g_textures.uTextures shader array; negative disables sampling.
-    Int32 BaseColorTextureIndex = -1;
-    Int32 NormalTextureIndex = -1;
-    Int32 MetallicRoughnessTextureIndex = -1;
-    Int32 MetallicTextureIndex = -1;
-    Int32 RoughnessTextureIndex = -1;
-    Int32 OcclusionTextureIndex = -1;
-    Int32 EmissiveTextureIndex = -1;
-};
-static_assert(sizeof(ForwardMaterialData) == 80, "ForwardMaterialData must match ForwardPbr.slang storage-buffer layout");
-static_assert(offsetof(ForwardMaterialData, BaseColorFactor) == 0);
-static_assert(offsetof(ForwardMaterialData, EmissiveFactor) == 16);
-static_assert(offsetof(ForwardMaterialData, MetallicFactor) == 32);
-static_assert(offsetof(ForwardMaterialData, BaseColorTextureIndex) == 40);
-static_assert(offsetof(ForwardMaterialData, EmissiveTextureIndex) == 64);
-
 struct ForwardViewParameterState {
     String              ViewRenderTargetKey = {};
     RHIShaderParameters Parameters          = {};
@@ -100,11 +77,6 @@ struct ForwardDrawInstance {
 struct ForwardMeshCacheEntry {
     String                                Asset = {};
     ResourceRef<ResourceMesh> Mesh  = {};
-};
-
-struct ForwardTextureCacheEntry {
-    String                                     Asset   = {};
-    ResourceRef<RHISampledTexture> Texture = {};
 };
 
 struct ResolvedForwardDraw {
@@ -158,7 +130,7 @@ class ForwardRenderer final : public IRenderer {
         m_SamplerLinear  = {};
         m_SamplerAniso   = {};
         m_MeshCache.clear();
-        m_TextureCache.clear();
+        m_MaterialResolver.Clear();
         m_ViewParameters.clear();
     }
 
@@ -251,38 +223,18 @@ class ForwardRenderer final : public IRenderer {
             CmdList.PresentSource = ColorRT;
 
         std::vector<ResolvedForwardDraw> ResolvedDraws = {};
-        std::vector<InstanceData>         Instances     = {};
-        std::vector<ForwardMaterialData>  MaterialData  = {};
-        std::vector<RHISampledTexture*>   TextureTable  = {};
-        std::map<String, Int32, std::less<>> TextureIndices = {};
-        const auto ResolveTexture = [&](const String& Asset, bool bEnabled) -> Int32 {
-            if (!bEnabled || Asset.empty())
-                return -1;
-            if (const auto Existing = TextureIndices.find(Asset); Existing != TextureIndices.end())
-                return Existing->second;
-            auto* Texture = Resources.TryGetReady(GetOrRequestTexture(Asset).GetHandle());
-            if (!Texture)
-                return -1;
-            if (TextureTable.size() >= static_cast<std::size_t>(std::numeric_limits<Int32>::max()))
-                return -1;
-            const auto Index = static_cast<Int32>(TextureTable.size());
-            TextureIndices.emplace(Asset, Index);
-            TextureTable.emplace_back(Texture);
-            return Index;
-        };
+        std::vector<InstanceData> Instances = {};
+        m_MaterialResolver.BeginFrame();
         ResolvedDraws.reserve(DrawInstances.size());
         Instances.reserve(DrawInstances.size());
-        MaterialData.reserve(DrawInstances.size());
 
         for (const auto& Instance : DrawInstances) {
             auto* PositionVB = Resources.TryGetReady(Instance.PositionVB);
-            auto* NormalVB   = Resources.TryGetReady(Instance.NormalVB);
-            auto* IB         = Resources.TryGetReady(Instance.IndexBuffer);
+            auto* NormalVB = Resources.TryGetReady(Instance.NormalVB);
+            auto* IB = Resources.TryGetReady(Instance.IndexBuffer);
             if (!PositionVB || !NormalVB || !IB)
                 continue;
 
-            // Meshes without UVs reuse the position stream as a placeholder binding;
-            // the shader only reads UVs when a base-color texture is bound.
             auto* TangentVB = Resources.TryGetReady(Instance.TangentVB);
             auto* UVVB = Instance.UVVB.IsValid() ? Resources.TryGetReady(Instance.UVVB) : nullptr;
             if (!UVVB)
@@ -290,19 +242,7 @@ class ForwardRenderer final : public IRenderer {
             if (!TangentVB)
                 continue;
 
-            const bool bCanSampleUV0 = Instance.HasUV0;
-            const bool bCanSampleNormal = bCanSampleUV0 && Instance.HasTangents;
-            const auto MaterialIndex = static_cast<Uint32>(MaterialData.size());
-            MaterialData.emplace_back(BuildMaterialData(
-                Instance.Material,
-                ResolveTexture(Instance.Material.BaseColorTexture, bCanSampleUV0),
-                ResolveTexture(Instance.Material.NormalTexture, bCanSampleNormal),
-                ResolveTexture(Instance.Material.MetallicRoughnessTexture, bCanSampleUV0),
-                ResolveTexture(Instance.Material.MetallicTexture, bCanSampleUV0),
-                ResolveTexture(Instance.Material.RoughnessTexture, bCanSampleUV0),
-                ResolveTexture(Instance.Material.OcclusionTexture, bCanSampleUV0),
-                ResolveTexture(Instance.Material.EmissiveTexture, bCanSampleUV0)));
-
+            const auto MaterialIndex = m_MaterialResolver.Resolve(Instance.Material, Instance.HasUV0, Instance.HasTangents);
             Instances.emplace_back(BuildInstanceData(Instance, MaterialIndex));
             ResolvedDraws.emplace_back(ResolvedForwardDraw{
                 .PositionVB = PositionVB,
@@ -313,14 +253,7 @@ class ForwardRenderer final : public IRenderer {
             });
         }
 
-        RHIResourceArray<RHISampledTexture> Textures = {};
-        if (TextureTable.empty()) {
-            // Vulkan runtime descriptor arrays must carry one element even when no material samples a texture.
-            Textures.Set(0, nullptr);
-        } else {
-            for (std::size_t TextureIndex = 0; TextureIndex < TextureTable.size(); ++TextureIndex)
-                Textures.Set(static_cast<Uint32>(TextureIndex), TextureTable[TextureIndex]);
-        }
+        const auto Textures = m_MaterialResolver.BuildTextureArray();
         if (auto R = Parameters.SetResourceArray("g_textures.uTextures", Textures); !R)
             return std::unexpected(R.error().Append("Forward PBR texture parameter binding failed"));
 
@@ -337,7 +270,7 @@ class ForwardRenderer final : public IRenderer {
             if (auto R = Parameters.SetTransientShaderStorageBuffer("g_forwardDraw.instances", *InstanceDataBuffer); !R)
                 return std::unexpected(R.error().Append("Forward PBR instance-data storage buffer binding failed"));
 
-            const auto MaterialDataBytes = std::as_bytes(std::span{MaterialData});
+            const auto MaterialDataBytes = std::as_bytes(m_MaterialResolver.GetMaterials());
             auto MaterialDataBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(MaterialDataBytes.size_bytes());
             if (!MaterialDataBuffer)
                 return std::unexpected(MaterialDataBuffer.error().Append("Forward PBR material-data transient buffer allocation failed"));
@@ -373,19 +306,6 @@ class ForwardRenderer final : public IRenderer {
             .Mesh  = ResourceManager::Get().RequestMeshRef(Asset),
         });
         return Entry.Mesh;
-    }
-
-    [[nodiscard]] auto GetOrRequestTexture(StringView Asset) -> ResourceRef<RHISampledTexture>& {
-        for (auto& Entry : m_TextureCache) {
-            if (Entry.Asset == Asset)
-                return Entry.Texture;
-        }
-
-        auto& Entry = m_TextureCache.emplace_back(ForwardTextureCacheEntry{
-            .Asset   = String(Asset),
-            .Texture = ResourceManager::Get().RequestSampledTextureRef(Asset),
-        });
-        return Entry.Texture;
     }
 
     [[nodiscard]] auto BuildDrawInstances(const SceneSnapshot& Scene)
@@ -487,29 +407,6 @@ class ForwardRenderer final : public IRenderer {
         };
     }
 
-    [[nodiscard]] static auto BuildMaterialData(const PbrMetallicRoughnessMaterial& Material,
-                                                Int32 BaseColorTextureIndex,
-                                                Int32 NormalTextureIndex,
-                                                Int32 MetallicRoughnessTextureIndex,
-                                                Int32 MetallicTextureIndex,
-                                                Int32 RoughnessTextureIndex,
-                                                Int32 OcclusionTextureIndex,
-                                                Int32 EmissiveTextureIndex) -> ForwardMaterialData {
-        return ForwardMaterialData{
-            .BaseColorFactor = hlslpp::interop::float4{hlslpp::float4{Material.BaseColor.x, Material.BaseColor.y, Material.BaseColor.z, 1.0f}},
-            .EmissiveFactor = hlslpp::interop::float4{hlslpp::float4{Material.Emissive.x, Material.Emissive.y, Material.Emissive.z, 0.0f}},
-            .MetallicFactor = Material.Metallic,
-            .RoughnessFactor = Material.Roughness,
-            .BaseColorTextureIndex = BaseColorTextureIndex,
-            .NormalTextureIndex = NormalTextureIndex,
-            .MetallicRoughnessTextureIndex = MetallicRoughnessTextureIndex,
-            .MetallicTextureIndex = MetallicTextureIndex,
-            .RoughnessTextureIndex = RoughnessTextureIndex,
-            .OcclusionTextureIndex = OcclusionTextureIndex,
-            .EmissiveTextureIndex = EmissiveTextureIndex,
-        };
-    }
-
     [[nodiscard]] static auto BuildViewConstants(const RenderViewSnapshot& View) -> ForwardViewConstants {
         return ForwardViewConstants{
             .ViewProjection = View.ViewProjection,
@@ -540,7 +437,7 @@ class ForwardRenderer final : public IRenderer {
     ResourceRef<RHISampler>          m_SamplerLinear  = {};
     ResourceRef<RHISampler>          m_SamplerAniso   = {};
     std::vector<ForwardMeshCacheEntry>             m_MeshCache                = {};
-    std::vector<ForwardTextureCacheEntry>          m_TextureCache             = {};
+    PbrMaterialResolver m_MaterialResolver = {};
     std::vector<ForwardViewParameterState>          m_ViewParameters           = {};
 };
 

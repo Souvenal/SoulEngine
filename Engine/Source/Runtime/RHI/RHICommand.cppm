@@ -88,10 +88,12 @@ struct RHIDrawCmd {
     std::array<RHIVertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
 };
 
-/// Update the RHIRenderDevice-owned BDA geometry metadata table before a ray dispatch.
-struct RHIUpdateRayTracingGeometryTableCmd {
-    RHIRayTracingGeometryTable*    TablePtr = nullptr;
-    RHIRayTracingGeometryTableUpdate Update  = {};
+/// Resolve logical ray-tracing geometry sources into transient shader-storage buffers.
+struct RHIWriteRayTracingGeometryDataCmd {
+    RHITransientShaderStorageBuffer          InstanceBuffer = {};
+    RHITransientShaderStorageBuffer          GeometryBuffer = {};
+    std::vector<RHIRayTracingInstanceData>   Instances      = {};
+    std::vector<RHIRayTracingGeometryDesc>   Geometries     = {};
 };
 
 /// @brief Upload a CPU snapshot into a RenderDevice-allocated transient constant buffer.
@@ -132,7 +134,7 @@ using RHICommand = std::variant<RHISetViewportCmd,
                              RHIBindShaderParametersCmd,
                              RHIDrawIndexedCmd,
                              RHIDrawCmd,
-                             RHIUpdateRayTracingGeometryTableCmd,
+                             RHIWriteRayTracingGeometryDataCmd,
                              RHIWriteTransientConstantBufferCmd,
                              RHIWriteTransientShaderStorageBufferCmd,
                              RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
@@ -183,8 +185,16 @@ struct RHIPass {
             .Parameters  = std::move(Parameters),
         });
     }
-    auto UpdateRayTracingGeometryTable(RHIRayTracingGeometryTable* TablePtr, RHIRayTracingGeometryTableUpdate Update) -> void {
-        Commands.emplace_back(RHIUpdateRayTracingGeometryTableCmd{.TablePtr = TablePtr, .Update = std::move(Update)});
+    auto WriteRayTracingGeometryData(RHITransientShaderStorageBuffer        InstanceBuffer,
+                                     RHITransientShaderStorageBuffer        GeometryBuffer,
+                                     std::vector<RHIRayTracingInstanceData> Instances,
+                                     std::vector<RHIRayTracingGeometryDesc> Geometries) -> void {
+        Commands.emplace_back(RHIWriteRayTracingGeometryDataCmd{
+            .InstanceBuffer = InstanceBuffer,
+            .GeometryBuffer = GeometryBuffer,
+            .Instances      = std::move(Instances),
+            .Geometries     = std::move(Geometries),
+        });
     }
     [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
         -> std::expected<void, ErrorMessage> {
@@ -283,8 +293,16 @@ struct RHINonRenderingPass {
             .Parameters  = std::move(Parameters),
         });
     }
-    auto UpdateRayTracingGeometryTable(RHIRayTracingGeometryTable* TablePtr, RHIRayTracingGeometryTableUpdate Update) -> void {
-        Commands.emplace_back(RHIUpdateRayTracingGeometryTableCmd{.TablePtr = TablePtr, .Update = std::move(Update)});
+    auto WriteRayTracingGeometryData(RHITransientShaderStorageBuffer        InstanceBuffer,
+                                     RHITransientShaderStorageBuffer        GeometryBuffer,
+                                     std::vector<RHIRayTracingInstanceData> Instances,
+                                     std::vector<RHIRayTracingGeometryDesc> Geometries) -> void {
+        Commands.emplace_back(RHIWriteRayTracingGeometryDataCmd{
+            .InstanceBuffer = InstanceBuffer,
+            .GeometryBuffer = GeometryBuffer,
+            .Instances      = std::move(Instances),
+            .Geometries     = std::move(Geometries),
+        });
     }
     [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
         -> std::expected<void, ErrorMessage> {
