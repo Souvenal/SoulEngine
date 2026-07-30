@@ -13,7 +13,6 @@ export namespace SoulEngine {
 
 class RHIRenderTarget;
 class RHITopLevelAccelerationStructure;
-class RHIRayTracingGeometryTable;
 
 // ── Buffer descriptor types ────────────────────────────────────────────────
 
@@ -40,8 +39,23 @@ struct RHISamplerDesc {
 
 // ── RHIGpuResource — base for GPU resources with usage tracking ────────────
 
-struct RHIGpuCompletionToken {
+/// One graphics-frame submission timeline value used for resource lifetime tracking.
+struct RHIFrameSubmissionToken {
     Uint64 Id = 0;
+};
+
+/// Logical immediate-task queue. Backends map this to concrete queues and timelines.
+enum class RHIImmediateQueue : Uint8 {
+    Unknown = 0,
+    Transfer,
+    Graphics,
+    Compute,
+};
+
+/// Completion token returned by asynchronous immediate work such as uploads.
+struct RHIGpuCompletionToken {
+    RHIImmediateQueue Queue = RHIImmediateQueue::Unknown;
+    Uint64            Value = 0;
 };
 
 /// Base class for GPU resources that tracks the last command-list usage token.
@@ -57,21 +71,21 @@ class RHIGpuResource {
     auto operator=(RHIGpuResource&&) -> RHIGpuResource&      = delete;
     virtual ~RHIGpuResource()                             = default;
 
-    [[nodiscard]] auto GetLastUsageToken() const noexcept -> RHIGpuCompletionToken {
+    [[nodiscard]] auto GetLastUsageToken() const noexcept -> RHIFrameSubmissionToken {
         return m_LastUsage;
     }
-    auto UpdateLastUsageToken(RHIGpuCompletionToken Token) noexcept -> void {
+    auto UpdateLastUsageToken(RHIFrameSubmissionToken Token) noexcept -> void {
         m_LastUsage = Token;
     }
 
   private:
-    RHIGpuCompletionToken m_LastUsage = {};
+    RHIFrameSubmissionToken m_LastUsage = {};
 };
 
 // ── Typed GPU buffer polymorphic bases ──────────────────────────────────
 
-/// Empty polymorphic base for vertex buffer resources.
-/// Backend concrete class (e.g. VulkanVertexBuffer) owns the GPU allocation.
+/// Polymorphic base for vertex buffer resources and their immutable metadata.
+/// Backend concrete classes (e.g. VulkanVertexBuffer) own GPU allocations.
 /// ResourceManager owns RHIVertexBuffer instances; command lists only observe them.
 class RHIVertexBuffer : public RHIGpuResource {
   public:
@@ -81,10 +95,25 @@ class RHIVertexBuffer : public RHIGpuResource {
     RHIVertexBuffer(RHIVertexBuffer&&)                         = delete;
     auto operator=(RHIVertexBuffer&&) -> RHIVertexBuffer&      = delete;
     virtual ~RHIVertexBuffer()                              = default;
+
+    [[nodiscard]] auto GetVertexCount() const noexcept -> Uint64 {
+        return m_VertexCount;
+    }
+    [[nodiscard]] auto GetStride() const noexcept -> Uint32 {
+        return m_Stride;
+    }
+
+  protected:
+    explicit RHIVertexBuffer(const RHIVertexBufferDesc& Desc)
+        : m_VertexCount(Desc.VertexCount), m_Stride(Desc.Stride) {}
+
+  private:
+    Uint64 m_VertexCount = 0;
+    Uint32 m_Stride      = 0;
 };
 
-/// Empty polymorphic base for index buffer resources.
-/// Same role as RHIVertexBuffer, for index data.
+/// Polymorphic base for index buffer resources and their immutable metadata.
+/// Same role as RHIVertexBuffer, for Uint32 index data.
 class RHIIndexBuffer : public RHIGpuResource {
   public:
     RHIIndexBuffer()                                      = default;
@@ -93,6 +122,17 @@ class RHIIndexBuffer : public RHIGpuResource {
     RHIIndexBuffer(RHIIndexBuffer&&)                         = delete;
     auto operator=(RHIIndexBuffer&&) -> RHIIndexBuffer&      = delete;
     virtual ~RHIIndexBuffer()                             = default;
+
+    [[nodiscard]] auto GetIndexCount() const noexcept -> Uint64 {
+        return m_IndexCount;
+    }
+
+  protected:
+    explicit RHIIndexBuffer(const RHIIndexBufferDesc& Desc)
+        : m_IndexCount(Desc.IndexCount) {}
+
+  private:
+    Uint64 m_IndexCount = 0;
 };
 
 /// @brief RenderDevice-allocated logical constant-buffer range for one command-list execution.
@@ -392,7 +432,6 @@ using RHIShaderParameterValue = std::variant<std::monostate,
                                           RHIResourceArray<RHISampledTexture>,
                                           RHISampler*,
                                           RHITopLevelAccelerationStructure*,
-                                          RHIRayTracingGeometryTable*,
                                           RHIRenderTarget*>;
 
 /// @brief Runtime values for one reflected shader descriptor set.
@@ -529,11 +568,6 @@ class RHIShaderParameters {
                                                          RHITopLevelAccelerationStructure* RHIAccelerationStructure)
         -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, ShaderResourceType::AccelerationStructure, false, RHIAccelerationStructure);
-    }
-
-    [[nodiscard]] auto SetRayTracingGeometryTable(StringView ParameterPath, RHIRayTracingGeometryTable* Table)
-        -> std::expected<void, ErrorMessage> {
-        return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Table);
     }
 
     [[nodiscard]] auto SetStorageRenderTarget(StringView ParameterPath, RHIRenderTarget* Target)

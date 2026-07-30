@@ -11,8 +11,8 @@ import std;
 
 import :Buffer;
 import :Capability;
-import :DeletionQueue;
 import :Pipeline;
+import :Context;
 
 export namespace SoulEngine {
 
@@ -370,11 +370,8 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     VulkanRayTracingPipeline(const VulkanRayTracingPipeline&)                    = delete;
     auto operator=(const VulkanRayTracingPipeline&) -> VulkanRayTracingPipeline& = delete;
 
-    [[nodiscard]] static auto Create(vk::raii::Device&                   Device,
-                                     VmaAllocator                         Allocator,
-                                     const RHIRayTracingPipelineDesc&   Desc,
-                                     Uint32                               MaxTextures,
-                                     VulkanDeletionQueue&                       Queue)
+    [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
+                                     const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanRayTracingPipeline>, ErrorMessage> {
         const auto& Support = VulkanCapability::Get().GetRayTracingSupport();
         if (!Support.Available)
@@ -389,11 +386,11 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
                 Properties.maxRayRecursionDepth)));
         }
 
-        auto LayoutObjects = CreatePipelineLayout(Device, Desc.Program.Reflection, MaxTextures, GetRayTracingShaderStageFlags());
+        auto LayoutObjects = CreatePipelineLayout(Context.Device, Desc.Program.Reflection, GetRayTracingShaderStageFlags());
         if (!LayoutObjects)
             return std::unexpected(LayoutObjects.error().Append("Failed to create ray-tracing pipeline layout"));
 
-        auto ShaderStates = CreateRayTracingShaderStates(Device, Desc);
+        auto ShaderStates = CreateRayTracingShaderStates(Context.Device, Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error().Append("Failed to lower ray-tracing shader stages and groups"));
 
@@ -405,7 +402,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
             .maxPipelineRayRecursionDepth = Desc.MaxRecursionDepth,
             .layout                      = *LayoutObjects->second,
         };
-        auto [PipelineResult, RHIPipeline] = Device.createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
+        auto [PipelineResult, RHIPipeline] = Context.Device.createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
         if (PipelineResult != vk::Result::eSuccess) {
             return std::unexpected(ErrorMessage(Format(
                 "Failed to create ray-tracing pipeline: {}", vk::to_string(PipelineResult))));
@@ -444,15 +441,15 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         auto SbtBuffer = VulkanHostBuffer::Create(SbtLayout->TotalSize,
                                             vk::BufferUsageFlagBits::eShaderBindingTableKHR |
                                                 vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                            Device,
-                                            Allocator);
+                                            Context.Device,
+                                            Context.Allocator);
         if (!SbtBuffer)
             return std::unexpected(SbtBuffer.error().Append("Failed to allocate shader-binding-table buffer"));
         if (auto R = SbtBuffer->Upload(SbtData->data(), SbtData->size()); !R)
             return std::unexpected(R.error().Append("Failed to upload shader-binding-table records"));
 
         const vk::DeviceAddress SbtAddress =
-            Device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = SbtBuffer->Get()});
+            SbtBuffer->GetDeviceAddress();
         if (SbtAddress == 0 || SbtAddress % Properties.shaderGroupBaseAlignment != 0) {
             return std::unexpected(ErrorMessage(Format(
                 "Shader-binding-table buffer address {} is not aligned to required base alignment {}",
@@ -477,7 +474,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         Result->m_MissRegion = MakeRegion(SbtAddress, SbtLayout->Miss);
         Result->m_HitRegion = MakeRegion(SbtAddress, SbtLayout->Hit);
         Result->m_CallableRegion = MakeRegion(SbtAddress, SbtLayout->Callable);
-        Result->m_DeletionQueue = &Queue;
+        Result->m_DeletionQueue = &Context.DeletionQueue;
         Result->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
         return Result;
     }

@@ -85,9 +85,6 @@ class MockRenderDevice final : public RHIRenderDevice {
         -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("MockRenderDevice does not create TLAS resources"));
     }
-    [[nodiscard]] auto GetRayTracingGeometryTable() -> RHIRayTracingGeometryTable* override {
-        return nullptr;
-    }
     [[nodiscard]] auto Execute(const RHICommandList&) -> std::expected<void, ErrorMessage> override {
         return {};
     }
@@ -102,7 +99,6 @@ class MockRenderDevice final : public RHIRenderDevice {
 };
 
 /// Concrete RT pipeline exposing the protected reflection-layout setup for testing.
-class MockRayTracingGeometryTable final : public RHIRayTracingGeometryTable {};
 
 class MockRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
@@ -117,7 +113,6 @@ class UsageVisitorTest : public ::testing::Test {
   protected:
     SPtr<RHIGraphicsPipeline>                      m_Pipeline   = std::make_shared<RHIGraphicsPipeline>();
     SPtr<MockRayTracingPipeline>                 m_RayPipeline = std::make_shared<MockRayTracingPipeline>();
-    SPtr<MockRayTracingGeometryTable>             m_GeometryTable = std::make_shared<MockRayTracingGeometryTable>();
     SPtr<RHIBottomLevelAccelerationStructure>       m_BLAS       = std::make_shared<RHIBottomLevelAccelerationStructure>();
     SPtr<RHITopLevelAccelerationStructure>          m_TLAS       = std::make_shared<RHITopLevelAccelerationStructure>();
     SPtr<RHIVertexBuffer>                           m_VB         = std::make_shared<RHIVertexBuffer>();
@@ -126,7 +121,7 @@ class UsageVisitorTest : public ::testing::Test {
     SPtr<MockSampledTexture>                     m_Texture    = std::make_shared<MockSampledTexture>();
     SPtr<MockRenderTarget>                       m_Output     = std::make_shared<MockRenderTarget>();
 
-    RHIGpuCompletionToken m_Token{42};
+    RHIFrameSubmissionToken m_Token{42};
     RHIUsageVisitor       m_Visitor{m_Token};
 };
 
@@ -203,74 +198,67 @@ TEST_F(UsageVisitorTest, BindShaderParametersCmdUpdatesReferencedResources) {
     EXPECT_EQ(m_Texture->GetLastUsageToken().Id, 42);
 }
 
-TEST(RayTracingCommandTest, NonRenderingPassCopiesBdaGeometryTableUpdate) {
-    RHIRayTracingGeometryTable Table;
+TEST(RayTracingCommandTest, NonRenderingPassCopiesRayTracingGeometryData) {
     RHIVertexBuffer Position;
     RHIVertexBuffer Normal;
     RHIIndexBuffer Index;
-    RHIVertexBuffer SecondPosition;
-    RHIVertexBuffer SecondNormal;
-    RHIIndexBuffer SecondIndex;
-    RHIRayTracingGeometryTableUpdate Update{
-        .Instances = {{.FirstGeometry = 0, .GeometryCount = 1, .MaterialIndex = 9},
-                      {.FirstGeometry = 1, .GeometryCount = 1, .MaterialIndex = 17}},
-        .Geometries = {{.PositionBuffer = &Position,
-                        .NormalBuffer = &Normal,
-                        .IndexBuffer = &Index,
-                        .VertexCount = 3,
-                        .IndexCount = 3},
-                       {.PositionBuffer = &SecondPosition,
-                        .NormalBuffer = &SecondNormal,
-                        .IndexBuffer = &SecondIndex,
-                        .VertexCount = 4,
-                        .IndexCount = 6}},
-    };
-    RHINonRenderingPass RHIPass;
+    std::vector<RHIRayTracingInstanceData> Instances{{.FirstGeometry = 0, .GeometryCount = 1}};
+    std::vector<RHIRayTracingGeometryDesc> Geometries{{
+        .PositionBuffer = &Position,
+        .NormalBuffer = &Normal,
+        .TangentBuffer = &Position,
+        .TexCoordBuffer = &Position,
+        .IndexBuffer = &Index,
+        .VertexCount = 3,
+        .IndexCount = 3,
+    }};
+    MockRenderDevice Device{};
+    auto InstanceBuffer = Device.AllocateTransientShaderStorageBuffer(sizeof(RHIRayTracingInstanceData));
+    auto GeometryBuffer = Device.AllocateTransientShaderStorageBuffer(sizeof(RHIRayTracingGeometryData));
+    ASSERT_TRUE(InstanceBuffer);
+    ASSERT_TRUE(GeometryBuffer);
+    RHINonRenderingPass PassValue{};
 
-    RHIPass.UpdateRayTracingGeometryTable(&Table, Update);
-    Update.Instances.clear();
-    Update.Geometries.clear();
+    PassValue.WriteRayTracingGeometryData(*InstanceBuffer, *GeometryBuffer, Instances, Geometries);
+    Instances.clear();
+    Geometries.clear();
 
-    ASSERT_EQ(RHIPass.Commands.size(), 1);
-    const auto* CommandPtr = std::get_if<RHIUpdateRayTracingGeometryTableCmd>(&RHIPass.Commands.front());
+    ASSERT_EQ(PassValue.Commands.size(), 1);
+    const auto* CommandPtr = std::get_if<RHIWriteRayTracingGeometryDataCmd>(&PassValue.Commands.front());
     ASSERT_NE(CommandPtr, nullptr);
-    ASSERT_EQ(CommandPtr->Update.Instances.size(), 2);
-    ASSERT_EQ(CommandPtr->Update.Geometries.size(), 2);
-    EXPECT_EQ(CommandPtr->TablePtr, &Table);
-    EXPECT_EQ(CommandPtr->Update.Instances[0].MaterialIndex, 9U);
-    EXPECT_EQ(CommandPtr->Update.Instances[1].FirstGeometry, 1U);
-    EXPECT_EQ(CommandPtr->Update.Instances[1].MaterialIndex, 17U);
-    EXPECT_EQ(CommandPtr->Update.Geometries[0].PositionBuffer, &Position);
-    EXPECT_EQ(CommandPtr->Update.Geometries[0].NormalBuffer, &Normal);
-    EXPECT_EQ(CommandPtr->Update.Geometries[0].IndexBuffer, &Index);
-    EXPECT_EQ(CommandPtr->Update.Geometries[1].PositionBuffer, &SecondPosition);
-    EXPECT_EQ(CommandPtr->Update.Geometries[1].NormalBuffer, &SecondNormal);
-    EXPECT_EQ(CommandPtr->Update.Geometries[1].IndexBuffer, &SecondIndex);
-    EXPECT_EQ(CommandPtr->Update.Geometries[1].IndexCount, 6U);
+    EXPECT_EQ(CommandPtr->InstanceBuffer, *InstanceBuffer);
+    EXPECT_EQ(CommandPtr->GeometryBuffer, *GeometryBuffer);
+    ASSERT_EQ(CommandPtr->Instances.size(), 1);
+    ASSERT_EQ(CommandPtr->Geometries.size(), 1);
+    EXPECT_EQ(CommandPtr->Instances.front().FirstGeometry, 0U);
+    EXPECT_EQ(CommandPtr->Geometries.front().PositionBuffer, &Position);
 }
 
-TEST_F(UsageVisitorTest, UpdateBdaGeometryTableCmdUpdatesSourceBufferTokens) {
-    ASSERT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
+TEST_F(UsageVisitorTest, WriteRayTracingGeometryDataCmdUpdatesSourceBufferTokens) {
     ASSERT_EQ(m_VB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_SecondVB->GetLastUsageToken().Id, 0);
     ASSERT_EQ(m_IB->GetLastUsageToken().Id, 0);
 
+    MockRenderDevice Device{};
+    auto InstanceBuffer = Device.AllocateTransientShaderStorageBuffer(sizeof(RHIRayTracingInstanceData));
+    auto GeometryBuffer = Device.AllocateTransientShaderStorageBuffer(sizeof(RHIRayTracingGeometryData));
+    ASSERT_TRUE(InstanceBuffer);
+    ASSERT_TRUE(GeometryBuffer);
+
     std::visit(m_Visitor,
-               RHICommand{RHIUpdateRayTracingGeometryTableCmd{
-                   .TablePtr = m_GeometryTable.get(),
-                   .Update = RHIRayTracingGeometryTableUpdate{
-                       .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}},
-                       .Geometries = {{.PositionBuffer = m_VB.get(),
-                                       .NormalBuffer = m_SecondVB.get(),
-                                       .IndexBuffer = m_IB.get(),
-                                       .VertexCount = 3,
-                                       .IndexCount = 3}},
-                   },
+               RHICommand{RHIWriteRayTracingGeometryDataCmd{
+                   .InstanceBuffer = *InstanceBuffer,
+                   .GeometryBuffer = *GeometryBuffer,
+                   .Instances = {{.FirstGeometry = 0, .GeometryCount = 1}},
+                   .Geometries = {{.PositionBuffer = m_VB.get(),
+                                   .NormalBuffer = m_SecondVB.get(),
+                                   .TangentBuffer = m_VB.get(),
+                                   .TexCoordBuffer = m_VB.get(),
+                                   .IndexBuffer = m_IB.get(),
+                                   .VertexCount = 3,
+                                   .IndexCount = 3}},
                }});
 
-    // Vulkan stamps the table only after a graphics submit succeeds. The
-    // generic visitor still protects all source buffers immediately.
-    EXPECT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
     EXPECT_EQ(m_VB->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_SecondVB->GetLastUsageToken().Id, 42);
     EXPECT_EQ(m_IB->GetLastUsageToken().Id, 42);
@@ -318,21 +306,6 @@ TEST(RayTracingCommandTest, PassCopiesTopLevelAccelerationStructureInstances) {
     ASSERT_EQ(CommandPtr->Instances.size(), 1);
     EXPECT_EQ(CommandPtr->TargetPtr, &TLAS);
     EXPECT_EQ(CommandPtr->Instances.front().BottomLevelPtr, &BLAS);
-}
-
-TEST_F(UsageVisitorTest, RayTracingGeometryTableShaderParameterDefersTokenToVulkanSubmit) {
-    const auto Layout = RHIShaderParameterLayout::Create(ShaderReflection{
-        .Bindings = {{.ParameterPath = "g_rt.metadata", .Set = 0, .BindingIndex = 0,
-                      .Type = ShaderResourceType::StorageBuffer}},
-    });
-    auto Parameters = RHIShaderParameters::Create(Layout);
-    ASSERT_TRUE(Parameters.SetRayTracingGeometryTable("g_rt.metadata", m_GeometryTable.get()));
-
-    std::visit(m_Visitor,
-               RHICommand{RHIBindShaderParametersCmd{.PipelinePtr = m_RayPipeline.get(), .Parameters = std::move(Parameters)}});
-
-    EXPECT_EQ(m_RayPipeline->GetLastUsageToken().Id, 42);
-    EXPECT_EQ(m_GeometryTable->GetLastUsageToken().Id, 0);
 }
 
 TEST_F(UsageVisitorTest, RayTracingShaderParametersUpdateTlasAndStorageOutputTokens) {
@@ -535,7 +508,7 @@ TEST_F(UsageVisitorTest, VisitEntireCommandList) {
 
     // Visit all commands with a single RHIUsageVisitor
     for (const auto& Cmd : PassValue.Commands)
-        std::visit(RHIUsageVisitor{RHIGpuCompletionToken{.Id = 99}}, Cmd);
+        std::visit(RHIUsageVisitor{RHIFrameSubmissionToken{.Id = 99}}, Cmd);
 
     // Resource commands updated
     EXPECT_EQ(m_Pipeline->GetLastUsageToken().Id, 99);

@@ -20,7 +20,7 @@ namespace SoulEngine {
 class VulkanDeletionQueue {
   public:
     struct Record {
-        RHIGpuCompletionToken RetireToken;
+        RHIFrameSubmissionToken RetireToken;
         std::function<void()>   Callback;
     };
 
@@ -43,7 +43,7 @@ class VulkanDeletionQueue {
     auto operator=(const VulkanDeletionQueue&) -> VulkanDeletionQueue& = delete;
 
     /// Thread-safe enqueue — may be called from any thread.
-    auto Enqueue(RHIGpuCompletionToken Token, std::function<void()> Callback) -> void {
+    auto Enqueue(RHIFrameSubmissionToken Token, std::function<void()> Callback) -> void {
         std::lock_guard Lock(m_Mutex);
         m_Records.emplace_back(Token, std::move(Callback));
     }

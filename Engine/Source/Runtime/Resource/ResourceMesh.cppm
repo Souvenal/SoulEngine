@@ -179,8 +179,11 @@ enum class ImportedTextureSemantic : Uint8 {
     Out.m_Name = Path(String(MeshPath)).stem().string();
     const Path MeshDirectory = Path(String(MeshPath)).parent_path();
     Out.m_ImportedMaterials.reserve(Scene->mNumMaterials);
-    for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex)
-        Out.m_ImportedMaterials.emplace_back(ImportMaterial(Scene->mMaterials[MaterialIndex], MeshDirectory, MaterialIndex));
+    for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex) {
+        auto ImportedMaterial = ImportMaterial(Scene->mMaterials[MaterialIndex], MeshDirectory, MaterialIndex);
+        LogDebug("Imported material '{}' from '{}'", ImportedMaterial.Name, MeshPath);
+        Out.m_ImportedMaterials.emplace_back(std::move(ImportedMaterial));
+    }
     if (!Scene->HasMeshes())
         return {};
 

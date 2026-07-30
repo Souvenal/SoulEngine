@@ -26,10 +26,10 @@ TEST(DeletionQueueTest, GpuResourceTokenTracking) {
     auto Res = std::make_shared<RHIGraphicsPipeline>();
     EXPECT_EQ(Res->GetLastUsageToken().Id, 0);
 
-    Res->UpdateLastUsageToken(RHIGpuCompletionToken{.Id = 5});
+    Res->UpdateLastUsageToken(RHIFrameSubmissionToken{.Id = 5});
     EXPECT_EQ(Res->GetLastUsageToken().Id, 5);
 
-    Res->UpdateLastUsageToken(RHIGpuCompletionToken{.Id = 10});
+    Res->UpdateLastUsageToken(RHIFrameSubmissionToken{.Id = 10});
     EXPECT_EQ(Res->GetLastUsageToken().Id, 10);
 }
 

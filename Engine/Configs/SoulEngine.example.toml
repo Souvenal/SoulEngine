@@ -22,10 +22,6 @@ Name = "Test"
 DebugInfo = true
 
 [RHI.Vulkan]
-# Bindless texture descriptor array size.  When omitted the Vulkan backend
-# defaults to 4096.
-MaxTextures = 4096
-
 # Per-frame dynamic constant arena capacity in bytes.
 # Logical ConstantBuffer resources reserve aligned slots in this arena.
 # When omitted the backend defaults to 4096 bytes.

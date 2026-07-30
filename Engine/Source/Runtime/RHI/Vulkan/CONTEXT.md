@@ -8,10 +8,9 @@ Vulkan RHI backend — implements `SoulEngineRenderDevice`.
 
 | Term | Definition |
 |------|------------|
-| **HostBuffer** | Internal Vulkan buffer with VMA allocation marked mappable (`HOST_ACCESS_SEQUENTIAL_WRITE_BIT`). Exposes `Upload(Data, Size, Offset)` for map+memcpy+unmap, and `DeferredDelete(Queue, Token)` to defer VMA destruction to a transfer completion token. Used as staging buffer for device-local transfers. Created with `BufferUsage::TransferSrc`. |
+| **HostBuffer** | Internal Vulkan buffer with VMA allocation marked mappable (`HOST_ACCESS_SEQUENTIAL_WRITE_BIT`). Exposes `Upload(Data, Size, Offset)` and `DeferredDelete(ImmediateContext, Token)` for one-shot upload staging lifetime. |
 | **DeviceBuffer** | Internal Vulkan buffer with device-local VMA allocation (`VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE`). Exposes transfer-copy helpers for whole-buffer staging upload. Does NOT host-mappable. Created with `BufferUsage::TransferDst` combined with semantic usage (e.g. `VertexBuffer`, `IndexBuffer`). |
-| **ImmediateContext** | One-shot async executor for GPU commands like staging copies. Allocates transient command buffers, submits to the dedicated transfer queue with timeline semaphore signalling, and does not call `waitIdle`. |
-| **TransferCompletionQueue** | Class in `:TransferCompletionQueue`. Owns the transfer upload timeline semaphore, allocates upload completion tokens, checks them non-blockingly, and runs callbacks after transfer completion. Deferred deletion is one callback use-case, not the queue's whole responsibility. |
+| **ImmediateContext** | Unified one-shot executor with transfer and graphics lanes. Each lane owns a command pool and timeline semaphore; tasks may wait across lanes, return queue-qualified completion tokens, and retire callbacks through `Tick()`. |
 
 | Term | Definition |
 |------|------------|
@@ -62,8 +61,7 @@ BDA (Buffer Device Address) rather than descriptor tables.
 | :Buffer | VKBuffer.cppm | `HostBuffer` (mappable staging), `DeviceBuffer` (device-local), `VertexBuffer`, `IndexBuffer` — VMA-backed buffer classes with Create factories per ADR 02 |
 | :VertexBuffer | VKVertexBuffer.cppm | (unused — logic consolidated into :Buffer) |
 | :IndexBuffer | VKIndexBuffer.cppm | (unused — logic consolidated into :Buffer) |
-| :ImmediateContext | VKImmediateContext.cppm | One-shot async GPU command executor for staging uploads, initial barriers, etc. Transient command buffers, no waitIdle. |
-| :TransferCompletionQueue | VKTransferCompletionQueue.cppm | `TransferCompletionQueue` — transfer timeline, upload completion token allocation/query, and deferred callback execution |
+| :ImmediateContext | VKImmediateContext.cppm | Unified one-shot transfer/graphics task executor, queue-qualified completion tokens, timeline waits, and deferred callback execution |
 | :Descriptor | VKDescriptor.cppm | `DescriptorManager` — descriptor allocation/write policy and descriptor write helpers |
 | :Texture | VKTexture.cppm | `DeviceTexture`, `SampledTexture`, and `RenderTarget` image resources |
 
@@ -77,12 +75,11 @@ a backend transfer-destination layout, and the source is blitted into the
 swapchain image before presentation. Public RHI callers express this intent
 with `TextureUsage::FrameOutput`; they do not request native transfer usage.
 
-### BDA ray-tracing geometry table
+### BDA ray-tracing geometry data
 
-`BdaRayTracingGeometryTable` is the Vulkan implementation of the
-RenderDevice-owned RHI table. It resolves source `VertexBuffer` and
-`IndexBuffer` device addresses only inside Vulkan, uploads fixed metadata, and
-uses a host-write to ray-tracing-shader-read barrier before `TraceRays`. Before
-reusing its shared host-visible allocation, it waits for the prior submitted
-consumer token; its descriptor range remains the fixed table capacity. It is
-one reflected storage-buffer descriptor, not a bindless descriptor array.
+Vulkan resolves source VertexBuffer and IndexBuffer device addresses only
+while executing WriteRayTracingGeometryDataCmd. It serializes per-instance
+ranges and per-geometry BDA/layout rows into ordinary frame-slot transient
+storage buffers, then uses the standard host-write to shader-read barrier.
+The shader binds these two reflected storage-buffer descriptors directly; no
+persistent metadata allocation or cross-frame reuse wait exists.

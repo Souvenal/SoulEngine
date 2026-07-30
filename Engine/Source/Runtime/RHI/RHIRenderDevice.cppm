@@ -51,8 +51,6 @@ class RHIRenderDevice {
     [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
 
-    /// Return the RHIRenderDevice-owned BDA metadata table, or null when hardware ray tracing is unavailable.
-    [[nodiscard]] virtual auto GetRayTracingGeometryTable() -> RHIRayTracingGeometryTable* = 0;
     /// Allocate a logical transient constant-buffer handle.
     /// The handle is written through a command list and resolved by the backend during Execute().
     [[nodiscard]] auto AllocateTransientConstantBuffer(Uint64 Size)

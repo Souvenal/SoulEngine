@@ -15,7 +15,7 @@ export namespace SoulEngine {
 /// here — the compiler will error on any uncovered variant, preventing silent
 /// omission of usage tracking.
 struct RHIUsageVisitor {
-    RHIGpuCompletionToken CurrentToken = {};
+    RHIFrameSubmissionToken CurrentToken = {};
 
     auto operator()(const RHISetGraphicsPipelineCmd& Cmd) -> void {
         if (Cmd.PipelinePtr)
@@ -52,12 +52,16 @@ struct RHIUsageVisitor {
                 VertexBufferPtr->UpdateLastUsageToken(CurrentToken);
         }
     }
-    auto operator()(const RHIUpdateRayTracingGeometryTableCmd& Cmd) -> void {
-        for (const auto& Geometry : Cmd.Update.Geometries) {
+    auto operator()(const RHIWriteRayTracingGeometryDataCmd& Cmd) -> void {
+        for (const auto& Geometry : Cmd.Geometries) {
             if (Geometry.PositionBuffer)
                 Geometry.PositionBuffer->UpdateLastUsageToken(CurrentToken);
             if (Geometry.NormalBuffer)
                 Geometry.NormalBuffer->UpdateLastUsageToken(CurrentToken);
+            if (Geometry.TangentBuffer)
+                Geometry.TangentBuffer->UpdateLastUsageToken(CurrentToken);
+            if (Geometry.TexCoordBuffer)
+                Geometry.TexCoordBuffer->UpdateLastUsageToken(CurrentToken);
             if (Geometry.IndexBuffer)
                 Geometry.IndexBuffer->UpdateLastUsageToken(CurrentToken);
         }
@@ -125,9 +129,6 @@ struct RHIUsageVisitor {
                         } else if constexpr (std::same_as<ValueType, RHITopLevelAccelerationStructure*>) {
                             if (TypedValue)
                                 TypedValue->UpdateLastUsageToken(CurrentToken);
-                        } else if constexpr (std::same_as<ValueType, RHIRayTracingGeometryTable*>) {
-                            // Metadata buffers are host-written immediately before trace recording.
-                            // Vulkan stamps their token only after the graphics submission succeeds.
                         } else if constexpr (std::same_as<ValueType, RHIRenderTarget*>) {
                             if (TypedValue)
                                 TypedValue->UpdateLastUsageToken(CurrentToken);

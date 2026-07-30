@@ -18,16 +18,14 @@ namespace {
 [[nodiscard]] auto BuildBottomLevelAccelerationStructureKey(const ResourceHandle<ResourceMesh>& MeshHandle,
                                                              const BottomLevelAccelerationStructureRequest& Request)
     -> String {
-    return Format("rt-blas/mesh={}/generation={}/flags={}/policy={}",
+    return Format("rt-blas/mesh={}/generation={}/policy={}",
                   MeshHandle.GetKey(),
                   MeshHandle.GetGeneration(),
-                  static_cast<Uint32>(Request.BuildFlags),
                   static_cast<Uint32>(Request.GeometryPolicy));
 }
 
-[[nodiscard]] auto BuildTopLevelAccelerationStructureKey(StringView ScopeKey,
-                                                          const RHITopLevelAccelerationStructureDesc& Desc) -> String {
-    return Format("rt-tlas/scope={}/flags={}", ScopeKey, static_cast<Uint32>(Desc.BuildFlags));
+[[nodiscard]] auto BuildTopLevelAccelerationStructureKey(StringView ScopeKey) -> String {
+    return Format("rt-tlas/scope={}", ScopeKey);
 }
 
 struct PendingBottomLevelAccelerationStructureRequest {
@@ -103,11 +101,7 @@ struct PendingBottomLevelAccelerationStructureRequest {
             IndexHandles.push_back(SubMesh.IB);
             Geometries.push_back(RHITriangleAccelerationStructureGeometryDesc{
                 .VertexBufferPtr = PositionBuffer,
-                .VertexCount = SubMesh.VertexCount,
-                .VertexStride = sizeof(hlslpp::interop::float3),
-                .VertexFormat = RHIFormat::R32G32B32_SFLOAT,
                 .IndexBufferPtr = IndexBuffer,
-                .IndexCount = static_cast<Uint32>(SubMesh.Indices.size()),
             });
         }
     }
@@ -143,10 +137,8 @@ struct PendingBottomLevelAccelerationStructureRequest {
     if (!MarkResourceRhiCommitting<ResourceBottomLevelAccelerationStructure>(Context, Pending->Key, Pending->Generation))
         return true;
 
-    auto Payload = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructureDesc{
-        .Geometries = std::move(Geometries),
-        .BuildFlags = Pending->Request.BuildFlags,
-    });
+    auto Payload = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(
+        RHIBottomLevelAccelerationStructureDesc{.Geometries = std::move(Geometries)});
     if (!Payload) {
         PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
             Context,
@@ -200,7 +192,7 @@ struct PendingBottomLevelAccelerationStructureRequest {
                                                                StringView ScopeKey,
                                                                const RHITopLevelAccelerationStructureDesc& Desc)
     -> ResourceHandle<ResourceTopLevelAccelerationStructure> {
-    const auto Key = BuildTopLevelAccelerationStructureKey(ScopeKey, Desc);
+    const auto Key = BuildTopLevelAccelerationStructureKey(ScopeKey);
     auto Work = BeginResourceWork<ResourceTopLevelAccelerationStructure>(Context, Key);
     if (!Work.ShouldStartWork)
         return Work.Handle;

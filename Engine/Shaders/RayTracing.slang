@@ -1,6 +1,5 @@
 import Pbr;
 
-static const uint kMaxRayTracingInstances = 64;
 static const float kRayEpsilon = 0.001;
 static const float kRayMaxDistance = 10000.0;
 
@@ -12,9 +11,28 @@ public struct RayTracingViewData {
     public float4 pathSettings;
 };
 
-public struct RayTracingMaterialData {
-    public float4 baseColorMetallic[kMaxRayTracingInstances];
-    public float4 roughnessGeometryBase[kMaxRayTracingInstances];
+public struct RayTracingInstanceData {
+    public uint firstGeometry;
+    public uint geometryCount;
+};
+
+public struct RayTracingGeometryData {
+    public uint64_t positionAddress;
+    public uint64_t normalAddress;
+    public uint64_t tangentAddress;
+    public uint64_t texCoordAddress;
+    public uint64_t indexAddress;
+    public uint positionByteOffset;
+    public uint normalByteOffset;
+    public uint tangentByteOffset;
+    public uint texCoordByteOffset;
+    public uint indexByteOffset;
+    public uint positionStride;
+    public uint normalStride;
+    public uint tangentStride;
+    public uint texCoordStride;
+    public uint indexStride;
+    public uint materialIndex;
 };
 
 public struct RayTracingResources {
@@ -22,24 +40,11 @@ public struct RayTracingResources {
     public RWTexture2D<float4> output;
     public RWTexture2D<float4> accumulation;
     public ConstantBuffer<RayTracingViewData> view;
-    public ConstantBuffer<RayTracingMaterialData> materials;
+    public StructuredBuffer<PbrMaterialData> materials;
+    public StructuredBuffer<RayTracingInstanceData> instances;
+    public StructuredBuffer<RayTracingGeometryData> geometries;
 };
 public ParameterBlock<RayTracingResources> g_rayTracing;
-
-/// Fixed metadata binding. The records stored here contain Vulkan-resolved BDA
-/// source-buffer addresses; renderer code never binds per-mesh descriptors.
-public struct RayTracingGeometryMetadataResources {
-    public ByteAddressBuffer metadata;
-};
-public ParameterBlock<RayTracingGeometryMetadataResources> g_rayTracingGeometryMetadata;
-
-static const uint kInstanceGeometryRecordSize = 16;
-static const uint kGeometryAddressRecordSize = 64;
-
-uint64_t loadAddress(ByteAddressBuffer buffer, uint byteOffset) {
-    uint2 words = buffer.Load2(byteOffset);
-    return uint64_t(words.x) | (uint64_t(words.y) << 32);
-}
 
 float3 loadFloat3(uint64_t address) {
     float* values = (float*)address;
@@ -51,31 +56,44 @@ uint loadUint32(uint64_t address) {
     return value[0];
 }
 
-float3 loadPosition(ByteAddressBuffer metadata, uint geometryOffset, uint vertexIndex) {
-    uint64_t address = loadAddress(metadata, geometryOffset) +
-                       metadata.Load(geometryOffset + 24) +
-                       uint64_t(vertexIndex) * metadata.Load(geometryOffset + 36);
+float3 loadPosition(RayTracingGeometryData geometry, uint vertexIndex) {
+    uint64_t address = geometry.positionAddress + uint64_t(geometry.positionByteOffset) +
+                       uint64_t(vertexIndex) * uint64_t(geometry.positionStride);
     return loadFloat3(address);
 }
 
-float3 loadNormal(ByteAddressBuffer metadata, uint geometryOffset, uint vertexIndex) {
-    uint64_t address = loadAddress(metadata, geometryOffset + 8) +
-                       metadata.Load(geometryOffset + 28) +
-                       uint64_t(vertexIndex) * metadata.Load(geometryOffset + 40);
+float3 loadNormal(RayTracingGeometryData geometry, uint vertexIndex) {
+    uint64_t address = geometry.normalAddress + uint64_t(geometry.normalByteOffset) +
+                       uint64_t(vertexIndex) * uint64_t(geometry.normalStride);
     return loadFloat3(address);
 }
 
-uint loadIndex(ByteAddressBuffer metadata, uint geometryOffset, uint indexIndex) {
-    uint64_t address = loadAddress(metadata, geometryOffset + 16) +
-                       metadata.Load(geometryOffset + 32) +
-                       uint64_t(indexIndex) * metadata.Load(geometryOffset + 44);
+float4 loadTangent(RayTracingGeometryData geometry, uint vertexIndex) {
+    uint64_t address = geometry.tangentAddress + uint64_t(geometry.tangentByteOffset) +
+                       uint64_t(vertexIndex) * uint64_t(geometry.tangentStride);
+    float* values = (float*)address;
+    return float4(values[0], values[1], values[2], values[3]);
+}
+
+float2 loadTexCoord(RayTracingGeometryData geometry, uint vertexIndex) {
+    uint64_t address = geometry.texCoordAddress + uint64_t(geometry.texCoordByteOffset) +
+                       uint64_t(vertexIndex) * uint64_t(geometry.texCoordStride);
+    float* values = (float*)address;
+    return float2(values[0], values[1]);
+}
+
+uint loadIndex(RayTracingGeometryData geometry, uint indexIndex) {
+    uint64_t address = geometry.indexAddress + uint64_t(geometry.indexByteOffset) +
+                       uint64_t(indexIndex) * uint64_t(geometry.indexStride);
     return loadUint32(address);
 }
 
 struct PathPayload {
     float3 position;
     float3 normal;
-    uint instanceIndex;
+    uint materialIndex;
+    float2 uv;
+    float4 tangent;
     uint hit;
 };
 
@@ -95,12 +113,6 @@ uint hashUint(uint value) {
 float nextRandom(inout uint state) {
     state = hashUint(state);
     return float(state) * (1.0 / 4294967296.0);
-}
-
-PbrMaterial getMaterial(uint instanceIndex) {
-    float4 baseColorMetallic = g_rayTracing.materials.baseColorMetallic[instanceIndex];
-    float roughness = g_rayTracing.materials.roughnessGeometryBase[instanceIndex].x;
-    return makePbrMaterial(baseColorMetallic.xyz, baseColorMetallic.w, roughness);
 }
 
 bool traceShadow(float3 origin, float3 direction) {
@@ -162,11 +174,15 @@ void rayGenMain() {
         float3 normal = payload.normal;
         if (dot(normal, -ray.Direction) < 0.0)
             normal = -normal;
+        PbrSurfaceMaterial surface = resolvePbrMaterial(
+            g_rayTracing.materials[payload.materialIndex], payload.uv, normal, payload.tangent);
+        normal = surface.normal;
         float3 viewDirection = -ray.Direction;
-        PbrMaterial material = getMaterial(payload.instanceIndex);
+        PbrMaterial material = surface.material;
+        radiance += throughput * surface.emissive;
         float nDotL = saturate(dot(normal, lightDirection));
         if (nDotL > 0.0 && !traceShadow(payload.position + normal * kRayEpsilon, lightDirection))
-            radiance += throughput * evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * lightRadiance * nDotL;
+            radiance += throughput * evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * lightRadiance * nDotL * surface.occlusion;
 
         PbrBsdfSample sample = samplePbrBsdf(material,
                                               normal,
@@ -212,32 +228,36 @@ void shadowMissMain(inout ShadowPayload payload) {
 
 [shader("closesthit")]
 void closestHitMain(inout PathPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
-    ByteAddressBuffer metadata = g_rayTracingGeometryMetadata.metadata;
-    uint instanceOffset = metadata.Load(8);
-    uint geometryOffset = metadata.Load(12);
-    uint instanceRecordOffset = instanceOffset + InstanceID() * kInstanceGeometryRecordSize;
-    uint firstGeometry = metadata.Load(instanceRecordOffset);
-    uint geometryCount = metadata.Load(instanceRecordOffset + 4);
-    if (GeometryIndex() >= geometryCount) {
+    RayTracingInstanceData instanceData = g_rayTracing.instances[InstanceID()];
+    if (GeometryIndex() >= instanceData.geometryCount) {
         payload.hit = 0;
         return;
     }
 
-    uint geometryRecordOffset = geometryOffset +
-                                (firstGeometry + GeometryIndex()) * kGeometryAddressRecordSize;
+    RayTracingGeometryData geometry = g_rayTracing.geometries[instanceData.firstGeometry + GeometryIndex()];
     uint firstIndex = PrimitiveIndex() * 3;
-    uint3 indices = uint3(loadIndex(metadata, geometryRecordOffset, firstIndex),
-                          loadIndex(metadata, geometryRecordOffset, firstIndex + 1),
-                          loadIndex(metadata, geometryRecordOffset, firstIndex + 2));
+    uint3 indices = uint3(loadIndex(geometry, firstIndex),
+                          loadIndex(geometry, firstIndex + 1),
+                          loadIndex(geometry, firstIndex + 2));
     float3 barycentrics = float3(1.0 - attributes.barycentrics.x - attributes.barycentrics.y,
                                   attributes.barycentrics.x,
                                   attributes.barycentrics.y);
-    float3 position0 = loadPosition(metadata, geometryRecordOffset, indices.x);
-    float3 position1 = loadPosition(metadata, geometryRecordOffset, indices.y);
-    float3 position2 = loadPosition(metadata, geometryRecordOffset, indices.z);
-    float3 normal0 = loadNormal(metadata, geometryRecordOffset, indices.x);
-    float3 normal1 = loadNormal(metadata, geometryRecordOffset, indices.y);
-    float3 normal2 = loadNormal(metadata, geometryRecordOffset, indices.z);
+    float3 position0 = loadPosition(geometry, indices.x);
+    float3 position1 = loadPosition(geometry, indices.y);
+    float3 position2 = loadPosition(geometry, indices.z);
+    float3 normal0 = loadNormal(geometry, indices.x);
+    float3 normal1 = loadNormal(geometry, indices.y);
+    float3 normal2 = loadNormal(geometry, indices.z);
+    float2 uv0 = loadTexCoord(geometry, indices.x);
+    float2 uv1 = loadTexCoord(geometry, indices.y);
+    float2 uv2 = loadTexCoord(geometry, indices.z);
+    float4 objectTangent = float4(1.0, 0.0, 0.0, 1.0);
+    if (g_rayTracing.materials[geometry.materialIndex].normalTextureIndex >= 0) {
+        float4 tangent0 = loadTangent(geometry, indices.x);
+        float4 tangent1 = loadTangent(geometry, indices.y);
+        float4 tangent2 = loadTangent(geometry, indices.z);
+        objectTangent = tangent0 * barycentrics.x + tangent1 * barycentrics.y + tangent2 * barycentrics.z;
+    }
     float3 objectPosition = position0 * barycentrics.x + position1 * barycentrics.y + position2 * barycentrics.z;
     float3 geometricNormal = normalize(cross(position1 - position0, position2 - position0));
     float3 objectNormal = normalize(normal0 * barycentrics.x + normal1 * barycentrics.y + normal2 * barycentrics.z);
@@ -245,7 +265,9 @@ void closestHitMain(inout PathPayload payload, in BuiltInTriangleIntersectionAtt
         objectNormal = -objectNormal;
     payload.position = mul(ObjectToWorld3x4(), float4(objectPosition, 1.0));
     payload.normal = normalize(mul(objectNormal, (float3x3)ObjectToWorld3x4()));
-    payload.instanceIndex = InstanceID();
+    payload.tangent = float4(normalize(mul(objectTangent.xyz, (float3x3)ObjectToWorld3x4())), objectTangent.w);
+    payload.materialIndex = geometry.materialIndex;
+    payload.uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
     payload.hit = 1;
 }
 
