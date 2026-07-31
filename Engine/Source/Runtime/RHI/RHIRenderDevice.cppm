@@ -3,6 +3,7 @@ export module RHI:RenderDevice;
 export import WindowSystem;
 export import std;
 import :Types;
+import :Ref;
 import :RayTracing;
 import :Command; // RHICommandList
 
@@ -15,7 +16,7 @@ enum class RHIBackendType {
 
 class RHIRenderDevice {
   public:
-    RHIRenderDevice()                                       = default;
+    RHIRenderDevice()                                          = default;
     RHIRenderDevice(const RHIRenderDevice&)                    = delete;
     auto operator=(const RHIRenderDevice&) -> RHIRenderDevice& = delete;
     RHIRenderDevice(RHIRenderDevice&&)                         = delete;
@@ -24,8 +25,7 @@ class RHIRenderDevice {
     virtual ~RHIRenderDevice() = default;
 
     /// @brief Initialize backend-native GPU device and presentation state.
-    [[nodiscard]] virtual auto Initialize(IWindowSystem* WindowSys)
-        -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Initialize(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> = 0;
 
     /// @brief Return the concrete RHI backend tag for integration dispatch.
     [[nodiscard]] virtual auto GetBackendType() const -> RHIBackendType = 0;
@@ -33,24 +33,71 @@ class RHIRenderDevice {
     // ── Resource creation ────────────────────────────────────────────────────
 
     [[nodiscard]] virtual auto CreateVertexBuffer(const RHIVertexBufferDesc& Desc)
-        -> std::expected<RHIVertexBufferCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
-        -> std::expected<RHIIndexBufferCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateSampler(const RHISamplerDesc& Desc)
-        -> std::expected<UPtr<RHISampler>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
-        -> std::expected<RHISampledTextureCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateRenderTarget(const RHIRenderTargetDesc& Desc)
-        -> std::expected<RHIRenderTargetCreateResult, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
-        -> std::expected<UPtr<RHIGraphicsPipeline>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
-        -> std::expected<UPtr<RHIRayTracingPipeline>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
-        -> std::expected<UPtr<RHIBottomLevelAccelerationStructure>, ErrorMessage> = 0;
-    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
-        -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> = 0;
 
+    [[nodiscard]] virtual auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
+        -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateSampler(const RHISamplerDesc& Desc)
+        -> std::expected<RHIRef<RHISampler>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateRenderTarget(const RHIRenderTargetDesc& Desc)
+        -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
+        -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
+        -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
+        -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
+        -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
+
+    /// @brief Poll backend completions and retire deferred RHI resources.
+    auto Tick() -> void {
+        TickBackendCompletions();
+        DrainDeletionQueue();
+    }
+
+    /// @brief Drain the deferred deletion queue. Exposed for tests.
+    auto DrainDeletionQueue() -> void {
+        m_DeletionQueue.Drain();
+    }
+
+  protected:
+    /// @brief Retire backend-native completion callbacks. Called by Tick() on the RHI thread.
+    virtual auto TickBackendCompletions() -> void = 0;
+    [[nodiscard]] auto GetDeletionQueue() -> RHIDeferredDeletionQueue& {
+        return m_DeletionQueue;
+    }
+
+    template <typename T>
+    [[nodiscard]] auto PublishReadyPayload(RHIRef<T>& Resource, UPtr<T> Payload) -> std::expected<void, ErrorMessage> {
+        if (Resource.m_Payload && Resource.m_Payload->Publish(std::move(Payload), RHIRefState::Ready))
+            return {};
+
+        auto Error = ErrorMessage("RHI resource ref cannot publish a ready payload");
+        Resource.MarkFailed(Error);
+        return std::unexpected(std::move(Error));
+    }
+
+    template <typename T>
+    [[nodiscard]] auto PublishPendingPayload(RHIRef<T>& Resource, UPtr<T> Payload) -> std::expected<void, ErrorMessage> {
+        if (Resource.m_Payload && Resource.m_Payload->Publish(std::move(Payload), RHIRefState::GpuPending))
+            return {};
+
+        auto Error = ErrorMessage("RHI resource ref cannot publish a pending payload");
+        Resource.MarkFailed(Error);
+        return std::unexpected(std::move(Error));
+    }
+
+  public:
     /// Allocate a logical transient constant-buffer handle.
     /// The handle is written through a command list and resolved by the backend during Execute().
     [[nodiscard]] auto AllocateTransientConstantBuffer(Uint64 Size)
@@ -74,17 +121,12 @@ class RHIRenderDevice {
     /// @brief Execute a frame's worth of RHI commands.
     /// Replaces the old single-threaded BeginFrame/EndFrame pattern.
     /// The backend handles submission + present internally.
-    [[nodiscard]] virtual auto Execute(const RHICommandList& CmdList) -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Execute(RHICommandList&& CmdList) -> std::expected<void, ErrorMessage> = 0;
 
     // ── RHICommand context access ──────────────────────────────────────────
 
     /// @brief Return the current frame-in-flight index.
     [[nodiscard]] virtual auto GetCurrentFrameIndex() const -> Uint32 = 0;
-
-    // ── GPU sync ───────────────────────────────────────────────────────────
-
-    /// @brief Non-blocking query for backend GPU completion tokens.
-    [[nodiscard]] virtual auto IsGpuComplete(RHIGpuCompletionToken Token) -> bool = 0;
 
     /// @brief Block the CPU until all GPU work completes.
     /// Safe to call at any point after Init(); required before destroying
@@ -106,8 +148,7 @@ class RHIRenderDevice {
     /// engine initialization, before any other RHI access.
     ///
     /// @return Error on failure (e.g., backend not found).
-    [[nodiscard]] static auto Create(IWindowSystem* WindowSys)
-        -> std::expected<void, ErrorMessage>;
+    [[nodiscard]] static auto Create(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage>;
 
     /// @brief Destroy the process-wide RHI singleton.
     ///
@@ -127,7 +168,8 @@ class RHIRenderDevice {
         return NextId.fetch_add(1, std::memory_order_relaxed);
     }
 
-    static UPtr<RHIRenderDevice> s_Instance;
+    RHIDeferredDeletionQueue           m_DeletionQueue       = {};
+    static UPtr<RHIRenderDevice>       s_Instance;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -147,8 +189,7 @@ using RHIBackendFactory = Factory<RHIRenderDevice>;
 
 inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
 
-[[nodiscard]] inline auto RHIRenderDevice::Create(IWindowSystem* WindowSys)
-    -> std::expected<void, ErrorMessage> {
+[[nodiscard]] inline auto RHIRenderDevice::Create(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> {
     const auto& Cfg = ConfigManager::Get().GetConfig();
 
     if (!Cfg.Render.RHI.has_value())
@@ -181,7 +222,8 @@ inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
         return std::unexpected(R.error().Append(Format("Failed to initialize '{}' RHI backend", Backend)));
     }
 
-    s_Instance = std::move(Ctx);
+    s_Instance             = std::move(Ctx);
+    GDeferredDeletionQueue = &s_Instance->m_DeletionQueue;
     return {};
 }
 
@@ -189,6 +231,7 @@ inline auto RHIRenderDevice::Destroy() -> void {
     if (s_Instance) {
         s_Instance->Shutdown();
         s_Instance.reset();
+        GDeferredDeletionQueue = nullptr;
     }
 }
 

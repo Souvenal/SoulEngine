@@ -30,7 +30,7 @@ relevant diagnostics are retained while routine output is suppressed. When
 5. Run tests through Xmake so target `runenvs` are applied:
 
    ```powershell
-   rtk err xmake test -v
+   rtk err xmake test
    ```
 
    Use `rtk err xmake run` only when the executable does not require test-specific environment setup.

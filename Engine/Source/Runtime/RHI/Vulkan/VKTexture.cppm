@@ -71,72 +71,60 @@ class VulkanDeviceTexture {
     /// Submit a staging-buffer → image copy via VulkanImmediateContext.
     /// Handles Undefined→TransferDst→ShaderReadOnly barriers.
     /// Returns upload completion token (caller defers staging destruction).
-    [[nodiscard]] auto
-    CopyFrom(VulkanHostBuffer& Staging, VulkanImmediateContext& Ctx, Uint32 Width, Uint32 Height, vk::Format VkFmt)
-        -> std::expected<RHIGpuCompletionToken, ErrorMessage> {
-
-        return Ctx.Submit(RHIImmediateQueue::Transfer,
-                          {},
+    [[nodiscard]] auto CopyFrom(VulkanHostBuffer& Staging,
+                                VulkanImmediateContext& Ctx,
+                                Uint32 Width,
+                                Uint32 Height,
+                                vk::Format VkFmt,
+                                VulkanImmediateContext::CompletionDesc Completion)
+        -> std::expected<void, ErrorMessage> {
+        return Ctx.Submit(VulkanImmediateQueue::Transfer,
                           vk::PipelineStageFlagBits2::eTransfer,
                           [&](const vk::raii::CommandBuffer& CmdBuf) {
-            // Barrier: Undefined → TransferDst
-            vk::ImageMemoryBarrier2 Barrier1{
-                .srcStageMask        = vk::PipelineStageFlagBits2::eNone,
-                .srcAccessMask       = vk::AccessFlagBits2::eNone,
-                .dstStageMask        = vk::PipelineStageFlagBits2::eTransfer,
-                .dstAccessMask       = vk::AccessFlagBits2::eTransferWrite,
-                .oldLayout           = vk::ImageLayout::eUndefined,
-                .newLayout           = vk::ImageLayout::eTransferDstOptimal,
-                .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-                .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-                .image               = m_Image,
-                .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                        .baseMipLevel   = 0,
-                                        .levelCount     = 1,
-                                        .baseArrayLayer = 0,
-                                        .layerCount     = 1},
-            };
-            CmdBuf.pipelineBarrier2(vk::DependencyInfo{
-                .imageMemoryBarrierCount = 1,
-                .pImageMemoryBarriers    = &Barrier1,
-            });
-
-            // Copy buffer → image
-            vk::BufferImageCopy Region{
-                .bufferOffset      = 0,
-                .bufferRowLength   = 0,
-                .bufferImageHeight = 0,
-                .imageSubresource  = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                      .mipLevel       = 0,
-                                      .baseArrayLayer = 0,
-                                      .layerCount     = 1},
-                .imageOffset       = {0, 0, 0},
-                .imageExtent       = {Width, Height, 1},
-            };
-            CmdBuf.copyBufferToImage(Staging.Get(), m_Image, vk::ImageLayout::eTransferDstOptimal, {Region});
-
-            // Barrier: TransferDst → ShaderReadOnly
-            vk::ImageMemoryBarrier2 Barrier2{
-                .srcStageMask        = vk::PipelineStageFlagBits2::eTransfer,
-                .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
-                .dstStageMask        = vk::PipelineStageFlagBits2::eNone,
-                .dstAccessMask       = vk::AccessFlagBits2::eNone,
-                .oldLayout           = vk::ImageLayout::eTransferDstOptimal,
-                .newLayout           = vk::ImageLayout::eShaderReadOnlyOptimal,
-                .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-                .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-                .image               = m_Image,
-                .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                        .baseMipLevel   = 0,
-                                        .levelCount     = 1,
-                                        .baseArrayLayer = 0,
-                                        .layerCount     = 1},
-            };
-            CmdBuf.pipelineBarrier2(vk::DependencyInfo{
-                .imageMemoryBarrierCount = 1,
-                .pImageMemoryBarriers    = &Barrier2,
-            });
-        });
+                              // Barrier: Undefined → TransferDst
+                              vk::ImageMemoryBarrier2 Barrier1{
+                                  .srcStageMask        = vk::PipelineStageFlagBits2::eNone,
+                                  .srcAccessMask       = vk::AccessFlagBits2::eNone,
+                                  .dstStageMask        = vk::PipelineStageFlagBits2::eTransfer,
+                                  .dstAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+                                  .oldLayout           = vk::ImageLayout::eUndefined,
+                                  .newLayout           = vk::ImageLayout::eTransferDstOptimal,
+                                  .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+                                  .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+                                  .image               = m_Image,
+                                  .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                                         .baseMipLevel   = 0,
+                                                         .levelCount     = 1,
+                                                         .baseArrayLayer = 0,
+                                                         .layerCount     = 1},
+                              };
+                              CmdBuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &Barrier1});
+                              // Copy buffer → image
+                              vk::BufferImageCopy Region{
+                                  .bufferOffset = 0,
+                                  .bufferRowLength = 0,
+                                  .bufferImageHeight = 0,
+                                  .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
+                                  .imageOffset = {0, 0, 0},
+                                  .imageExtent = {Width, Height, 1},
+                              };
+                              CmdBuf.copyBufferToImage(Staging.Get(), m_Image, vk::ImageLayout::eTransferDstOptimal, {Region});
+                              // Barrier: TransferDst → ShaderReadOnly
+                              vk::ImageMemoryBarrier2 Barrier2{
+                                  .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                                  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                                  .dstStageMask = vk::PipelineStageFlagBits2::eNone,
+                                  .dstAccessMask = vk::AccessFlagBits2::eNone,
+                                  .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                                  .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                                  .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+                                  .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+                                  .image = m_Image,
+                                  .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
+                              };
+                              CmdBuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &Barrier2});
+                          },
+                          std::move(Completion));
     }
 
   private:
@@ -152,13 +140,10 @@ class VulkanDeviceTexture {
 
 class VulkanSampledTexture final : public RHISampledTexture {
   public:
-    VulkanSampledTexture(SPtr<VulkanDeviceTexture> Tex, VulkanDeletionQueue& Queue, Uint32 Width, Uint32 Height)
-        : m_Texture(std::move(Tex)), m_DeletionQueue(&Queue), m_Width(Width), m_Height(Height) {}
+    VulkanSampledTexture(SPtr<VulkanDeviceTexture> Tex, Uint32 Width, Uint32 Height)
+        : m_Texture(std::move(Tex)), m_Width(Width), m_Height(Height) {}
 
-    ~VulkanSampledTexture() override {
-        if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Tex = m_Texture]() {});
-    }
+    ~VulkanSampledTexture() override = default;
 
     VulkanSampledTexture(const VulkanSampledTexture&)                    = delete;
     auto operator=(const VulkanSampledTexture&) -> VulkanSampledTexture& = delete;
@@ -167,93 +152,69 @@ class VulkanSampledTexture final : public RHISampledTexture {
 
     /// Static factory: upload pixel data to GPU texture via staging buffer.
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     const RHISampledTextureDesc& Desc)
-        -> std::expected<RHISampledTextureCreateResult, ErrorMessage> {
+                                     const RHISampledTextureDesc& Desc,
+                                     VulkanImmediateContext::CompletionFn OnReady)
+        -> std::expected<UPtr<VulkanSampledTexture>, ErrorMessage> {
+        if (Desc.Data.empty() || Desc.Width == 0 || Desc.Height == 0 || Desc.Channels == 0)
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: invalid desc (empty data or zero dimensions)"));
+        if (Desc.Width > std::numeric_limits<Uint64>::max() / Desc.Height)
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: pixel count overflows Uint64"));
+        const Uint64 PixelCount = static_cast<Uint64>(Desc.Width) * Desc.Height;
+        if (PixelCount > std::numeric_limits<Uint64>::max() / Desc.Channels)
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: source data size overflows Uint64"));
+        const Uint64 PixelSize = PixelCount * Desc.Channels;
+        if (Desc.Data.size_bytes() != PixelSize)
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: data size does not match texture dimensions"));
 
-        if (!Desc.Data || Desc.Width == 0 || Desc.Height == 0)
-            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: invalid desc (null data or zero dimensions)"));
-
-        Uint64     PixelSize = static_cast<Uint64>(Desc.Width) * Desc.Height * Desc.Channels;
-        vk::Format VkFmt     = ToVkFormat(static_cast<RHIFormat>(Desc.Format));
-
-        // ── Staging buffer ─────────────────────────────────────────────
         auto StagingRes = VulkanHostBuffer::Create(PixelSize, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VulkanSampledTexture::Create: staging creation failed"));
-        auto Staging = std::move(*StagingRes);
-
-        if (auto R = Staging.Upload(Desc.Data, PixelSize); !R)
+        auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
+        if (auto R = Staging->Upload(Desc.Data.data(), PixelSize); !R)
             return std::unexpected(R.error().Append("VulkanSampledTexture::Create: staging upload failed"));
 
-        // ── Create VkImage ─────────────────────────────────────────────
-        const bool bConcurrentSharing = Context.GraphicsFamily != Context.TransferFamily;
+        const auto VkFmt = ToVkFormat(Desc.Format);
+        if (VkFmt == vk::Format::eUndefined)
+            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: unsupported texture format"));
         const std::array QueueFamilies{Context.GraphicsFamily, Context.TransferFamily};
+        const bool bConcurrentSharing = Context.GraphicsFamily != Context.TransferFamily;
         vk::ImageCreateInfo ImageCI{
-            .imageType     = vk::ImageType::e2D,
-            .format        = VkFmt,
-            .extent        = {Desc.Width, Desc.Height, 1},
-            .mipLevels     = 1,
-            .arrayLayers   = 1,
-            .samples       = vk::SampleCountFlagBits::e1,
-            .tiling        = vk::ImageTiling::eOptimal,
-            .usage         = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-            .sharingMode   = bConcurrentSharing ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
+            .imageType = vk::ImageType::e2D, .format = VkFmt, .extent = {Desc.Width, Desc.Height, 1}, .mipLevels = 1,
+            .arrayLayers = 1, .samples = vk::SampleCountFlagBits::e1, .tiling = vk::ImageTiling::eOptimal,
+            .usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            .sharingMode = bConcurrentSharing ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
             .queueFamilyIndexCount = bConcurrentSharing ? static_cast<Uint32>(QueueFamilies.size()) : 0,
-            .pQueueFamilyIndices = bConcurrentSharing ? QueueFamilies.data() : nullptr,
-            .initialLayout = vk::ImageLayout::eUndefined,
+            .pQueueFamilyIndices = bConcurrentSharing ? QueueFamilies.data() : nullptr, .initialLayout = vk::ImageLayout::eUndefined,
         };
-
         VmaAllocationCreateInfo ImageAllocInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-
-        VkImage           RawImage = nullptr;
-        VmaAllocation     RawAlloc = nullptr;
-        VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
+        VkImage RawImage = nullptr;
+        VmaAllocation RawAlloc = nullptr;
+        VkImageCreateInfo RawCI = static_cast<VkImageCreateInfo>(ImageCI);
         if (vmaCreateImage(Context.Allocator, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
             return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: vmaCreateImage failed"));
-
-        auto VkImage = static_cast<vk::Image>(RawImage);
-
-        // ── Create ImageView ───────────────────────────────────────────
+        const auto VkImage = static_cast<vk::Image>(RawImage);
         vk::ImageViewCreateInfo ViewCI{
-            .image            = VkImage,
-            .viewType         = vk::ImageViewType::e2D,
-            .format           = VkFmt,
-            .components       = {vk::ComponentSwizzle::eIdentity,
-                                 vk::ComponentSwizzle::eIdentity,
-                                 vk::ComponentSwizzle::eIdentity,
-                                 vk::ComponentSwizzle::eIdentity},
-            .subresourceRange = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                 .baseMipLevel   = 0,
-                                 .levelCount     = 1,
-                                 .baseArrayLayer = 0,
-                                 .layerCount     = 1},
+            .image = VkImage, .viewType = vk::ImageViewType::e2D, .format = VkFmt,
+            .components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity},
+            .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
         };
         auto ViewRes = Context.Device.createImageView(ViewCI);
-        if (ViewRes.result != vk::Result::eSuccess)
+        if (ViewRes.result != vk::Result::eSuccess) {
+            vmaDestroyImage(Context.Allocator, RawImage, RawAlloc);
             return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: vkCreateImageView failed"));
+        }
 
-        // ── Copy staging → device via VulkanDeviceTexture ────────────────────
-        auto Tex = std::make_shared<VulkanDeviceTexture>(Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value));
-
-        auto CopyResult = Tex->CopyFrom(Staging, Context.Immediate, Desc.Width, Desc.Height, VkFmt);
-        if (!CopyResult)
-            return std::unexpected(CopyResult.error().Append("VulkanSampledTexture::Create: transfer submission failed"));
-
-        // ── Defer staging destruction ──────────────────────────────────
-        Staging.DeferredDelete(Context.Immediate, *CopyResult);
-        const VulkanImmediateContext::WaitDependency Wait{.Token = *CopyResult};
-        auto ReadyToken = Context.Immediate.Submit(
-            RHIImmediateQueue::Graphics,
-            std::span{&Wait, 1},
-            vk::PipelineStageFlagBits2::eAllCommands,
-            [](const vk::raii::CommandBuffer&) {});
-        if (!ReadyToken)
-            return std::unexpected(ReadyToken.error().Append("VulkanSampledTexture::Create: graphics acquire submission failed"));
-
-        return RHISampledTextureCreateResult{
-            .Texture          = std::make_unique<VulkanSampledTexture>(std::move(Tex), Context.DeletionQueue, Desc.Width, Desc.Height),
-            .UploadCompletion = *ReadyToken,
+        auto Texture = std::make_shared<VulkanDeviceTexture>(Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value));
+        auto Completion = VulkanImmediateContext::CompletionDesc{
+            .ConsumerQueue = VulkanImmediateQueue::Graphics,
+            .OnComplete = [Staging, Texture, OnReady = std::move(OnReady)]() mutable {
+                if (OnReady)
+                    OnReady();
+            },
         };
+        if (auto R = Texture->CopyFrom(*Staging, Context.Immediate, Desc.Width, Desc.Height, VkFmt, std::move(Completion)); !R)
+            return std::unexpected(R.error().Append("VulkanSampledTexture::Create: transfer submission failed"));
+        return std::make_unique<VulkanSampledTexture>(std::move(Texture), Desc.Width, Desc.Height);
     }
 
     // ── RHISampledTexture interface ──────────────────────────────────
@@ -274,8 +235,7 @@ class VulkanSampledTexture final : public RHISampledTexture {
         return m_Texture->GetImageView();
     }
   private:
-    SPtr<VulkanDeviceTexture> m_Texture       = nullptr;
-    VulkanDeletionQueue*      m_DeletionQueue = nullptr;
+    SPtr<VulkanDeviceTexture> m_Texture = nullptr;
     Uint32              m_Width         = 0;
     Uint32              m_Height        = 0;
 };
@@ -283,22 +243,17 @@ class VulkanSampledTexture final : public RHISampledTexture {
 class VulkanRenderTarget final : public RHIRenderTarget {
   public:
     VulkanRenderTarget(SPtr<VulkanDeviceTexture> Tex,
-                 VulkanDeletionQueue&      Queue,
                  Uint32              Width,
                  Uint32              Height,
                  RHIFormat         Format,
                  RHITextureUsage   Usage)
         : m_Texture(std::move(Tex)),
-          m_DeletionQueue(&Queue),
           m_Width(Width),
           m_Height(Height),
           m_Format(Format),
           m_Usage(Usage) {}
 
-    ~VulkanRenderTarget() override {
-        if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Tex = m_Texture]() {});
-    }
+    ~VulkanRenderTarget() override = default;
 
     VulkanRenderTarget(const VulkanRenderTarget&)                    = delete;
     auto operator=(const VulkanRenderTarget&) -> VulkanRenderTarget& = delete;
@@ -307,7 +262,7 @@ class VulkanRenderTarget final : public RHIRenderTarget {
 
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
                                      const RHIRenderTargetDesc&    Desc)
-        -> std::expected<RHIRenderTargetCreateResult, ErrorMessage> {
+        -> std::expected<UPtr<VulkanRenderTarget>, ErrorMessage> {
         if (Desc.Width == 0 || Desc.Height == 0)
             return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: invalid desc (zero dimensions)"));
         if (Desc.Format == RHIFormat::Unknown)
@@ -382,9 +337,7 @@ class VulkanRenderTarget final : public RHIRenderTarget {
         }
 
         auto Tex = std::make_shared<VulkanDeviceTexture>(Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value));
-        return RHIRenderTargetCreateResult{
-            .Texture = std::make_unique<VulkanRenderTarget>(std::move(Tex), Context.DeletionQueue, Desc.Width, Desc.Height, Desc.Format, Desc.Usage),
-        };
+        return std::make_unique<VulkanRenderTarget>(std::move(Tex), Desc.Width, Desc.Height, Desc.Format, Desc.Usage);
     }
 
     [[nodiscard]] auto GetWidth() const -> Uint32 override {
@@ -408,8 +361,7 @@ class VulkanRenderTarget final : public RHIRenderTarget {
     }
 
   private:
-    SPtr<VulkanDeviceTexture> m_Texture       = nullptr;
-    VulkanDeletionQueue*      m_DeletionQueue = nullptr;
+    SPtr<VulkanDeviceTexture> m_Texture = nullptr;
     Uint32              m_Width         = 0;
     Uint32              m_Height        = 0;
     RHIFormat         m_Format        = RHIFormat::Unknown;

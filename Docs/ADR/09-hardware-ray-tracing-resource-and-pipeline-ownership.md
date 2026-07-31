@@ -1,3 +1,6 @@
+> **August 1, 2026 implementation note:** RHI payload ownership described here
+> now uses `RHIRef<T>` under the RHI submission-retention contract. A submitted ray-tracing command
+> retains pipeline, TLAS, and BLAS refs through Vulkan timeline retirement.
 # ADR 09 — Hardware Ray-Tracing Resource and Pipeline Ownership
 
 ## Status

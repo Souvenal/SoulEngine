@@ -18,7 +18,7 @@
     rtk err xmake clean --all -y
     rtk err xmake f -m debug -y
     rtk err xmake -y
-    rtk err xmake test -v
+    rtk err xmake test
     ```
 
   - Record whether `minizip` installs successfully and whether the generated CMake/Ninja link command preserves LLVM paths containing spaces.

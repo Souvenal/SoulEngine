@@ -118,23 +118,6 @@ class VulkanHostBuffer {
         return {};
     }
 
-    /// Defer destruction until the immediate task token completes.
-    /// After this call the VulkanHostBuffer is hollowed out (m_Allocation = nullptr)
-    /// so its destructor is a no-op. The lambda captures VMA handles by value.
-    auto DeferredDelete(VulkanImmediateContext& Immediate, RHIGpuCompletionToken Token) -> void {
-        auto Alloc       = m_Allocator;
-        auto Buf         = static_cast<VkBuffer>(m_Buffer);
-        auto AllocHandle = m_Allocation;
-        Immediate.EnqueueCompletionCallback(Token, [Alloc, Buf, AllocHandle]() {
-            if (AllocHandle)
-                vmaDestroyBuffer(Alloc, Buf, AllocHandle);
-        });
-        m_Allocation    = nullptr;
-        m_Buffer        = nullptr;
-        m_DeviceAddress = 0;
-        m_Size          = 0;
-    }
-
   private:
     auto Destroy() -> void {
         if (m_Allocation) {
@@ -245,21 +228,22 @@ class VulkanDeviceBuffer {
 
     /// Copy full contents from a VulkanHostBuffer staging source via VulkanImmediateContext.
     /// Copies min(SrcSize, this->Size) bytes and returns the transfer completion token.
-    [[nodiscard]] auto CopyFrom(VulkanHostBuffer& Src, VulkanImmediateContext& Ctx)
-        -> std::expected<RHIGpuCompletionToken, ErrorMessage> {
-        Uint64 CopySize = std::min(Src.GetSize(), m_Size);
-
-        auto CopyResult = Ctx.Submit(RHIImmediateQueue::Transfer,
-                                     {},
-                                     vk::PipelineStageFlagBits2::eTransfer,
-                                     [&](const vk::raii::CommandBuffer& CmdBuf) {
-                                         vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
-                                         CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
-                                     });
-
-        if (!CopyResult)
-            return std::unexpected(CopyResult.error().Append("VulkanDeviceBuffer::CopyFrom failed"));
-        return *CopyResult;
+    [[nodiscard]] auto CopyFrom(VulkanHostBuffer& Src,
+                                VulkanImmediateContext& Ctx,
+                                VulkanImmediateContext::CompletionDesc Completion)
+        -> std::expected<void, ErrorMessage> {
+        const Uint64 CopySize = std::min(Src.GetSize(), m_Size);
+        if (auto R = Ctx.Submit(VulkanImmediateQueue::Transfer,
+                                vk::PipelineStageFlagBits2::eTransfer,
+                                [&](const vk::raii::CommandBuffer& CmdBuf) {
+                                    vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
+                                    CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
+                                },
+                                std::move(Completion));
+            !R) {
+            return std::unexpected(R.error().Append("VulkanDeviceBuffer::CopyFrom failed"));
+        }
+        return {};
     }
 
   private:
@@ -281,79 +265,61 @@ class VulkanDeviceBuffer {
 
 class VulkanVertexBuffer final : public RHIVertexBuffer {
   public:
-    VulkanVertexBuffer(SPtr<VulkanDeviceBuffer> Buf, VulkanDeletionQueue& Queue, const RHIVertexBufferDesc& Desc)
-        : RHIVertexBuffer(Desc), m_Buffer(std::move(Buf)), m_DeletionQueue(&Queue) {}
+    VulkanVertexBuffer(SPtr<VulkanDeviceBuffer> Buf, const RHIVertexBufferDesc& Desc)
+        : RHIVertexBuffer(Desc), m_Buffer(std::move(Buf)) {}
 
-    ~VulkanVertexBuffer() override {
-        if (m_DeletionQueue) {
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Buf = m_Buffer]() {});
-        }
-    }
+    ~VulkanVertexBuffer() override = default;
 
     /// Static factory: creates staging buffer, uploads data, copies to
     /// device-local buffer via VulkanImmediateContext, and defers staging destruction
     /// to VulkanTransferCompletionQueue.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHIVertexBufferDesc& Desc)
-        -> std::expected<RHIVertexBufferCreateResult, ErrorMessage> {
-        if (!Desc.Data)
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: data pointer is null"));
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     const RHIVertexBufferDesc& Desc,
+                                     VulkanImmediateContext::CompletionFn OnReady)
+        -> std::expected<UPtr<VulkanVertexBuffer>, ErrorMessage> {
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: data is empty"));
         if (Desc.VertexCount == 0)
             return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: vertex count is zero"));
         if (Desc.VertexCount > std::numeric_limits<Uint32>::max())
             return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: vertex count exceeds Vulkan draw limit"));
         if (Desc.Stride == 0)
             return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: vertex stride is zero"));
+        if (Desc.VertexCount > std::numeric_limits<Uint64>::max() / Desc.Stride)
+            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: source data size overflows Uint64"));
 
-        Uint64 Size = Desc.VertexCount * Desc.Stride;
+        const Uint64 Size = Desc.VertexCount * Desc.Stride;
+        if (Desc.Data.size_bytes() != Size)
+            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: data size does not match vertex layout"));
 
-        // ── Staging buffer ──────────────────────────────────────────────
-        VulkanHostBuffer Staging;
-        auto             StagingRes =
-            VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
+        auto StagingRes = VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VulkanVertexBuffer::Create: staging creation failed"));
-        Staging = std::move(*StagingRes);
-
-        if (auto R = Staging.Upload(Desc.Data, Size); !R)
+        auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
+        if (auto R = Staging->Upload(Desc.Data.data(), Desc.Data.size_bytes()); !R)
             return std::unexpected(R.error().Append("VulkanVertexBuffer::Create: staging upload failed"));
 
-        // ── Device buffer ────────────────────────────────────────────────
-        VulkanDeviceBuffer DevBuf;
-        auto               Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
-                                   vk::BufferUsageFlagBits::eTransferDst;
+        auto Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
+                     vk::BufferUsageFlagBits::eTransferDst;
         if (VulkanCapability::Get().GetRayTracingSupport().Available)
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         auto DevRes = VulkanDeviceBuffer::Create(Size, Usage, Context);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("VulkanVertexBuffer::Create: device buffer creation failed"));
-        DevBuf = std::move(*DevRes);
+        auto Buffer = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
 
-        // ── Copy staging -> device with timeline signal ────────────────
-        auto CopyToken = DevBuf.CopyFrom(Staging, Context.Immediate);
-        if (!CopyToken)
-            return std::unexpected(CopyToken.error().Append("VulkanVertexBuffer::Create: staging copy failed"));
-
-        // ── Defer staging destruction ──────────────────────────────────
-        Staging.DeferredDelete(Context.Immediate, *CopyToken);
-        const VulkanImmediateContext::WaitDependency Wait{.Token = *CopyToken};
-        auto ReadyToken = Context.Immediate.Submit(RHIImmediateQueue::Graphics,
-                                                   std::span{&Wait, 1},
-                                                   vk::PipelineStageFlagBits2::eAllCommands,
-                                                   [](const vk::raii::CommandBuffer&) {});
-        if (!ReadyToken)
-            return std::unexpected(ReadyToken.error().Append("Vulkan buffer graphics acquire submission failed"));
-
-        // ── Move VulkanDeviceBuffer into delayed-deletion ownership ──────────
-        // DevBuf is a local; move it onto the heap so VulkanVertexBuffer's
-        // destructor can hand it to VulkanDeletionQueue. The moved-from local's
-        // destructor is a no-op.
-        return RHIVertexBufferCreateResult{
-            .Buffer = std::make_unique<VulkanVertexBuffer>(
-                std::make_shared<VulkanDeviceBuffer>(std::move(DevBuf)), Context.DeletionQueue, Desc),
-            .UploadCompletion = *ReadyToken,
+        auto Completion = VulkanImmediateContext::CompletionDesc{
+            .ConsumerQueue = VulkanImmediateQueue::Graphics,
+            .OnComplete = [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
+                if (OnReady)
+                    OnReady();
+            },
         };
-    }
+        if (auto R = Buffer->CopyFrom(*Staging, Context.Immediate, std::move(Completion)); !R)
+            return std::unexpected(R.error().Append("VulkanVertexBuffer::Create: staging copy failed"));
 
+        return std::make_unique<VulkanVertexBuffer>(std::move(Buffer), Desc);
+    }
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer->Get();
     }
@@ -366,8 +332,7 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
     auto operator=(VulkanVertexBuffer&&) -> VulkanVertexBuffer&      = delete;
 
   private:
-    SPtr<VulkanDeviceBuffer> m_Buffer        = nullptr;
-    VulkanDeletionQueue*     m_DeletionQueue = nullptr;
+    SPtr<VulkanDeviceBuffer> m_Buffer = nullptr;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -376,69 +341,56 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
 
 class VulkanIndexBuffer final : public RHIIndexBuffer {
   public:
-    VulkanIndexBuffer(SPtr<VulkanDeviceBuffer> Buf, VulkanDeletionQueue& Queue, const RHIIndexBufferDesc& Desc)
-        : RHIIndexBuffer(Desc), m_Buffer(std::move(Buf)), m_DeletionQueue(&Queue) {}
+    VulkanIndexBuffer(SPtr<VulkanDeviceBuffer> Buf, const RHIIndexBufferDesc& Desc)
+        : RHIIndexBuffer(Desc), m_Buffer(std::move(Buf)) {}
 
-    ~VulkanIndexBuffer() override {
-        if (m_DeletionQueue) {
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Buf = m_Buffer]() {});
-        }
-    }
+    ~VulkanIndexBuffer() override = default;
 
     /// Static factory: same pattern as VulkanVertexBuffer::Create.
     /// Index type is hardcoded to uint32 (eUint32).  uint16 is not supported.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHIIndexBufferDesc& Desc)
-        -> std::expected<RHIIndexBufferCreateResult, ErrorMessage> {
-        if (!Desc.Data)
-            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: data pointer is null"));
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     const RHIIndexBufferDesc& Desc,
+                                     VulkanImmediateContext::CompletionFn OnReady)
+        -> std::expected<UPtr<VulkanIndexBuffer>, ErrorMessage> {
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: data is empty"));
         if (Desc.IndexCount == 0)
             return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: index count is zero"));
         if (Desc.IndexCount > std::numeric_limits<Uint32>::max())
             return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: index count exceeds Vulkan draw limit"));
 
-        Uint64 Size = Desc.IndexCount * 4ULL;
+        const Uint64 Size = Desc.IndexCount * 4ULL;
+        if (Desc.Data.size_bytes() != Size)
+            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: data size does not match index count"));
 
-        VulkanHostBuffer Staging;
-        auto             StagingRes =
-            VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
+        auto StagingRes = VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VulkanIndexBuffer::Create: staging creation failed"));
-        Staging = std::move(*StagingRes);
-
-        if (auto R = Staging.Upload(Desc.Data, Size); !R)
+        auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
+        if (auto R = Staging->Upload(Desc.Data.data(), Desc.Data.size_bytes()); !R)
             return std::unexpected(R.error().Append("VulkanIndexBuffer::Create: staging upload failed"));
 
-        VulkanDeviceBuffer DevBuf;
-        auto               Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
-                                   vk::BufferUsageFlagBits::eTransferDst;
+        auto Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
+                     vk::BufferUsageFlagBits::eTransferDst;
         if (VulkanCapability::Get().GetRayTracingSupport().Available)
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         auto DevRes = VulkanDeviceBuffer::Create(Size, Usage, Context);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("VulkanIndexBuffer::Create: device buffer creation failed"));
-        DevBuf = std::move(*DevRes);
+        auto Buffer = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
 
-        auto CopyToken = DevBuf.CopyFrom(Staging, Context.Immediate);
-        if (!CopyToken)
-            return std::unexpected(CopyToken.error().Append("VulkanIndexBuffer::Create: staging copy failed"));
-
-        Staging.DeferredDelete(Context.Immediate, *CopyToken);
-        const VulkanImmediateContext::WaitDependency Wait{.Token = *CopyToken};
-        auto ReadyToken = Context.Immediate.Submit(RHIImmediateQueue::Graphics,
-                                                   std::span{&Wait, 1},
-                                                   vk::PipelineStageFlagBits2::eAllCommands,
-                                                   [](const vk::raii::CommandBuffer&) {});
-        if (!ReadyToken)
-            return std::unexpected(ReadyToken.error().Append("Vulkan buffer graphics acquire submission failed"));
-
-        // ── Move VulkanDeviceBuffer into delayed-deletion ownership ──────────
-        return RHIIndexBufferCreateResult{
-            .Buffer = std::make_unique<VulkanIndexBuffer>(
-                std::make_shared<VulkanDeviceBuffer>(std::move(DevBuf)), Context.DeletionQueue, Desc),
-            .UploadCompletion = *ReadyToken,
+        auto Completion = VulkanImmediateContext::CompletionDesc{
+            .ConsumerQueue = VulkanImmediateQueue::Graphics,
+            .OnComplete = [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
+                if (OnReady)
+                    OnReady();
+            },
         };
-    }
+        if (auto R = Buffer->CopyFrom(*Staging, Context.Immediate, std::move(Completion)); !R)
+            return std::unexpected(R.error().Append("VulkanIndexBuffer::Create: staging copy failed"));
 
+        return std::make_unique<VulkanIndexBuffer>(std::move(Buffer), Desc);
+    }
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer->Get();
     }
@@ -451,8 +403,7 @@ class VulkanIndexBuffer final : public RHIIndexBuffer {
     auto operator=(VulkanIndexBuffer&&) -> VulkanIndexBuffer&      = delete;
 
   private:
-    SPtr<VulkanDeviceBuffer> m_Buffer        = nullptr;
-    VulkanDeletionQueue*     m_DeletionQueue = nullptr;
+    SPtr<VulkanDeviceBuffer> m_Buffer = nullptr;
 };
 
 /// Shared per-frame uniform-buffer arena for values that must remain distinct

@@ -153,34 +153,34 @@ public struct PbrSurfaceMaterial {
 public PbrSurfaceMaterial resolvePbrMaterial(PbrMaterialData data, float2 uv, float3 geometricNormal, float4 tangent) {
     float3 baseColor = data.baseColorFactor.rgb;
     if (data.baseColorTextureIndex >= 0)
-        baseColor *= pow(g_textures.uTextures[data.baseColorTextureIndex].Sample(g_samplers.uSamplerLinear, uv).rgb, 2.2);
+        baseColor *= pow(g_textures.uTextures[data.baseColorTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).rgb, 2.2);
 
     float metallic = data.metallicFactor;
     float roughness = data.roughnessFactor;
     if (data.metallicRoughnessTextureIndex >= 0) {
-        float4 packed = g_textures.uTextures[data.metallicRoughnessTextureIndex].Sample(g_samplers.uSamplerLinear, uv);
+        float4 packed = g_textures.uTextures[data.metallicRoughnessTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0);
         roughness *= packed.g;
         metallic *= packed.b;
     }
     if (data.metallicTextureIndex >= 0)
-        metallic *= g_textures.uTextures[data.metallicTextureIndex].Sample(g_samplers.uSamplerLinear, uv).r;
+        metallic *= g_textures.uTextures[data.metallicTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).r;
     if (data.roughnessTextureIndex >= 0)
-        roughness *= g_textures.uTextures[data.roughnessTextureIndex].Sample(g_samplers.uSamplerLinear, uv).r;
+        roughness *= g_textures.uTextures[data.roughnessTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).r;
 
     float3 normal = normalize(geometricNormal);
     if (data.normalTextureIndex >= 0) {
-        float3 sample = g_textures.uTextures[data.normalTextureIndex].Sample(g_samplers.uSamplerLinear, uv).xyz * 2.0 - 1.0;
+        float3 sample = g_textures.uTextures[data.normalTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).xyz * 2.0 - 1.0;
         float3 basisTangent = normalize(tangent.xyz - normal * dot(normal, tangent.xyz));
         float3 bitangent = normalize(cross(normal, basisTangent)) * tangent.w;
         normal = normalize(sample.x * basisTangent + sample.y * bitangent + sample.z * normal);
     }
 
     float occlusion = data.occlusionTextureIndex >= 0
-        ? g_textures.uTextures[data.occlusionTextureIndex].Sample(g_samplers.uSamplerLinear, uv).r
+        ? g_textures.uTextures[data.occlusionTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).r
         : 1.0;
     float3 emissive = data.emissiveFactor.rgb;
     if (data.emissiveTextureIndex >= 0)
-        emissive *= pow(g_textures.uTextures[data.emissiveTextureIndex].Sample(g_samplers.uSamplerLinear, uv).rgb, 2.2);
+        emissive *= pow(g_textures.uTextures[data.emissiveTextureIndex].SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).rgb, 2.2);
 
     PbrSurfaceMaterial result;
     result.material = makePbrMaterial(baseColor, metallic, roughness);

@@ -33,6 +33,7 @@ struct VulkanCommandVisitor {
     std::vector<std::pair<RHITransientConstantBuffer, VulkanTransientBufferSlice>>* TransientConstantBuffers = nullptr;
     std::vector<std::pair<RHITransientShaderStorageBuffer, VulkanTransientBufferSlice>>*
         TransientShaderStorageBuffers = nullptr;
+    std::vector<std::function<void()>>* RetiredPayloads = nullptr;
     Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
     enum class BoundPipelineType : Uint8 {
@@ -173,7 +174,7 @@ struct VulkanCommandVisitor {
             }
 
             auto Instance = Pipeline.GetOrCreateDescriptorSetInstance(
-                Cmd.Parameters.GetId(), SetIndex, VariableDescriptorCount, *Descriptors);
+                Cmd.Parameters.GetId(), FrameIndex, SetIndex, VariableDescriptorCount, *Descriptors);
             if (!Instance) {
                 Error = Instance.error();
                 return;
@@ -416,21 +417,23 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHISetGraphicsPipelineCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr)
+        auto* PipelinePtr = Cmd.PipelineRef.TryGet();
+        if (!PipelinePtr)
             return;
 
-        auto& Pipeline = static_cast<VulkanGraphicsPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<VulkanGraphicsPipeline&>(*PipelinePtr);
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
-        m_BoundPipeline     = Cmd.PipelinePtr;
+        m_BoundPipeline     = PipelinePtr;
         m_BoundPipelineType = BoundPipelineType::Graphics;
     }
 
     auto operator()(const RHISetRayTracingPipelineCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr)
+        auto* PipelinePtr = Cmd.PipelineRef.TryGet();
+        if (!PipelinePtr)
             return;
-        auto& Pipeline = static_cast<VulkanRayTracingPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<VulkanRayTracingPipeline&>(*PipelinePtr);
         Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
-        m_BoundPipeline     = Cmd.PipelinePtr;
+        m_BoundPipeline     = PipelinePtr;
         m_BoundPipelineType = BoundPipelineType::RayTracing;
     }
 
@@ -490,7 +493,8 @@ struct VulkanCommandVisitor {
         std::vector<RHIRayTracingGeometryData> GeometryData = {};
         GeometryData.reserve(Cmd.Geometries.size());
         for (const auto& Source : Cmd.Geometries) {
-            if (!Source.PositionBuffer || !Source.NormalBuffer || !Source.TangentBuffer || !Source.TexCoordBuffer || !Source.IndexBuffer) {
+            if (!Source.PositionBufferRef.TryGet() || !Source.NormalBufferRef.TryGet() ||
+                !Source.TangentBufferRef.TryGet() || !Source.TexCoordBufferRef.TryGet() || !Source.IndexBufferRef.TryGet()) {
                 Error = ErrorMessage("Ray-tracing geometry data has a null source buffer");
                 return;
             }
@@ -500,11 +504,11 @@ struct VulkanCommandVisitor {
                 Error = ErrorMessage("Ray-tracing geometry data has an unsupported layout");
                 return;
             }
-            const auto& Position = static_cast<const VulkanVertexBuffer&>(*Source.PositionBuffer);
-            const auto& Normal = static_cast<const VulkanVertexBuffer&>(*Source.NormalBuffer);
-            const auto& Tangent = static_cast<const VulkanVertexBuffer&>(*Source.TangentBuffer);
-            const auto& TexCoord = static_cast<const VulkanVertexBuffer&>(*Source.TexCoordBuffer);
-            const auto& Indices = static_cast<const VulkanIndexBuffer&>(*Source.IndexBuffer);
+            const auto& Position = static_cast<const VulkanVertexBuffer&>(*Source.PositionBufferRef.TryGet());
+            const auto& Normal = static_cast<const VulkanVertexBuffer&>(*Source.NormalBufferRef.TryGet());
+            const auto& Tangent = static_cast<const VulkanVertexBuffer&>(*Source.TangentBufferRef.TryGet());
+            const auto& TexCoord = static_cast<const VulkanVertexBuffer&>(*Source.TexCoordBufferRef.TryGet());
+            const auto& Indices = static_cast<const VulkanIndexBuffer&>(*Source.IndexBufferRef.TryGet());
             const auto PositionAddress = Position.GetDeviceAddress();
             const auto NormalAddress = Normal.GetDeviceAddress();
             const auto TangentAddress = Tangent.GetDeviceAddress();
@@ -596,10 +600,11 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
-        if (!Cmd.TargetPtr)
+        auto* TargetPtr = Cmd.TargetRef.TryGet();
+        if (!TargetPtr)
             return;
-        auto& Tlas = static_cast<VulkanTopLevelAccelerationStructure&>(*Cmd.TargetPtr);
-        if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode); !R) {
+        auto& Tlas = static_cast<VulkanTopLevelAccelerationStructure&>(*TargetPtr);
+        if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode, RetiredPayloads); !R) {
             Error = R.error().Append("Failed to record TLAS build");
             return;
         }
@@ -618,9 +623,10 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHITraceRaysCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr)
+        auto* PipelinePtr = Cmd.PipelineRef.TryGet();
+        if (!PipelinePtr)
             return;
-        auto& Pipeline = static_cast<VulkanRayTracingPipeline&>(*Cmd.PipelinePtr);
+        auto& Pipeline = static_cast<VulkanRayTracingPipeline&>(*PipelinePtr);
         Buf.traceRaysKHR(Pipeline.GetRayGenerationRegion(),
                          Pipeline.GetMissRegion(),
                          Pipeline.GetHitRegion(),
@@ -643,9 +649,12 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHIPushConstantsCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr || Cmd.Data.empty())
+        RHIPipeline* PipelinePtr = Cmd.PipelineRef.Graphics.TryGet();
+        if (!PipelinePtr)
+            PipelinePtr = Cmd.PipelineRef.RayTracing.TryGet();
+        if (!PipelinePtr || Cmd.Data.empty())
             return;
-        if (m_BoundPipeline != Cmd.PipelinePtr) {
+        if (m_BoundPipeline != PipelinePtr) {
             Error = ErrorMessage("PushConstants pipeline is not currently bound");
             return;
         }
@@ -655,14 +664,14 @@ struct VulkanCommandVisitor {
         Uint32 PushConstantSize = 0;
         switch (m_BoundPipelineType) {
         case BoundPipelineType::Graphics: {
-            const auto& Pipeline = static_cast<const VulkanGraphicsPipeline&>(*Cmd.PipelinePtr);
+            const auto& Pipeline = static_cast<const VulkanGraphicsPipeline&>(*PipelinePtr);
             PipelineLayout = Pipeline.GetPipelineLayout();
             Stages = vk::ShaderStageFlagBits::eAllGraphics;
             PushConstantSize = Pipeline.GetPushConstantSize();
             break;
         }
         case BoundPipelineType::RayTracing: {
-            const auto& Pipeline = static_cast<const VulkanRayTracingPipeline&>(*Cmd.PipelinePtr);
+            const auto& Pipeline = static_cast<const VulkanRayTracingPipeline&>(*PipelinePtr);
             PipelineLayout = Pipeline.GetPipelineLayout();
             Stages = Pipeline.GetPushConstantStages();
             PushConstantSize = Pipeline.GetPushConstantSize();
@@ -689,14 +698,17 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHIBindShaderParametersCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr)
+        RHIPipeline* PipelinePtr = Cmd.PipelineRef.Graphics.TryGet();
+        if (!PipelinePtr)
+            PipelinePtr = Cmd.PipelineRef.RayTracing.TryGet();
+        if (!PipelinePtr)
             return;
         if (!Descriptors || !TransientUniformArena || !TransientShaderStorageArena ||
             !TransientConstantBuffers || !TransientShaderStorageBuffers) {
             Error = ErrorMessage("VulkanCommandVisitor: descriptor manager or transient arena is missing");
             return;
         }
-        if (m_BoundPipeline != Cmd.PipelinePtr) {
+        if (m_BoundPipeline != PipelinePtr) {
             Error = ErrorMessage("BindShaderParameters pipeline is not currently bound");
             return;
         }
@@ -704,13 +716,13 @@ struct VulkanCommandVisitor {
         switch (m_BoundPipelineType) {
         case BoundPipelineType::Graphics:
             BindShaderParameters(Cmd,
-                                 static_cast<VulkanGraphicsPipeline&>(*Cmd.PipelinePtr),
+                                 static_cast<VulkanGraphicsPipeline&>(*PipelinePtr),
                                  vk::PipelineBindPoint::eGraphics,
                                  vk::PipelineStageFlagBits2::eAllGraphics);
             return;
         case BoundPipelineType::RayTracing:
             BindShaderParameters(Cmd,
-                                 static_cast<VulkanRayTracingPipeline&>(*Cmd.PipelinePtr),
+                                 static_cast<VulkanRayTracingPipeline&>(*PipelinePtr),
                                  vk::PipelineBindPoint::eRayTracingKHR,
                                  vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
             return;
@@ -755,34 +767,34 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHIDrawIndexedCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0] || !Cmd.IndexBufferPtr)
+        if (!Cmd.PipelineRef.TryGet() || !Cmd.VertexBufferRefs[0].TryGet() || !Cmd.IndexBufferRef.TryGet())
             return;
 
-        for (Uint32 Binding = 0; Binding < Cmd.VertexBuffers.size(); ++Binding) {
-            auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
+        for (Uint32 Binding = 0; Binding < Cmd.VertexBufferRefs.size(); ++Binding) {
+            auto* VertexBufferPtr = Cmd.VertexBufferRefs[Binding].TryGet();
             if (!VertexBufferPtr)
                 continue;
             const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
             Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
         }
 
-        const auto& VkIB = static_cast<const VulkanIndexBuffer&>(*Cmd.IndexBufferPtr);
+        const auto& VkIB = static_cast<const VulkanIndexBuffer&>(*Cmd.IndexBufferRef.TryGet());
         Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
         Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
     }
 
     auto operator()(const RHIDrawCmd& Cmd) -> void {
-        if (!Cmd.PipelinePtr || !Cmd.VertexBuffers[0])
+        if (!Cmd.PipelineRef.TryGet() || !Cmd.VertexBufferRefs[0].TryGet())
             return;
 
-        for (Uint32 Binding = 0; Binding < Cmd.VertexBuffers.size(); ++Binding) {
-            auto* VertexBufferPtr = Cmd.VertexBuffers[Binding];
+        for (Uint32 Binding = 0; Binding < Cmd.VertexBufferRefs.size(); ++Binding) {
+            auto* VertexBufferPtr = Cmd.VertexBufferRefs[Binding].TryGet();
             if (!VertexBufferPtr)
                 continue;
             const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
             Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
         }
-        const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*Cmd.VertexBuffers[0]);
+        const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*Cmd.VertexBufferRefs[0].TryGet());
         Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
     }
 };

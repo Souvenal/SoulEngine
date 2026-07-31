@@ -67,3 +67,11 @@ asset identities in snapshots; SceneSnapshot itself contains no GPU handles.
 - `entt` — Scene Registry and meta-driven component schema
 - `yaml-cpp` — internal Scene Persistence implementation
 - `hlsl++` — vector and matrix math
+
+## RHI ownership boundary
+
+SceneSnapshot is renderer-neutral and carries no native RHI payloads. Scene
+components and snapshots must not store backend pointers to extend GPU lifetime.
+Renderer-local Resource wrappers provide ready RHIRef<T> values when they
+record the frame; command-list copies and then Vulkan submission retention own
+the GPU-use lifetime.

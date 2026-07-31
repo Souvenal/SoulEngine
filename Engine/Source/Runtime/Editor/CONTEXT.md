@@ -33,3 +33,12 @@ RHI-thread task enqueued after `Editor::BindWindowSystem()`.
 - `TaskGraph` — RHI-thread resource creation task
 - `WindowSystem` — platform backend selection; GLFW native handle for `imgui_impl_glfw`
 - Third-party: Dear ImGui (local checkout target, see root `imgui_dir` option)
+
+## Presentation-overlay lifetime
+
+Editor::AttachPresentationOverlay() writes borrowed ImGui snapshot,
+texture-queue, and mutex pointers into RHIImGuiPresentationOverlayCmd. This is
+an Execute-time bridge for the Dear ImGui backend, not a general RHI resource
+reference: RHILoop clears the slot only after Execute() returns, and Vulkan
+does not access this borrowed overlay payload after submission. Ordinary engine
+GPU resources must use RHIRef<T> in the command list instead.

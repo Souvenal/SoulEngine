@@ -356,16 +356,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
     VulkanRayTracingPipeline() = default;
 
-    ~VulkanRayTracingPipeline() override {
-        if (m_DeletionQueue) {
-            m_DeletionQueue->Enqueue(GetLastUsageToken(),
-                                     [RHIPipeline = m_Pipeline,
-                                      PipelineLayout = m_PipelineLayout,
-                                      SetLayouts = m_SetLayouts,
-                                      ShaderBindingTable = m_ShaderBindingTable,
-                                      ParameterSets = m_ParameterSets]() {});
-        }
-    }
+    ~VulkanRayTracingPipeline() override = default;
 
     VulkanRayTracingPipeline(const VulkanRayTracingPipeline&)                    = delete;
     auto operator=(const VulkanRayTracingPipeline&) -> VulkanRayTracingPipeline& = delete;
@@ -474,7 +465,6 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         Result->m_MissRegion = MakeRegion(SbtAddress, SbtLayout->Miss);
         Result->m_HitRegion = MakeRegion(SbtAddress, SbtLayout->Hit);
         Result->m_CallableRegion = MakeRegion(SbtAddress, SbtLayout->Callable);
-        Result->m_DeletionQueue = &Context.DeletionQueue;
         Result->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
         return Result;
     }
@@ -496,6 +486,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     }
 
     [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
+                                                         Uint32             FrameIndex,
                                                          Uint32             SetIndex,
                                                          Uint32             VariableDescriptorCount,
                                                          VulkanDescriptorManager& Descriptors)
@@ -503,7 +494,13 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         if (SetIndex >= m_RawSetLayouts.size())
             return std::unexpected(ErrorMessage(Format("Parameter set uses missing descriptor set {}", SetIndex)));
 
-        auto& Instances = m_ParameterSets->ByParameterId[ParameterId];
+        auto& Frames = m_ParameterSets->ByParameterId[ParameterId];
+        if (FrameIndex >= Descriptors.GetFramesInFlight())
+            return std::unexpected(ErrorMessage(Format("Invalid frame index {} for descriptor set instance", FrameIndex)));
+        if (Frames.size() < Descriptors.GetFramesInFlight())
+            Frames.resize(Descriptors.GetFramesInFlight());
+
+        auto& Instances = Frames[FrameIndex];
         if (Instances.size() < m_RawSetLayouts.size())
             Instances.resize(m_RawSetLayouts.size());
 
@@ -555,7 +552,6 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     Uint32                                           m_DescriptorSetCount = 0;
     Uint32                                           m_DynamicOffsetCount = 0;
     Uint32                                           m_PushConstantSize = 0;
-    VulkanDeletionQueue*                                   m_DeletionQueue = nullptr;
 };
 
 } // namespace SoulEngine

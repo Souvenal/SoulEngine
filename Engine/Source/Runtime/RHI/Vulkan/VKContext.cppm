@@ -9,7 +9,6 @@ export module Vulkan:Context;
 
 import vulkan;
 
-import :DeletionQueue;
 import :ImmediateContext;
 
 export namespace SoulEngine {
@@ -18,20 +17,17 @@ export namespace SoulEngine {
 struct VulkanResourceContext {
     VulkanResourceContext(vk::raii::Device&       InDevice,
                           VmaAllocator            InAllocator,
-                          VulkanDeletionQueue&    InDeletionQueue,
                           VulkanImmediateContext& InImmediate,
                           Uint32                  InGraphicsFamily,
                           Uint32                  InTransferFamily)
         : Device(InDevice),
           Allocator(InAllocator),
-          DeletionQueue(InDeletionQueue),
           Immediate(InImmediate),
           GraphicsFamily(InGraphicsFamily),
           TransferFamily(InTransferFamily) {}
 
     vk::raii::Device&       Device;
     VmaAllocator            Allocator;
-    VulkanDeletionQueue&    DeletionQueue;
     VulkanImmediateContext& Immediate;
     Uint32                  GraphicsFamily = vk::QueueFamilyIgnored;
     Uint32                  TransferFamily = vk::QueueFamilyIgnored;

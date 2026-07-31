@@ -13,6 +13,7 @@ module;
 export module Vulkan:RenderDevice;
 
 import RHI; // RHICommandList, RHIPass, etc.
+import TaskGraph;
 import vulkan;
 import std;
 
@@ -111,12 +112,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(Semaphore.error());
         m_Timeline = std::move(*Semaphore);
 
-        // ── Deletion Queue ───────────────────────────────────────────────
-        m_DeletionQueue = VulkanDeletionQueue{m_Timeline};
-
         // Resource factory contexts borrow RenderDevice-owned Vulkan services.
         m_ResourceContext.emplace(
-            m_Device, m_Allocator, m_DeletionQueue, m_ImmediateContext, m_GraphicsFamily, m_TransferFamily);
+            m_Device, m_Allocator, m_ImmediateContext, m_GraphicsFamily, m_TransferFamily);
 
         // ── VulkanFrameContext ───────────────────────────────────────────────────
         // Each frame slot gets its own Pool, PrimaryBuffer, and SubPool.
@@ -170,6 +168,16 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     // ── Frame lifecycle — private ─────────────────────────────────────
 
+    auto RetireInFlightSubmissions() -> void {
+        auto CompletedValue = m_Timeline.GetCurrentValue();
+        if (!CompletedValue)
+            return;
+        while (!m_InFlightSubmissions.empty() &&
+               m_InFlightSubmissions.front().CompletionTimelineValue <= *CompletedValue) {
+            m_InFlightSubmissions.pop_front();
+        }
+    }
+
     [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> {
         // CPU-GPU sync: wait for the timeline semaphore to reach the value
         // from N frames ago (when this slot was last signalled).
@@ -183,10 +191,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             m_DescriptorManager->BeginFrame(m_CurrentFrame);
 
         // Free any GPU resources whose transfer operations have completed.
-        m_ImmediateContext.Tick();
-
-        // Retire GPU resources whose frame-timeline token has passed.
-        m_DeletionQueue.Tick();
+        RetireInFlightSubmissions();
 
         auto& PresentCompleteSema = m_FrameContext[m_CurrentFrame].PresentComplete;
         auto  AcquireRes          = m_Swapchain.AcquireNextImage(PresentCompleteSema);
@@ -285,53 +290,157 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     [[nodiscard]] auto CreateVertexBuffer(const RHIVertexBufferDesc& Desc)
-        -> std::expected<RHIVertexBufferCreateResult, ErrorMessage> override {
-        return VulkanVertexBuffer::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> override {
+        std::vector<std::byte> Data(Desc.Data.begin(), Desc.Data.end());
+
+        return EnqueueResourceCreation<RHIVertexBuffer>(
+            [this, Data = std::move(Data), VertexCount = Desc.VertexCount, Stride = Desc.Stride](RHIRef<RHIVertexBuffer>& Resource) mutable
+                -> std::expected<void, ErrorMessage> {
+                auto Payload = Resource.m_Payload;
+                auto Result = VulkanVertexBuffer::Create(
+                    *m_ResourceContext,
+                    RHIVertexBufferDesc{.Data = std::span<const std::byte>{Data}, .VertexCount = VertexCount, .Stride = Stride},
+                    [Payload] { (void)Payload->TryMarkReady(); });
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHIVertexBuffer> PayloadResource = std::move(*Result);
+                return PublishPendingPayload(Resource, std::move(PayloadResource));
+            });
     }
 
     [[nodiscard]] auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
-        -> std::expected<RHIIndexBufferCreateResult, ErrorMessage> override {
-        return VulkanIndexBuffer::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> override {
+        std::vector<std::byte> Data(Desc.Data.begin(), Desc.Data.end());
+
+        return EnqueueResourceCreation<RHIIndexBuffer>(
+            [this, Data = std::move(Data), IndexCount = Desc.IndexCount](RHIRef<RHIIndexBuffer>& Resource) mutable
+                -> std::expected<void, ErrorMessage> {
+                auto Payload = Resource.m_Payload;
+                auto Result = VulkanIndexBuffer::Create(
+                    *m_ResourceContext,
+                    RHIIndexBufferDesc{.Data = std::span<const std::byte>{Data}, .IndexCount = IndexCount},
+                    [Payload] { (void)Payload->TryMarkReady(); });
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHIIndexBuffer> PayloadResource = std::move(*Result);
+                return PublishPendingPayload(Resource, std::move(PayloadResource));
+            });
     }
 
-    [[nodiscard]] auto CreateSampler(const RHISamplerDesc& Desc)
-        -> std::expected<UPtr<RHISampler>, ErrorMessage> override {
-        return VulkanSampler::Create(*m_ResourceContext, Desc);
+    [[nodiscard]] auto CreateSampler(const RHISamplerDesc& Desc) -> std::expected<RHIRef<RHISampler>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHISampler>(
+            [this, Desc](RHIRef<RHISampler>& Resource) -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanSampler::Create(*m_ResourceContext, Desc);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHISampler> PayloadResource = std::move(*Result);
+                return PublishReadyPayload(Resource, std::move(PayloadResource));
+            });
     }
 
     [[nodiscard]] auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
-        -> std::expected<RHISampledTextureCreateResult, ErrorMessage> override {
+        -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> override {
         // Sampled images upload on the dedicated transfer lane, then complete through a graphics-lane bridge.
-        return VulkanSampledTexture::Create(*m_ResourceContext, Desc);
+        std::vector<std::byte> Data(Desc.Data.begin(), Desc.Data.end());
+
+        return EnqueueResourceCreation<RHISampledTexture>(
+            [this, Data = std::move(Data), Width = Desc.Width, Height = Desc.Height, Channels = Desc.Channels,
+             Format = Desc.Format, Usage = Desc.Usage](RHIRef<RHISampledTexture>& Resource) mutable
+                -> std::expected<void, ErrorMessage> {
+                auto Payload = Resource.m_Payload;
+                auto Result = VulkanSampledTexture::Create(*m_ResourceContext,
+                                                           RHISampledTextureDesc{.Data = std::span<const std::byte>{Data},
+                                                                                 .Width = Width,
+                                                                                 .Height = Height,
+                                                                                 .Channels = Channels,
+                                                                                 .Format = Format,
+                                                                                 .Usage = Usage},
+                                                           [Payload] { (void)Payload->TryMarkReady(); });
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHISampledTexture> PayloadResource = std::move(*Result);
+                return PublishPendingPayload(Resource, std::move(PayloadResource));
+            });
     }
 
     [[nodiscard]] auto CreateRenderTarget(const RHIRenderTargetDesc& Desc)
-        -> std::expected<RHIRenderTargetCreateResult, ErrorMessage> override {
-        return VulkanRenderTarget::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHIRenderTarget>(
+            [this, Desc](RHIRef<RHIRenderTarget>& Resource) -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanRenderTarget::Create(*m_ResourceContext, Desc);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHIRenderTarget> PayloadResource = std::move(*Result);
+                return PublishReadyPayload(Resource, std::move(PayloadResource));
+            });
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
-        -> std::expected<UPtr<RHIGraphicsPipeline>, ErrorMessage> override {
-        return VulkanGraphicsPipeline::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHIGraphicsPipeline>(
+            [this, Desc](RHIRef<RHIGraphicsPipeline>& Resource) mutable -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanGraphicsPipeline::Create(*m_ResourceContext, Desc);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHIGraphicsPipeline> Payload = std::move(*Result);
+                return PublishReadyPayload(Resource, std::move(Payload));
+            });
     }
 
     [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
-        -> std::expected<UPtr<RHIRayTracingPipeline>, ErrorMessage> override {
-        return VulkanRayTracingPipeline::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHIRayTracingPipeline>(
+            [this, Desc](RHIRef<RHIRayTracingPipeline>& Resource) mutable -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanRayTracingPipeline::Create(*m_ResourceContext, Desc);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                UPtr<RHIRayTracingPipeline> Payload = std::move(*Result);
+                return PublishReadyPayload(Resource, std::move(Payload));
+            });
     }
 
     [[nodiscard]] auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
-        -> std::expected<UPtr<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
-        return VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHIBottomLevelAccelerationStructure>(
+            [this, Desc](RHIRef<RHIBottomLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Desc);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                return PublishReadyPayload(Resource, std::move(*Result));
+            });
     }
 
     [[nodiscard]] auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
-        -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> override {
-        return VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Desc);
+        -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHITopLevelAccelerationStructure>(
+            [this, Desc](RHIRef<RHITopLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Desc);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                return PublishReadyPayload(Resource, std::move(*Result));
+            });
     }
 
-    [[nodiscard]] auto IsGpuComplete(RHIGpuCompletionToken Token) -> bool override {
-        return m_ImmediateContext.IsComplete(Token);
+    auto TickBackendCompletions() -> void override {
+        m_ImmediateContext.Tick();
     }
 
     auto WaitIdle() -> void override {
@@ -346,10 +455,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             auto ImmediateDrain = m_ImmediateContext.Drain();
             if (!ImmediateDrain)
                 LogError("{}", ImmediateDrain.error().ToString());
-            auto DeletionDrain = m_DeletionQueue.Drain(true);
-            if (!DeletionDrain)
-                LogError("{}", DeletionDrain.error().ToString());
             WaitIdle();
+            m_InFlightSubmissions.clear();
+            GetDeletionQueue().Drain();
         }
 
 
@@ -418,6 +526,23 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return {};
     }
 
+    template <typename T, typename CreateFn>
+    [[nodiscard]] auto EnqueueResourceCreation(CreateFn&& Create)
+        -> std::expected<RHIRef<T>, ErrorMessage> {
+        auto Resource = RHIRef<T>::Create();
+        auto TaskRef  = Resource;
+        auto EnqueueResult = TaskGraph::Get().Enqueue(
+            ThreadQueue::RHI,
+            [TaskRef = std::move(TaskRef), Create = std::forward<CreateFn>(Create)] mutable {
+                if (auto Result = Create(TaskRef); !Result)
+                    LogError("Failed to create RHI resource: {}", Result.error().ToString());
+            });
+        if (!EnqueueResult) {
+            Resource.MarkFailed(EnqueueResult.error());
+            return std::unexpected(EnqueueResult.error());
+        }
+        return Resource;
+    }
     [[nodiscard]] auto CreateInstance(vk::raii::Context& Context, IVulkanSurfaceProvider& SurfaceProvider)
         -> std::expected<void, ErrorMessage> {
         vk::ApplicationInfo AppInfo{
@@ -681,10 +806,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     [[nodiscard]] auto ValidateCommandList(const RHICommandList& CmdList) const -> std::expected<void, ErrorMessage> {
-        if (CmdList.Scopes.empty() && !CmdList.PresentSource && !CmdList.ImGuiPresentationOverlay)
+        if (CmdList.Scopes.empty() && !CmdList.PresentSourceRef.TryGet() && !CmdList.ImGuiPresentationOverlay)
             return {};
 
-        if (!CmdList.PresentSource)
+        if (!CmdList.PresentSourceRef.TryGet())
             return std::unexpected(ErrorMessage("Execute: command list with scopes must specify PresentSource"));
 
         const auto ValidateCommands = [](std::span<const RHICommand> Commands, bool bRenderingScope)
@@ -698,27 +823,35 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     if constexpr (std::is_same_v<CommandType, RHISetGraphicsPipelineCmd>) {
                         if (!bRenderingScope)
                             return std::unexpected(ErrorMessage("Execute: graphics pipelines require a rendering scope"));
-                        if (!TypedCmd.PipelinePtr)
+                        auto* Pipeline = TypedCmd.PipelineRef.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: SetGraphicsPipeline is missing graphics pipeline"));
-                        BoundPipeline = TypedCmd.PipelinePtr;
+                        BoundPipeline = Pipeline;
                     } else if constexpr (std::is_same_v<CommandType, RHISetRayTracingPipelineCmd>) {
                         if (bRenderingScope)
                             return std::unexpected(ErrorMessage("Execute: ray-tracing pipelines require a non-rendering scope"));
-                        if (!TypedCmd.PipelinePtr)
+                        auto* Pipeline = TypedCmd.PipelineRef.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: SetRayTracingPipeline is missing ray-tracing pipeline"));
-                        BoundPipeline = TypedCmd.PipelinePtr;
+                        BoundPipeline = Pipeline;
                     } else if constexpr (std::is_same_v<CommandType, RHIPushConstantsCmd>) {
-                        if (!TypedCmd.PipelinePtr)
+                        RHIPipeline* Pipeline = TypedCmd.PipelineRef.Graphics.TryGet();
+                        if (!Pipeline)
+                            Pipeline = TypedCmd.PipelineRef.RayTracing.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: PushConstants is missing pipeline"));
-                        if (BoundPipeline != TypedCmd.PipelinePtr)
+                        if (BoundPipeline != Pipeline)
                             return std::unexpected(ErrorMessage(
                                 "Execute: PushConstants pipeline does not match the currently bound pipeline"));
                         if (TypedCmd.Data.empty())
                             return std::unexpected(ErrorMessage("Execute: PushConstants data is empty"));
                     } else if constexpr (std::is_same_v<CommandType, RHIBindShaderParametersCmd>) {
-                        if (!TypedCmd.PipelinePtr)
+                        RHIPipeline* Pipeline = TypedCmd.PipelineRef.Graphics.TryGet();
+                        if (!Pipeline)
+                            Pipeline = TypedCmd.PipelineRef.RayTracing.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: BindShaderParameters is missing pipeline"));
-                        if (BoundPipeline != TypedCmd.PipelinePtr) {
+                        if (BoundPipeline != Pipeline) {
                             return std::unexpected(ErrorMessage(
                                 "Execute: BindShaderParameters pipeline does not match the currently bound pipeline"));
                         }
@@ -727,26 +860,28 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     } else if constexpr (std::is_same_v<CommandType, RHIDrawIndexedCmd>) {
                         if (!bRenderingScope)
                             return std::unexpected(ErrorMessage("Execute: draw commands require a rendering scope"));
-                        if (!TypedCmd.PipelinePtr)
+                        auto* Pipeline = TypedCmd.PipelineRef.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing graphics pipeline"));
-                        if (BoundPipeline != TypedCmd.PipelinePtr) {
+                        if (BoundPipeline != Pipeline) {
                             return std::unexpected(ErrorMessage(
                                 "Execute: indexed draw pipeline does not match the currently bound graphics pipeline"));
                         }
-                        if (!TypedCmd.VertexBuffers[0])
+                        if (!TypedCmd.VertexBufferRefs[0].TryGet())
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing vertex buffer"));
-                        if (!TypedCmd.IndexBufferPtr)
+                        if (!TypedCmd.IndexBufferRef.TryGet())
                             return std::unexpected(ErrorMessage("Execute: indexed draw is missing index buffer"));
                     } else if constexpr (std::is_same_v<CommandType, RHIDrawCmd>) {
                         if (!bRenderingScope)
                             return std::unexpected(ErrorMessage("Execute: draw commands require a rendering scope"));
-                        if (!TypedCmd.PipelinePtr)
+                        auto* Pipeline = TypedCmd.PipelineRef.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: draw is missing graphics pipeline"));
-                        if (BoundPipeline != TypedCmd.PipelinePtr) {
+                        if (BoundPipeline != Pipeline) {
                             return std::unexpected(ErrorMessage(
                                 "Execute: draw pipeline does not match the currently bound graphics pipeline"));
                         }
-                        if (!TypedCmd.VertexBuffers[0])
+                        if (!TypedCmd.VertexBufferRefs[0].TryGet())
                             return std::unexpected(ErrorMessage("Execute: draw is missing vertex buffer"));
                     } else if constexpr (std::is_same_v<CommandType, RHIWriteTransientConstantBufferCmd>) {
                         if (!TypedCmd.Buffer.IsValid())
@@ -769,14 +904,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                             return std::unexpected(ErrorMessage(
                                 "Execute: acceleration-structure builds require a non-rendering scope"));
                         }
-                        if (!TypedCmd.TargetPtr)
+                        if (!TypedCmd.TargetRef.TryGet())
                             return std::unexpected(ErrorMessage("Execute: TLAS build is missing its target"));
                     } else if constexpr (std::is_same_v<CommandType, RHITraceRaysCmd>) {
                         if (bRenderingScope)
                             return std::unexpected(ErrorMessage("Execute: TraceRays requires a non-rendering scope"));
-                        if (!TypedCmd.PipelinePtr)
+                        auto* Pipeline = TypedCmd.PipelineRef.TryGet();
+                        if (!Pipeline)
                             return std::unexpected(ErrorMessage("Execute: TraceRays is missing ray-tracing pipeline"));
-                        if (BoundPipeline != TypedCmd.PipelinePtr) {
+                        if (BoundPipeline != Pipeline) {
                             return std::unexpected(ErrorMessage(
                                 "Execute: TraceRays pipeline does not match the currently bound ray-tracing pipeline"));
                         }
@@ -938,10 +1074,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // Execute — consume RHICommandList, record and submit
     // ═════════════════════════════════════════════════════════════════════════════
 
-    [[nodiscard]] auto Execute(const RHICommandList& CmdList) -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto Execute(RHICommandList&& CmdList) -> std::expected<void, ErrorMessage> override {
         if (auto R = ValidateCommandList(CmdList); !R)
             return std::unexpected(R.error());
-        if (CmdList.Scopes.empty() && !CmdList.PresentSource && !CmdList.ImGuiPresentationOverlay)
+        if (CmdList.Scopes.empty() && !CmdList.PresentSourceRef.TryGet() && !CmdList.ImGuiPresentationOverlay)
             return {};
 
         if (auto R = BeginFrame(); !R)
@@ -950,27 +1086,16 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(R.error().Append("Execute: transient constant arena reset failed"));
         if (auto R = m_TransientShaderStorageArena.BeginFrame(m_CurrentFrame); !R)
             return std::unexpected(R.error().Append("Execute: transient shader storage arena reset failed"));
-        // Frame token for usage tracking — this frame's signal value on the timeline
-        const Uint64                  FrameTokenValue = m_Timeline.NextValue();
-        const RHIFrameSubmissionToken FrameToken{.Id = FrameTokenValue};
-        RHIUsageVisitor             UsageTracker{.CurrentToken = FrameToken};
-        UsageTracker.StampPresentSource(CmdList.PresentSource);
+        const Uint64 FrameTokenValue = m_Timeline.NextValue();
 
         std::vector<vk::CommandBuffer> Secondaries;
         Secondaries.reserve(CmdList.Scopes.size());
         std::vector<std::pair<RHITransientConstantBuffer, VulkanTransientBufferSlice>> TransientConstantBuffers;
         std::vector<std::pair<RHITransientShaderStorageBuffer, VulkanTransientBufferSlice>>
             TransientShaderStorageBuffers;
+        std::vector<std::function<void()>> RetiredPayloads;
 
         for (const auto& Scope : CmdList.Scopes) {
-            const auto StampScopeUsage = [&UsageTracker](const auto& TypedScope) -> void {
-                using ScopeType = std::decay_t<decltype(TypedScope)>;
-                if constexpr (std::is_same_v<ScopeType, RHIPass>)
-                    UsageTracker.StampPassAttachments(TypedScope.Desc);
-                for (const auto& Cmd : TypedScope.Commands)
-                    std::visit(UsageTracker, Cmd);
-            };
-
             // Allocate one secondary for this ordered rendering or non-rendering scope.
             vk::CommandBufferAllocateInfo Alloc{
                 .commandPool        = *m_FrameContext[m_CurrentFrame].SubPool,
@@ -1007,6 +1132,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     .TransientShaderStorageArena = &m_TransientShaderStorageArena,
                     .TransientConstantBuffers = &TransientConstantBuffers,
                     .TransientShaderStorageBuffers = &TransientShaderStorageBuffers,
+                    .RetiredPayloads = &RetiredPayloads,
                     .FrameIndex       = m_CurrentFrame,
                 };
                 const auto IsTransientUpload = [](const RHICommand& Cmd) -> bool {
@@ -1064,7 +1190,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         if (!Secondaries.empty())
             Primary.executeCommands(Secondaries);
-        RecordPresentBlit(Primary, CmdList.PresentSource, !CmdList.ImGuiPresentationOverlay.has_value());
+        RecordPresentBlit(Primary, CmdList.PresentSourceRef.TryGet(), !CmdList.ImGuiPresentationOverlay.has_value());
         if (CmdList.ImGuiPresentationOverlay) {
             if (auto R = RecordImGuiPresentationOverlay(Primary, *CmdList.ImGuiPresentationOverlay); !R)
                 return std::unexpected(R.error());
@@ -1099,6 +1225,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (auto R = m_GraphicsQueue.submit2({SubmitInfo2}); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Format("Queue submit failed: {}", vk::to_string(R))));
         m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = FrameTokenValue;
+        m_InFlightSubmissions.push_back(VulkanInFlightSubmission{
+            .CompletionTimelineValue = FrameTokenValue,
+            .CommandList = std::move(CmdList),
+            .RetiredPayloads = std::move(RetiredPayloads),
+        });
 
         auto PresentRes = m_Swapchain.Present(m_GraphicsQueue);
         if (PresentRes == vk::Result::eErrorOutOfDateKHR || PresentRes == vk::Result::eSuboptimalKHR) {
@@ -1141,7 +1272,12 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     VmaAllocator      m_Allocator = nullptr;
     VulkanTimelineSemaphore m_Timeline;
 
-    VulkanDeletionQueue m_DeletionQueue = {}; // re-initialized after m_Timeline created
+    struct VulkanInFlightSubmission {
+        Uint64 CompletionTimelineValue = 0;
+        RHICommandList CommandList = {};
+        std::vector<std::function<void()>> RetiredPayloads = {};
+    };
+    std::deque<VulkanInFlightSubmission> m_InFlightSubmissions = {};
 
     std::optional<VulkanResourceContext> m_ResourceContext       = std::nullopt;
 
