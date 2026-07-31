@@ -9,21 +9,13 @@ export namespace SoulEngine {
 
 template <ManagedResource T>
 struct ResourceRequestResult {
-    ResourceHandle<T> Handle          = {};
+    ResourceHandle<T> Handle = {};
 
     /// @brief True only for the caller that created a new slot and must start resource work.
     ///
     /// False means an existing slot was found. That existing slot may be ready,
     /// still loading, failed, or otherwise waiting on its current generation.
     bool ShouldStartWork = false;
-};
-
-template <ManagedRHIResource T>
-struct GpuPendingResource {
-    ResourceGeneration      Generation       = 0;
-    String                  Key              = {};
-    Resource<T>             Resource         = {};
-    RHIGpuCompletionToken UploadCompletion = {};
 };
 
 template <ManagedResource T>
@@ -37,25 +29,12 @@ template <ManagedResource T>
 using ResourceEntryMap = std::unordered_map<String, UPtr<ResourceEntry<T>>>;
 
 /// @brief Per-resource-type entry registry.
-///
-/// `HasGpuPending = true` means the resource type has a GPU upload/completion
-/// phase after RHI object creation, so the family owns a `GpuPending` queue.
-/// Types without that phase publish Ready directly and do not carry the queue.
-template <ManagedResource T, bool HasGpuPending = ResourceTraits<T>::Info.HasGpuPending()>
+template <ManagedResource T>
 struct ResourceFamily {
     using ResourceType = T;
 
-    std::mutex                 Mutex;
-    ResourceEntryMap<T>        Entries;
-};
-
-template <ManagedRHIResource T>
-struct ResourceFamily<T, true> {
-    using ResourceType = T;
-
-    std::mutex                          Mutex;
-    ResourceEntryMap<T>                 Entries;
-    std::vector<GpuPendingResource<T>>  GpuPending;
+    std::mutex          Mutex;
+    ResourceEntryMap<T> Entries;
 };
 
 template <typename Tuple>
@@ -218,34 +197,6 @@ class ResourceContext {
         return Locked.Entry->Slot.PublishFailed(Generation, std::move(Error));
     }
 
-    template <GpuPendingManagedRHIResource T>
-    [[nodiscard]] auto PublishGpuPending(const String& Key,
-                                         ResourceGeneration Generation,
-                                         Resource<T> Value,
-                                         RHIGpuCompletionToken UploadCompletion) -> bool {
-        std::lock_guard Lock(m_PublishMutex);
-        if (IsShutdownRequested()) {
-            LogDebug("Async {} GPU pending discarded after shutdown '{}'", ResourceTraits<T>::Info.Label, Key);
-            return false;
-        }
-
-        auto& Family = GetFamily<T>();
-        std::lock_guard FamilyLock(Family.Mutex);
-        auto* Entry = FindEntry(Family.Entries, Key);
-        if (!Entry || !Entry->Slot.PublishGpuPending(Generation)) {
-            LogDebug("Stale async {} GPU pending discarded '{}'", ResourceTraits<T>::Info.Label, Key);
-            return false;
-        }
-
-        Family.GpuPending.push_back(GpuPendingResource<T>{
-            .Generation       = Generation,
-            .Key              = Key,
-            .Resource         = std::move(Value),
-            .UploadCompletion = UploadCompletion,
-        });
-        return true;
-    }
-
     /// Queue a resource-family dependency waiter for RHI-thread polling.
     /// Returning true removes the waiter; returning false retains it for the next RHI tick.
     auto EnqueueRhiDependencyWaiter(std::function<bool()> Waiter) -> void {
@@ -257,18 +208,10 @@ class ResourceContext {
             m_RhiDependencyWaiters.push_back(std::move(Waiter));
     }
 
-    auto TickGpuPending() -> void {
-        {
-            std::lock_guard Lock(m_PublishMutex);
-            if (IsShutdownRequested()) {
-                ClearGpuPendingQueues();
-                ClearRhiDependencyWaiters();
-                return;
-            }
-
-            ForEachGpuPendingFamily([this]<GpuPendingManagedRHIResource T>() -> void {
-                TickGpuPendingFamily<T>();
-            });
+    auto TickRhiDependencies() -> void {
+        if (IsShutdownRequested()) {
+            ClearRhiDependencyWaiters();
+            return;
         }
         TickRhiDependencyWaiters();
     }
@@ -279,10 +222,6 @@ class ResourceContext {
             ReleaseAndEraseEntries(Family.Entries);
         });
 
-        {
-            std::lock_guard Lock(m_PublishMutex);
-            ClearGpuPendingQueues();
-        }
         ClearRhiDependencyWaiters();
     }
 
@@ -334,20 +273,6 @@ class ResourceContext {
             m_Families);
     }
 
-    template <typename Fn>
-    auto ForEachGpuPendingFamily(Fn&& Callback) -> void {
-        ForEachFamily([&]<ManagedResource T>(ResourceFamily<T>&) -> void {
-            if constexpr (ManagedRHIResource<T> && ResourceTraits<T>::Info.HasGpuPending())
-                Callback.template operator()<T>();
-        });
-    }
-
-    auto ClearGpuPendingQueues() -> void {
-        ForEachGpuPendingFamily([this]<GpuPendingManagedRHIResource T>() -> void {
-            GetFamily<T>().GpuPending.clear();
-        });
-    }
-
     template <typename T>
     auto ReleaseAndEraseEntries(ResourceEntryMap<T>& Entries) -> void {
         for (auto It = Entries.begin(); It != Entries.end();) {
@@ -360,9 +285,8 @@ class ResourceContext {
     template <typename T>
     static auto EraseReleasedTransientEntries(ResourceEntryMap<T>& Entries) -> void {
         for (auto It = Entries.begin(); It != Entries.end();) {
-            if (!It->second ||
-                (It->second->Policy == ResourceLifetimePolicy::Transient && It->second->RefCount == 0 &&
-                 It->second->Slot.IsReleased()))
+            if (!It->second || (It->second->Policy == ResourceLifetimePolicy::Transient && It->second->RefCount == 0 &&
+                                It->second->Slot.IsReleased()))
                 It = Entries.erase(It);
             else
                 ++It;
@@ -403,51 +327,11 @@ class ResourceContext {
         }
     }
 
-    template <GpuPendingManagedRHIResource T>
-    auto TickGpuPendingFamily() -> void {
-        auto& Family = GetFamily<T>();
-        std::vector<GpuPendingResource<T>> Next;
-        Next.reserve(Family.GpuPending.size());
-        for (auto& Pending : Family.GpuPending) {
-            auto State = ResourceState::Unknown;
-            {
-                std::lock_guard Lock(Family.Mutex);
-                auto* Entry = FindEntry(Family.Entries, Pending.Key);
-                State = Entry ? Entry->Slot.GetState(Pending.Generation) : ResourceState::Unknown;
-            }
-            if (State == ResourceState::Stale) {
-                LogDebug("Stale async {} GPU pending discarded '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
-                continue;
-            }
-            if (State != ResourceState::GpuPending) {
-                LogDebug("Async {} GPU pending discarded '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
-                continue;
-            }
-            if (!RHIRenderDevice::Get().IsGpuComplete(Pending.UploadCompletion)) {
-                Next.push_back(std::move(Pending));
-                continue;
-            }
-
-            auto Published = false;
-            {
-                std::lock_guard Lock(Family.Mutex);
-                auto* Entry = FindEntry(Family.Entries, Pending.Key);
-                Published = Entry && Entry->Slot.PublishReady(Pending.Generation, std::move(Pending.Resource));
-            }
-            if (!Published) {
-                LogDebug("Stale async {} ready discarded '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
-                continue;
-            }
-            LogDebug("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Pending.Key);
-        }
-        Family.GpuPending = std::move(Next);
-    }
-
-    ResourceFamilies                       m_Families = {};
-    std::atomic<bool>                      m_ShutdownRequested = false;
-    std::mutex                             m_PublishMutex;
-    std::mutex                             m_RhiDependencyMutex;
-    std::vector<std::function<bool()>>     m_RhiDependencyWaiters = {};
+    ResourceFamilies                   m_Families          = {};
+    std::atomic<bool>                  m_ShutdownRequested = false;
+    std::mutex                         m_PublishMutex;
+    std::mutex                         m_RhiDependencyMutex;
+    std::vector<std::function<bool()>> m_RhiDependencyWaiters = {};
 };
 
 template <ManagedResource T>
@@ -456,9 +340,7 @@ template <ManagedResource T>
         return {};
 
     return ResourceRef<T>::Create(
-        &Context,
-        Handle,
-        [](void* ContextPtr, const ResourceHandle<T>& ReleaseHandle) -> void {
+        &Context, Handle, [](void* ContextPtr, const ResourceHandle<T>& ReleaseHandle) -> void {
             static_cast<ResourceContext*>(ContextPtr)->ReleaseRef(ReleaseHandle);
         });
 }

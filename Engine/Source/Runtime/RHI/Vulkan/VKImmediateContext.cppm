@@ -13,6 +13,13 @@ import :Semaphore;
 
 namespace SoulEngine {
 
+/// Logical immediate-task queue owned solely by the Vulkan backend.
+export enum class VulkanImmediateQueue : Uint8 {
+    Unknown = 0,
+    Transfer,
+    Graphics,
+};
+
 /// Unified executor for short-lived transfer and graphics work.
 ///
 /// Each logical immediate queue owns a command pool and a timeline semaphore.
@@ -23,12 +30,11 @@ namespace SoulEngine {
 class VulkanImmediateContext {
   public:
     using CmdFn = std::function<void(const vk::raii::CommandBuffer&)>;
+    using CompletionFn = std::move_only_function<void()>;
 
-    /// A dependency produced by another logical immediate queue.
-    /// WaitStage identifies the first consumer stage in this submission.
-    struct WaitDependency {
-        RHIGpuCompletionToken Token = {};
-        vk::PipelineStageFlags2 WaitStage = vk::PipelineStageFlagBits2::eAllCommands;
+    struct CompletionDesc {
+        VulkanImmediateQueue ConsumerQueue = VulkanImmediateQueue::Unknown;
+        CompletionFn         OnComplete    = {};
     };
 
     VulkanImmediateContext() = default;
@@ -43,9 +49,9 @@ class VulkanImmediateContext {
         Context.m_Device = &Device;
         // These are distinct logical immediate queues even if both roles use
         // the same native VkQueue. They retain separate timeline token domains.
-        if (auto R = Context.InitializeQueue(RHIImmediateQueue::Transfer, TransferQueue, TransferFamily); !R)
+        if (auto R = Context.InitializeQueue(VulkanImmediateQueue::Transfer, TransferQueue, TransferFamily); !R)
             return std::unexpected(R.error().Append("VulkanImmediateContext transfer queue initialization failed"));
-        if (auto R = Context.InitializeQueue(RHIImmediateQueue::Graphics, GraphicsQueue, GraphicsFamily); !R)
+        if (auto R = Context.InitializeQueue(VulkanImmediateQueue::Graphics, GraphicsQueue, GraphicsFamily); !R)
             return std::unexpected(R.error().Append("VulkanImmediateContext graphics queue initialization failed"));
         return Context;
     }
@@ -55,10 +61,120 @@ class VulkanImmediateContext {
     /// SignalStage must include this task's last producer stage. Waits from the
     /// same logical queue are omitted because native VkQueue submission order
     /// already supplies that dependency.
-    [[nodiscard]] auto Submit(RHIImmediateQueue Queue,
-                              std::span<const WaitDependency> Waits,
+    [[nodiscard]] auto Submit(VulkanImmediateQueue Queue,
                               vk::PipelineStageFlags2 SignalStage,
-                              const CmdFn& RecordFn) -> std::expected<RHIGpuCompletionToken, ErrorMessage> {
+                              const CmdFn& RecordFn) -> std::expected<void, ErrorMessage> {
+        return Submit(Queue, SignalStage, RecordFn, CompletionDesc{});
+    }
+
+    [[nodiscard]] auto Submit(VulkanImmediateQueue Queue,
+                              vk::PipelineStageFlags2 SignalStage,
+                              const CmdFn& RecordFn,
+                              CompletionDesc Completion) -> std::expected<void, ErrorMessage> {
+        auto Producer = SubmitRaw(Queue, {}, SignalStage, RecordFn);
+        if (!Producer)
+            return std::unexpected(Producer.error());
+
+        if (!Completion.OnComplete)
+            return {};
+
+        const auto ConsumerQueue = Completion.ConsumerQueue == VulkanImmediateQueue::Unknown ? Queue : Completion.ConsumerQueue;
+        if (ConsumerQueue == Queue) {
+            EnqueueCompletionCallback(*Producer, std::move(Completion.OnComplete));
+            return {};
+        }
+
+        const WaitDependency Wait{.Point = *Producer};
+        auto Bridge = SubmitRaw(ConsumerQueue,
+                                std::span<const WaitDependency>{&Wait, 1},
+                                vk::PipelineStageFlagBits2::eAllCommands,
+                                [](const vk::raii::CommandBuffer&) {});
+        if (!Bridge) {
+            // Once the producer submission succeeds, completion-owned captures
+            // must remain alive until that GPU work retires even when the bridge
+            // cannot be submitted. The callback's state transition is guarded
+            // by RHIRefPayload::TryMarkReady().
+            EnqueueCompletionCallback(*Producer, std::move(Completion.OnComplete));
+            return std::unexpected(Bridge.error().Append("Immediate task consumer bridge submission failed"));
+        }
+
+        EnqueueCompletionCallback(*Bridge, std::move(Completion.OnComplete));
+        return {};
+    }
+
+    [[nodiscard]] auto SubmitAndWait(VulkanImmediateQueue Queue,
+                                     vk::PipelineStageFlags2 SignalStage,
+                                     const CmdFn& RecordFn) -> std::expected<void, ErrorMessage> {
+        auto Submission = SubmitRaw(Queue, {}, SignalStage, RecordFn);
+        if (!Submission)
+            return std::unexpected(Submission.error());
+        auto* State = GetState(Queue);
+        if (auto R = State->Timeline.Wait(Submission->Value); !R)
+            return std::unexpected(R.error().Append("Immediate task CPU wait failed"));
+        TickState(*State);
+        return {};
+    }
+
+    /// Release completed command buffers and run their deferred callbacks.
+    /// Called once per frame; IsComplete remains usable between ticks.
+    auto Tick() -> void {
+        TickState(m_Transfer);
+        TickState(m_Graphics);
+    }
+
+    /// Wait for every submitted task during device shutdown, then retire all callbacks.
+    [[nodiscard]] auto Drain() -> std::expected<void, ErrorMessage> {
+        for (auto* State : {&m_Transfer, &m_Graphics}) {
+            if (!State->Queue || State->LastSubmitted == 0)
+                continue;
+            if (auto R = State->Timeline.Wait(State->LastSubmitted); !R)
+                return std::unexpected(R.error().Append("Immediate task timeline drain failed"));
+        }
+        Tick();
+        return {};
+    }
+
+    VulkanImmediateContext(VulkanImmediateContext&&) = default;
+    auto operator=(VulkanImmediateContext&&) -> VulkanImmediateContext& = default;
+    VulkanImmediateContext(const VulkanImmediateContext&) = delete;
+    auto operator=(const VulkanImmediateContext&) -> VulkanImmediateContext& = delete;
+
+  private:
+    struct TimelinePoint {
+        VulkanImmediateQueue Queue = VulkanImmediateQueue::Unknown;
+        Uint64               Value = 0;
+    };
+
+    /// A dependency produced by another logical immediate queue.
+    /// WaitStage identifies the first consumer stage in this submission.
+    struct WaitDependency {
+        TimelinePoint               Point     = {};
+        vk::PipelineStageFlags2 WaitStage = vk::PipelineStageFlagBits2::eAllCommands;
+    };
+
+    /// A lifetime action retired once its logical immediate queue reaches Value.
+    struct PendingCallback {
+        Uint64       Value    = 0;
+        CompletionFn Callback = {};
+    };
+
+    /// State isolated per logical immediate queue.
+    ///
+    /// Queue is the native VkQueue used for submission. Timelines remain
+    /// independent even when two logical queues share that native VkQueue, so
+    /// queue-qualified completion tokens cannot be confused.
+    struct QueueState {
+        vk::raii::Queue* Queue = nullptr;
+        vk::raii::CommandPool Pool = nullptr;
+        VulkanTimelineSemaphore Timeline;
+        Uint64 LastSubmitted = 0;
+        std::deque<PendingCallback> Callbacks = {};
+    };
+
+    [[nodiscard]] auto SubmitRaw(VulkanImmediateQueue Queue,
+                                 std::span<const WaitDependency> Waits,
+                                 vk::PipelineStageFlags2 SignalStage,
+                                 const CmdFn& RecordFn) -> std::expected<TimelinePoint, ErrorMessage> {
         auto* State = GetState(Queue);
         if (!State)
             return std::unexpected(ErrorMessage("Immediate task requested an unavailable queue"));
@@ -85,24 +201,24 @@ class VulkanImmediateContext {
         std::vector<vk::SemaphoreSubmitInfo> WaitInfos = {};
         WaitInfos.reserve(Waits.size());
         for (const auto& Wait : Waits) {
-            if (Wait.Token.Value == 0)
+            if (Wait.Point.Value == 0)
                 continue;
-            auto* WaitState = GetState(Wait.Token.Queue);
+            auto* WaitState = GetState(Wait.Point.Queue);
             if (!WaitState)
                 return std::unexpected(ErrorMessage("Immediate task wait references an unavailable queue"));
-            if (Wait.Token.Queue == Queue)
+            if (Wait.Point.Queue == Queue)
                 continue;
             WaitInfos.emplace_back(vk::SemaphoreSubmitInfo{
                 .semaphore = WaitState->Timeline.Get(),
-                .value     = Wait.Token.Value,
+                .value     = Wait.Point.Value,
                 .stageMask = Wait.WaitStage,
             });
         }
 
-        const RHIGpuCompletionToken Token{.Queue = Queue, .Value = State->Timeline.NextValue()};
+        const TimelinePoint Point{.Queue = Queue, .Value = State->Timeline.NextValue()};
         const vk::SemaphoreSubmitInfo SignalInfo{
             .semaphore = State->Timeline.Get(),
-            .value     = Token.Value,
+            .value     = Point.Value,
             .stageMask = SignalStage,
         };
         const vk::CommandBufferSubmitInfo CmdInfo{.commandBuffer = CmdBuf};
@@ -117,87 +233,43 @@ class VulkanImmediateContext {
         if (auto R = State->Queue->submit2({SubmitInfo}); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Immediate task submit failed"));
 
-        State->LastSubmitted = Token.Value;
+        State->LastSubmitted = Point.Value;
         // Keep the command buffer alive until its submission is complete; the
         // empty callback owns the RAII command-buffer wrapper for that period.
-        EnqueueCompletionCallback(Token, [CommandBuffer = std::make_shared<vk::raii::CommandBuffer>(std::move(CmdBuf))]() {});
-        return Token;
+        EnqueueCompletionCallback(Point, [CommandBuffer = std::make_shared<vk::raii::CommandBuffer>(std::move(CmdBuf))]() {});
+        return Point;
     }
 
     /// Poll whether Token has completed without retiring deferred callbacks.
-    [[nodiscard]] auto IsComplete(RHIGpuCompletionToken Token) -> bool {
-        if (Token.Value == 0)
+    [[nodiscard]] auto IsComplete(TimelinePoint Point) -> bool {
+        if (Point.Value == 0)
             return true;
-        auto* State = GetState(Token.Queue);
+        auto* State = GetState(Point.Queue);
         if (!State)
             return false;
         auto Current = State->Timeline.GetCurrentValue();
-        return Current && *Current >= Token.Value;
+        return Current && *Current >= Point.Value;
     }
 
     /// Retire Callback on Tick after Token reaches its timeline value.
-    auto EnqueueCompletionCallback(RHIGpuCompletionToken Token, std::function<void()> Callback) -> void {
-        auto* State = GetState(Token.Queue);
-        if (!State || Token.Value == 0)
+    auto EnqueueCompletionCallback(TimelinePoint Point, CompletionFn Callback) -> void {
+        auto* State = GetState(Point.Queue);
+        if (!State || Point.Value == 0)
             return;
-        State->Callbacks.emplace_back(PendingCallback{.Value = Token.Value, .Callback = std::move(Callback)});
-    }
-
-    /// Release completed command buffers and run their deferred callbacks.
-    /// Called once per frame; IsComplete remains usable between ticks.
-    auto Tick() -> void {
-        TickState(m_Transfer);
-        TickState(m_Graphics);
+        State->Callbacks.emplace_back(PendingCallback{.Value = Point.Value, .Callback = std::move(Callback)});
     }
 
     /// Block the CPU until Token completes. Use only where CPU visibility is required.
-    [[nodiscard]] auto Wait(RHIGpuCompletionToken Token) -> std::expected<void, ErrorMessage> {
-        if (Token.Value == 0)
+    [[nodiscard]] auto Wait(TimelinePoint Point) -> std::expected<void, ErrorMessage> {
+        if (Point.Value == 0)
             return {};
-        auto* State = GetState(Token.Queue);
+        auto* State = GetState(Point.Queue);
         if (!State)
             return std::unexpected(ErrorMessage("Immediate task wait references an unavailable queue"));
-        return State->Timeline.Wait(Token.Value);
+        return State->Timeline.Wait(Point.Value);
     }
 
-    /// Wait for every submitted task during device shutdown, then retire all callbacks.
-    [[nodiscard]] auto Drain() -> std::expected<void, ErrorMessage> {
-        for (auto* State : {&m_Transfer, &m_Graphics}) {
-            if (!State->Queue || State->LastSubmitted == 0)
-                continue;
-            if (auto R = State->Timeline.Wait(State->LastSubmitted); !R)
-                return std::unexpected(R.error().Append("Immediate task timeline drain failed"));
-        }
-        Tick();
-        return {};
-    }
-
-    VulkanImmediateContext(VulkanImmediateContext&&) = default;
-    auto operator=(VulkanImmediateContext&&) -> VulkanImmediateContext& = default;
-    VulkanImmediateContext(const VulkanImmediateContext&) = delete;
-    auto operator=(const VulkanImmediateContext&) -> VulkanImmediateContext& = delete;
-
-  private:
-    /// A lifetime action retired once its logical immediate queue reaches Value.
-    struct PendingCallback {
-        Uint64 Value = 0;
-        std::function<void()> Callback = {};
-    };
-
-    /// State isolated per logical immediate queue.
-    ///
-    /// Queue is the native VkQueue used for submission. Timelines remain
-    /// independent even when two logical queues share that native VkQueue, so
-    /// queue-qualified completion tokens cannot be confused.
-    struct QueueState {
-        vk::raii::Queue* Queue = nullptr;
-        vk::raii::CommandPool Pool = nullptr;
-        VulkanTimelineSemaphore Timeline;
-        Uint64 LastSubmitted = 0;
-        std::deque<PendingCallback> Callbacks = {};
-    };
-
-    [[nodiscard]] auto InitializeQueue(RHIImmediateQueue Kind, vk::raii::Queue& Queue, Uint32 Family)
+    [[nodiscard]] auto InitializeQueue(VulkanImmediateQueue Kind, vk::raii::Queue& Queue, Uint32 Family)
         -> std::expected<void, ErrorMessage> {
         auto* State = GetState(Kind);
         if (!State)
@@ -220,12 +292,11 @@ class VulkanImmediateContext {
         return {};
     }
 
-    [[nodiscard]] auto GetState(RHIImmediateQueue Queue) -> QueueState* {
+    [[nodiscard]] auto GetState(VulkanImmediateQueue Queue) -> QueueState* {
         switch (Queue) {
-        case RHIImmediateQueue::Transfer: return &m_Transfer;
-        case RHIImmediateQueue::Graphics: return &m_Graphics;
-        case RHIImmediateQueue::Unknown:
-        case RHIImmediateQueue::Compute: return nullptr;
+        case VulkanImmediateQueue::Transfer: return &m_Transfer;
+        case VulkanImmediateQueue::Graphics: return &m_Graphics;
+        case VulkanImmediateQueue::Unknown: return nullptr;
         }
         return nullptr;
     }

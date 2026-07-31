@@ -1,9 +1,14 @@
 /// @file   RHIRayTracing.cppm
 /// @brief  Backend-agnostic hardware ray-tracing resource and command descriptors.
 
+module;
+
+#include <cstddef>
+
 export module RHI:RayTracing;
 
 export import :Types;
+import :Ref;
 
 import Shader;
 
@@ -13,8 +18,8 @@ export namespace SoulEngine {
 
 /// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
 struct RHITriangleAccelerationStructureGeometryDesc {
-    RHIVertexBuffer* VertexBufferPtr = nullptr;
-    RHIIndexBuffer*  IndexBufferPtr  = nullptr;
+    RHIRef<RHIVertexBuffer> VertexBufferRef = nullptr;
+    RHIRef<RHIIndexBuffer>  IndexBufferRef  = nullptr;
 };
 
 /// Descriptor for immutable triangle geometry used to construct a BLAS.
@@ -44,7 +49,7 @@ struct RHIRowMajorTransform3x4 {
 };
 
 /// Common GPU resource base for BLAS and TLAS payloads.
-class RHIAccelerationStructure : public RHIGpuResource {
+class RHIAccelerationStructure {
   public:
     RHIAccelerationStructure()                                                   = default;
     RHIAccelerationStructure(const RHIAccelerationStructure&)                    = delete;
@@ -81,24 +86,24 @@ class RHITopLevelAccelerationStructure : public RHIAccelerationStructure {
 /// This record intentionally contains RHI resource observers and layout intent only.
 /// The backend resolves native device addresses while recording the command list.
 struct RHIRayTracingGeometryDesc {
-    RHIVertexBuffer* PositionBuffer     = nullptr;
-    RHIVertexBuffer* NormalBuffer       = nullptr;
-    RHIVertexBuffer* TangentBuffer      = nullptr;
-    RHIVertexBuffer* TexCoordBuffer     = nullptr;
-    RHIIndexBuffer*  IndexBuffer        = nullptr;
-    Uint32           PositionByteOffset = 0;
-    Uint32           NormalByteOffset   = 0;
-    Uint32           TangentByteOffset  = 0;
-    Uint32           TexCoordByteOffset = 0;
-    Uint32           IndexByteOffset    = 0;
-    Uint32           PositionStride     = sizeof(Float32) * 3;
-    Uint32           NormalStride       = sizeof(Float32) * 3;
-    Uint32           TangentStride      = sizeof(Float32) * 4;
-    Uint32           TexCoordStride     = sizeof(Float32) * 2;
-    Uint32           IndexStride        = sizeof(Uint32);
-    Uint32           VertexCount        = 0;
-    Uint32           IndexCount         = 0;
-    Uint32           MaterialIndex      = 0;
+    RHIRef<RHIVertexBuffer> PositionBufferRef  = nullptr;
+    RHIRef<RHIVertexBuffer> NormalBufferRef    = nullptr;
+    RHIRef<RHIVertexBuffer> TangentBufferRef   = nullptr;
+    RHIRef<RHIVertexBuffer> TexCoordBufferRef  = nullptr;
+    RHIRef<RHIIndexBuffer>  IndexBufferRef     = nullptr;
+    Uint32                  PositionByteOffset = 0;
+    Uint32                  NormalByteOffset   = 0;
+    Uint32                  TangentByteOffset  = 0;
+    Uint32                  TexCoordByteOffset = 0;
+    Uint32                  IndexByteOffset    = 0;
+    Uint32                  PositionStride     = sizeof(Float32) * 3;
+    Uint32                  NormalStride       = sizeof(Float32) * 3;
+    Uint32                  TangentStride      = sizeof(Float32) * 4;
+    Uint32                  TexCoordStride     = sizeof(Float32) * 2;
+    Uint32                  IndexStride        = sizeof(Uint32);
+    Uint32                  VertexCount        = 0;
+    Uint32                  IndexCount         = 0;
+    Uint32                  MaterialIndex      = 0;
 };
 
 /// Shader-visible per-instance range into ray-tracing geometry data.
@@ -111,7 +116,7 @@ struct RHIRayTracingInstanceData {
 ///
 /// Renderer allocates storage for this ABI but never writes device addresses;
 /// the backend resolves source buffers while executing the upload command.
-struct alignas(16) RHIRayTracingGeometryData {
+struct alignas(8) RHIRayTracingGeometryData {
     Uint64 PositionAddress    = 0;
     Uint64 NormalAddress      = 0;
     Uint64 TangentAddress     = 0;
@@ -130,8 +135,12 @@ struct alignas(16) RHIRayTracingGeometryData {
     Uint32 MaterialIndex      = 0;
 };
 static_assert(sizeof(RHIRayTracingInstanceData) == 8);
-static_assert(sizeof(RHIRayTracingGeometryData) == 96);
-static_assert(alignof(RHIRayTracingGeometryData) == 16);
+static_assert(sizeof(RHIRayTracingGeometryData) == 88);
+static_assert(alignof(RHIRayTracingGeometryData) == 8);
+static_assert(offsetof(RHIRayTracingGeometryData, PositionAddress) == 0);
+static_assert(offsetof(RHIRayTracingGeometryData, PositionByteOffset) == 40);
+static_assert(offsetof(RHIRayTracingGeometryData, PositionStride) == 60);
+static_assert(offsetof(RHIRayTracingGeometryData, MaterialIndex) == 80);
 
 /// Backend-neutral instance flags for TLAS population.
 enum class RHIAccelerationStructureInstanceFlags : Uint8 {
@@ -141,12 +150,12 @@ enum class RHIAccelerationStructureInstanceFlags : Uint8 {
 
 /// One TLAS instance referencing a reusable BLAS.
 struct RHIAccelerationStructureInstance {
-    RHIBottomLevelAccelerationStructure*  BottomLevelPtr = nullptr;
-    RHIRowMajorTransform3x4               Transform      = {};
-    Uint32                                CustomIndex    = 0;
-    Uint32                                HitGroupIndex  = 0;
-    Uint8                                 Mask           = 0xFF;
-    RHIAccelerationStructureInstanceFlags Flags          = RHIAccelerationStructureInstanceFlags::None;
+    RHIRef<RHIBottomLevelAccelerationStructure> BottomLevelRef = nullptr;
+    RHIRowMajorTransform3x4                     Transform      = {};
+    Uint32                                      CustomIndex    = 0;
+    Uint32                                      HitGroupIndex  = 0;
+    Uint8                                       Mask           = 0xFF;
+    RHIAccelerationStructureInstanceFlags       Flags          = RHIAccelerationStructureInstanceFlags::None;
 };
 
 /// Requested TLAS population operation. Backends select rebuild only when update is invalid.

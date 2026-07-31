@@ -9,7 +9,6 @@ export module Resource:Mesh;
 
 export import Core;
 export import RHI;
-import :Buffer;
 import :Context;
 import :RequestCommon;
 export import :Types;
@@ -51,24 +50,25 @@ enum class ImportedTextureSemantic : Uint8 {
     return "unknown";
 }
 
-[[nodiscard]] auto GetExternalTexturePath(const aiMaterial& Material,
-                                          aiTextureType Type,
+[[nodiscard]] auto GetExternalTexturePath(const aiMaterial&       Material,
+                                          aiTextureType           Type,
                                           ImportedTextureSemantic Semantic,
-                                          const Path& MeshDirectory)
-    -> String {
+                                          const Path&             MeshDirectory) -> String {
     const auto TextureCount = Material.GetTextureCount(Type);
     if (TextureCount == 0)
         return {};
     if (TextureCount != 1) {
-        LogWarning("Assimp material {} texture disabled: layered texture stacks are not supported", TextureSemanticName(Semantic));
+        LogWarning("Assimp material {} texture disabled: layered texture stacks are not supported",
+                   TextureSemanticName(Semantic));
         return {};
     }
 
-    aiString TexturePath = {};
-    aiTextureMapping Mapping = aiTextureMapping_UV;
-    Uint32 UVIndex = 0;
+    aiString         TexturePath = {};
+    aiTextureMapping Mapping     = aiTextureMapping_UV;
+    Uint32           UVIndex     = 0;
     if (Material.GetTexture(Type, 0, &TexturePath, &Mapping, &UVIndex) != AI_SUCCESS) {
-        LogWarning("Assimp material {} texture disabled: failed to read texture binding", TextureSemanticName(Semantic));
+        LogWarning("Assimp material {} texture disabled: failed to read texture binding",
+                   TextureSemanticName(Semantic));
         return {};
     }
     if (Mapping != aiTextureMapping_UV || UVIndex != 0) {
@@ -78,11 +78,13 @@ enum class ImportedTextureSemantic : Uint8 {
 
     const Path SourcePath = TexturePath.C_Str();
     if (TexturePath.length == 0 || TexturePath.C_Str()[0] == '*') {
-        LogWarning("Assimp material {} texture disabled: embedded textures are not supported", TextureSemanticName(Semantic));
+        LogWarning("Assimp material {} texture disabled: embedded textures are not supported",
+                   TextureSemanticName(Semantic));
         return {};
     }
     if (SourcePath.is_absolute()) {
-        LogWarning("Assimp material {} texture disabled: absolute paths are not supported", TextureSemanticName(Semantic));
+        LogWarning("Assimp material {} texture disabled: absolute paths are not supported",
+                   TextureSemanticName(Semantic));
         return {};
     }
 
@@ -94,11 +96,8 @@ enum class ImportedTextureSemantic : Uint8 {
     return Normalized.string();
 }
 
-[[nodiscard]] auto ReadColor(const aiMaterial& Material,
-                             const char* Key,
-                             Uint32 Type,
-                             Uint32 Index,
-                             hlslpp::float3 Fallback)
+[[nodiscard]] auto
+ReadColor(const aiMaterial& Material, const char* Key, Uint32 Type, Uint32 Index, hlslpp::float3 Fallback)
     -> hlslpp::float3 {
     aiColor4D Value = {};
     if (Material.Get(Key, Type, Index, Value) != AI_SUCCESS)
@@ -130,7 +129,8 @@ enum class ImportedTextureSemantic : Uint8 {
     }
     Result.Material.Emissive = ReadColor(*AiMaterial, AI_MATKEY_COLOR_EMISSIVE, hlslpp::float3{0.0f, 0.0f, 0.0f});
     Result.Material.Metallic = std::clamp(ReadFloat(*AiMaterial, AI_MATKEY_METALLIC_FACTOR, 0.0f), 0.0f, 1.0f);
-    Result.Material.Roughness = std::clamp(ReadFloat(*AiMaterial, AI_MATKEY_ROUGHNESS_FACTOR, Result.Material.Roughness), 0.0f, 1.0f);
+    Result.Material.Roughness =
+        std::clamp(ReadFloat(*AiMaterial, AI_MATKEY_ROUGHNESS_FACTOR, Result.Material.Roughness), 0.0f, 1.0f);
 
     Result.Material.BaseColorTexture = GetExternalTexturePath(
         *AiMaterial, aiTextureType_BASE_COLOR, ImportedTextureSemantic::BaseColor, MeshDirectory);
@@ -140,10 +140,10 @@ enum class ImportedTextureSemantic : Uint8 {
     Result.Material.NormalTexture = GetExternalTexturePath(
         *AiMaterial, aiTextureType_NORMAL_CAMERA, ImportedTextureSemantic::Normal, MeshDirectory);
     if (Result.Material.NormalTexture.empty())
-        Result.Material.NormalTexture = GetExternalTexturePath(
-            *AiMaterial, aiTextureType_NORMALS, ImportedTextureSemantic::Normal, MeshDirectory);
-    Result.Material.MetallicTexture = GetExternalTexturePath(
-        *AiMaterial, aiTextureType_METALNESS, ImportedTextureSemantic::Metallic, MeshDirectory);
+        Result.Material.NormalTexture =
+            GetExternalTexturePath(*AiMaterial, aiTextureType_NORMALS, ImportedTextureSemantic::Normal, MeshDirectory);
+    Result.Material.MetallicTexture =
+        GetExternalTexturePath(*AiMaterial, aiTextureType_METALNESS, ImportedTextureSemantic::Metallic, MeshDirectory);
     Result.Material.RoughnessTexture = GetExternalTexturePath(
         *AiMaterial, aiTextureType_DIFFUSE_ROUGHNESS, ImportedTextureSemantic::Roughness, MeshDirectory);
     Result.Material.OcclusionTexture = GetExternalTexturePath(
@@ -154,10 +154,11 @@ enum class ImportedTextureSemantic : Uint8 {
         Result.Material.EmissiveTexture = GetExternalTexturePath(
             *AiMaterial, aiTextureType_EMISSIVE, ImportedTextureSemantic::Emissive, MeshDirectory);
 
-    if (!Result.Material.MetallicTexture.empty() && Result.Material.MetallicTexture == Result.Material.RoughnessTexture) {
+    if (!Result.Material.MetallicTexture.empty() &&
+        Result.Material.MetallicTexture == Result.Material.RoughnessTexture) {
         Result.Material.MetallicRoughnessTexture = Result.Material.MetallicTexture;
-        Result.Material.MetallicTexture = {};
-        Result.Material.RoughnessTexture = {};
+        Result.Material.MetallicTexture          = {};
+        Result.Material.RoughnessTexture         = {};
     }
     return Result;
 }
@@ -168,15 +169,15 @@ enum class ImportedTextureSemantic : Uint8 {
     Assimp::Importer Importer;
 
     constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
-                             aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality |
-                             aiProcess_OptimizeMeshes;
+                             aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
+                             aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes;
 
     const auto* Scene = Importer.ReadFile(String(MeshPath).c_str(), Flags);
     if (!Scene || !Scene->mRootNode || Scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE)
         return std::unexpected(
             ErrorMessage(Format("Assimp import failed '{}': {}", MeshPath, Importer.GetErrorString())));
 
-    Out.m_Name = Path(String(MeshPath)).stem().string();
+    Out.m_Name               = Path(String(MeshPath)).stem().string();
     const Path MeshDirectory = Path(String(MeshPath)).parent_path();
     Out.m_ImportedMaterials.reserve(Scene->mNumMaterials);
     for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex) {
@@ -194,7 +195,7 @@ enum class ImportedTextureSemantic : Uint8 {
             continue;
 
         MeshGroup Group{.Name = AiMesh->mName.C_Str()};
-        SubMesh Sub{
+        SubMesh   Sub{
             .VertexCount  = AiMesh->mNumVertices,
             .MaterialSlot = AiMesh->mMaterialIndex,
             .HasUV0       = AiMesh->mTextureCoords[0] != nullptr,
@@ -211,14 +212,15 @@ enum class ImportedTextureSemantic : Uint8 {
             const auto Normal = AiMesh->mNormals ? AiMesh->mNormals[VertexIndex] : aiVector3D{0.0f, 1.0f, 0.0f};
             Sub.Normals.push_back(hlslpp::interop::float3{hlslpp::float3{Normal.x, Normal.y, Normal.z}});
 
-            const auto Tangent = AiMesh->mTangents ? AiMesh->mTangents[VertexIndex] : aiVector3D{1.0f, 0.0f, 0.0f};
-            float Handedness = 1.0f;
+            const auto Tangent    = AiMesh->mTangents ? AiMesh->mTangents[VertexIndex] : aiVector3D{1.0f, 0.0f, 0.0f};
+            float      Handedness = 1.0f;
             if (Sub.HasTangents) {
                 const auto Bitangent = AiMesh->mBitangents[VertexIndex];
-                const auto Cross = Normal ^ Tangent;
-                Handedness = (Cross * Bitangent) < 0.0f ? -1.0f : 1.0f;
+                const auto Cross     = Normal ^ Tangent;
+                Handedness           = (Cross * Bitangent) < 0.0f ? -1.0f : 1.0f;
             }
-            Sub.Tangents.push_back(hlslpp::interop::float4{hlslpp::float4{Tangent.x, Tangent.y, Tangent.z, Handedness}});
+            Sub.Tangents.push_back(
+                hlslpp::interop::float4{hlslpp::float4{Tangent.x, Tangent.y, Tangent.z, Handedness}});
 
             const auto UV = Sub.HasUV0 ? AiMesh->mTextureCoords[0][VertexIndex] : aiVector3D{};
             Sub.UVs.push_back(hlslpp::interop::float2{hlslpp::float2{UV.x, UV.y}});
@@ -257,55 +259,141 @@ enum class ImportedTextureSemantic : Uint8 {
     return &m_ImportedMaterials[MaterialSlot].Material;
 }
 
-auto UploadMeshBuffers(ResourceContext& Context, const String& MeshKey, ResourceMesh& InMesh) -> void {
-    auto& Groups = InMesh.GetMeshGroups();
-    for (std::size_t GroupIndex = 0; GroupIndex < Groups.size(); ++GroupIndex) {
-        auto& Group = Groups[GroupIndex];
-        for (std::size_t SubMeshIndex = 0; SubMeshIndex < Group.SubMeshes.size(); ++SubMeshIndex) {
-            auto& Sub = Group.SubMeshes[SubMeshIndex];
-            auto  Key = Format("{}/group{}/submesh{}", MeshKey, GroupIndex, SubMeshIndex);
+struct MeshBufferRequestHandles {
+    RHIRef<RHIVertexBuffer> Position = nullptr;
+    RHIRef<RHIVertexBuffer> Normal   = nullptr;
+    RHIRef<RHIVertexBuffer> Tangent  = nullptr;
+    RHIRef<RHIVertexBuffer> UV       = nullptr;
+    RHIRef<RHIIndexBuffer>  Index    = nullptr;
+};
 
-            Sub.PositionVB = SubmitVertexBufferRequest(Context, Key + "_pos", {.Data = Sub.Positions.data(),
-                                                                                .VertexCount = Sub.Positions.size(),
-                                                                                .Stride = sizeof(hlslpp::interop::float3)});
-            Sub.NormalVB = SubmitVertexBufferRequest(Context, Key + "_nrm", {.Data = Sub.Normals.data(),
-                                                                              .VertexCount = Sub.Normals.size(),
-                                                                              .Stride = sizeof(hlslpp::interop::float3)});
-            Sub.TangentVB = SubmitVertexBufferRequest(Context, Key + "_tan", {.Data = Sub.Tangents.data(),
-                                                                               .VertexCount = Sub.Tangents.size(),
-                                                                               .Stride = sizeof(hlslpp::interop::float4)});
-            Sub.UVVB = SubmitVertexBufferRequest(Context, Key + "_uv", {.Data = Sub.UVs.data(),
-                                                                         .VertexCount = Sub.UVs.size(),
-                                                                         .Stride = sizeof(hlslpp::interop::float2)});
-            Sub.IB = SubmitIndexBufferRequest(
-                Context, Key + "_ib", {.Data = Sub.Indices.data(), .IndexCount = Sub.Indices.size()});
+struct PendingMeshUpload {
+    ResourceContext*                      Context       = nullptr;
+    ResourceGeneration                    Generation    = 0;
+    String                                Key           = {};
+    UPtr<ResourceMesh>                    Mesh          = nullptr;
+    std::vector<MeshBufferRequestHandles> BufferHandles = {};
+};
+
+[[nodiscard]] auto RequestMeshVertexBuffer(const RHIVertexBufferDesc& Desc) -> RHIRef<RHIVertexBuffer> {
+    auto Buffer = RHIRenderDevice::Get().CreateVertexBuffer(Desc);
+    if (!Buffer) {
+        LogError("Failed to queue mesh vertex buffer creation: {}", Buffer.error().ToString());
+        return {};
+    }
+    return std::move(*Buffer);
+}
+
+[[nodiscard]] auto RequestMeshIndexBuffer(const RHIIndexBufferDesc& Desc) -> RHIRef<RHIIndexBuffer> {
+    auto Buffer = RHIRenderDevice::Get().CreateIndexBuffer(Desc);
+    if (!Buffer) {
+        LogError("Failed to queue mesh index buffer creation: {}", Buffer.error().ToString());
+        return {};
+    }
+    return std::move(*Buffer);
+}
+
+[[nodiscard]] auto SubmitMeshBufferRequests(const ResourceMesh& Mesh) -> std::vector<MeshBufferRequestHandles> {
+    std::vector<MeshBufferRequestHandles> Result = {};
+    const auto&                           Groups = Mesh.GetMeshGroups();
+    for (const auto& Group : Groups) {
+        for (const auto& Sub : Group.SubMeshes) {
+            Result.emplace_back(MeshBufferRequestHandles{
+                .Position = RequestMeshVertexBuffer({.Data        = std::as_bytes(std::span{Sub.Positions}),
+                                                     .VertexCount = Sub.Positions.size(),
+                                                     .Stride      = sizeof(hlslpp::interop::float3)}),
+                .Normal   = RequestMeshVertexBuffer({.Data        = std::as_bytes(std::span{Sub.Normals}),
+                                                     .VertexCount = Sub.Normals.size(),
+                                                     .Stride      = sizeof(hlslpp::interop::float3)}),
+                .Tangent  = RequestMeshVertexBuffer({.Data        = std::as_bytes(std::span{Sub.Tangents}),
+                                                     .VertexCount = Sub.Tangents.size(),
+                                                     .Stride      = sizeof(hlslpp::interop::float4)}),
+                .UV       = RequestMeshVertexBuffer(
+                    {.Data = std::as_bytes(std::span{Sub.UVs}), .VertexCount = Sub.UVs.size(), .Stride = sizeof(hlslpp::interop::float2)}),
+                .Index = RequestMeshIndexBuffer({.Data = std::as_bytes(std::span{Sub.Indices}), .IndexCount = Sub.Indices.size()}),
+            });
         }
     }
+    return Result;
+}
+
+[[nodiscard]] auto ResolveMeshBufferDependencies(const std::shared_ptr<PendingMeshUpload>& Pending) -> bool {
+    auto& Context = *Pending->Context;
+    if (Context.IsShutdownRequested())
+        return true;
+
+    std::size_t BufferIndex = 0;
+    for (auto& Group : Pending->Mesh->GetMeshGroups()) {
+        for (auto& Sub : Group.SubMeshes) {
+            if (BufferIndex >= Pending->BufferHandles.size()) {
+                PublishResourceFailed<ResourceMesh>(
+                    Context, Pending->Generation, Pending->Key, ErrorMessage("Mesh buffer dependency count mismatch"));
+                return true;
+            }
+
+            const auto& Handles  = Pending->BufferHandles[BufferIndex++];
+            auto        Position = Handles.Position;
+            auto        Normal   = Handles.Normal;
+            auto        Tangent  = Handles.Tangent;
+            auto        UV       = Handles.UV;
+            auto        Index    = Handles.Index;
+            if (Position.GetState() == RHIRefState::Failed || Normal.GetState() == RHIRefState::Failed ||
+                Tangent.GetState() == RHIRefState::Failed || UV.GetState() == RHIRefState::Failed ||
+                Index.GetState() == RHIRefState::Failed) {
+                PublishResourceFailed<ResourceMesh>(
+                    Context, Pending->Generation, Pending->Key, ErrorMessage("Mesh buffer creation failed"));
+                return true;
+            }
+            if (!Position.TryGet() || !Normal.TryGet() || !Tangent.TryGet() || !UV.TryGet() || !Index.TryGet())
+                return false;
+
+            Sub.PositionVB = std::move(Position);
+            Sub.NormalVB   = std::move(Normal);
+            Sub.TangentVB  = std::move(Tangent);
+            Sub.UVVB       = std::move(UV);
+            Sub.IB         = std::move(Index);
+        }
+    }
+
+    if (BufferIndex != Pending->BufferHandles.size()) {
+        PublishResourceFailed<ResourceMesh>(
+            Context, Pending->Generation, Pending->Key, ErrorMessage("Mesh buffer dependency count mismatch"));
+        return true;
+    }
+
+    PublishResourceReady<ResourceMesh>(
+        Context, Pending->Generation, Pending->Key, {.Object = std::move(Pending->Mesh)});
+    return true;
 }
 
 [[nodiscard]] auto SubmitMeshRequest(ResourceContext& Context, StringView MeshPath) -> ResourceHandle<ResourceMesh> {
-    const auto Key = NormalizeMeshResourcePath(MeshPath);
+    const auto Key  = NormalizeMeshResourcePath(MeshPath);
     auto       Work = BeginResourceWork<ResourceMesh>(Context, Key);
     if (!Work.ShouldStartWork)
         return Work.Handle;
 
     auto* ContextPtr = &Context;
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
-        [ContextPtr, Generation = Work.Handle.GetGeneration(), Key] {
-        auto& Context = *ContextPtr;
-        if (Context.IsShutdownRequested())
-            return;
+    auto  EnqueueResult =
+        TaskGraph::Get().EnqueueBackground([ContextPtr, Generation = Work.Handle.GetGeneration(), Key] {
+            auto& Context = *ContextPtr;
+            if (Context.IsShutdownRequested())
+                return;
 
-        auto ImportedMesh = std::make_unique<ResourceMesh>();
-        if (auto Parsed = ParseAssimpMeshes(Key, *ImportedMesh); !Parsed) {
-            PublishResourceFailed<ResourceMesh>(Context, Generation, Key, Parsed.error());
-            return;
-        }
-        if (Context.IsShutdownRequested())
-            return;
+            auto ImportedMesh = std::make_unique<ResourceMesh>();
+            if (auto Parsed = ParseAssimpMeshes(Key, *ImportedMesh); !Parsed) {
+                PublishResourceFailed<ResourceMesh>(Context, Generation, Key, Parsed.error());
+                return;
+            }
+            if (Context.IsShutdownRequested())
+                return;
 
-        UploadMeshBuffers(Context, Key, *ImportedMesh);
-        PublishResourceReady<ResourceMesh>(Context, Generation, Key, {.Object = std::move(ImportedMesh)});
+            auto Pending           = std::make_shared<PendingMeshUpload>();
+            Pending->Context       = &Context;
+            Pending->Generation    = Generation;
+            Pending->Key           = Key;
+            Pending->BufferHandles = SubmitMeshBufferRequests(*ImportedMesh);
+            Pending->Mesh          = std::move(ImportedMesh);
+            Context.EnqueueRhiDependencyWaiter([Pending] { return ResolveMeshBufferDependencies(Pending); });
         });
     if (!EnqueueResult) {
         PublishResourceFailed<ResourceMesh>(

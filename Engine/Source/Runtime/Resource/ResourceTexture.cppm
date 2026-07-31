@@ -6,9 +6,6 @@ export module Resource:Texture;
 
 export import Core;
 export import RHI;
-import :Context;
-import :RequestCommon;
-export import :Types;
 import TaskGraph;
 export import std;
 
@@ -32,8 +29,8 @@ struct DecodedTexture {
     auto* Pixels = stbi_load(String(TexturePath).c_str(), &W, &H, &Ch, 4);
     if (!Pixels) {
         const char* Reason = stbi_failure_reason();
-        return std::unexpected(ErrorMessage(Format(
-            "stbi_load failed for '{}': {}", TexturePath, Reason ? StringView(Reason) : StringView("unknown"))));
+        return std::unexpected(ErrorMessage(
+            Format("stbi_load failed for '{}': {}", TexturePath, Reason ? StringView(Reason) : StringView("unknown"))));
     }
 
     const std::size_t  PixelByteCount = static_cast<std::size_t>(W) * static_cast<std::size_t>(H) * 4;
@@ -47,91 +44,43 @@ struct DecodedTexture {
     };
 }
 
-[[nodiscard]] auto SubmitSampledTextureRequest(ResourceContext& Context, StringView TexturePath)
-    -> ResourceHandle<RHISampledTexture> {
-    const auto Key = NormalizeResourcePath(TexturePath);
-
-    auto Work   = BeginResourceWork<RHISampledTexture>(Context, Key);
-    auto Handle = Work.Handle;
-    if (!Work.ShouldStartWork)
-        return Handle;
-
-    LogDebug("Sampled texture requested '{}'", Key);
-
-    auto* ContextPtr = &Context;
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
-        [ContextPtr, Generation = Handle.GetGeneration(), Key] {
-        auto& Context = *ContextPtr;
-        if (Context.IsShutdownRequested()) {
-            LogDebug("Async texture decode discarded after shutdown '{}'", Key);
+[[nodiscard]] auto SubmitSampledTexturePreparation(
+    StringView TexturePath,
+    std::move_only_function<void(RHIRef<RHISampledTexture>)> OnCreated)
+    -> std::expected<void, ErrorMessage> {
+    const auto Path          = NormalizeResourcePath(TexturePath);
+    auto       EnqueueResult = TaskGraph::Get().EnqueueBackground([Path, OnCreated = std::move(OnCreated)] mutable {
+        auto Decoded = DecodeTexture(Path);
+        if (!Decoded) {
+            LogError("Failed to decode sampled texture {}: {}", Path, Decoded.error().ToString());
             return;
         }
 
-        auto DecodeResult = DecodeTexture(Key);
-        if (!DecodeResult) {
-            PublishResourceFailed<RHISampledTexture>(Context, Generation, Key, DecodeResult.error());
+        auto Created = RHIRenderDevice::Get().CreateSampledTexture(RHISampledTextureDesc{
+            .Data     = std::as_bytes(std::span{Decoded->Pixels}),
+            .Width    = Decoded->Width,
+            .Height   = Decoded->Height,
+            .Channels = 4,
+            .Format   = RHIFormat::R8G8B8A8_UNORM,
+            .Usage    = RHITextureUsage::ShaderResource,
+        });
+        if (!Created) {
+            LogError("Failed to queue sampled texture creation: {}", Created.error().ToString());
             return;
         }
 
-        if (Context.IsShutdownRequested()) {
-            LogDebug("Async texture upload discarded after shutdown '{}'", Key);
-            return;
-        }
-
-        auto EnqueueResult = TaskGraph::Get().Enqueue(
-            ThreadQueue::RHI,
-            [ContextPtr, Generation, Key, Decoded = std::move(*DecodeResult)] {
-            auto& Context = *ContextPtr;
-            if (Context.IsShutdownRequested()) {
-                LogDebug("Async texture publish discarded after shutdown '{}'", Key);
-                return;
-            }
-
-            if (!MarkResourceRhiCommitting<RHISampledTexture>(Context, Key, Generation))
-                return;
-
-            RHISampledTextureDesc Desc{
-                .Data     = Decoded.Pixels.data(),
-                .Width    = Decoded.Width,
-                .Height   = Decoded.Height,
-                .Channels = 4,
-                .Format   = RHIFormat::R8G8B8A8_UNORM,
-                .Usage    = RHITextureUsage::ShaderResource,
-            };
-
-            auto TexResult = RHIRenderDevice::Get().CreateSampledTexture(Desc);
-            if (!TexResult) {
-                PublishResourceFailed<RHISampledTexture>(
-                    Context, Generation, Key, TexResult.error().Append(Format("Failed to create GPU texture for '{}'", Key)));
-                return;
-            }
-
-            PublishResourceGpuPending<RHISampledTexture>(
-                Context,
-                Generation,
-                Key,
-                Resource<RHISampledTexture>{.Object = std::move(TexResult->Texture)},
-                TexResult->UploadCompletion);
-            });
-        if (!EnqueueResult) {
-            PublishResourceFailed<RHISampledTexture>(
-                Context,
-                Generation,
-                Key,
-                EnqueueResult.error().Append(
-                    Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHISampledTexture>::Info.Label, Key)));
+        if (auto Delivery = TaskGraph::Get().Enqueue(
+                ThreadQueue::Render,
+                [OnCreated = std::move(OnCreated), Texture = std::move(*Created)] mutable {
+                    OnCreated(std::move(Texture));
+                });
+            !Delivery) {
+            LogError("Failed to deliver sampled texture creation result: {}", Delivery.error().ToString());
         }
     });
-    if (!EnqueueResult) {
-        PublishResourceFailed<RHISampledTexture>(
-            Context,
-            Handle.GetGeneration(),
-            Key,
-            EnqueueResult.error().Append(
-                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHISampledTexture>::Info.Label, Key)));
-    }
-
-    return Handle;
+    if (!EnqueueResult)
+        return std::unexpected(EnqueueResult.error());
+    return {};
 }
 
 } // namespace SoulEngine

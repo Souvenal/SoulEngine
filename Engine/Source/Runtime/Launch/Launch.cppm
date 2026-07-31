@@ -37,10 +37,10 @@ struct FrameSlot {
     std::mutex              Mutex;
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
-    SceneSnapshot      SceneData;
-    SPtr<IRenderer>    Renderer = nullptr;
-    RenderResult       RenderPacket;
-    ImDrawDataSnapshot ImGuiSnapshot;
+    SceneSnapshot           SceneData;
+    SPtr<IRenderer>         Renderer = nullptr;
+    RenderResult            RenderPacket;
+    ImDrawDataSnapshot      ImGuiSnapshot;
 };
 
 constexpr Uint32 kSlotCount = 3;
@@ -123,7 +123,7 @@ class EngineLoop {
 
         ResourceManager::Get().Init();
 
-        auto& Cfg = ConfigManager::Get().GetConfig();
+        auto&      Cfg             = ConfigManager::Get().GetConfig();
         const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Forward");
         if (auto R = SelectRenderer(InitialRenderer); !R) {
             Shutdown();
@@ -136,8 +136,8 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
         const auto InitialExtent = m_WindowSystem->GetFramebufferExtent();
-        m_Editor.ResizeSceneViewport(
-            static_cast<Uint32>(std::max(0, InitialExtent.Width)), static_cast<Uint32>(std::max(0, InitialExtent.Height)));
+        m_Editor.ResizeSceneViewport(static_cast<Uint32>(std::max(0, InitialExtent.Width)),
+                                     static_cast<Uint32>(std::max(0, InitialExtent.Height)));
 
         // ── Create application from config ───────────────────────────────
         if (auto R = OpenApplication(Cfg.Application.Name.value_or("Test")); !R) {
@@ -188,8 +188,8 @@ class EngineLoop {
         // Release frame slot snapshots and command observers before
         // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
         for (auto& Slot : m_Slots) {
-            Slot.SceneData = {};
-            Slot.Renderer = nullptr;
+            Slot.SceneData    = {};
+            Slot.Renderer     = nullptr;
             Slot.RenderPacket = {};
         }
 
@@ -358,9 +358,10 @@ class EngineLoop {
 
             // Resource handles are passive state reads; publish completed sampled-texture uploads here
             // on the RHI thread before the next command list can observe them.
-            ResourceManager::Get().TickGpuPending();
+            RHIRenderDevice::Get().Tick();
+            ResourceManager::Get().TickRhiDependencies();
 
-            if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
+            if (auto R = RHIRenderDevice::Get().Execute(std::move(Slot.RenderPacket.CmdList)); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
                 break;
@@ -392,8 +393,8 @@ class EngineLoop {
 
     // ── State ───────────────────────────────────────────────────────────────
 
-    Editor                   m_Editor;
-    UPtr<IWindowSystem>      m_WindowSystem;
+    Editor                                m_Editor;
+    UPtr<IWindowSystem>                   m_WindowSystem;
     std::chrono::steady_clock::time_point m_LastTickTime;
 
     std::array<FrameSlot, kSlotCount> m_Slots = {};

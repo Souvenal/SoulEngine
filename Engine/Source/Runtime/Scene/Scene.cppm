@@ -7,7 +7,8 @@ export module Scene;
 
 export import Core;
 export import Material;
-export import Resource;
+export import RHI;
+import TaskGraph;
 // export import std;
 
 export namespace SoulEngine {
@@ -15,35 +16,33 @@ export namespace SoulEngine {
 using SceneEntity = entt::entity;
 
 struct Transform {
-    hlslpp::float3   Translation     = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    hlslpp::float3   Rotation        = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    hlslpp::float3   Scale           = hlslpp::float3(1.0f, 1.0f, 1.0f);
-    hlslpp::float4x4 WorldTransform  = hlslpp::float4x4::identity();
+    hlslpp::float3   Translation    = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    hlslpp::float3   Rotation       = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    hlslpp::float3   Scale          = hlslpp::float3(1.0f, 1.0f, 1.0f);
+    hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
 
     [[nodiscard]] auto GetLocalMatrix() const -> hlslpp::float4x4 {
         const auto RotationRadians = Rotation * (std::numbers::pi_v<float> / 180.0f);
-        return hlslpp::mul(
-            hlslpp::mul(
-                hlslpp::mul(
-                    hlslpp::mul(hlslpp::float4x4::scale(Scale), hlslpp::float4x4::rotation_x(RotationRadians.x)),
-                    hlslpp::float4x4::rotation_y(RotationRadians.y)),
-                hlslpp::float4x4::rotation_z(RotationRadians.z)),
-            hlslpp::float4x4::translation(Translation));
+        return hlslpp::mul(hlslpp::mul(hlslpp::mul(hlslpp::mul(hlslpp::float4x4::scale(Scale),
+                                                               hlslpp::float4x4::rotation_x(RotationRadians.x)),
+                                                   hlslpp::float4x4::rotation_y(RotationRadians.y)),
+                                       hlslpp::float4x4::rotation_z(RotationRadians.z)),
+                           hlslpp::float4x4::translation(Translation));
     }
 };
 
 /// @brief Immutable render data and resources for one camera/view.
 struct RenderViewSnapshot {
-    hlslpp::float4x4                 ViewProjection = hlslpp::float4x4::identity();
-    hlslpp::float3                   CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    ResourceHandle<RHIRenderTarget> ColorRT = {};
-    ResourceHandle<RHIRenderTarget> DepthRT = {};
+    hlslpp::float4x4        ViewProjection = hlslpp::float4x4::identity();
+    hlslpp::float3          CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    RHIRef<RHIRenderTarget> ColorRT        = nullptr;
+    RHIRef<RHIRenderTarget> DepthRT        = nullptr;
 };
 
 struct SceneNode {
-    String                   Name     = {};
-    SceneEntity              Parent   = entt::null;
-    std::vector<SceneEntity> Children = {};
+    String                   Name      = {};
+    SceneEntity              Parent    = entt::null;
+    std::vector<SceneEntity> Children  = {};
     Transform                Transform = {};
 };
 
@@ -57,20 +56,20 @@ struct SceneNode {
 // minimal for now: view parameters plus view-scoped resource refs only.
 /// @brief Reusable lens and view-matrix policy for scene and editor cameras.
 struct Camera {
-    float FOV       = 60.0f;
-    float NearPlane = 0.1f;
-    float FarPlane  = 100.0f;
-    ResourceRef<RHIRenderTarget> ColorRT = {};
-    ResourceRef<RHIRenderTarget> DepthRT = {};
-    Uint32 ViewportWidth = 0;
-    Uint32 ViewportHeight = 0;
+    float                   FOV            = 60.0f;
+    float                   NearPlane      = 0.1f;
+    float                   FarPlane       = 100.0f;
+    RHIRef<RHIRenderTarget> ColorRT        = nullptr;
+    RHIRef<RHIRenderTarget> DepthRT        = nullptr;
+    Uint32                  ViewportWidth  = 0;
+    Uint32                  ViewportHeight = 0;
 
     /// @brief Resize the camera-owned output resources.
     auto ResizeViewport(StringView ResourceKey, Uint32 Width, Uint32 Height) -> void {
         if (Width == 0 || Height == 0) {
-            ColorRT = {};
-            DepthRT = {};
-            ViewportWidth = 0;
+            ColorRT        = nullptr;
+            DepthRT        = nullptr;
+            ViewportWidth  = 0;
             ViewportHeight = 0;
             return;
         }
@@ -78,24 +77,35 @@ struct Camera {
         if (ViewportWidth == Width && ViewportHeight == Height && ColorRT && DepthRT)
             return;
 
-        ViewportWidth = Width;
+        ViewportWidth  = Width;
         ViewportHeight = Height;
-        ColorRT = ResourceManager::Get().RequestRenderTargetRef(
-            Format("{}_color_{}x{}", ResourceKey, Width, Height),
-            RHIRenderTargetDesc{
-                .Width  = Width,
-                .Height = Height,
-                .Format = RHIFormat::B8G8R8A8_UNORM,
-                .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
-            });
-        DepthRT = ResourceManager::Get().RequestRenderTargetRef(
-            Format("{}_depth_{}x{}", ResourceKey, Width, Height),
-            RHIRenderTargetDesc{
-                .Width  = Width,
-                .Height = Height,
-                .Format = RHIFormat::D32_SFLOAT,
-                .Usage  = RHITextureUsage::DepthStencil,
-            });
+        const RHIRenderTargetDesc ColorDesc{
+            .Width  = Width,
+            .Height = Height,
+            .Format = RHIFormat::B8G8R8A8_UNORM,
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
+        };
+        const RHIRenderTargetDesc DepthDesc{
+            .Width  = Width,
+            .Height = Height,
+            .Format = RHIFormat::D32_SFLOAT,
+            .Usage  = RHITextureUsage::DepthStencil,
+        };
+        auto Color = RHIRenderDevice::Get().CreateRenderTarget(ColorDesc);
+        if (!Color) {
+            LogError("Failed to queue camera color render target creation: {}", Color.error().ToString());
+            ColorRT = nullptr;
+        } else {
+            ColorRT = std::move(*Color);
+        }
+
+        auto Depth = RHIRenderDevice::Get().CreateRenderTarget(DepthDesc);
+        if (!Depth) {
+            LogError("Failed to queue camera depth render target creation: {}", Depth.error().ToString());
+            DepthRT = nullptr;
+        } else {
+            DepthRT = std::move(*Depth);
+        }
     }
 
     /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
@@ -115,8 +125,8 @@ struct Camera {
     }
 
     [[nodiscard]] auto GetViewMatrix(const Transform& CameraTransform) const -> hlslpp::float4x4 {
-        const auto& World = CameraTransform.WorldTransform;
-        const auto Position = hlslpp::float3(World[3].x, World[3].y, World[3].z);
+        const auto& World    = CameraTransform.WorldTransform;
+        const auto  Position = hlslpp::float3(World[3].x, World[3].y, World[3].z);
         return hlslpp::float4x4::look_at(
             Position, Position + GetForward(CameraTransform), hlslpp::float3(0.0f, 1.0f, 0.0f));
     }
@@ -125,13 +135,18 @@ struct Camera {
         if (!ColorRT || !DepthRT || ViewportWidth == 0 || ViewportHeight == 0)
             return std::nullopt;
 
+        auto ColorRTRef = ColorRT;
+        auto DepthRTRef = DepthRT;
+        if (!ColorRTRef.TryGet() || !DepthRTRef.TryGet())
+            return std::nullopt;
+
         const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
-        const auto& World = CameraTransform.WorldTransform;
+        const auto& World       = CameraTransform.WorldTransform;
         return RenderViewSnapshot{
             .ViewProjection = hlslpp::mul(GetViewMatrix(CameraTransform), GetProjectionMatrix(AspectRatio)),
             .CameraPosition = hlslpp::float3(World[3].x, World[3].y, World[3].z),
-            .ColorRT        = ColorRT.GetHandle(),
-            .DepthRT        = DepthRT.GetHandle(),
+            .ColorRT        = std::move(ColorRTRef),
+            .DepthRT        = std::move(DepthRTRef),
         };
     }
 };
@@ -172,7 +187,7 @@ struct CameraComponent {
 /// mesh resources, uploads, and draw representations are
 /// owned by each renderer rather than this component.
 struct MeshComponent {
-    String Asset = {};
+    String Asset    = {};
     /// Scene-local PBR material instance ID. Empty uses the built-in material defaults.
     String Material = {};
 };
@@ -184,17 +199,17 @@ struct LightComponent {};
 /// It intentionally carries only renderer-neutral asset identity and instance
 /// state. Each renderer resolves it to its own GPU representation.
 struct RenderableInstance {
-    String                        MeshAsset      = {};
+    String                       MeshAsset      = {};
     /// Scene-local material instance ID. Empty identifies the shared built-in material.
-    String                        MaterialId     = {};
-    PbrMetallicRoughnessMaterial  Material       = {};
-    hlslpp::float4x4              WorldTransform = hlslpp::float4x4::identity();
+    String                       MaterialId     = {};
+    PbrMetallicRoughnessMaterial Material       = {};
+    hlslpp::float4x4             WorldTransform = hlslpp::float4x4::identity();
 };
 
 struct SceneSnapshot {
-    std::vector<RenderViewSnapshot>  Views       = {};
-    std::vector<RenderableInstance>  Renderables = {};
-    float                            Time        = 0.0f;
+    std::vector<RenderViewSnapshot> Views       = {};
+    std::vector<RenderableInstance> Renderables = {};
+    float                           Time        = 0.0f;
 };
 
 struct ComponentWarning {
@@ -212,16 +227,16 @@ struct SceneLoadReport {
 /// collections.
 class Scene {
   private:
-    std::chrono::steady_clock::time_point m_StartTime = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point                       m_StartTime         = std::chrono::steady_clock::now();
     // TODO(SoulEngine): Hide EnTT behind a Scene implementation boundary. This should remove
     // both the downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
-    UPtr<entt::registry>                                         m_Registry = nullptr;
-    Path                                                         m_AssetRoot = {};
-    std::vector<SceneEntity>                                      m_Roots = {};
-    std::map<String, PbrMetallicRoughnessMaterial, std::less<>>   m_MaterialInstances = {};
-    std::vector<String>                                           m_TexturePaths = {};
-    float                                                         m_Time = 0.0f;
+    UPtr<entt::registry>                                        m_Registry          = nullptr;
+    Path                                                        m_AssetRoot         = {};
+    std::vector<SceneEntity>                                    m_Roots             = {};
+    std::map<String, PbrMetallicRoughnessMaterial, std::less<>> m_MaterialInstances = {};
+    std::vector<String>                                         m_TexturePaths      = {};
+    float                                                       m_Time              = 0.0f;
 
     [[nodiscard]] auto ResolveAssetPath(StringView AssetPath) const -> String {
         const Path Asset{String(AssetPath)};
@@ -258,7 +273,7 @@ class Scene {
     }
 
     /// @brief Add or replace a scene-local PBR material instance.
-    auto SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material) -> void;
+    auto               SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material) -> void;
     [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const PbrMetallicRoughnessMaterial*;
     [[nodiscard]] auto GetMaterialInstances() const
         -> const std::map<String, PbrMetallicRoughnessMaterial, std::less<>>&;
@@ -292,8 +307,8 @@ namespace SoulEngine {
 // Keep these definitions inline: MSVC/Xmake emits LNK2005 duplicates when they are non-inline
 // in Scene's primary module interface. The implementation-boundary TODO above should remove this.
 inline Scene::Scene() : m_Registry(std::make_unique<entt::registry>()) {}
-inline Scene::~Scene() = default;
-inline Scene::Scene(Scene&&) = default;
+inline Scene::~Scene()                          = default;
+inline Scene::Scene(Scene&&)                    = default;
 inline auto Scene::operator=(Scene&&) -> Scene& = default;
 
 auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material) -> void {
@@ -345,10 +360,10 @@ auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material
 
 namespace {
 
-auto UpdateWorldTransformRecursive(entt::registry& Registry,
-                                   SceneEntity Entity,
+auto UpdateWorldTransformRecursive(entt::registry&         Registry,
+                                   SceneEntity             Entity,
                                    const hlslpp::float4x4& ParentTransform) -> void {
-    auto& Node = Registry.get<SceneNode>(Entity);
+    auto& Node                    = Registry.get<SceneNode>(Entity);
     Node.Transform.WorldTransform = hlslpp::mul(Node.Transform.GetLocalMatrix(), ParentTransform);
     for (const auto Child : Node.Children)
         UpdateWorldTransformRecursive(Registry, Child, Node.Transform.WorldTransform);
@@ -367,7 +382,7 @@ auto Scene::UpdateWorldTransforms() -> void {
     UpdateWorldTransforms();
     SceneSnapshot Snapshot{
         .Views = std::vector<RenderViewSnapshot>(Views.begin(), Views.end()),
-        .Time = m_Time,
+        .Time  = m_Time,
     };
 
     const auto Meshes = m_Registry->view<MeshComponent, SceneNode>();
@@ -384,8 +399,8 @@ auto Scene::UpdateWorldTransforms() -> void {
             Material = *MaterialInstance;
         }
 
-        const auto& Node = Meshes.get<SceneNode>(Entity);
-        const auto ResolveTextureAsset = [this](String& Texture) -> void {
+        const auto& Node                = Meshes.get<SceneNode>(Entity);
+        const auto  ResolveTextureAsset = [this](String& Texture) -> void {
             if (!Texture.empty())
                 Texture = ResolveAssetPath(Texture);
         };

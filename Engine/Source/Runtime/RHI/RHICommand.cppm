@@ -6,6 +6,7 @@ export module RHI:Command;
 
 export import :Types;
 export import :RayTracing;
+import :Ref;
 
 export import std;
 
@@ -40,14 +41,17 @@ struct RHISetFullScissorRectCmd {};
 
 /// @brief Bind the graphics pipeline used by subsequent draw calls.
 struct RHISetGraphicsPipelineCmd {
-    /// Non-owning observer. Producer must keep the pipeline alive until Execute() completes.
-    RHIGraphicsPipeline* PipelinePtr = nullptr;
+    RHIRef<RHIGraphicsPipeline> PipelineRef = nullptr;
 };
 
 /// @brief Bind the ray-tracing pipeline used by subsequent ray-tracing commands.
 struct RHISetRayTracingPipelineCmd {
-    /// Non-owning observer. Producer must keep the pipeline alive until Execute() completes.
-    RHIRayTracingPipeline* PipelinePtr = nullptr;
+    RHIRef<RHIRayTracingPipeline> PipelineRef = nullptr;
+};
+
+struct RHIPipelineRef {
+    RHIRef<RHIGraphicsPipeline>   Graphics   = nullptr;
+    RHIRef<RHIRayTracingPipeline> RayTracing = nullptr;
 };
 
 /// @brief Push a CPU-side byte snapshot into the active graphics pipeline's push-constant range.
@@ -55,18 +59,32 @@ struct RHIPushConstantsCmd {
     /// RHIPipeline expected to be bound when the push happens. Backends use this for
     /// validation and pipeline-layout lookup.
     /// The common RHIPipeline base permits the same reflected push-constant contract for ray tracing.
-    RHIPipeline*                PipelinePtr = nullptr;
-    Uint32                   Offset      = 0;
-    std::vector<std::byte>   Data        = {};
+    RHIPipelineRef         PipelineRef = {};
+    Uint32                 Offset      = 0;
+    std::vector<std::byte> Data        = {};
 };
+
+/// @brief Submission-owned resource snapshots used by shader parameter bindings.
+struct RHIShaderParameterResources {
+    std::vector<RHIRef<RHISampledTexture>> SampledTextures = {};
+    std::vector<RHIRef<RHISampler>>        Samplers        = {};
+    std::vector<RHIRef<RHIRenderTarget>>   RenderTargets   = {};
+};
+
+[[nodiscard]] inline auto AreShaderParameterResourcesReady(const RHIShaderParameterResources& Resources) -> bool {
+    const auto IsReady = []<typename T>(const RHIRef<T>& Ref) { return !Ref.IsValid() || Ref.TryGet() != nullptr; };
+    return std::ranges::all_of(Resources.SampledTextures, IsReady) &&
+           std::ranges::all_of(Resources.Samplers, IsReady) && std::ranges::all_of(Resources.RenderTargets, IsReady);
+}
 
 /// @brief Bind a reflection-derived shader parameter snapshot to the active pipeline.
 struct RHIBindShaderParametersCmd {
     /// RHIPipeline expected to be bound when the parameter snapshot is bound.
     /// The common RHIPipeline base permits the same reflected parameter contract for ray tracing.
-    RHIPipeline* PipelinePtr = nullptr;
+    RHIPipelineRef              PipelineRef = {};
     /// Value snapshot keeps per-frame constant data stable until the RHI thread consumes it.
-    RHIShaderParameters  Parameters  = {};
+    RHIShaderParameters         Parameters  = {};
+    RHIShaderParameterResources Resources   = {};
 };
 
 /// @brief Draw indexed primitives.
@@ -74,9 +92,9 @@ struct RHIDrawIndexedCmd {
     /// RHIPipeline expected to be bound for this draw. Backends use this for
     /// validation and for lowering draw parameters that require pipeline
     /// layout information, such as Vulkan push constants.
-    RHIGraphicsPipeline*                         PipelinePtr     = nullptr;
-    std::array<RHIVertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
-    RHIIndexBuffer*                              IndexBufferPtr  = nullptr;
+    RHIRef<RHIGraphicsPipeline>                                   PipelineRef      = nullptr;
+    std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs = {};
+    RHIRef<RHIIndexBuffer>                                        IndexBufferRef   = nullptr;
 };
 
 /// @brief Draw non-indexed primitives.
@@ -84,22 +102,22 @@ struct RHIDrawCmd {
     /// RHIPipeline expected to be bound for this draw. Backends use this for
     /// validation and for lowering draw parameters that require pipeline
     /// layout information, such as Vulkan push constants.
-    RHIGraphicsPipeline*                         PipelinePtr     = nullptr;
-    std::array<RHIVertexBuffer*, kMaxVertexBufferBindings> VertexBuffers = {};
+    RHIRef<RHIGraphicsPipeline>                                   PipelineRef      = nullptr;
+    std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs = {};
 };
 
 /// Resolve logical ray-tracing geometry sources into transient shader-storage buffers.
 struct RHIWriteRayTracingGeometryDataCmd {
-    RHITransientShaderStorageBuffer          InstanceBuffer = {};
-    RHITransientShaderStorageBuffer          GeometryBuffer = {};
-    std::vector<RHIRayTracingInstanceData>   Instances      = {};
-    std::vector<RHIRayTracingGeometryDesc>   Geometries     = {};
+    RHITransientShaderStorageBuffer        InstanceBuffer = {};
+    RHITransientShaderStorageBuffer        GeometryBuffer = {};
+    std::vector<RHIRayTracingInstanceData> Instances      = {};
+    std::vector<RHIRayTracingGeometryDesc> Geometries     = {};
 };
 
 /// @brief Upload a CPU snapshot into a RenderDevice-allocated transient constant buffer.
 struct RHIWriteTransientConstantBufferCmd {
     RHITransientConstantBuffer Buffer = {};
-    std::vector<std::byte>    Data   = {};
+    std::vector<std::byte>     Data   = {};
 };
 
 /// @brief Upload a CPU snapshot into a RenderDevice-allocated transient storage buffer.
@@ -110,39 +128,41 @@ struct RHIWriteTransientShaderStorageBufferCmd {
 
 /// @brief Build or update a persistent TLAS from renderer-provided logical instances.
 struct RHIBuildOrUpdateTopLevelAccelerationStructureCmd {
-    RHITopLevelAccelerationStructure*          TargetPtr = nullptr;
+    RHIRef<RHITopLevelAccelerationStructure>      TargetRef = nullptr;
     std::vector<RHIAccelerationStructureInstance> Instances = {};
-    RHITopLevelAccelerationStructureBuildMode   Mode      = RHITopLevelAccelerationStructureBuildMode::Auto;
+    RHITopLevelAccelerationStructureBuildMode     Mode      = RHITopLevelAccelerationStructureBuildMode::Auto;
 };
 
 /// @brief Dispatch hardware rays through the pipeline-owned shader binding table.
 struct RHITraceRaysCmd {
-    RHIRayTracingPipeline* PipelinePtr = nullptr;
-    Uint32              Width       = 0;
-    Uint32              Height      = 0;
-    Uint32              Depth       = 1;
+    RHIRef<RHIRayTracingPipeline> PipelineRef = nullptr;
+    Uint32                        Width       = 0;
+    Uint32                        Height      = 0;
+    Uint32                        Depth       = 1;
 };
 
 /// @brief All command types dispatched via std::visit.
 using RHICommand = std::variant<RHISetViewportCmd,
-                             RHISetFullViewportCmd,
-                             RHISetScissorCmd,
-                             RHISetFullScissorRectCmd,
-                             RHISetGraphicsPipelineCmd,
-                             RHISetRayTracingPipelineCmd,
-                             RHIPushConstantsCmd,
-                             RHIBindShaderParametersCmd,
-                             RHIDrawIndexedCmd,
-                             RHIDrawCmd,
-                             RHIWriteRayTracingGeometryDataCmd,
-                             RHIWriteTransientConstantBufferCmd,
-                             RHIWriteTransientShaderStorageBufferCmd,
-                             RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
-                             RHITraceRaysCmd>;
+                                RHISetFullViewportCmd,
+                                RHISetScissorCmd,
+                                RHISetFullScissorRectCmd,
+                                RHISetGraphicsPipelineCmd,
+                                RHISetRayTracingPipelineCmd,
+                                RHIPushConstantsCmd,
+                                RHIBindShaderParametersCmd,
+                                RHIDrawIndexedCmd,
+                                RHIDrawCmd,
+                                RHIWriteRayTracingGeometryDataCmd,
+                                RHIWriteTransientConstantBufferCmd,
+                                RHIWriteTransientShaderStorageBufferCmd,
+                                RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
+                                RHITraceRaysCmd>;
 
 /// @brief One rendering pass with attachments and commands inside.
 /// Backend automatically wraps each pass with begin/end rendering.
 struct RHIPass {
+    RHIRef<RHIRenderTarget> ColorAttachmentRef = nullptr;
+    RHIRef<RHIRenderTarget> DepthAttachmentRef = nullptr;
     RHIRenderingDesc        Desc;
     std::vector<RHICommand> Commands;
 
@@ -161,28 +181,71 @@ struct RHIPass {
     auto SetFullScissorRect() -> void {
         Commands.emplace_back(RHISetFullScissorRectCmd{});
     }
-    auto SetGraphicsPipeline(RHIGraphicsPipeline* PipelinePtr) -> void {
-        Commands.emplace_back(RHISetGraphicsPipelineCmd{.PipelinePtr = PipelinePtr});
+    auto SetGraphicsPipeline(RHIRef<RHIGraphicsPipeline> PipelineRef) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
+        Commands.emplace_back(
+            RHISetGraphicsPipelineCmd{.PipelineRef = std::move(PipelineRef)});
     }
-    auto SetRayTracingPipeline(RHIRayTracingPipeline* PipelinePtr) -> void {
-        Commands.emplace_back(RHISetRayTracingPipelineCmd{.PipelinePtr = PipelinePtr});
+    auto SetRayTracingPipeline(RHIRef<RHIRayTracingPipeline> PipelineRef) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
+        Commands.emplace_back(
+            RHISetRayTracingPipelineCmd{.PipelineRef = std::move(PipelineRef)});
     }
-    auto PushConstants(RHIPipeline* PipelinePtr, Uint32 Offset, const void* Data, Uint64 Size) -> void {
+    auto PushConstants(RHIRef<RHIGraphicsPipeline> PipelineRef, Uint32 Offset, const void* Data, Uint64 Size) -> void {
         if (Size == 0)
             return;
-
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
         RHIPushConstantsCmd Cmd{
-            .PipelinePtr = PipelinePtr,
+            .PipelineRef = RHIPipelineRef{.Graphics = std::move(PipelineRef)},
             .Offset      = Offset,
         };
         Cmd.Data.resize(Size);
         std::memcpy(Cmd.Data.data(), Data, Size);
         Commands.emplace_back(std::move(Cmd));
     }
-    auto BindShaderParameters(RHIPipeline* PipelinePtr, RHIShaderParameters Parameters) -> void {
+    auto PushConstants(RHIRef<RHIRayTracingPipeline> PipelineRef, Uint32 Offset, const void* Data, Uint64 Size)
+        -> void {
+        if (Size == 0)
+            return;
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
+        RHIPushConstantsCmd Cmd{
+            .PipelineRef = RHIPipelineRef{.RayTracing = std::move(PipelineRef)},
+            .Offset      = Offset,
+        };
+        Cmd.Data.resize(Size);
+        std::memcpy(Cmd.Data.data(), Data, Size);
+        Commands.emplace_back(std::move(Cmd));
+    }
+    auto BindShaderParameters(RHIRef<RHIGraphicsPipeline> PipelineRef,
+                              RHIShaderParameters         Parameters,
+                              RHIShaderParameterResources Resources) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr || !AreShaderParameterResourcesReady(Resources))
+            return;
         Commands.emplace_back(RHIBindShaderParametersCmd{
-            .PipelinePtr = PipelinePtr,
+            .PipelineRef = RHIPipelineRef{.Graphics = std::move(PipelineRef)},
             .Parameters  = std::move(Parameters),
+            .Resources   = std::move(Resources),
+        });
+    }
+    auto BindShaderParameters(RHIRef<RHIRayTracingPipeline> PipelineRef,
+                              RHIShaderParameters           Parameters,
+                              RHIShaderParameterResources   Resources) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr || !AreShaderParameterResourcesReady(Resources))
+            return;
+        Commands.emplace_back(RHIBindShaderParametersCmd{
+            .PipelineRef = RHIPipelineRef{.RayTracing = std::move(PipelineRef)},
+            .Parameters  = std::move(Parameters),
+            .Resources   = std::move(Resources),
         });
     }
     auto WriteRayTracingGeometryData(RHITransientShaderStorageBuffer        InstanceBuffer,
@@ -209,58 +272,56 @@ struct RHIPass {
         return {};
     }
     [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
-                                                          std::span<const std::byte>           Data)
+                                                         std::span<const std::byte>      Data)
         -> std::expected<void, ErrorMessage> {
         if (!Buffer.IsValid())
             return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
         if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
+            return std::unexpected(
+                ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
         Commands.emplace_back(RHIWriteTransientShaderStorageBufferCmd{
             .Buffer = Buffer,
             .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
         });
         return {};
     }
-    auto BuildOrUpdateTopLevelAccelerationStructure(RHITopLevelAccelerationStructure*               TargetPtr,
-                                                     std::span<const RHIAccelerationStructureInstance> Instances,
-                                                     RHITopLevelAccelerationStructureBuildMode        Mode =
-                                                         RHITopLevelAccelerationStructureBuildMode::Auto) -> void {
+    auto BuildOrUpdateTopLevelAccelerationStructure(
+        RHIRef<RHITopLevelAccelerationStructure>          TargetRef,
+        std::span<const RHIAccelerationStructureInstance> Instances,
+        RHITopLevelAccelerationStructureBuildMode Mode = RHITopLevelAccelerationStructureBuildMode::Auto) -> void {
+        auto* TargetPtr = TargetRef.TryGet();
+        if (!TargetPtr)
+            return;
         Commands.emplace_back(RHIBuildOrUpdateTopLevelAccelerationStructureCmd{
-            .TargetPtr = TargetPtr,
+            .TargetRef = std::move(TargetRef),
             .Instances = std::vector<RHIAccelerationStructureInstance>{Instances.begin(), Instances.end()},
             .Mode      = Mode,
         });
     }
-    auto TraceRays(RHIRayTracingPipeline* PipelinePtr, Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
+    auto TraceRays(RHIRef<RHIRayTracingPipeline> PipelineRef, Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
         Commands.emplace_back(RHITraceRaysCmd{
-            .PipelinePtr = PipelinePtr,
+            .PipelineRef = std::move(PipelineRef),
             .Width       = Width,
             .Height      = Height,
             .Depth       = Depth,
         });
     }
-    auto DrawIndexed(RHIGraphicsPipeline* PipelinePtr,
-                     RHIVertexBuffer*     VertexBufferPtr,
-                     RHIIndexBuffer*      IndexBufferPtr) -> void {
-        DrawIndexed(PipelinePtr, std::array<RHIVertexBuffer*, kMaxVertexBufferBindings>{VertexBufferPtr}, IndexBufferPtr);
-    }
-    auto DrawIndexed(RHIGraphicsPipeline*                                PipelinePtr,
-                     std::array<RHIVertexBuffer*, kMaxVertexBufferBindings> VertexBuffers,
-                     RHIIndexBuffer*                                     IndexBufferPtr) -> void {
+    auto DrawIndexed(RHIRef<RHIGraphicsPipeline>                                   PipelineRef,
+                     std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs,
+                     RHIRef<RHIIndexBuffer>                                        IndexBufferRef) -> void {
+        if (!PipelineRef.TryGet() || !VertexBufferRefs[0].TryGet() || !IndexBufferRef.TryGet())
+            return;
+        for (Uint32 Index = 1; Index < VertexBufferRefs.size(); ++Index) {
+            if (VertexBufferRefs[Index].IsValid() && !VertexBufferRefs[Index].TryGet())
+                return;
+        }
         Commands.emplace_back(RHIDrawIndexedCmd{
-            .PipelinePtr     = PipelinePtr,
-            .VertexBuffers   = VertexBuffers,
-            .IndexBufferPtr  = IndexBufferPtr,
-        });
-    }
-    auto Draw(RHIGraphicsPipeline* PipelinePtr, RHIVertexBuffer* VertexBufferPtr) -> void {
-        Draw(PipelinePtr, std::array<RHIVertexBuffer*, kMaxVertexBufferBindings>{VertexBufferPtr});
-    }
-    auto Draw(RHIGraphicsPipeline*                                PipelinePtr,
-              std::array<RHIVertexBuffer*, kMaxVertexBufferBindings> VertexBuffers) -> void {
-        Commands.emplace_back(RHIDrawCmd{
-            .PipelinePtr   = PipelinePtr,
-            .VertexBuffers = VertexBuffers,
+            .PipelineRef      = std::move(PipelineRef),
+            .VertexBufferRefs = std::move(VertexBufferRefs),
+            .IndexBufferRef   = std::move(IndexBufferRef),
         });
     }
 };
@@ -272,25 +333,64 @@ struct RHIPass {
 struct RHINonRenderingPass {
     std::vector<RHICommand> Commands = {};
 
-    auto SetRayTracingPipeline(RHIRayTracingPipeline* PipelinePtr) -> void {
-        Commands.emplace_back(RHISetRayTracingPipelineCmd{.PipelinePtr = PipelinePtr});
+    auto SetRayTracingPipeline(RHIRef<RHIRayTracingPipeline> PipelineRef) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
+        Commands.emplace_back(
+            RHISetRayTracingPipelineCmd{.PipelineRef = std::move(PipelineRef)});
     }
-    auto PushConstants(RHIPipeline* PipelinePtr, Uint32 Offset, const void* Data, Uint64 Size) -> void {
+    auto PushConstants(RHIRef<RHIGraphicsPipeline> PipelineRef, Uint32 Offset, const void* Data, Uint64 Size) -> void {
         if (Size == 0)
             return;
-
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
         RHIPushConstantsCmd Cmd{
-            .PipelinePtr = PipelinePtr,
+            .PipelineRef = RHIPipelineRef{.Graphics = std::move(PipelineRef)},
             .Offset      = Offset,
         };
         Cmd.Data.resize(Size);
         std::memcpy(Cmd.Data.data(), Data, Size);
         Commands.emplace_back(std::move(Cmd));
     }
-    auto BindShaderParameters(RHIPipeline* PipelinePtr, RHIShaderParameters Parameters) -> void {
+    auto PushConstants(RHIRef<RHIRayTracingPipeline> PipelineRef, Uint32 Offset, const void* Data, Uint64 Size)
+        -> void {
+        if (Size == 0)
+            return;
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
+        RHIPushConstantsCmd Cmd{
+            .PipelineRef = RHIPipelineRef{.RayTracing = std::move(PipelineRef)},
+            .Offset      = Offset,
+        };
+        Cmd.Data.resize(Size);
+        std::memcpy(Cmd.Data.data(), Data, Size);
+        Commands.emplace_back(std::move(Cmd));
+    }
+    auto BindShaderParameters(RHIRef<RHIGraphicsPipeline> PipelineRef,
+                              RHIShaderParameters         Parameters,
+                              RHIShaderParameterResources Resources) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr || !AreShaderParameterResourcesReady(Resources))
+            return;
         Commands.emplace_back(RHIBindShaderParametersCmd{
-            .PipelinePtr = PipelinePtr,
+            .PipelineRef = RHIPipelineRef{.Graphics = std::move(PipelineRef)},
             .Parameters  = std::move(Parameters),
+            .Resources   = std::move(Resources),
+        });
+    }
+    auto BindShaderParameters(RHIRef<RHIRayTracingPipeline> PipelineRef,
+                              RHIShaderParameters           Parameters,
+                              RHIShaderParameterResources   Resources) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr || !AreShaderParameterResourcesReady(Resources))
+            return;
+        Commands.emplace_back(RHIBindShaderParametersCmd{
+            .PipelineRef = RHIPipelineRef{.RayTracing = std::move(PipelineRef)},
+            .Parameters  = std::move(Parameters),
+            .Resources   = std::move(Resources),
         });
     }
     auto WriteRayTracingGeometryData(RHITransientShaderStorageBuffer        InstanceBuffer,
@@ -317,31 +417,38 @@ struct RHINonRenderingPass {
         return {};
     }
     [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
-                                                          std::span<const std::byte>           Data)
+                                                         std::span<const std::byte>      Data)
         -> std::expected<void, ErrorMessage> {
         if (!Buffer.IsValid())
             return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
         if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
+            return std::unexpected(
+                ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
         Commands.emplace_back(RHIWriteTransientShaderStorageBufferCmd{
             .Buffer = Buffer,
             .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
         });
         return {};
     }
-    auto BuildOrUpdateTopLevelAccelerationStructure(RHITopLevelAccelerationStructure*               TargetPtr,
-                                                     std::span<const RHIAccelerationStructureInstance> Instances,
-                                                     RHITopLevelAccelerationStructureBuildMode        Mode =
-                                                         RHITopLevelAccelerationStructureBuildMode::Auto) -> void {
+    auto BuildOrUpdateTopLevelAccelerationStructure(
+        RHIRef<RHITopLevelAccelerationStructure>          TargetRef,
+        std::span<const RHIAccelerationStructureInstance> Instances,
+        RHITopLevelAccelerationStructureBuildMode Mode = RHITopLevelAccelerationStructureBuildMode::Auto) -> void {
+        auto* TargetPtr = TargetRef.TryGet();
+        if (!TargetPtr)
+            return;
         Commands.emplace_back(RHIBuildOrUpdateTopLevelAccelerationStructureCmd{
-            .TargetPtr = TargetPtr,
+            .TargetRef = std::move(TargetRef),
             .Instances = std::vector<RHIAccelerationStructureInstance>{Instances.begin(), Instances.end()},
             .Mode      = Mode,
         });
     }
-    auto TraceRays(RHIRayTracingPipeline* PipelinePtr, Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
+    auto TraceRays(RHIRef<RHIRayTracingPipeline> PipelineRef, Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
+        auto* PipelinePtr = PipelineRef.TryGet();
+        if (!PipelinePtr)
+            return;
         Commands.emplace_back(RHITraceRaysCmd{
-            .PipelinePtr = PipelinePtr,
+            .PipelineRef = std::move(PipelineRef),
             .Width       = Width,
             .Height      = Height,
             .Depth       = Depth,
@@ -360,15 +467,20 @@ using RHICommandScope = std::variant<RHIPass, RHINonRenderingPass>;
 struct RHIImGuiPresentationOverlayCmd {
     ImDrawDataSnapshot* Snapshot     = nullptr;
     ImTextureQueue*     TextureQueue = nullptr;
-    std::mutex*           TextureMutex = nullptr;
+    std::mutex*         TextureMutex = nullptr;
 };
 
 /// @brief Complete frame's worth of GPU commands, produced by RenderLoop,
 /// consumed by RHIRenderDevice::Execute().
 struct RHICommandList {
-    std::vector<RHICommandScope> Scopes = {};
+    RHICommandList()                                                                                      = default;
+    RHICommandList(const RHICommandList&)                                                                 = delete;
+    auto operator=(const RHICommandList&) -> RHICommandList&                                              = delete;
+    RHICommandList(RHICommandList&&) noexcept                                                             = default;
+    auto                                          operator=(RHICommandList&&) noexcept -> RHICommandList& = default;
+    std::vector<RHICommandScope>                  Scopes                                                  = {};
     /// Final frame output. Backend presents this engine-owned RT to swapchain.
-    RHIRenderTarget*             PresentSource = nullptr;
+    RHIRef<RHIRenderTarget>                       PresentSourceRef                                        = nullptr;
     std::optional<RHIImGuiPresentationOverlayCmd> ImGuiPresentationOverlay = std::nullopt;
 };
 

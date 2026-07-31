@@ -16,7 +16,7 @@ target("RHIVulkan")
     set_kind("moduleonly")
 
     add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw", "magic_enum", "imgui", "imgui-club", {public = true})
-    add_deps("RHI", "VMA", "WindowSystem")
+    add_deps("RHI", "VMA", "WindowSystem", "TaskGraph")
     add_files("Vulkan/*.cppm")
 
 test_module("RHI", {

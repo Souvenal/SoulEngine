@@ -77,10 +77,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
   public:
     VulkanBottomLevelAccelerationStructure() = default;
 
-    ~VulkanBottomLevelAccelerationStructure() override {
-        if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Native = m_Native]() {});
-    }
+    ~VulkanBottomLevelAccelerationStructure() override = default;
 
     VulkanBottomLevelAccelerationStructure(const VulkanBottomLevelAccelerationStructure&)                    = delete;
     auto operator=(const VulkanBottomLevelAccelerationStructure&) -> VulkanBottomLevelAccelerationStructure& = delete;
@@ -101,11 +98,13 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
         PrimitiveCounts.reserve(Desc.Geometries.size());
 
         for (const auto& GeometryDesc : Desc.Geometries) {
-            if (!GeometryDesc.VertexBufferPtr || !GeometryDesc.IndexBufferPtr) {
+            auto* VertexBufferPtr = GeometryDesc.VertexBufferRef.TryGet();
+            auto* IndexBufferPtr = GeometryDesc.IndexBufferRef.TryGet();
+            if (!VertexBufferPtr || !IndexBufferPtr) {
                 return std::unexpected(ErrorMessage("BLAS triangle geometry requires both vertex and index buffers"));
             }
-            auto& VertexBuf = static_cast<const VulkanVertexBuffer&>(*GeometryDesc.VertexBufferPtr);
-            auto& IndexBuf  = static_cast<const VulkanIndexBuffer&>(*GeometryDesc.IndexBufferPtr);
+            auto& VertexBuf = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
+            auto& IndexBuf  = static_cast<const VulkanIndexBuffer&>(*IndexBufferPtr);
             if (VertexBuf.GetVertexCount() == 0 || IndexBuf.GetIndexCount() == 0 || IndexBuf.GetIndexCount() % 3 != 0) {
                 return std::unexpected(ErrorMessage("BLAS triangle geometry requires non-empty triangle indices"));
             }
@@ -170,22 +169,18 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
         if (BuildGeometryCI.scratchData.deviceAddress == 0)
             return std::unexpected(ErrorMessage("BLAS scratch buffer has no device address"));
         const vk::AccelerationStructureBuildRangeInfoKHR* BuildRangePtr = BuildRanges.data();
-        auto BuildToken = Context.Immediate.Submit(
-            RHIImmediateQueue::Graphics,
-            {},
-            vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-            [&](const vk::raii::CommandBuffer& CmdBuf) {
-                CmdBuf.buildAccelerationStructuresKHR(BuildGeometryCI, {BuildRangePtr});
-            });
-        if (!BuildToken)
-            return std::unexpected(BuildToken.error().Append("Failed to submit BLAS build"));
-        Context.Immediate.EnqueueCompletionCallback(*BuildToken, [ScratchBuffer = std::move(Scratch)]() {});
-        if (auto R = Context.Immediate.Wait(*BuildToken); !R)
-            return std::unexpected(R.error().Append("Failed to wait for BLAS build completion"));
+        if (auto R = Context.Immediate.SubmitAndWait(
+                VulkanImmediateQueue::Graphics,
+                vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+                [&](const vk::raii::CommandBuffer& CmdBuf) {
+                    CmdBuf.buildAccelerationStructuresKHR(BuildGeometryCI, {BuildRangePtr});
+                });
+            !R) {
+            return std::unexpected(R.error().Append("Failed to build BLAS"));
+        }
 
         auto Result             = std::make_unique<VulkanBottomLevelAccelerationStructure>();
         Result->m_Native        = std::move(*Native);
-        Result->m_DeletionQueue = &Context.DeletionQueue;
         return UPtr<RHIBottomLevelAccelerationStructure>{std::move(Result)};
     }
 
@@ -194,8 +189,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
     }
 
   private:
-    SPtr<VulkanNativeAccelerationStructure> m_Native        = nullptr;
-    VulkanDeletionQueue*                    m_DeletionQueue = nullptr;
+    SPtr<VulkanNativeAccelerationStructure> m_Native = nullptr;
 };
 
 /// Vulkan persistent TLAS allocation. Instance uploads and builds are recorded by the command encoder.
@@ -203,10 +197,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
   public:
     VulkanTopLevelAccelerationStructure() = default;
 
-    ~VulkanTopLevelAccelerationStructure() override {
-        if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [Native = m_Native]() {});
-    }
+    ~VulkanTopLevelAccelerationStructure() override = default;
 
     VulkanTopLevelAccelerationStructure(const VulkanTopLevelAccelerationStructure&)                    = delete;
     auto operator=(const VulkanTopLevelAccelerationStructure&) -> VulkanTopLevelAccelerationStructure& = delete;
@@ -266,7 +257,6 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
         Result->m_InstanceBuffer   = std::move(InstanceBuffer);
         Result->m_ScratchBuffer    = std::move(ScratchBuffer);
         Result->m_InstanceCapacity = Desc.InitialInstanceCapacity;
-        Result->m_DeletionQueue    = &Context.DeletionQueue;
         return UPtr<RHITopLevelAccelerationStructure>{std::move(Result)};
     }
 
@@ -280,20 +270,22 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 
     [[nodiscard]] auto RecordBuild(const vk::raii::CommandBuffer&                    CmdBuf,
                                    std::span<const RHIAccelerationStructureInstance> Instances,
-                                   RHITopLevelAccelerationStructureBuildMode         Mode)
+                                   RHITopLevelAccelerationStructureBuildMode         Mode,
+                                   std::vector<std::function<void()>>* RetiredPayloads)
         -> std::expected<void, ErrorMessage> {
         if (Instances.empty())
             return std::unexpected(ErrorMessage("TLAS requires at least one instance"));
         if (Instances.size() > m_InstanceCapacity) {
-            if (auto R = GrowTo(static_cast<Uint32>(Instances.size())); !R)
+            if (auto R = GrowTo(static_cast<Uint32>(Instances.size()), RetiredPayloads); !R)
                 return std::unexpected(R.error());
         }
         std::vector<vk::AccelerationStructureInstanceKHR> VkInstances;
         VkInstances.reserve(Instances.size());
         for (const auto& Instance : Instances) {
-            if (!Instance.BottomLevelPtr)
+            auto* BottomLevelPtr = Instance.BottomLevelRef.TryGet();
+            if (!BottomLevelPtr)
                 return std::unexpected(ErrorMessage("TLAS instance is missing a BLAS"));
-            const auto& Blas = static_cast<const VulkanBottomLevelAccelerationStructure&>(*Instance.BottomLevelPtr);
+            const auto& Blas = static_cast<const VulkanBottomLevelAccelerationStructure&>(*BottomLevelPtr);
             vk::AccelerationStructureInstanceKHR VkInstance{};
             const auto                           Flags =
                 Instance.Flags == RHIAccelerationStructureInstanceFlags::DisableTriangleCulling
@@ -345,7 +337,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     }
 
   private:
-    [[nodiscard]] auto GrowTo(Uint32 RequiredCapacity) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto GrowTo(Uint32 RequiredCapacity, std::vector<std::function<void()>>* RetiredPayloads) -> std::expected<void, ErrorMessage> {
         const Uint32 NewCapacity = (std::max)(RequiredCapacity, m_InstanceCapacity * 2);
         vk::AccelerationStructureGeometryInstancesDataKHR InstanceData{
             .arrayOfPointers = vk::False,
@@ -393,10 +385,9 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
         m_ScratchBuffer        = std::move(ScratchBuffer);
         m_InstanceCapacity     = NewCapacity;
         m_LastInstanceCount    = 0;
-        m_DeletionQueue->Enqueue(GetLastUsageToken(),
-                                 [Native         = std::move(OldNative),
-                                  InstanceBuffer = std::move(OldInstanceBuffer),
-                                  ScratchBuffer  = std::move(OldScratchBuffer)]() {});
+        RetiredPayloads->emplace_back([Native         = std::move(OldNative),
+                                       InstanceBuffer = std::move(OldInstanceBuffer),
+                                       ScratchBuffer  = std::move(OldScratchBuffer)]() {});
         return {};
     }
 
@@ -408,7 +399,6 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     SPtr<VulkanDeviceBuffer>                m_ScratchBuffer     = nullptr;
     Uint32                                  m_InstanceCapacity  = 0;
     Uint32                                  m_LastInstanceCount = 0;
-    VulkanDeletionQueue*                    m_DeletionQueue     = nullptr;
 };
 
 } // namespace SoulEngine

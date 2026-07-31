@@ -7,13 +7,13 @@ Guidance for AI agents on this repo.
 - Configure: `xmake f -m debug` or `xmake f -m release`
 - Build: `xmake`
 - Run: `xmake run`
-- Run tests: `xmake test -v`
+- Run tests: `xmake test`
 - Binary: `Engine/Binaries/SoulEngine`
 - Compiler: Clang 20+
 - C++23 modules enabled (`import std;` throughout)
 - **Agent command output:** `rtk` is an optional command-output filter. When
   `rtk` is available on `PATH`, build and test commands MUST use `rtk err`
-  (for example, `rtk err xmake -y` and `rtk err xmake test -v`). When it
+  (for example, `rtk err xmake -y` and `rtk err xmake test`). When it
   is unavailable, run the equivalent xmake command directly.
 
 ## Project Structure

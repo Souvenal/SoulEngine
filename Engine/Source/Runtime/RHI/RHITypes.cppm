@@ -17,14 +17,14 @@ class RHITopLevelAccelerationStructure;
 // ── Buffer descriptor types ────────────────────────────────────────────────
 
 struct RHIVertexBufferDesc {
-    const void* Data        = nullptr;
-    Uint64      VertexCount = 0;
-    Uint32      Stride      = 0;
+    std::span<const std::byte> Data        = {};
+    Uint64                     VertexCount = 0;
+    Uint32                     Stride      = 0;
 };
 
 struct RHIIndexBufferDesc {
-    const void* Data       = nullptr;
-    Uint64      IndexCount = 0;
+    std::span<const std::byte> Data       = {};
+    Uint64                     IndexCount = 0;
 };
 
 enum class RHISamplerProfile : Uint8 {
@@ -37,57 +37,12 @@ struct RHISamplerDesc {
     RHISamplerProfile Profile = RHISamplerProfile::LinearRepeat;
 };
 
-// ── RHIGpuResource — base for GPU resources with usage tracking ────────────
-
-/// One graphics-frame submission timeline value used for resource lifetime tracking.
-struct RHIFrameSubmissionToken {
-    Uint64 Id = 0;
-};
-
-/// Logical immediate-task queue. Backends map this to concrete queues and timelines.
-enum class RHIImmediateQueue : Uint8 {
-    Unknown = 0,
-    Transfer,
-    Graphics,
-    Compute,
-};
-
-/// Completion token returned by asynchronous immediate work such as uploads.
-struct RHIGpuCompletionToken {
-    RHIImmediateQueue Queue = RHIImmediateQueue::Unknown;
-    Uint64            Value = 0;
-};
-
-/// Base class for GPU resources that tracks the last command-list usage token.
-/// Resources inheriting this can participate in deferred deletion via
-/// DeletionQueue: when the GPU completes all work up to the last usage token,
-/// the resource is safe to destroy.
-class RHIGpuResource {
-  public:
-    RHIGpuResource()                                      = default;
-    RHIGpuResource(const RHIGpuResource&)                    = delete;
-    auto operator=(const RHIGpuResource&) -> RHIGpuResource& = delete;
-    RHIGpuResource(RHIGpuResource&&)                         = delete;
-    auto operator=(RHIGpuResource&&) -> RHIGpuResource&      = delete;
-    virtual ~RHIGpuResource()                             = default;
-
-    [[nodiscard]] auto GetLastUsageToken() const noexcept -> RHIFrameSubmissionToken {
-        return m_LastUsage;
-    }
-    auto UpdateLastUsageToken(RHIFrameSubmissionToken Token) noexcept -> void {
-        m_LastUsage = Token;
-    }
-
-  private:
-    RHIFrameSubmissionToken m_LastUsage = {};
-};
-
 // ── Typed GPU buffer polymorphic bases ──────────────────────────────────
 
 /// Polymorphic base for vertex buffer resources and their immutable metadata.
 /// Backend concrete classes (e.g. VulkanVertexBuffer) own GPU allocations.
 /// ResourceManager owns RHIVertexBuffer instances; command lists only observe them.
-class RHIVertexBuffer : public RHIGpuResource {
+class RHIVertexBuffer {
   public:
     RHIVertexBuffer()                                       = default;
     RHIVertexBuffer(const RHIVertexBuffer&)                    = delete;
@@ -114,7 +69,7 @@ class RHIVertexBuffer : public RHIGpuResource {
 
 /// Polymorphic base for index buffer resources and their immutable metadata.
 /// Same role as RHIVertexBuffer, for Uint32 index data.
-class RHIIndexBuffer : public RHIGpuResource {
+class RHIIndexBuffer {
   public:
     RHIIndexBuffer()                                      = default;
     RHIIndexBuffer(const RHIIndexBuffer&)                    = delete;
@@ -193,7 +148,7 @@ class RHITransientShaderStorageBuffer final {
 ///
 /// Backends own the native sampler handle. ResourceManager owns RHISampler
 /// instances; command lists only observe them.
-class RHISampler : public RHIGpuResource {
+class RHISampler {
   public:
     explicit RHISampler(const RHISamplerDesc& Desc) {
         m_Desc = Desc;
@@ -311,7 +266,7 @@ class RHIShaderParameterLayout {
 };
 
 /// Common polymorphic base for pipelines that consume reflection-derived shader parameters.
-class RHIPipeline : public RHIGpuResource {
+class RHIPipeline {
   public:
     RHIPipeline()                                  = default;
     RHIPipeline(const RHIPipeline&)                    = delete;
@@ -360,7 +315,7 @@ class RHIGraphicsPipeline : public RHIPipeline {
 /// Polymorphic base for shader-readable sampled texture resources.
 /// Backend concrete class (e.g. VulkanSampledTexture) owns the GPU allocation.
 /// ResourceManager owns RHISampledTexture instances.
-class RHISampledTexture : public RHIGpuResource {
+class RHISampledTexture {
   public:
     RHISampledTexture()                                         = default;
     RHISampledTexture(const RHISampledTexture&)                    = delete;
@@ -681,7 +636,7 @@ enum class RHITextureUsage : Uint32 {
 /// Polymorphic base for render-target images (color or depth/stencil).
 /// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
 /// Backend concrete class owns GPU allocation. ResourceManager owns render targets.
-class RHIRenderTarget : public RHIGpuResource {
+class RHIRenderTarget {
   public:
     RHIRenderTarget()                                       = default;
     RHIRenderTarget(const RHIRenderTarget&)                    = delete;
@@ -697,17 +652,12 @@ class RHIRenderTarget : public RHIGpuResource {
 };
 
 struct RHISampledTextureDesc {
-    const void*  Data     = nullptr;
-    Uint32       Width    = 1;
-    Uint32       Height   = 1;
-    Uint32       Channels = 4;
-    RHIFormat       Format   = RHIFormat::R8G8B8A8_UNORM;
-    RHITextureUsage Usage    = RHITextureUsage::ShaderResource;
-};
-
-struct RHISampledTextureCreateResult {
-    UPtr<RHISampledTexture> Texture          = nullptr;
-    RHIGpuCompletionToken   UploadCompletion = {};
+    std::span<const std::byte> Data     = {};
+    Uint32                     Width    = 1;
+    Uint32                     Height   = 1;
+    Uint32                     Channels = 4;
+    RHIFormat                  Format   = RHIFormat::R8G8B8A8_UNORM;
+    RHITextureUsage            Usage    = RHITextureUsage::ShaderResource;
 };
 
 struct RHIRenderTargetDesc {
@@ -715,20 +665,6 @@ struct RHIRenderTargetDesc {
     Uint32       Height = 1;
     RHIFormat       Format = RHIFormat::B8G8R8A8_UNORM;
     RHITextureUsage Usage  = RHITextureUsage::RenderTarget;
-};
-
-struct RHIRenderTargetCreateResult {
-    UPtr<RHIRenderTarget> Texture = nullptr;
-};
-
-struct RHIVertexBufferCreateResult {
-    UPtr<RHIVertexBuffer> Buffer           = nullptr;
-    RHIGpuCompletionToken UploadCompletion = {};
-};
-
-struct RHIIndexBufferCreateResult {
-    UPtr<RHIIndexBuffer>  Buffer           = nullptr;
-    RHIGpuCompletionToken UploadCompletion = {};
 };
 
 // ── RHIPipeline ─────────────────────────────────────────────────────────────────

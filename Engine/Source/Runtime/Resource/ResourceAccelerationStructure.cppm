@@ -15,8 +15,8 @@ export import std;
 namespace SoulEngine {
 namespace {
 
-[[nodiscard]] auto BuildBottomLevelAccelerationStructureKey(const ResourceHandle<ResourceMesh>& MeshHandle,
-                                                             const BottomLevelAccelerationStructureRequest& Request)
+[[nodiscard]] auto BuildBottomLevelAccelerationStructureKey(const ResourceHandle<ResourceMesh>&            MeshHandle,
+                                                            const BottomLevelAccelerationStructureRequest& Request)
     -> String {
     return Format("rt-blas/mesh={}/generation={}/policy={}",
                   MeshHandle.GetKey(),
@@ -29,11 +29,11 @@ namespace {
 }
 
 struct PendingBottomLevelAccelerationStructureRequest {
-    ResourceContext*                               Context = nullptr;
-    ResourceGeneration                             Generation = 0;
-    String                                         Key = {};
-    BottomLevelAccelerationStructureRequest        Request = {};
-    ResourceRef<ResourceMesh>                              MeshRef = {};
+    ResourceContext*                        Context    = nullptr;
+    ResourceGeneration                      Generation = 0;
+    String                                  Key        = {};
+    BottomLevelAccelerationStructureRequest Request    = {};
+    ResourceRef<ResourceMesh>               MeshRef    = {};
 };
 
 [[nodiscard]] auto IsDependencyFailed(ResourceContext& Context, const ResourceHandle<ResourceMesh>& Handle) -> bool {
@@ -41,8 +41,9 @@ struct PendingBottomLevelAccelerationStructureRequest {
     return State == ResourceState::Failed || State == ResourceState::Stale || State == ResourceState::Unknown;
 }
 
-[[nodiscard]] auto WaitForBottomLevelAccelerationStructureDependencies(
-    const SPtr<PendingBottomLevelAccelerationStructureRequest>& Pending) -> bool {
+[[nodiscard]] auto
+WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLevelAccelerationStructureRequest>& Pending)
+    -> bool {
     auto& Context = *Pending->Context;
     if (Context.IsShutdownRequested())
         return true;
@@ -60,19 +61,17 @@ struct PendingBottomLevelAccelerationStructureRequest {
 
     if (Pending->Request.GeometryPolicy != BottomLevelAccelerationStructureGeometryPolicy::AllMeshSubMeshes) {
         PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
-            Context,
-            Pending->Generation,
-            Pending->Key,
-            ErrorMessage("Unsupported BLAS geometry policy"));
+            Context, Pending->Generation, Pending->Key, ErrorMessage("Unsupported BLAS geometry policy"));
         return true;
     }
 
-    std::vector<ResourceHandle<RHIVertexBuffer>> PositionHandles;
-    std::vector<ResourceHandle<RHIIndexBuffer>>  IndexHandles;
+    std::vector<RHIRef<RHIVertexBuffer>>                      PositionRefs;
+    std::vector<RHIRef<RHIIndexBuffer>>                       IndexRefs;
     std::vector<RHITriangleAccelerationStructureGeometryDesc> Geometries;
     for (const auto& Group : MeshResource->GetMeshGroups()) {
         for (const auto& SubMesh : Group.SubMeshes) {
-            if (!SubMesh.PositionVB.IsValid() || !SubMesh.IB.IsValid() || SubMesh.VertexCount == 0 || SubMesh.Indices.empty()) {
+            if (!SubMesh.PositionVB.IsValid() || !SubMesh.IB.IsValid() || SubMesh.VertexCount == 0 ||
+                SubMesh.Indices.empty()) {
                 PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
                     Context,
                     Pending->Generation,
@@ -81,28 +80,25 @@ struct PendingBottomLevelAccelerationStructureRequest {
                 return true;
             }
 
-            const auto PositionState = Context.GetState(SubMesh.PositionVB);
-            const auto IndexState = Context.GetState(SubMesh.IB);
-            if (PositionState == ResourceState::Failed || PositionState == ResourceState::Stale ||
-                IndexState == ResourceState::Failed || IndexState == ResourceState::Stale) {
+            auto  PositionRef    = SubMesh.PositionVB;
+            auto  IndexRef       = SubMesh.IB;
+            auto* PositionBuffer = PositionRef.TryGet();
+            auto* IndexBuffer    = IndexRef.TryGet();
+            if (!PositionBuffer || !IndexBuffer) {
                 PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
                     Context,
                     Pending->Generation,
                     Pending->Key,
-                    ErrorMessage("BLAS geometry buffer dependency failed"));
+                    ErrorMessage("BLAS geometry buffer dependency became unavailable"));
                 return true;
             }
-            auto* PositionBuffer = Context.TryGetReady(SubMesh.PositionVB);
-            auto* IndexBuffer = Context.TryGetReady(SubMesh.IB);
-            if (!PositionBuffer || !IndexBuffer)
-                return false;
 
-            PositionHandles.push_back(SubMesh.PositionVB);
-            IndexHandles.push_back(SubMesh.IB);
             Geometries.push_back(RHITriangleAccelerationStructureGeometryDesc{
-                .VertexBufferPtr = PositionBuffer,
-                .IndexBufferPtr = IndexBuffer,
+                .VertexBufferRef = PositionRef,
+                .IndexBufferRef  = IndexRef,
             });
+            PositionRefs.push_back(std::move(PositionRef));
+            IndexRefs.push_back(std::move(IndexRef));
         }
     }
 
@@ -115,36 +111,15 @@ struct PendingBottomLevelAccelerationStructureRequest {
         return true;
     }
 
-    std::vector<ResourceRef<RHIVertexBuffer>> PositionRefs;
-    std::vector<ResourceRef<RHIIndexBuffer>> IndexRefs;
-    PositionRefs.reserve(PositionHandles.size());
-    IndexRefs.reserve(IndexHandles.size());
-    for (Uint32 GeometryIndex = 0; GeometryIndex < Geometries.size(); ++GeometryIndex) {
-        auto PositionRef = AcquireResourceRef(Context, PositionHandles[GeometryIndex]);
-        auto IndexRef = AcquireResourceRef(Context, IndexHandles[GeometryIndex]);
-        if (!PositionRef || !IndexRef) {
-            PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
-                Context,
-                Pending->Generation,
-                Pending->Key,
-                ErrorMessage("BLAS geometry buffer dependency became stale before ownership could be retained"));
-            return true;
-        }
-        PositionRefs.push_back(std::move(PositionRef));
-        IndexRefs.push_back(std::move(IndexRef));
-    }
-
-    if (!MarkResourceRhiCommitting<ResourceBottomLevelAccelerationStructure>(Context, Pending->Key, Pending->Generation))
+    if (!MarkResourceRhiCommitting<ResourceBottomLevelAccelerationStructure>(
+            Context, Pending->Key, Pending->Generation))
         return true;
 
     auto Payload = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(
         RHIBottomLevelAccelerationStructureDesc{.Geometries = std::move(Geometries)});
     if (!Payload) {
         PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
-            Context,
-            Pending->Generation,
-            Pending->Key,
-            Payload.error().Append("Failed to create BLAS RHI payload"));
+            Context, Pending->Generation, Pending->Key, Payload.error().Append("Failed to create BLAS RHI payload"));
         return true;
     }
 
@@ -157,12 +132,12 @@ struct PendingBottomLevelAccelerationStructureRequest {
 
 } // namespace
 
-[[nodiscard]] auto SubmitBottomLevelAccelerationStructureRequest(
-    ResourceContext& Context,
-    const ResourceHandle<ResourceMesh>& MeshHandle,
-    const BottomLevelAccelerationStructureRequest& Request) -> ResourceHandle<ResourceBottomLevelAccelerationStructure> {
-    const auto Key = BuildBottomLevelAccelerationStructureKey(MeshHandle, Request);
-    auto Work = BeginResourceWork<ResourceBottomLevelAccelerationStructure>(Context, Key);
+[[nodiscard]] auto SubmitBottomLevelAccelerationStructureRequest(ResourceContext&                    Context,
+                                                                 const ResourceHandle<ResourceMesh>& MeshHandle,
+                                                                 const BottomLevelAccelerationStructureRequest& Request)
+    -> ResourceHandle<ResourceBottomLevelAccelerationStructure> {
+    const auto Key  = BuildBottomLevelAccelerationStructureKey(MeshHandle, Request);
+    auto       Work = BeginResourceWork<ResourceBottomLevelAccelerationStructure>(Context, Key);
     if (!Work.ShouldStartWork)
         return Work.Handle;
 
@@ -176,24 +151,23 @@ struct PendingBottomLevelAccelerationStructureRequest {
         return Work.Handle;
     }
 
-    auto Pending = std::make_shared<PendingBottomLevelAccelerationStructureRequest>();
-    Pending->Context = &Context;
+    auto Pending        = std::make_shared<PendingBottomLevelAccelerationStructureRequest>();
+    Pending->Context    = &Context;
     Pending->Generation = Work.Handle.GetGeneration();
-    Pending->Key = Key;
-    Pending->Request = Request;
-    Pending->MeshRef = std::move(MeshRef);
-    Context.EnqueueRhiDependencyWaiter([Pending] {
-        return WaitForBottomLevelAccelerationStructureDependencies(Pending);
-    });
+    Pending->Key        = Key;
+    Pending->Request    = Request;
+    Pending->MeshRef    = std::move(MeshRef);
+    Context.EnqueueRhiDependencyWaiter(
+        [Pending] { return WaitForBottomLevelAccelerationStructureDependencies(Pending); });
     return Work.Handle;
 }
 
-[[nodiscard]] auto SubmitTopLevelAccelerationStructureRequest(ResourceContext& Context,
-                                                               StringView ScopeKey,
-                                                               const RHITopLevelAccelerationStructureDesc& Desc)
+[[nodiscard]] auto SubmitTopLevelAccelerationStructureRequest(ResourceContext&                            Context,
+                                                              StringView                                  ScopeKey,
+                                                              const RHITopLevelAccelerationStructureDesc& Desc)
     -> ResourceHandle<ResourceTopLevelAccelerationStructure> {
-    const auto Key = BuildTopLevelAccelerationStructureKey(ScopeKey);
-    auto Work = BeginResourceWork<ResourceTopLevelAccelerationStructure>(Context, Key);
+    const auto Key  = BuildTopLevelAccelerationStructureKey(ScopeKey);
+    auto       Work = BeginResourceWork<ResourceTopLevelAccelerationStructure>(Context, Key);
     if (!Work.ShouldStartWork)
         return Work.Handle;
     if (ScopeKey.empty()) {
@@ -206,38 +180,33 @@ struct PendingBottomLevelAccelerationStructureRequest {
     }
 
     auto* ContextPtr = &Context;
-    auto EnqueueResult = TaskGraph::Get().Enqueue(
-        ThreadQueue::RHI,
-        [ContextPtr, Generation = Work.Handle.GetGeneration(), Key, Desc] {
-        auto& Context = *ContextPtr;
-        if (Context.IsShutdownRequested())
-            return;
-        if (!MarkResourceRhiCommitting<ResourceTopLevelAccelerationStructure>(Context, Key, Generation))
-            return;
+    auto  EnqueueResult =
+        TaskGraph::Get().Enqueue(ThreadQueue::RHI, [ContextPtr, Generation = Work.Handle.GetGeneration(), Key, Desc] {
+            auto& Context = *ContextPtr;
+            if (Context.IsShutdownRequested())
+                return;
+            if (!MarkResourceRhiCommitting<ResourceTopLevelAccelerationStructure>(Context, Key, Generation))
+                return;
 
-        auto Payload = RHIRenderDevice::Get().CreateTopLevelAccelerationStructure(Desc);
-        if (!Payload) {
-            PublishResourceFailed<ResourceTopLevelAccelerationStructure>(
-                Context,
-                Generation,
-                Key,
-                Payload.error().Append("Failed to create TLAS RHI payload"));
-            return;
-        }
+            auto Payload = RHIRenderDevice::Get().CreateTopLevelAccelerationStructure(Desc);
+            if (!Payload) {
+                PublishResourceFailed<ResourceTopLevelAccelerationStructure>(
+                    Context, Generation, Key, Payload.error().Append("Failed to create TLAS RHI payload"));
+                return;
+            }
 
-        auto ResourceValue = std::make_unique<ResourceTopLevelAccelerationStructure>(std::move(*Payload));
-        PublishResourceReady<ResourceTopLevelAccelerationStructure>(
-            Context, Generation, Key, {.Object = std::move(ResourceValue)});
+            auto ResourceValue = std::make_unique<ResourceTopLevelAccelerationStructure>(std::move(*Payload));
+            PublishResourceReady<ResourceTopLevelAccelerationStructure>(
+                Context, Generation, Key, {.Object = std::move(ResourceValue)});
         });
     if (!EnqueueResult) {
         PublishResourceFailed<ResourceTopLevelAccelerationStructure>(
             Context,
             Work.Handle.GetGeneration(),
             Key,
-            EnqueueResult.error().Append(
-                Format("Failed to enqueue async {} work '{}'",
-                       ResourceTraits<ResourceTopLevelAccelerationStructure>::Info.Label,
-                       Key)));
+            EnqueueResult.error().Append(Format("Failed to enqueue async {} work '{}'",
+                                                ResourceTraits<ResourceTopLevelAccelerationStructure>::Info.Label,
+                                                Key)));
     }
     return Work.Handle;
 }

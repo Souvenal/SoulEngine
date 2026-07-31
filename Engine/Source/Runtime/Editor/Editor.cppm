@@ -235,7 +235,7 @@ class Editor {
     /// frame has been published and the pipeline, font texture, and dynamic
     /// buffers are all ready.
     auto AttachPresentationOverlay(RHICommandList& CmdList, ImDrawDataSnapshot& Snapshot) -> void {
-        if (!CmdList.PresentSource)
+        if (!CmdList.PresentSourceRef.TryGet())
             return;
 
         if (!Snapshot.DrawData.Valid)

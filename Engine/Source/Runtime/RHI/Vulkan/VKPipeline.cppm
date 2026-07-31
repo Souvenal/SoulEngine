@@ -216,7 +216,7 @@ struct VulkanDescriptorSetInstance {
 };
 
 struct VulkanPipelineParameterSetInstances {
-    std::unordered_map<Uint64, std::vector<std::vector<VulkanDescriptorSetInstance>>> ByParameterId = {};
+    std::unordered_map<Uint64, std::vector<std::vector<std::vector<VulkanDescriptorSetInstance>>>> ByParameterId = {};
 };
 
 [[nodiscard]] auto BuildReflectedBindings(const ShaderReflection& Reflection)
@@ -263,15 +263,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     // All callers should use Create() instead.
     VulkanGraphicsPipeline() = default;
 
-    ~VulkanGraphicsPipeline() override {
-        if (m_DeletionQueue) {
-            m_DeletionQueue->Enqueue(GetLastUsageToken(),
-                                     [RHIPipeline = m_Pipeline,
-                                      PipelineLayout = m_PipelineLayout,
-                                      SetLayouts = m_SetLayouts,
-                                      ParameterSets = m_ParameterSets]() {});
-        }
-    }
+    ~VulkanGraphicsPipeline() override = default;
 
     VulkanGraphicsPipeline(const VulkanGraphicsPipeline&)                    = delete;
     auto operator=(const VulkanGraphicsPipeline&) -> VulkanGraphicsPipeline& = delete;
@@ -480,7 +472,6 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
         Ret->m_PushConstantSize   = MaxPushConstantSize(Desc.Program.Reflection);
         Ret->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
-        Ret->m_DeletionQueue      = &Context.DeletionQueue;
         return Ret;
     }
 
@@ -525,6 +516,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     }
 
     [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
+                                                         Uint32             FrameIndex,
                                                          Uint32             SetIndex,
                                                          Uint32             VariableDescriptorCount,
                                                          VulkanDescriptorManager& Descriptors)
@@ -540,7 +532,6 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     Uint32                                           m_DescriptorSetCount = 0;
     Uint32                                           m_DynamicOffsetCount = 0;
     Uint32                                           m_PushConstantSize   = 0;
-    VulkanDeletionQueue*                                   m_DeletionQueue      = nullptr;
 };
 
 auto VulkanGraphicsPipeline::GetDescriptorSetLayout(Uint32 Set) const -> vk::DescriptorSetLayout {
@@ -550,6 +541,7 @@ auto VulkanGraphicsPipeline::GetDescriptorSetLayout(Uint32 Set) const -> vk::Des
 }
 
 auto VulkanGraphicsPipeline::GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
+                                                         Uint32             FrameIndex,
                                                          Uint32             SetIndex,
                                                          Uint32             VariableDescriptorCount,
                                                          VulkanDescriptorManager& Descriptors)
@@ -557,7 +549,13 @@ auto VulkanGraphicsPipeline::GetOrCreateDescriptorSetInstance(Uint64            
     if (SetIndex >= m_RawSetLayouts.size())
         return std::unexpected(ErrorMessage(Format("Parameter set uses missing descriptor set {}", SetIndex)));
 
-    auto& Instances = m_ParameterSets->ByParameterId[ParameterId];
+    auto& Frames = m_ParameterSets->ByParameterId[ParameterId];
+    if (FrameIndex >= Descriptors.GetFramesInFlight())
+        return std::unexpected(ErrorMessage(Format("Invalid frame index {} for descriptor set instance", FrameIndex)));
+    if (Frames.size() < Descriptors.GetFramesInFlight())
+        Frames.resize(Descriptors.GetFramesInFlight());
+
+    auto& Instances = Frames[FrameIndex];
     if (Instances.size() < m_RawSetLayouts.size())
         Instances.resize(m_RawSetLayouts.size());
 

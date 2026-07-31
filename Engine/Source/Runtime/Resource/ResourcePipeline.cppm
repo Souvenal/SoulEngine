@@ -31,8 +31,11 @@ export namespace SoulEngine {
     for (const auto& Binding : Req.VertexInputLayout.Bindings)
         Key += Format("|vbind={}:{}", Binding.Binding, Binding.Stride);
     for (const auto& Attribute : Req.VertexInputLayout.Attributes)
-        Key += Format(
-            "|attr={}:{}:{}:{}", Attribute.Location, Attribute.Binding, static_cast<Uint8>(Attribute.Format), Attribute.Offset);
+        Key += Format("|attr={}:{}:{}:{}",
+                      Attribute.Location,
+                      Attribute.Binding,
+                      static_cast<Uint8>(Attribute.Format),
+                      Attribute.Offset);
 
     for (const auto& Attachment : Req.Blend.Attachments)
         Key += Format("|blend={}", Attachment.BlendEnable);
@@ -77,153 +80,74 @@ struct PreparedGraphicsPipeline {
     };
 }
 
-[[nodiscard]] auto SubmitGraphicsPipelineRequest(ResourceContext& Context, const GraphicsPipelineRequest& Req)
-    -> ResourceHandle<RHIGraphicsPipeline> {
-    const auto Key = MakePipelineKey(Req);
-
-    auto Work   = BeginResourceWork<RHIGraphicsPipeline>(Context, Key);
-    auto Handle = Work.Handle;
-    if (!Work.ShouldStartWork)
-        return Handle;
-
-    LogDebug("Graphics pipeline requested '{}'", Key);
-
-    auto* ContextPtr = &Context;
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
-        [ContextPtr, Generation = Handle.GetGeneration(), Key, Req] {
-        auto& Context = *ContextPtr;
-        if (Context.IsShutdownRequested()) {
-            LogDebug("Async graphics pipeline compile discarded after shutdown '{}'", Key);
-            return;
-        }
-
+[[nodiscard]] auto SubmitGraphicsPipelinePreparation(
+    const GraphicsPipelineRequest& Req,
+    std::move_only_function<void(RHIRef<RHIGraphicsPipeline>)> OnCreated)
+    -> std::expected<void, ErrorMessage> {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
         auto Prepared = PrepareGraphicsPipeline(Req);
         if (!Prepared) {
-            PublishResourceFailed<RHIGraphicsPipeline>(Context, Generation, Key, Prepared.error());
+            LogError("Failed to prepare graphics pipeline: {}", Prepared.error().ToString());
             return;
         }
 
-        if (Context.IsShutdownRequested()) {
-            LogDebug("Async graphics pipeline creation discarded after shutdown '{}'", Key);
+        auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(Prepared->Desc);
+        if (!Created) {
+            LogError("Failed to queue graphics pipeline creation: {}", Created.error().ToString());
             return;
         }
 
-        auto EnqueueResult = TaskGraph::Get().Enqueue(
-            ThreadQueue::RHI,
-            [ContextPtr, Generation, Key, Prepared = std::move(*Prepared)] {
-            auto& Context = *ContextPtr;
-            if (Context.IsShutdownRequested()) {
-                LogDebug("Async graphics pipeline publish discarded after shutdown '{}'", Key);
-                return;
-            }
-
-            if (!MarkResourceRhiCommitting<RHIGraphicsPipeline>(Context, Key, Generation))
-                return;
-
-            auto PipeResult = RHIRenderDevice::Get().CreateGraphicsPipeline(Prepared.Desc);
-            if (!PipeResult) {
-                PublishResourceFailed<RHIGraphicsPipeline>(
-                    Context,
-                    Generation,
-                    Key,
-                    PipeResult.error().Append(Format("Failed to create graphics pipeline '{}'", Key)));
-                return;
-            }
-
-            PublishResourceReady<RHIGraphicsPipeline>(
-                Context, Generation, Key, Resource<RHIGraphicsPipeline>{.Object = std::move(*PipeResult)});
-            });
-        if (!EnqueueResult) {
-            PublishResourceFailed<RHIGraphicsPipeline>(
-                Context,
-                Generation,
-                Key,
-                EnqueueResult.error().Append(
-                    Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIGraphicsPipeline>::Info.Label, Key)));
+        if (auto Delivery = TaskGraph::Get().Enqueue(
+                ThreadQueue::Render,
+                [OnCreated = std::move(OnCreated), Pipeline = std::move(*Created)] mutable {
+                    OnCreated(std::move(Pipeline));
+                });
+            !Delivery) {
+            LogError("Failed to deliver graphics pipeline creation result: {}", Delivery.error().ToString());
         }
-        });
-    if (!EnqueueResult) {
-        PublishResourceFailed<RHIGraphicsPipeline>(
-            Context,
-            Handle.GetGeneration(),
-            Key,
-            EnqueueResult.error().Append(
-                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIGraphicsPipeline>::Info.Label, Key)));
-    }
-
-    return Handle;
+    });
+    if (!EnqueueResult)
+        return std::unexpected(EnqueueResult.error());
+    return {};
 }
 
-[[nodiscard]] auto MakeRayTracingPipelineKey(const RayTracingPipelineRequest& Req) -> String {
-    String Key = Format("rt/raygen={}:{}:{}|depth={}", Req.RayGeneration.SourcePath.lexically_normal().string(),
-                        Req.RayGeneration.EntryPoint, static_cast<Uint8>(Req.RayGeneration.Backend), Req.MaxRecursionDepth);
-    for (const auto& Miss : Req.MissEntries)
-        Key += Format("|miss={}:{}:{}", Miss.SourcePath.lexically_normal().string(), Miss.EntryPoint, static_cast<Uint8>(Miss.Backend));
-    for (const auto& Group : Req.HitGroups) {
-        Key += Format("|hit={}", static_cast<Uint8>(Group.Type));
-        if (Group.ClosestHit)
-            Key += Format(":{}", Group.ClosestHit->EntryPoint);
-    }
-    return Key;
-}
-
-[[nodiscard]] auto SubmitRayTracingPipelineRequest(ResourceContext& Context, const RayTracingPipelineRequest& Req)
-    -> ResourceHandle<RHIRayTracingPipeline> {
-    const auto Key = MakeRayTracingPipelineKey(Req);
-    auto Work = BeginResourceWork<RHIRayTracingPipeline>(Context, Key);
-    if (!Work.ShouldStartWork)
-        return Work.Handle;
-
-    auto* ContextPtr = &Context;
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
-        [ContextPtr, Generation = Work.Handle.GetGeneration(), Key, Req] {
-        auto& Context = *ContextPtr;
-        if (Context.IsShutdownRequested())
-            return;
-        const auto& Cfg = ConfigManager::Get();
+[[nodiscard]] auto SubmitRayTracingPipelinePreparation(
+    const RayTracingPipelineRequest& Req,
+    std::move_only_function<void(RHIRef<RHIRayTracingPipeline>)> OnCreated)
+    -> std::expected<void, ErrorMessage> {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
+        const auto&       Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
-        auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
+        auto              Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
             .RayGeneration = Req.RayGeneration,
-            .MissEntries = Req.MissEntries,
-            .HitGroups = Req.HitGroups,
-            .IncludeDirs = IncludeDirs,
+            .MissEntries   = Req.MissEntries,
+            .HitGroups     = Req.HitGroups,
+            .IncludeDirs   = IncludeDirs,
         });
         if (!Program) {
-            PublishResourceFailed<RHIRayTracingPipeline>(Context, Generation, Key, Program.error());
+            LogError("Failed to prepare ray-tracing pipeline: {}", Program.error().ToString());
             return;
         }
-        auto EnqueueResult = TaskGraph::Get().Enqueue(
-            ThreadQueue::RHI,
-            [ContextPtr, Generation, Key, Program = std::move(*Program), MaxDepth = Req.MaxRecursionDepth] mutable {
-            auto& Context = *ContextPtr;
-            if (Context.IsShutdownRequested() || !MarkResourceRhiCommitting<RHIRayTracingPipeline>(Context, Key, Generation))
-                return;
-            auto Pipeline = RHIRenderDevice::Get().CreateRayTracingPipeline(
-                RHIRayTracingPipelineDesc{.Program = std::move(Program), .MaxRecursionDepth = MaxDepth});
-            if (!Pipeline) {
-                PublishResourceFailed<RHIRayTracingPipeline>(Context, Generation, Key, Pipeline.error());
-                return;
-            }
-            PublishResourceReady<RHIRayTracingPipeline>(Context, Generation, Key, {.Object = std::move(*Pipeline)});
-            });
-        if (!EnqueueResult) {
-            PublishResourceFailed<RHIRayTracingPipeline>(
-                Context,
-                Generation,
-                Key,
-                EnqueueResult.error().Append(
-                    Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIRayTracingPipeline>::Info.Label, Key)));
+
+        auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(
+            RHIRayTracingPipelineDesc{.Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth});
+        if (!Created) {
+            LogError("Failed to queue ray-tracing pipeline creation: {}", Created.error().ToString());
+            return;
         }
-        });
-    if (!EnqueueResult) {
-        PublishResourceFailed<RHIRayTracingPipeline>(
-            Context,
-            Work.Handle.GetGeneration(),
-            Key,
-            EnqueueResult.error().Append(
-                Format("Failed to enqueue async {} work '{}'", ResourceTraits<RHIRayTracingPipeline>::Info.Label, Key)));
-    }
-    return Work.Handle;
+
+        if (auto Delivery = TaskGraph::Get().Enqueue(
+                ThreadQueue::Render,
+                [OnCreated = std::move(OnCreated), Pipeline = std::move(*Created)] mutable {
+                    OnCreated(std::move(Pipeline));
+                });
+            !Delivery) {
+            LogError("Failed to deliver ray-tracing pipeline creation result: {}", Delivery.error().ToString());
+        }
+    });
+    if (!EnqueueResult)
+        return std::unexpected(EnqueueResult.error());
+    return {};
 }
 
 } // namespace SoulEngine

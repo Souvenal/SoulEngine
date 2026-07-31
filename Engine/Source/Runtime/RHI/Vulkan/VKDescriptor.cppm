@@ -117,6 +117,10 @@ class VulkanDescriptorManager {
         return *m_Pool;
     }
 
+    [[nodiscard]] auto GetFramesInFlight() const -> Uint32 {
+        return m_FramesInFlight;
+    }
+
     [[nodiscard]] auto AllocateDescriptorSets(Uint32 FrameIndex, std::span<const vk::DescriptorSetLayout> SetLayouts)
         -> std::expected<std::vector<vk::DescriptorSet>, ErrorMessage> {
         std::vector<Uint32> VariableCounts(SetLayouts.size(), 1);

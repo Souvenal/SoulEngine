@@ -34,16 +34,10 @@ struct VulkanSamplerProfileInfo {
 
 class VulkanSampler final : public RHISampler {
   public:
-    VulkanSampler(const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler, VulkanDeletionQueue& Queue)
-        : RHISampler(Desc) {
-        m_Sampler       = std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler));
-        m_DeletionQueue = &Queue;
-    }
+    VulkanSampler(const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
+        : RHISampler(Desc), m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))) {}
 
-    ~VulkanSampler() override {
-        if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [VulkanSampler = m_Sampler]() {});
-    }
+    ~VulkanSampler() override = default;
 
     VulkanSampler(const VulkanSampler&)                    = delete;
     auto operator=(const VulkanSampler&) -> VulkanSampler& = delete;
@@ -82,7 +76,7 @@ class VulkanSampler final : public RHISampler {
         if (Result.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanSampler::Create: failed to create VkSampler"));
 
-        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value), Context.DeletionQueue);
+        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value));
     }
 
     [[nodiscard]] auto GetVkSampler() const -> vk::Sampler {
@@ -90,8 +84,7 @@ class VulkanSampler final : public RHISampler {
     }
 
   private:
-    SPtr<vk::raii::Sampler> m_Sampler       = nullptr;
-    VulkanDeletionQueue*          m_DeletionQueue = nullptr;
+    SPtr<vk::raii::Sampler> m_Sampler = nullptr;
 };
 
 } // namespace SoulEngine

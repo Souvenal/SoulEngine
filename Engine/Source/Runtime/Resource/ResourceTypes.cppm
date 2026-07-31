@@ -19,7 +19,6 @@ enum class ResourceState : Uint8 {
     Unknown = 0,
     CpuPreparing,
     RhiCommitting,
-    GpuPending,
     Ready,
     Failed,
     Stale,
@@ -39,29 +38,14 @@ enum class ResourceLifetimePolicy : Uint8 {
     Transient,
 };
 
-/// @brief Whether a resource family has a GPU completion wait phase before Ready.
-enum class ResourceGpuPendingPolicy : Uint8 {
-    Unknown = 0,
-    None,
-    WaitForCompletion,
-};
-
 /// @brief Compile-time metadata for a manager-owned resource type.
 struct ResourceTraitInfo {
-    ResourceGpuPendingPolicy GpuPendingPolicy = ResourceGpuPendingPolicy::Unknown;
-    StringView               Label            = {};
-    ResourceLifetimePolicy   DefaultPolicy    = ResourceLifetimePolicy::Unknown;
+    StringView             Label         = {};
+    ResourceLifetimePolicy DefaultPolicy = ResourceLifetimePolicy::Unknown;
 
-    consteval ResourceTraitInfo(ResourceGpuPendingPolicy InGpuPendingPolicy,
-                                StringView InLabel,
-                                ResourceLifetimePolicy InDefaultPolicy) {
-        GpuPendingPolicy = InGpuPendingPolicy;
-        Label            = InLabel;
-        DefaultPolicy    = InDefaultPolicy;
-    }
-
-    [[nodiscard]] constexpr auto HasGpuPending() const -> bool {
-        return GpuPendingPolicy == ResourceGpuPendingPolicy::WaitForCompletion;
+    consteval ResourceTraitInfo(StringView InLabel, ResourceLifetimePolicy InDefaultPolicy) {
+        Label         = InLabel;
+        DefaultPolicy = InDefaultPolicy;
     }
 };
 
@@ -73,72 +57,8 @@ class ResourceBottomLevelAccelerationStructure;
 class ResourceTopLevelAccelerationStructure;
 
 template <>
-struct ResourceTraits<RHISampledTexture> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::WaitForCompletion,
-        "sampled texture",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
-
-template <>
-struct ResourceTraits<RHIRenderTarget> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
-        "render target",
-        ResourceLifetimePolicy::Transient,
-    };
-};
-
-template <>
-struct ResourceTraits<RHIGraphicsPipeline> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
-        "graphics pipeline",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
-
-template <>
-struct ResourceTraits<RHIRayTracingPipeline> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
-        "ray tracing pipeline",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
-
-template <>
-struct ResourceTraits<RHIVertexBuffer> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::WaitForCompletion,
-        "vertex buffer",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
-
-template <>
-struct ResourceTraits<RHIIndexBuffer> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::WaitForCompletion,
-        "index buffer",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
-
-template <>
-struct ResourceTraits<RHISampler> {
-    static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
-        "sampler",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
-
-template <>
 struct ResourceTraits<ResourceMesh> {
     static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
         "mesh",
         ResourceLifetimePolicy::CachedAsset,
     };
@@ -147,7 +67,6 @@ struct ResourceTraits<ResourceMesh> {
 template <>
 struct ResourceTraits<ResourceBottomLevelAccelerationStructure> {
     static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
         "bottom-level acceleration structure",
         ResourceLifetimePolicy::CachedAsset,
     };
@@ -156,31 +75,13 @@ struct ResourceTraits<ResourceBottomLevelAccelerationStructure> {
 template <>
 struct ResourceTraits<ResourceTopLevelAccelerationStructure> {
     static constexpr ResourceTraitInfo Info{
-        ResourceGpuPendingPolicy::None,
         "top-level acceleration structure",
         ResourceLifetimePolicy::Transient,
     };
 };
 
-/// @brief Central list of RHI payload families managed by Resource.
-///
-/// A payload type must appear here and define `ResourceTraits<T>::Info` before
-/// it satisfies `ManagedRHIResource`. Keeping both requirements in the concept
-/// prevents a traits-only type from compiling without Context/FrameScope
-/// storage.
-using ManagedRHIResourceTypes = std::tuple<RHISampledTexture,
-                                           RHIRenderTarget,
-                                           RHIGraphicsPipeline,
-                                           RHIRayTracingPipeline,
-                                           RHIVertexBuffer,
-                                           RHIIndexBuffer,
-                                           RHISampler>;
-
-/// @brief Central list of high-level asset families managed by Resource.
-using ManagedAssetResourceTypes = std::tuple<ResourceMesh, ResourceBottomLevelAccelerationStructure, ResourceTopLevelAccelerationStructure>;
-
 using ManagedResourceTypes =
-    decltype(std::tuple_cat(std::declval<ManagedRHIResourceTypes>(), std::declval<ManagedAssetResourceTypes>()));
+    std::tuple<ResourceMesh, ResourceBottomLevelAccelerationStructure, ResourceTopLevelAccelerationStructure>;
 
 template <typename T, typename Tuple>
 struct TupleContains;
@@ -196,66 +97,43 @@ concept DefinedResourceTraits = requires {
 };
 
 template <typename T>
-concept ListedManagedRHIResource = TupleContains<T, ManagedRHIResourceTypes>::Value;
+concept ManagedResource = DefinedResourceTraits<T> && TupleContains<T, ManagedResourceTypes>::Value;
 
 template <typename T>
-concept ListedManagedAssetResource = TupleContains<T, ManagedAssetResourceTypes>::Value;
+concept ManagedAssetResource = ManagedResource<T>;
 
-template <typename T>
-concept ListedManagedResource = TupleContains<T, ManagedResourceTypes>::Value;
-
-template <typename T>
-concept ManagedRHIResource = DefinedResourceTraits<T> && ListedManagedRHIResource<T>;
-
-template <typename T>
-concept ManagedAssetResource = DefinedResourceTraits<T> && ListedManagedAssetResource<T>;
-
-template <typename T>
-concept ManagedResource = DefinedResourceTraits<T> && ListedManagedResource<T>;
-
-template <typename T>
-concept GpuPendingManagedRHIResource = ManagedRHIResource<T> && ResourceTraits<T>::Info.HasGpuPending();
-
-static_assert(ManagedRHIResource<RHISampledTexture>);
-static_assert(ManagedRHIResource<RHIRenderTarget>);
-static_assert(ManagedRHIResource<RHIGraphicsPipeline>);
-static_assert(ManagedRHIResource<RHIRayTracingPipeline>);
-static_assert(ManagedRHIResource<RHIVertexBuffer>);
-static_assert(ManagedRHIResource<RHIIndexBuffer>);
-static_assert(ManagedRHIResource<RHISampler>);
-static_assert(ManagedAssetResource<ResourceMesh>);
 static_assert(ManagedResource<ResourceMesh>);
 
-/// @brief ResourceContext-owned RHI payload for supported resource types.
-///
-/// The primary template is constrained through `ManagedResource`, so trying
-/// to instantiate Resource/Handle/Slot for an unsupported type fails at compile
-/// time instead of silently creating an unmanaged resource family.
-/// ResourceMesh extends this storage to imported non-RHI asset payloads.
+/// @brief ResourceContext-owned high-level asset payload.
 template <ManagedResource T>
 struct Resource {
     UPtr<T> Object = nullptr;
 };
 
+template <ManagedResource T>
+[[nodiscard]] auto GetResourceObject(const Resource<T>& Value) -> T* {
+    return Value.Object.get();
+}
+
 /// @brief Async graphics pipeline request descriptor.
 struct GraphicsPipelineRequest {
-    ShaderEntry VertEntry         = {};
-    ShaderEntry FragEntry         = {};
-    RHIVertexInputLayoutDesc  VertexInputLayout = {};
-    RHIPrimitiveTopology      Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState        Rasterizer        = {};
-    RHIBlendState             Blend             = {};
-    RHIDepthStencilState      DepthStencil      = {};
-    RHIFormat                 ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
-    RHIFormat                 DepthFormat       = RHIFormat::Unknown;
+    ShaderEntry              VertEntry         = {};
+    ShaderEntry              FragEntry         = {};
+    RHIVertexInputLayoutDesc VertexInputLayout = {};
+    RHIPrimitiveTopology     Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState       Rasterizer        = {};
+    RHIBlendState            Blend             = {};
+    RHIDepthStencilState     DepthStencil      = {};
+    RHIFormat                ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
+    RHIFormat                DepthFormat       = RHIFormat::Unknown;
 };
 
 /// @brief Async hardware ray-tracing pipeline request descriptor.
 struct RayTracingPipelineRequest {
-    ShaderEntry RayGeneration = {};
-    std::vector<ShaderEntry> MissEntries = {};
-    std::vector<RayTracingHitGroupCompileDesc> HitGroups = {};
-    Uint32 MaxRecursionDepth = 1;
+    ShaderEntry                                RayGeneration     = {};
+    std::vector<ShaderEntry>                   MissEntries       = {};
+    std::vector<RayTracingHitGroupCompileDesc> HitGroups         = {};
+    Uint32                                     MaxRecursionDepth = 1;
 };
 
 /// @brief Payload state machine for one ResourceContext entry generation.
@@ -296,12 +174,8 @@ class ResourceSlot {
         return SetState(Generation, ResourceState::RhiCommitting);
     }
 
-    [[nodiscard]] auto PublishGpuPending(ResourceGeneration Generation) -> bool {
-        return SetState(Generation, ResourceState::GpuPending);
-    }
-
     [[nodiscard]] auto PublishReady(ResourceGeneration Generation, Resource<T> Value) -> bool {
-        std::lock_guard Lock(m_Mutex);
+        std::scoped_lock Lock(m_Mutex);
         if (Generation != m_Generation)
             return false;
 
@@ -346,7 +220,7 @@ class ResourceSlot {
         if (Generation != m_Generation || m_State != ResourceState::Ready || !m_Value.Object)
             return nullptr;
 
-        return m_Value.Object.get();
+        return GetResourceObject(m_Value);
     }
 
     /// @brief Request payload release.
@@ -442,7 +316,7 @@ class ResourceRef {
 
     ResourceRef(ResourceRef&& Other) noexcept {
         m_Context = std::exchange(Other.m_Context, nullptr);
-        m_Handle = std::exchange(Other.m_Handle, {});
+        m_Handle  = std::exchange(Other.m_Handle, {});
         m_Release = std::exchange(Other.m_Release, nullptr);
     }
 
@@ -450,7 +324,7 @@ class ResourceRef {
         if (this != &Other) {
             Reset();
             m_Context = std::exchange(Other.m_Context, nullptr);
-            m_Handle = std::exchange(Other.m_Handle, {});
+            m_Handle  = std::exchange(Other.m_Handle, {});
             m_Release = std::exchange(Other.m_Release, nullptr);
         }
         return *this;
@@ -474,7 +348,7 @@ class ResourceRef {
 
         m_Release(m_Context, m_Handle);
         m_Context = nullptr;
-        m_Handle = {};
+        m_Handle  = {};
         m_Release = nullptr;
     }
 
@@ -489,14 +363,14 @@ class ResourceRef {
     [[nodiscard]] static auto Create(void* Context, ResourceHandle<T> Handle, ReleaseFn Release) -> ResourceRef {
         ResourceRef Ref;
         Ref.m_Context = Context;
-        Ref.m_Handle = std::move(Handle);
+        Ref.m_Handle  = std::move(Handle);
         Ref.m_Release = Release;
         return Ref;
     }
 
     // Non-owning ResourceContext observer; ResourceRef owns logical demand only.
     void*             m_Context = nullptr;
-    ResourceHandle<T> m_Handle = {};
+    ResourceHandle<T> m_Handle  = {};
     ReleaseFn         m_Release = nullptr;
 };
 
@@ -511,11 +385,11 @@ struct SubMesh {
     std::vector<hlslpp::interop::float2> UVs       = {};
     std::vector<Uint32>                  Indices   = {};
 
-    ResourceHandle<RHIVertexBuffer> PositionVB = {};
-    ResourceHandle<RHIVertexBuffer> NormalVB   = {};
-    ResourceHandle<RHIVertexBuffer> TangentVB  = {};
-    ResourceHandle<RHIVertexBuffer> UVVB       = {};
-    ResourceHandle<RHIIndexBuffer>  IB         = {};
+    RHIRef<RHIVertexBuffer> PositionVB = nullptr;
+    RHIRef<RHIVertexBuffer> NormalVB   = nullptr;
+    RHIRef<RHIVertexBuffer> TangentVB  = nullptr;
+    RHIRef<RHIVertexBuffer> UVVB       = nullptr;
+    RHIRef<RHIIndexBuffer>  IB         = nullptr;
 
     Uint32 VertexCount  = 0;
     Uint32 MaterialSlot = 0;
@@ -573,28 +447,33 @@ class ResourceBottomLevelAccelerationStructure {
   public:
     ResourceBottomLevelAccelerationStructure() = default;
 
-    ResourceBottomLevelAccelerationStructure(std::vector<ResourceRef<RHIVertexBuffer>> PositionBuffers,
-                                     std::vector<ResourceRef<RHIIndexBuffer>> IndexBuffers,
-                                     UPtr<RHIBottomLevelAccelerationStructure> Payload) {
+    ResourceBottomLevelAccelerationStructure(std::vector<RHIRef<RHIVertexBuffer>>        PositionBuffers,
+                                             std::vector<RHIRef<RHIIndexBuffer>>         IndexBuffers,
+                                             RHIRef<RHIBottomLevelAccelerationStructure> Payload) {
         m_PositionBuffers = std::move(PositionBuffers);
-        m_IndexBuffers = std::move(IndexBuffers);
-        m_Payload = std::move(Payload);
+        m_IndexBuffers    = std::move(IndexBuffers);
+        m_Payload         = std::move(Payload);
     }
 
     ResourceBottomLevelAccelerationStructure(const ResourceBottomLevelAccelerationStructure&) = delete;
-    auto operator=(const ResourceBottomLevelAccelerationStructure&) -> ResourceBottomLevelAccelerationStructure& = delete;
-    ResourceBottomLevelAccelerationStructure(ResourceBottomLevelAccelerationStructure&&) = delete;
+    auto operator=(const ResourceBottomLevelAccelerationStructure&)
+        -> ResourceBottomLevelAccelerationStructure&                                                        = delete;
+    ResourceBottomLevelAccelerationStructure(ResourceBottomLevelAccelerationStructure&&)                    = delete;
     auto operator=(ResourceBottomLevelAccelerationStructure&&) -> ResourceBottomLevelAccelerationStructure& = delete;
-    ~ResourceBottomLevelAccelerationStructure() = default;
+    ~ResourceBottomLevelAccelerationStructure()                                                             = default;
 
     [[nodiscard]] auto GetRhiPayload() const -> RHIBottomLevelAccelerationStructure* {
-        return m_Payload.get();
+        return m_Payload.TryGet();
+    }
+
+    [[nodiscard]] auto GetRhiPayloadRef() const -> RHIRef<RHIBottomLevelAccelerationStructure> {
+        return m_Payload;
     }
 
   private:
-    std::vector<ResourceRef<RHIVertexBuffer>> m_PositionBuffers = {};
-    std::vector<ResourceRef<RHIIndexBuffer>>  m_IndexBuffers = {};
-    UPtr<RHIBottomLevelAccelerationStructure> m_Payload = nullptr;
+    std::vector<RHIRef<RHIVertexBuffer>>        m_PositionBuffers = {};
+    std::vector<RHIRef<RHIIndexBuffer>>         m_IndexBuffers    = {};
+    RHIRef<RHIBottomLevelAccelerationStructure> m_Payload         = nullptr;
 };
 
 /// Persistent renderer-scoped TLAS allocation. Per-frame instances remain command-driven.
@@ -602,22 +481,26 @@ class ResourceTopLevelAccelerationStructure {
   public:
     ResourceTopLevelAccelerationStructure() = default;
 
-    explicit ResourceTopLevelAccelerationStructure(UPtr<RHITopLevelAccelerationStructure> Payload) {
+    explicit ResourceTopLevelAccelerationStructure(RHIRef<RHITopLevelAccelerationStructure> Payload) {
         m_Payload = std::move(Payload);
     }
 
-    ResourceTopLevelAccelerationStructure(const ResourceTopLevelAccelerationStructure&) = delete;
+    ResourceTopLevelAccelerationStructure(const ResourceTopLevelAccelerationStructure&)                    = delete;
     auto operator=(const ResourceTopLevelAccelerationStructure&) -> ResourceTopLevelAccelerationStructure& = delete;
-    ResourceTopLevelAccelerationStructure(ResourceTopLevelAccelerationStructure&&) = delete;
-    auto operator=(ResourceTopLevelAccelerationStructure&&) -> ResourceTopLevelAccelerationStructure& = delete;
-    ~ResourceTopLevelAccelerationStructure() = default;
+    ResourceTopLevelAccelerationStructure(ResourceTopLevelAccelerationStructure&&)                         = delete;
+    auto operator=(ResourceTopLevelAccelerationStructure&&) -> ResourceTopLevelAccelerationStructure&      = delete;
+    ~ResourceTopLevelAccelerationStructure()                                                               = default;
 
     [[nodiscard]] auto GetRhiPayload() const -> RHITopLevelAccelerationStructure* {
-        return m_Payload.get();
+        return m_Payload.TryGet();
+    }
+
+    [[nodiscard]] auto GetRhiPayloadRef() const -> RHIRef<RHITopLevelAccelerationStructure> {
+        return m_Payload;
     }
 
   private:
-    UPtr<RHITopLevelAccelerationStructure> m_Payload = nullptr;
+    RHIRef<RHITopLevelAccelerationStructure> m_Payload = nullptr;
 };
 
 } // namespace SoulEngine

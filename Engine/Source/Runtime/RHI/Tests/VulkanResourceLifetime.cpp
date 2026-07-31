@@ -20,7 +20,7 @@ using namespace SoulEngine;
 // This fixture creates a real RHI device.  It is marked as a guaranteed
 // crash if no GLFW window / Vulkan device is available.
 //
-// To run: xmake test -v -g VulkanResource
+// To run: xmake test -g VulkanResource
 
 class VulkanResourceLifetimeTest : public ::testing::Test {
   protected:
