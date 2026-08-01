@@ -1,14 +1,25 @@
 import Pbr;
 
 public struct ForwardFrameData {
-    public float  time;
-    public float4 directionalLightDirectionIntensity;
-    public float4 directionalLightColor;
+    public float time;
+    public float exposureEV100;
+    public uint  lightCount;
 };
 
 public struct ForwardViewData {
     public float4x4 viewProjection;
     public float4   cameraPosition;
+};
+
+public struct LightData {
+    // rgb is unit-luminance linear-sRGB chromaticity; w is lux or candela.
+    public float4 colorIntensity;
+    // xyz is world position in metres; w is finite-light range in metres.
+    public float4 positionRange;
+    // xyz is world -Z direction; w is LightType (1 directional, 2 point, 3 spot).
+    public float4 directionType;
+    // x/y are inner/outer spot cone cosines; z carries shadow metadata.
+    public float4 spotCone;
 };
 
 public struct InstanceData {
@@ -21,6 +32,7 @@ public struct InstanceData {
 public struct ForwardFrameViewResources {
     public ConstantBuffer<ForwardFrameData> frame;
     public ConstantBuffer<ForwardViewData>  view;
+    public StructuredBuffer<LightData>       lights;
 };
 
 public ParameterBlock<ForwardFrameViewResources> g_forwardFrameView;
@@ -52,6 +64,33 @@ struct VSOutput {
     nointerpolation uint instanceIndex;
 };
 
+float3 evaluateDirectLight(LightData light, PbrMaterial material, float3 worldPosition, float3 normal, float3 viewDirection) {
+    uint lightType = uint(light.directionType.w);
+    float3 lightDirection = float3(0.0);
+    float3 illuminance = float3(0.0);
+    if (lightType == 1u) {
+        lightDirection = normalize(-light.directionType.xyz);
+        illuminance = light.colorIntensity.rgb * light.colorIntensity.w;
+    } else {
+        float3 toLight = light.positionRange.xyz - worldPosition;
+        float distanceToLight = length(toLight);
+        if (distanceToLight <= 0.0001 || distanceToLight >= light.positionRange.w)
+            return float3(0.0);
+        lightDirection = toLight / distanceToLight;
+        float rangeFade = saturate(1.0 - pow(distanceToLight / light.positionRange.w, 4.0));
+        illuminance = light.colorIntensity.rgb * light.colorIntensity.w * rangeFade * rangeFade /
+                      (distanceToLight * distanceToLight);
+        if (lightType == 3u) {
+            float coneCosine = dot(normalize(worldPosition - light.positionRange.xyz), normalize(light.directionType.xyz));
+            illuminance *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
+        }
+    }
+    float nDotL = saturate(dot(normal, lightDirection));
+    if (nDotL <= 0.0)
+        return float3(0.0);
+    return evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * illuminance * nDotL;
+}
+
 [shader("vertex")]
 VSOutput vertMain(VSInput input, uniform ForwardInstanceIndex instanceIndex) {
     VSOutput output;
@@ -73,13 +112,11 @@ float4 fragMain(VSOutput input) : SV_TARGET {
         g_forwardDraw.materials[instanceData.materialIndex], input.uv, input.normal, input.tangent);
     PbrMaterial material = surface.material;
     float3 normal = surface.normal;
-    float3 lightDirection = normalize(-g_forwardFrameView.frame.directionalLightDirectionIntensity.xyz);
-    float3 radiance = g_forwardFrameView.frame.directionalLightColor.rgb *
-                      g_forwardFrameView.frame.directionalLightDirectionIntensity.w;
-    float nDotL = saturate(dot(normal, lightDirection));
     float3 viewDirection = normalize(g_forwardFrameView.view.cameraPosition.xyz - input.worldPosition);
-    float3 ambient = 0.035 * material.baseColor * (1.0 - material.metallic) * surface.occlusion;
-    float3 color = ambient + surface.emissive + evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * radiance * nDotL;
+    float3 color = 0.035 * material.baseColor * (1.0 - material.metallic) * surface.occlusion + surface.emissive;
+    for (uint lightIndex = 0u; lightIndex < g_forwardFrameView.frame.lightCount; ++lightIndex)
+        color += evaluateDirectLight(g_forwardFrameView.lights[lightIndex], material, input.worldPosition, normal, viewDirection);
+    color *= exp2(-g_forwardFrameView.frame.exposureEV100);
     color = color / (color + 1.0);
     color = pow(color, 1.0 / 2.2);
     return float4(color, 1.0);

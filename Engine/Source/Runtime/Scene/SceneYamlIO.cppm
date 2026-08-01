@@ -65,6 +65,10 @@ template <typename T>
         Error = "far_plane must be greater than near_plane";
         return false;
     }
+    if (!std::isfinite(Camera->Settings.ExposureEV100)) {
+        Error = "exposure_ev100 must be finite";
+        return false;
+    }
     return true;
 }
 
@@ -89,6 +93,44 @@ template <typename T>
     return true;
 }
 
+[[nodiscard]] auto ValidateLight(const Scene&, const entt::meta_any& Value, String& Error) -> bool {
+    const auto* Light = Value.try_cast<LightComponent>();
+    if (!Light) {
+        Error = "Light component metadata does not contain LightComponent";
+        return false;
+    }
+    if (Light->Type == LightType::Unknown) {
+        Error = "type must be directional, point, or spot";
+        return false;
+    }
+    const auto Luminance = 0.2126f * Light->ColorR + 0.7152f * Light->ColorG + 0.0722f * Light->ColorB;
+    if (!std::isfinite(Light->ColorR) || !std::isfinite(Light->ColorG) || !std::isfinite(Light->ColorB) ||
+        !std::isfinite(Light->Intensity) || !std::isfinite(Light->RangeMeters) ||
+        !std::isfinite(Light->InnerConeAngleDegrees) || !std::isfinite(Light->OuterConeAngleDegrees)) {
+        Error = "contains a non-finite value";
+        return false;
+    }
+    if (Light->ColorR < 0.0f || Light->ColorG < 0.0f || Light->ColorB < 0.0f ||
+        std::abs(Luminance - 1.0f) > 0.001f) {
+        Error = "color must be non-negative linear sRGB with Rec.709 luminance equal to one";
+        return false;
+    }
+    if (Light->Intensity < 0.0f) {
+        Error = "intensity must be non-negative";
+        return false;
+    }
+    if (Light->Type != LightType::Directional && Light->RangeMeters <= 0.0f) {
+        Error = "range_meters must be greater than zero for point and spot lights";
+        return false;
+    }
+    if (Light->Type == LightType::Spot &&
+        (Light->InnerConeAngleDegrees <= 0.0f || Light->InnerConeAngleDegrees > Light->OuterConeAngleDegrees ||
+         Light->OuterConeAngleDegrees >= 90.0f)) {
+        Error = "spot cone angles must satisfy 0 < inner <= outer < 90 degrees";
+        return false;
+    }
+    return true;
+}
 auto RegisterBuiltInComponentSchemas() -> void {
     static bool Registered = false;
     if (Registered)
@@ -98,12 +140,24 @@ auto RegisterBuiltInComponentSchemas() -> void {
         SceneFieldSchema{.Name = "fov_degrees", .Id = entt::hashed_string{"fov_degrees"}.value()},
         SceneFieldSchema{.Name = "near_plane", .Id = entt::hashed_string{"near_plane"}.value()},
         SceneFieldSchema{.Name = "far_plane", .Id = entt::hashed_string{"far_plane"}.value()},
+        SceneFieldSchema{.Name = "exposure_ev100", .Id = entt::hashed_string{"exposure_ev100"}.value()},
     };
     static const std::array MeshFields{
         SceneFieldSchema{.Name = "asset", .Id = entt::hashed_string{"asset"}.value()},
         SceneFieldSchema{.Name = "material", .Id = entt::hashed_string{"material"}.value()},
     };
 
+    static const std::array LightFields{
+        SceneFieldSchema{.Name = "type", .Id = entt::hashed_string{"type"}.value()},
+        SceneFieldSchema{.Name = "color_r", .Id = entt::hashed_string{"color_r"}.value()},
+        SceneFieldSchema{.Name = "color_g", .Id = entt::hashed_string{"color_g"}.value()},
+        SceneFieldSchema{.Name = "color_b", .Id = entt::hashed_string{"color_b"}.value()},
+        SceneFieldSchema{.Name = "intensity", .Id = entt::hashed_string{"intensity"}.value()},
+        SceneFieldSchema{.Name = "range_meters", .Id = entt::hashed_string{"range_meters"}.value()},
+        SceneFieldSchema{.Name = "inner_cone_angle_degrees", .Id = entt::hashed_string{"inner_cone_angle_degrees"}.value()},
+        SceneFieldSchema{.Name = "outer_cone_angle_degrees", .Id = entt::hashed_string{"outer_cone_angle_degrees"}.value()},
+        SceneFieldSchema{.Name = "casts_shadows", .Id = entt::hashed_string{"casts_shadows"}.value()},
+    };
     entt::meta_factory<CameraComponent>{}
         .type(entt::hashed_string{"camera"}.value())
         .custom<SceneComponentSchema>(SceneComponentSchema{
@@ -113,7 +167,8 @@ auto RegisterBuiltInComponentSchemas() -> void {
         })
         .data<&CameraComponent::SetFOV, &CameraComponent::GetFOV>(CameraFields[0].Id)
         .data<&CameraComponent::SetNearPlane, &CameraComponent::GetNearPlane>(CameraFields[1].Id)
-        .data<&CameraComponent::SetFarPlane, &CameraComponent::GetFarPlane>(CameraFields[2].Id);
+        .data<&CameraComponent::SetFarPlane, &CameraComponent::GetFarPlane>(CameraFields[2].Id)
+        .data<&CameraComponent::SetExposureEV100, &CameraComponent::GetExposureEV100>(CameraFields[3].Id);
 
     entt::meta_factory<MeshComponent>{}
         .type(entt::hashed_string{"mesh"}.value())
@@ -125,6 +180,22 @@ auto RegisterBuiltInComponentSchemas() -> void {
         .data<&MeshComponent::Asset>(MeshFields[0].Id)
         .data<&MeshComponent::Material>(MeshFields[1].Id);
 
+    entt::meta_factory<LightComponent>{}
+        .type(entt::hashed_string{"light"}.value())
+        .custom<SceneComponentSchema>(SceneComponentSchema{
+            .Create = &CreateComponent<LightComponent>, .Remove = &RemoveComponent<LightComponent>,
+            .Has = &HasComponent<LightComponent>, .Get = &GetComponent<LightComponent>,
+            .Validate = &ValidateLight, .Name = "light", .Fields = LightFields,
+        })
+        .data<&LightComponent::SetType, &LightComponent::GetType>(LightFields[0].Id)
+        .data<&LightComponent::ColorR>(LightFields[1].Id)
+        .data<&LightComponent::ColorG>(LightFields[2].Id)
+        .data<&LightComponent::ColorB>(LightFields[3].Id)
+        .data<&LightComponent::Intensity>(LightFields[4].Id)
+        .data<&LightComponent::RangeMeters>(LightFields[5].Id)
+        .data<&LightComponent::InnerConeAngleDegrees>(LightFields[6].Id)
+        .data<&LightComponent::OuterConeAngleDegrees>(LightFields[7].Id)
+        .data<&LightComponent::CastsShadows>(LightFields[8].Id);
     Registered = true;
 }
 [[nodiscard]] auto MakeStructuralError(StringView Path, StringView Message) -> std::unexpected<ErrorMessage> {
@@ -293,6 +364,8 @@ auto RegisterBuiltInComponentSchemas() -> void {
     return Result;
 }
 
+[[nodiscard]] auto SaveFloat3(const hlslpp::float3& Value) -> YAML::Node;
+
 [[nodiscard]] auto AssignYamlValue(const entt::meta_data& Field,
                                    entt::meta_any& Component,
                                    const YAML::Node& Value,
@@ -306,6 +379,17 @@ auto RegisterBuiltInComponentSchemas() -> void {
             }
             if (!Field.set(Component, Value.as<float>())) {
                 Error = "could not assign numeric value through metadata";
+                return false;
+            }
+            return true;
+        }
+        if (Type == entt::type_hash<bool>::value()) {
+            if (!Value.IsScalar()) {
+                Error = "must be a scalar boolean";
+                return false;
+            }
+            if (!Field.set(Component, Value.as<bool>())) {
+                Error = "could not assign boolean value through metadata";
                 return false;
             }
             return true;
@@ -468,6 +552,8 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YAML::Node& Node, St
         return std::unexpected(ErrorMessage("Scene component metadata could not read a persisted field"));
     if (const auto* Float = Value.try_cast<float>())
         return YAML::Node(*Float);
+    if (const auto* Bool = Value.try_cast<bool>())
+        return YAML::Node(*Bool);
     if (const auto* StringValue = Value.try_cast<String>())
         return YAML::Node(*StringValue);
     return std::unexpected(ErrorMessage("Scene component metadata contains an unsupported persisted field type"));

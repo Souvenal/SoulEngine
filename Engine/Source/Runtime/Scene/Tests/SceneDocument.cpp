@@ -305,4 +305,57 @@ entities:
     std::filesystem::remove(FilePath);
 }
 
+TEST(SceneDocument, BuildsPhysicalLightSnapshots) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - components:
+      camera:
+        exposure_ev100: 12.0
+  - name: Sun
+    components:
+      light:
+        type: directional
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 100000.0
+  - name: Lamp
+    transform:
+      translation: [2.0, 3.0, 4.0]
+    components:
+      light:
+        type: point
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 600.0
+        range_meters: 8.0
+  - name: Spot
+    components:
+      light:
+        type: spot
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 400.0
+        range_meters: 12.0
+        inner_cone_angle_degrees: 15.0
+        outer_cone_angle_degrees: 25.0
+)");
+
+    Scene Scene = {};
+    ASSERT_TRUE(Scene.LoadFromFile(FilePath).has_value());
+    const auto Snapshot = Scene.BuildSnapshot();
+
+    ASSERT_EQ(Snapshot.Lights.size(), 3u);
+    EXPECT_EQ(Snapshot.Lights[0].Type, LightType::Directional);
+    EXPECT_FLOAT_EQ(Snapshot.Lights[0].Intensity, 100000.0f);
+    EXPECT_EQ(Snapshot.Lights[1].Type, LightType::Point);
+    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Lights[1].Position.x), 2.0f);
+    EXPECT_FLOAT_EQ(Snapshot.Lights[1].RangeMeters, 8.0f);
+    EXPECT_EQ(Snapshot.Lights[2].Type, LightType::Spot);
+    EXPECT_GT(Snapshot.Lights[2].InnerConeCosine, Snapshot.Lights[2].OuterConeCosine);
+
+    std::filesystem::remove(FilePath);
+}
 } // namespace

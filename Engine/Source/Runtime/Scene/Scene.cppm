@@ -35,6 +35,7 @@ struct Transform {
 struct RenderViewSnapshot {
     hlslpp::float4x4        ViewProjection = hlslpp::float4x4::identity();
     hlslpp::float3          CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    Float32                 ExposureEV100  = 15.0f;
     RHIRef<RHIRenderTarget> ColorRT        = nullptr;
     RHIRef<RHIRenderTarget> DepthRT        = nullptr;
 };
@@ -59,6 +60,7 @@ struct Camera {
     float                   FOV            = 60.0f;
     float                   NearPlane      = 0.1f;
     float                   FarPlane       = 100.0f;
+    Float32                 ExposureEV100  = 15.0f;
     RHIRef<RHIRenderTarget> ColorRT        = nullptr;
     RHIRef<RHIRenderTarget> DepthRT        = nullptr;
     Uint32                  ViewportWidth  = 0;
@@ -145,6 +147,7 @@ struct Camera {
         return RenderViewSnapshot{
             .ViewProjection = hlslpp::mul(GetViewMatrix(CameraTransform), GetProjectionMatrix(AspectRatio)),
             .CameraPosition = hlslpp::float3(World[3].x, World[3].y, World[3].z),
+            .ExposureEV100  = ExposureEV100,
             .ColorRT        = std::move(ColorRTRef),
             .DepthRT        = std::move(DepthRTRef),
         };
@@ -179,6 +182,14 @@ struct CameraComponent {
     auto SetFarPlane(float Value) -> void {
         Settings.FarPlane = Value;
     }
+
+    [[nodiscard]] auto GetExposureEV100() const -> Float32 {
+        return Settings.ExposureEV100;
+    }
+
+    auto SetExposureEV100(Float32 Value) -> void {
+        Settings.ExposureEV100 = Value;
+    }
 };
 
 /// @brief Scene-authored mesh asset reference.
@@ -192,7 +203,63 @@ struct MeshComponent {
     String Material = {};
 };
 
-struct LightComponent {};
+enum class LightType : Uint32 {
+    Unknown = 0,
+    Directional,
+    Point,
+    Spot,
+};
+
+/// @brief Physically authored light attached to a spatial Scene Entity.
+struct LightComponent {
+    LightType        Type                  = LightType::Unknown;
+    Float32          ColorR                = 1.0f;
+    Float32          ColorG                = 1.0f;
+    Float32          ColorB                = 1.0f;
+    Float32          Intensity             = 0.0f;
+    Float32          RangeMeters           = 10.0f;
+    Float32          InnerConeAngleDegrees = 15.0f;
+    Float32          OuterConeAngleDegrees = 25.0f;
+    bool             CastsShadows          = false;
+
+    [[nodiscard]] auto GetType() const -> String {
+        switch (Type) {
+        case LightType::Directional:
+            return "directional";
+        case LightType::Point:
+            return "point";
+        case LightType::Spot:
+            return "spot";
+        case LightType::Unknown:
+            break;
+        }
+        return "unknown";
+    }
+
+    auto SetType(String Value) -> void {
+        if (Value == "directional")
+            Type = LightType::Directional;
+        else if (Value == "point")
+            Type = LightType::Point;
+        else if (Value == "spot")
+            Type = LightType::Spot;
+        else
+            Type = LightType::Unknown;
+    }
+};
+
+/// @brief Immutable world-space light record consumed by renderers.
+struct LightSnapshot {
+    LightType      Type             = LightType::Unknown;
+    hlslpp::float3 Color            = hlslpp::float3(1.0f, 1.0f, 1.0f);
+    Float32        Intensity        = 0.0f;
+    hlslpp::float3 Position         = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    Float32        RangeMeters      = 0.0f;
+    hlslpp::float3 Direction        = hlslpp::float3(0.0f, 0.0f, -1.0f);
+    Float32        InnerConeCosine  = 1.0f;
+    Float32        OuterConeCosine  = 1.0f;
+    bool           CastsShadows     = false;
+};
 
 /// @brief Immutable CPU render record for one mesh asset instance.
 ///
@@ -209,6 +276,7 @@ struct RenderableInstance {
 struct SceneSnapshot {
     std::vector<RenderViewSnapshot> Views       = {};
     std::vector<RenderableInstance> Renderables = {};
+    std::vector<LightSnapshot>      Lights      = {};
     float                           Time        = 0.0f;
 };
 
@@ -417,6 +485,27 @@ auto Scene::UpdateWorldTransforms() -> void {
             .MaterialId     = Mesh.Material,
             .Material       = std::move(Material),
             .WorldTransform = Node.Transform.WorldTransform,
+        });
+    }
+    const auto Lights = m_Registry->view<LightComponent, SceneNode>();
+    for (const auto Entity : Lights) {
+        const auto& Light = Lights.get<LightComponent>(Entity);
+        const auto& Node  = Lights.get<SceneNode>(Entity);
+        const auto WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), Node.Transform.WorldTransform);
+        const auto Direction = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+        const auto AngleScale = std::numbers::pi_v<Float32> / 180.0f;
+        Snapshot.Lights.emplace_back(LightSnapshot{
+            .Type            = Light.Type,
+            .Color           = hlslpp::float3(Light.ColorR, Light.ColorG, Light.ColorB),
+            .Intensity       = Light.Intensity,
+            .Position        = hlslpp::float3(Node.Transform.WorldTransform[3].x,
+                                              Node.Transform.WorldTransform[3].y,
+                                              Node.Transform.WorldTransform[3].z),
+            .RangeMeters     = Light.RangeMeters,
+            .Direction       = Direction,
+            .InnerConeCosine = std::cos(Light.InnerConeAngleDegrees * AngleScale),
+            .OuterConeCosine = std::cos(Light.OuterConeAngleDegrees * AngleScale),
+            .CastsShadows    = Light.CastsShadows,
         });
     }
     return Snapshot;
