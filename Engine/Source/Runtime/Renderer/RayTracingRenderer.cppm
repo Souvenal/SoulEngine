@@ -25,23 +25,31 @@ constexpr Uint32 kPathTracingMaxBounces = 6;
 /// Constant-buffer ABI mirror for RayTracing.slang camera unprojection data.
 struct alignas(16) RayTracingViewConstants {
     alignas(16) hlslpp::float4x4 ViewProjectionInverse = hlslpp::float4x4::identity();
-    alignas(16) hlslpp::interop::float4 CameraPosition = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, 0.0f, 0.0f, 1.0f}};
-    alignas(16) hlslpp::interop::float4 DirectionalLightDirectionIntensity = hlslpp::interop::float4{
-        hlslpp::float4{-0.4f, -1.0f, -0.8f, 5.0f}};
-    alignas(16) hlslpp::interop::float4 DirectionalLightColor = hlslpp::interop::float4{
-        hlslpp::float4{1.0f, 0.98f, 0.92f, 1.0f}};
-    alignas(16) hlslpp::interop::float4 PathSettings = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, static_cast<float>(kPathTracingMaxBounces), 0.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 CameraPosition = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 1.0f}};
+    alignas(16) hlslpp::interop::float4 PathSettings = hlslpp::interop::float4{hlslpp::float4{0.0f, static_cast<float>(kPathTracingMaxBounces), 0.0f, 0.0f}};
+    Float32 ExposureEV100 = 15.0f;
+    Uint32 LightCount = 0;
 };
-static_assert(sizeof(RayTracingViewConstants) == 128,
+static_assert(sizeof(RayTracingViewConstants) == 112,
               "RayTracingViewConstants must match RayTracing.slang RayTracingViewData std140 layout");
 static_assert(offsetof(RayTracingViewConstants, ViewProjectionInverse) == 0,
               "RayTracingViewConstants::ViewProjectionInverse must match RayTracingViewData.viewProjectionInverse");
 static_assert(offsetof(RayTracingViewConstants, CameraPosition) == 64,
               "RayTracingViewConstants::CameraPosition must match RayTracingViewData.cameraPosition");
-static_assert(offsetof(RayTracingViewConstants, PathSettings) == 112,
+static_assert(offsetof(RayTracingViewConstants, PathSettings) == 80,
               "RayTracingViewConstants::PathSettings must match RayTracingViewData.pathSettings");
+static_assert(offsetof(RayTracingViewConstants, ExposureEV100) == 96,
+              "RayTracingViewConstants::ExposureEV100 must match RayTracingViewData.exposureEV100");
+static_assert(offsetof(RayTracingViewConstants, LightCount) == 100,
+              "RayTracingViewConstants::LightCount must match RayTracingViewData.lightCount");
+
+struct alignas(16) RayTracingLightGpuData {
+    alignas(16) hlslpp::interop::float4 ColorIntensity = hlslpp::interop::float4{hlslpp::float4{1.0f, 1.0f, 1.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 PositionRange  = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 DirectionType  = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, -1.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 SpotCone       = hlslpp::interop::float4{hlslpp::float4{1.0f, 1.0f, 0.0f, 0.0f}};
+};
+static_assert(sizeof(RayTracingLightGpuData) == 64, "RayTracingLightGpuData must match RayTracing.slang storage-buffer layout");
 
 /// @brief Convert a Scene row-vector transform to an RHI TLAS instance transform.
 ///
@@ -289,7 +297,14 @@ class RayTracingRenderer final : public IRenderer {
         if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.materials", *MaterialBuffer); !R) {
             return std::unexpected(R.error().Append("RayTracingRenderer material parameter binding failed"));
         }
-        const auto ViewData   = BuildViewConstants(View, m_SampleIndex);
+        const auto Lights = BuildLightData(Scene.Lights);
+        const auto LightBytes = std::as_bytes(std::span{Lights});
+        auto LightBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(LightBytes.size_bytes());
+        if (!LightBuffer)
+            return std::unexpected(LightBuffer.error().Append("RayTracingRenderer light transient storage allocation failed"));
+        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.lights", *LightBuffer); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer light parameter binding failed"));
+        const auto ViewData   = BuildViewConstants(View, m_SampleIndex, static_cast<Uint32>(Scene.Lights.size()));
         auto       ViewBuffer = RHIRenderDevice::Get().AllocateTransientConstantBuffer(sizeof(ViewData));
         if (!ViewBuffer)
             return std::unexpected(
@@ -298,6 +313,8 @@ class RayTracingRenderer final : public IRenderer {
             return std::unexpected(R.error().Append("RayTracingRenderer view parameter binding failed"));
 
         RHINonRenderingPass Pass = {};
+        if (auto R = Pass.WriteTransientShaderStorageBuffer(*LightBuffer, LightBytes); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer light transient storage write failed"));
         if (auto R = Pass.WriteTransientShaderStorageBuffer(*MaterialBuffer, MaterialDataBytes); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer material transient storage write failed"));
         if (auto R = Pass.WriteTransientConstantBuffer(*ViewBuffer, std::as_bytes(std::span{&ViewData, 1})); !R)
@@ -410,6 +427,23 @@ class RayTracingRenderer final : public IRenderer {
             Signature = HashCombine(Signature, HashFloat(Renderable.Material.Metallic));
             Signature = HashCombine(Signature, HashFloat(Renderable.Material.Roughness));
         }
+        Signature = HashCombine(Signature, HashFloat(View.ExposureEV100));
+        for (const auto& Light : Scene.Lights) {
+            Signature = HashCombine(Signature, static_cast<Uint64>(Light.Type));
+            Signature = HashCombine(Signature, HashFloat(Light.Color.x));
+            Signature = HashCombine(Signature, HashFloat(Light.Color.y));
+            Signature = HashCombine(Signature, HashFloat(Light.Color.z));
+            Signature = HashCombine(Signature, HashFloat(Light.Intensity));
+            Signature = HashCombine(Signature, HashFloat(Light.Position.x));
+            Signature = HashCombine(Signature, HashFloat(Light.Position.y));
+            Signature = HashCombine(Signature, HashFloat(Light.Position.z));
+            Signature = HashCombine(Signature, HashFloat(Light.RangeMeters));
+            Signature = HashCombine(Signature, HashFloat(Light.Direction.x));
+            Signature = HashCombine(Signature, HashFloat(Light.Direction.y));
+            Signature = HashCombine(Signature, HashFloat(Light.Direction.z));
+            Signature = HashCombine(Signature, HashFloat(Light.InnerConeCosine));
+            Signature = HashCombine(Signature, HashFloat(Light.OuterConeCosine));
+        }
         for (const auto& Material : MaterialData) {
             Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.x));
             Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.y));
@@ -421,14 +455,31 @@ class RayTracingRenderer final : public IRenderer {
         return Signature;
     }
 
-    [[nodiscard]] static auto BuildViewConstants(const RenderViewSnapshot& View, Uint32 SampleIndex)
+    [[nodiscard]] static auto BuildLightData(std::span<const LightSnapshot> Lights) -> std::vector<RayTracingLightGpuData> {
+        std::vector<RayTracingLightGpuData> Result = {};
+        Result.reserve(std::max<std::size_t>(Lights.size(), 1));
+        for (const auto& Light : Lights) {
+            Result.emplace_back(RayTracingLightGpuData{
+                .ColorIntensity = hlslpp::interop::float4{hlslpp::float4{Light.Color.x, Light.Color.y, Light.Color.z, Light.Intensity}},
+                .PositionRange = hlslpp::interop::float4{hlslpp::float4{Light.Position.x, Light.Position.y, Light.Position.z, Light.RangeMeters}},
+                .DirectionType = hlslpp::interop::float4{hlslpp::float4{Light.Direction.x, Light.Direction.y, Light.Direction.z, static_cast<Float32>(Light.Type)}},
+                .SpotCone = hlslpp::interop::float4{hlslpp::float4{Light.InnerConeCosine, Light.OuterConeCosine, Light.CastsShadows ? 1.0f : 0.0f, 0.0f}},
+            });
+        }
+        if (Result.empty())
+            Result.emplace_back();
+        return Result;
+    }
+    [[nodiscard]] static auto BuildViewConstants(const RenderViewSnapshot& View, Uint32 SampleIndex, Uint32 LightCount)
         -> RayTracingViewConstants {
         return RayTracingViewConstants{
             .ViewProjectionInverse = hlslpp::inverse(View.ViewProjection),
             .CameraPosition        = hlslpp::interop::float4{hlslpp::float4{
                 View.CameraPosition.x, View.CameraPosition.y, View.CameraPosition.z, 1.0f}},
-            .PathSettings          = hlslpp::interop::float4{hlslpp::float4{
+            .PathSettings = hlslpp::interop::float4{hlslpp::float4{
                 static_cast<float>(SampleIndex), static_cast<float>(kPathTracingMaxBounces), 0.0f, 0.0f}},
+            .ExposureEV100 = View.ExposureEV100,
+            .LightCount = LightCount,
         };
     }
 

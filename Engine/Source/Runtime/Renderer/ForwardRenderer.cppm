@@ -20,22 +20,20 @@ export import std;
 
 export namespace SoulEngine {
 
-/// @brief Constant buffer layout matching Common.slang FrameData.
+/// @brief Constant buffer layout matching ForwardPbr.slang ForwardFrameData.
 struct alignas(16) ForwardFrameConstants {
-    Float32 Time                                                           = 0.0f;
-    alignas(16) hlslpp::interop::float4 DirectionalLightDirectionIntensity = hlslpp::interop::float4{
-        hlslpp::float4{-0.4f, -1.0f, -0.8f, 5.0f}};
-    alignas(16) hlslpp::interop::float4 DirectionalLightColor = hlslpp::interop::float4{
-        hlslpp::float4{1.0f, 0.98f, 0.92f, 1.0f}};
+    Float32 Time          = 0.0f;
+    Float32 ExposureEV100 = 15.0f;
+    Uint32  LightCount    = 0;
 };
-static_assert(sizeof(ForwardFrameConstants) == 48,
+static_assert(sizeof(ForwardFrameConstants) == 16,
               "ForwardFrameConstants must match ForwardPbr.slang ForwardFrameData std140 layout");
 static_assert(offsetof(ForwardFrameConstants, Time) == 0,
               "ForwardFrameConstants::Time must match ForwardFrameData.time");
-static_assert(offsetof(ForwardFrameConstants, DirectionalLightDirectionIntensity) == 16,
-              "ForwardFrameConstants::DirectionalLightDirectionIntensity must match ForwardFrameData");
-static_assert(offsetof(ForwardFrameConstants, DirectionalLightColor) == 32,
-              "ForwardFrameConstants::DirectionalLightColor must match ForwardFrameData");
+static_assert(offsetof(ForwardFrameConstants, ExposureEV100) == 4,
+              "ForwardFrameConstants::ExposureEV100 must match ForwardFrameData.exposureEV100");
+static_assert(offsetof(ForwardFrameConstants, LightCount) == 8,
+              "ForwardFrameConstants::LightCount must match ForwardFrameData.lightCount");
 
 /// @brief Constant buffer layout matching ForwardPbr.slang ViewData.
 struct alignas(16) ForwardViewConstants {
@@ -46,6 +44,14 @@ struct alignas(16) ForwardViewConstants {
 static_assert(sizeof(ForwardViewConstants) == 80,
               "ForwardViewConstants must match ForwardPbr.slang ForwardViewData std140 layout");
 
+/// @brief Storage-buffer layout matching ForwardPbr.slang LightData.
+struct alignas(16) LightGpuData {
+    alignas(16) hlslpp::interop::float4 ColorIntensity = hlslpp::interop::float4{hlslpp::float4{1.0f, 1.0f, 1.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 PositionRange  = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 DirectionType  = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, -1.0f, 0.0f}};
+    alignas(16) hlslpp::interop::float4 SpotCone       = hlslpp::interop::float4{hlslpp::float4{1.0f, 1.0f, 0.0f, 0.0f}};
+};
+static_assert(sizeof(LightGpuData) == 64, "LightGpuData must match ForwardPbr.slang storage-buffer layout");
 /// @brief Storage-buffer layout matching ForwardPbr.slang InstanceData.
 struct alignas(16) InstanceData {
     alignas(16) hlslpp::float4x4 WorldTransform        = hlslpp::float4x4::identity();
@@ -146,9 +152,8 @@ class ForwardRenderer final : public IRenderer {
             return Result;
 
         const auto DrawInstances = BuildDrawInstances(Scene);
-        const auto FrameData     = BuildFrameConstants(Scene.Time);
         for (const auto& View : Scene.Views) {
-            if (auto R = RenderView(Result.CmdList, DrawInstances, View, FrameData); !R)
+            if (auto R = RenderView(Result.CmdList, DrawInstances, View, Scene); !R)
                 return std::unexpected(R.error().Append("Forward PBR view rendering failed"));
         }
 
@@ -187,7 +192,7 @@ class ForwardRenderer final : public IRenderer {
     [[nodiscard]] auto RenderView(RHICommandList&                      CmdList,
                                   std::span<const ForwardDrawInstance> DrawInstances,
                                   const RenderViewSnapshot&            View,
-                                  const ForwardFrameConstants&         FrameData) -> std::expected<void, ErrorMessage> {
+                                  const SceneSnapshot&                 Scene) -> std::expected<void, ErrorMessage> {
         auto& Resources = ResourceManager::Get();
 
         auto  ColorRTRef       = View.ColorRT;
@@ -204,6 +209,12 @@ class ForwardRenderer final : public IRenderer {
             return {};
         }
 
+        const auto FrameData = BuildFrameConstants(Scene.Time, View.ExposureEV100, static_cast<Uint32>(Scene.Lights.size()));
+        const auto Lights = BuildLightData(Scene.Lights);
+        const auto LightBytes = std::as_bytes(std::span{Lights});
+        auto LightBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(LightBytes.size_bytes());
+        if (!LightBuffer)
+            return std::unexpected(LightBuffer.error().Append("Forward PBR light transient storage allocation failed"));
         auto FrameBuffer = RHIRenderDevice::Get().AllocateTransientConstantBuffer(sizeof(FrameData));
         if (!FrameBuffer)
             return std::unexpected(
@@ -215,6 +226,8 @@ class ForwardRenderer final : public IRenderer {
             return std::unexpected(ViewBuffer.error().Append("Forward PBR view transient constant allocation failed"));
 
         auto& Parameters = GetViewParameters(View, *Pipeline);
+        if (auto R = Parameters.SetTransientShaderStorageBuffer("g_forwardFrameView.lights", *LightBuffer); !R)
+            return std::unexpected(R.error().Append("Forward PBR light parameter binding failed"));
         if (auto R = Parameters.SetTransientConstantBuffer("g_forwardFrameView.frame", *FrameBuffer); !R)
             return std::unexpected(R.error().Append("Forward PBR frame parameter binding failed"));
 
@@ -242,6 +255,8 @@ class ForwardRenderer final : public IRenderer {
         };
         Pass.ColorAttachmentRef = ColorRTRef;
         Pass.DepthAttachmentRef = DepthRTRef;
+        if (auto R = Pass.WriteTransientShaderStorageBuffer(*LightBuffer, LightBytes); !R)
+            return std::unexpected(R.error().Append("Forward PBR light transient storage write failed"));
         if (auto R = Pass.WriteTransientConstantBuffer(*FrameBuffer, std::as_bytes(std::span{&FrameData, 1})); !R)
             return std::unexpected(R.error().Append("Forward PBR frame transient constant write failed"));
         if (auto R = Pass.WriteTransientConstantBuffer(*ViewBuffer, std::as_bytes(std::span{&ViewData, 1})); !R)
@@ -386,14 +401,26 @@ class ForwardRenderer final : public IRenderer {
         return DrawInstances;
     }
 
-    [[nodiscard]] static auto BuildFrameConstants(float Time) -> ForwardFrameConstants {
-        return ForwardFrameConstants{
-            .Time                               = Time,
-            .DirectionalLightDirectionIntensity = hlslpp::interop::float4{hlslpp::float4{-0.4f, -1.0f, -0.8f, 5.0f}},
-            .DirectionalLightColor              = hlslpp::interop::float4{hlslpp::float4{1.0f, 0.98f, 0.92f, 1.0f}},
-        };
+    [[nodiscard]] static auto BuildFrameConstants(Float32 Time, Float32 ExposureEV100, Uint32 LightCount)
+        -> ForwardFrameConstants {
+        return ForwardFrameConstants{.Time = Time, .ExposureEV100 = ExposureEV100, .LightCount = LightCount};
     }
 
+    [[nodiscard]] static auto BuildLightData(std::span<const LightSnapshot> Lights) -> std::vector<LightGpuData> {
+        std::vector<LightGpuData> Result = {};
+        Result.reserve(std::max<std::size_t>(Lights.size(), 1));
+        for (const auto& Light : Lights) {
+            Result.emplace_back(LightGpuData{
+                .ColorIntensity = hlslpp::interop::float4{hlslpp::float4{Light.Color.x, Light.Color.y, Light.Color.z, Light.Intensity}},
+                .PositionRange = hlslpp::interop::float4{hlslpp::float4{Light.Position.x, Light.Position.y, Light.Position.z, Light.RangeMeters}},
+                .DirectionType = hlslpp::interop::float4{hlslpp::float4{Light.Direction.x, Light.Direction.y, Light.Direction.z, static_cast<Float32>(Light.Type)}},
+                .SpotCone = hlslpp::interop::float4{hlslpp::float4{Light.InnerConeCosine, Light.OuterConeCosine, Light.CastsShadows ? 1.0f : 0.0f, 0.0f}},
+            });
+        }
+        if (Result.empty())
+            Result.emplace_back();
+        return Result;
+    }
     [[nodiscard]] static auto BuildWorldBoundingSphere(const std::vector<hlslpp::interop::float3>& Positions,
                                                        const hlslpp::float4x4&                     WorldTransform)
         -> hlslpp::interop::float4 {

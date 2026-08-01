@@ -6,9 +6,16 @@ static const float kRayMaxDistance = 10000.0;
 public struct RayTracingViewData {
     public float4x4 viewProjectionInverse;
     public float4 cameraPosition;
-    public float4 directionalLightDirectionIntensity;
-    public float4 directionalLightColor;
     public float4 pathSettings;
+    public float exposureEV100;
+    public uint lightCount;
+};
+
+public struct LightData {
+    public float4 colorIntensity;
+    public float4 positionRange;
+    public float4 directionType;
+    public float4 spotCone;
 };
 
 public struct RayTracingInstanceData {
@@ -41,6 +48,7 @@ public struct RayTracingResources {
     public RWTexture2D<float4> accumulation;
     public ConstantBuffer<RayTracingViewData> view;
     public StructuredBuffer<PbrMaterialData> materials;
+    public StructuredBuffer<LightData> lights;
     public StructuredBuffer<RayTracingInstanceData> instances;
     public StructuredBuffer<RayTracingGeometryData> geometries;
 };
@@ -115,12 +123,12 @@ float nextRandom(inout uint state) {
     return float(state) * (1.0 / 4294967296.0);
 }
 
-bool traceShadow(float3 origin, float3 direction) {
+bool traceShadow(float3 origin, float3 direction, float maxDistance) {
     RayDesc ray = {};
     ray.Origin = origin;
     ray.Direction = direction;
     ray.TMin = kRayEpsilon;
-    ray.TMax = kRayMaxDistance;
+    ray.TMax = maxDistance;
 
     ShadowPayload payload = {};
     TraceRay(g_rayTracing.tlas,
@@ -158,9 +166,6 @@ void rayGenMain() {
 
     float3 radiance = float3(0.0, 0.0, 0.0);
     float3 throughput = float3(1.0, 1.0, 1.0);
-    float3 lightDirection = normalize(-g_rayTracing.view.directionalLightDirectionIntensity.xyz);
-    float3 lightRadiance = g_rayTracing.view.directionalLightColor.rgb *
-                           g_rayTracing.view.directionalLightDirectionIntensity.w;
     const float3 environmentRadiance = float3(0.03, 0.05, 0.10);
 
     for (uint bounce = 0; bounce < maxBounces; ++bounce) {
@@ -180,10 +185,34 @@ void rayGenMain() {
         float3 viewDirection = -ray.Direction;
         PbrMaterial material = surface.material;
         radiance += throughput * surface.emissive;
-        float nDotL = saturate(dot(normal, lightDirection));
-        if (nDotL > 0.0 && !traceShadow(payload.position + normal * kRayEpsilon, lightDirection))
-            radiance += throughput * evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * lightRadiance * nDotL * surface.occlusion;
-
+        for (uint lightIndex = 0u; lightIndex < g_rayTracing.view.lightCount; ++lightIndex) {
+            LightData light = g_rayTracing.lights[lightIndex];
+            uint lightType = uint(light.directionType.w);
+            float3 lightDirection = float3(0.0);
+            float3 illuminance = float3(0.0);
+            float shadowDistance = kRayMaxDistance;
+            if (lightType == 1u) {
+                lightDirection = normalize(-light.directionType.xyz);
+                illuminance = light.colorIntensity.rgb * light.colorIntensity.w;
+            } else {
+                float3 toLight = light.positionRange.xyz - payload.position;
+                float distanceToLight = length(toLight);
+                if (distanceToLight <= kRayEpsilon || distanceToLight >= light.positionRange.w)
+                    continue;
+                lightDirection = toLight / distanceToLight;
+                float rangeFade = saturate(1.0 - pow(distanceToLight / light.positionRange.w, 4.0));
+                illuminance = light.colorIntensity.rgb * light.colorIntensity.w * rangeFade * rangeFade /
+                              (distanceToLight * distanceToLight);
+                shadowDistance = distanceToLight - kRayEpsilon;
+                if (lightType == 3u) {
+                    float coneCosine = dot(normalize(payload.position - light.positionRange.xyz), normalize(light.directionType.xyz));
+                    illuminance *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
+                }
+            }
+            float nDotL = saturate(dot(normal, lightDirection));
+            if (nDotL > 0.0 && !traceShadow(payload.position + normal * kRayEpsilon, lightDirection, shadowDistance))
+                radiance += throughput * evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * illuminance * nDotL * surface.occlusion;
+        }
         PbrBsdfSample sample = samplePbrBsdf(material,
                                               normal,
                                               viewDirection,
@@ -211,6 +240,7 @@ void rayGenMain() {
         ? radiance
         : (g_rayTracing.accumulation[pixel].xyz * float(sampleIndex) + radiance) / float(sampleIndex + 1u);
     g_rayTracing.accumulation[pixel] = float4(accumulated, 1.0);
+    accumulated *= exp2(-g_rayTracing.view.exposureEV100);
     float3 displayColor = accumulated / (accumulated + 1.0);
     displayColor = pow(displayColor, 1.0 / 2.2);
     g_rayTracing.output[pixel] = float4(displayColor, 1.0);
