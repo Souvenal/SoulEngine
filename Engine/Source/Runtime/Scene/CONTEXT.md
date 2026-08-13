@@ -50,11 +50,12 @@ via `IRenderer::Render()`. Mesh instances are represented as Renderable Instance
 which pair an absolute asset identity with an entity-derived world transform.
 Each renderer resolves that identity into its own draw-instance representation.
 
-Scene Persistence is an internal Scene implementation. It uses YAML without
-exposing parser-specific types through the Scene API. V1 loads a complete
-replacement Runtime World, reports Structural Errors for invalid required tree
-data, and reports Component Warnings while omitting only invalid optional
-components.
+Scene Persistence is an internal Scene implementation. It uses a single-document
+YAML subset of mappings, sequences, and scalars without exposing parser-specific
+types through the Scene API. Anchors, aliases, explicit tags, directives, and
+duplicate mapping keys are Structural Errors. V1 loads a complete replacement
+Runtime World, reports Structural Errors for invalid required tree data, and
+reports Component Warnings while omitting only invalid optional components.
 
 Authoring State and component-private Runtime State may coexist in one
 component type, but only authoring fields participate in the Scene Component
@@ -65,7 +66,7 @@ asset identities in snapshots; SceneSnapshot itself contains no GPU handles.
 - `Core` — types, error handling
 - `Resource` — typed runtime resource refs and snapshot handles
 - `entt` — Scene Registry and meta-driven component schema
-- `yaml-cpp` — internal Scene Persistence implementation
+- `libyaml` — internal Scene Persistence implementation
 - `hlsl++` — vector and matrix math
 
 ## RHI ownership boundary
