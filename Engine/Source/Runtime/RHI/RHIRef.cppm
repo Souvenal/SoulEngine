@@ -21,14 +21,14 @@ class RHIDeferredDeletionQueue {
     auto operator=(const RHIDeferredDeletionQueue&) -> RHIDeferredDeletionQueue& = delete;
 
     /// @brief Enqueue a destruction callback. Thread-safe.
-    auto Enqueue(std::move_only_function<void() noexcept> Destructor) -> void {
+    auto Enqueue(std::function<void()> Destructor) -> void {
         std::scoped_lock Lock(m_Mutex);
         m_Pending.push_back(std::move(Destructor));
     }
 
     /// @brief Destroy all pending resources. Must run on the RHI thread.
     auto Drain() -> void {
-        std::vector<std::move_only_function<void() noexcept>> Batch;
+        std::vector<std::function<void()>> Batch;
         {
             std::scoped_lock Lock(m_Mutex);
             Batch = std::move(m_Pending);
@@ -39,7 +39,7 @@ class RHIDeferredDeletionQueue {
 
   private:
     std::mutex                                            m_Mutex;
-    std::vector<std::move_only_function<void() noexcept>> m_Pending;
+    std::vector<std::function<void()>> m_Pending;
 };
 
 /// @brief Process-wide deferred deletion queue. Set by RHIRenderDevice::Create().
@@ -64,7 +64,8 @@ class RHIRefPayload final {
         if (!m_Object)
             return;
 
-        GDeferredDeletionQueue->Enqueue([Object = std::move(m_Object)]() noexcept {});
+        GDeferredDeletionQueue->Enqueue(
+            [Object = std::make_shared<UPtr<T>>(std::move(m_Object))]() noexcept {});
     }
 
     [[nodiscard]] auto GetState() const -> RHIRefState {

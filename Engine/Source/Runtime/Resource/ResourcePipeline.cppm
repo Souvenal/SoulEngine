@@ -82,7 +82,7 @@ struct PreparedGraphicsPipeline {
 
 [[nodiscard]] auto SubmitGraphicsPipelinePreparation(
     const GraphicsPipelineRequest& Req,
-    std::move_only_function<void(RHIRef<RHIGraphicsPipeline>)> OnCreated)
+    std::function<void(RHIRef<RHIGraphicsPipeline>)> OnCreated)
     -> std::expected<void, ErrorMessage> {
     auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
         auto Prepared = PrepareGraphicsPipeline(Req);
@@ -113,7 +113,7 @@ struct PreparedGraphicsPipeline {
 
 [[nodiscard]] auto SubmitRayTracingPipelinePreparation(
     const RayTracingPipelineRequest& Req,
-    std::move_only_function<void(RHIRef<RHIRayTracingPipeline>)> OnCreated)
+    std::function<void(RHIRef<RHIRayTracingPipeline>)> OnCreated)
     -> std::expected<void, ErrorMessage> {
     auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
         const auto&       Cfg = ConfigManager::Get();
