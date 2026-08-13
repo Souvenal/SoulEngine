@@ -277,6 +277,172 @@ TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
     std::filesystem::remove(ValidPath);
 }
 
+TEST(SceneDocument, ReportsYamlSyntaxErrorsWithoutReplacingExistingScene) {
+    const auto ValidPath = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
+    Scene Scene = {};
+    ASSERT_TRUE(Scene.LoadFromFile(ValidPath).has_value());
+
+    const auto InvalidPath = WriteSceneFile("entities:\n  - components: [\n");
+    const auto Loaded = Scene.LoadFromFile(InvalidPath);
+
+    ASSERT_FALSE(Loaded.has_value());
+    EXPECT_TRUE(Loaded.error().ToString().contains("line"));
+    EXPECT_TRUE(Loaded.error().ToString().contains("column"));
+    ASSERT_EQ(Scene.GetRoots().size(), 1u);
+    EXPECT_EQ(Scene.TryGetSceneNode(Scene.GetRoots().front())->Name, "Valid");
+
+    std::filesystem::remove(ValidPath);
+}
+
+TEST(SceneDocument, RejectsUnsupportedYamlFeaturesAndDuplicateKeys) {
+    const std::array InvalidDocuments{
+        R"(
+entities:
+  - &camera
+    components:
+      camera: {}
+)",
+        R"(
+entities:
+  - &camera
+    components:
+      camera: {}
+  - *camera
+)",
+        R"(
+!!map
+entities:
+  - components:
+      camera: {}
+)",
+        R"(
+%YAML 1.2
+---
+entities:
+  - components:
+      camera: {}
+)",
+        R"(
+entities:
+  - components:
+      camera: {}
+  - components:
+      camera: {}
+)",
+        R"(
+entities:
+  - components:
+      camera: {}
+---
+entities:
+  - components:
+      camera: {}
+)",
+        R"(
+entities:
+  - name: First
+    name: Second
+    components:
+      camera: {}
+)",
+    };
+
+    for (const auto Document : InvalidDocuments) {
+        const auto FilePath = WriteSceneFile(Document);
+        Scene Scene = {};
+        const auto Loaded = Scene.LoadFromFile(FilePath);
+        EXPECT_FALSE(Loaded.has_value()) << Loaded.error().ToString();
+        std::filesystem::remove(FilePath);
+    }
+}
+
+TEST(SceneDocument, UsesYaml12CoreScalarRules) {
+    const auto ValidPath = WriteSceneFile(R"(
+entities:
+  - components:
+      camera:
+        fov_degrees: +6.0e1
+  - components:
+      light:
+        type: directional
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 1.0e5
+        casts_shadows: TRUE
+)");
+    Scene ValidScene = {};
+    const auto ValidLoaded = ValidScene.LoadFromFile(ValidPath);
+    ASSERT_TRUE(ValidLoaded.has_value()) << ValidLoaded.error().ToString();
+    const auto Lights = ValidScene.GetRegistry().view<LightComponent>();
+    std::size_t LightCount = 0;
+    for (const auto Entity : Lights) {
+        EXPECT_TRUE(Lights.get<LightComponent>(Entity).CastsShadows);
+        ++LightCount;
+    }
+    EXPECT_EQ(LightCount, 1u);
+
+    const auto InvalidPath = WriteSceneFile(R"(
+entities:
+  - components:
+      camera: {}
+  - components:
+      light:
+        type: directional
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 1.0
+        casts_shadows: yes
+)");
+    Scene InvalidScene = {};
+    const auto InvalidLoaded = InvalidScene.LoadFromFile(InvalidPath);
+    ASSERT_TRUE(InvalidLoaded.has_value()) << InvalidLoaded.error().ToString();
+    ASSERT_EQ(InvalidLoaded->Warnings.size(), 1u);
+    EXPECT_EQ(InvalidLoaded->Warnings.front().Path, "entities[1].components.light.casts_shadows");
+
+    std::filesystem::remove(ValidPath);
+    std::filesystem::remove(InvalidPath);
+}
+
+TEST(SceneDocument, SavesCanonicalYamlLayout) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - name: "Main Camera"
+    transform:
+      translation: [1.0, 2.0, 3.0]
+    components:
+      camera: {}
+  - components:
+      light:
+        type: directional
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 100000.0
+        casts_shadows: true
+)");
+    SoulEngine::Scene SavedScene = {};
+    ASSERT_TRUE(SavedScene.LoadFromFile(FilePath).has_value());
+
+    const auto SavedPath = FilePath.parent_path() / "soulengine_scene_canonical_test.yaml";
+    ASSERT_TRUE(SavedScene.SaveToFile(SavedPath).has_value());
+    const auto Saved = ReadFile(SavedPath);
+    ASSERT_TRUE(Saved.has_value()) << Saved.error().ToString();
+    EXPECT_TRUE(Saved->contains("translation: [1, 2, 3]"));
+    EXPECT_TRUE(Saved->contains("casts_shadows: true"));
+    EXPECT_TRUE(Saved->contains("name: \"Main Camera\""));
+    EXPECT_TRUE(Saved->contains("entities:\n- name:"));
+
+    SoulEngine::Scene Reloaded = {};
+    const auto ReloadedResult = Reloaded.LoadFromFile(SavedPath);
+    ASSERT_TRUE(ReloadedResult.has_value()) << ReloadedResult.error().ToString();
+    EXPECT_EQ(Reloaded.GetRoots().size(), SavedScene.GetRoots().size());
+
+    std::filesystem::remove(FilePath);
+    std::filesystem::remove(SavedPath);
+}
+
 TEST(SceneDocument, RejectsSceneWithoutCamera) {
     const auto FilePath = WriteSceneFile("entities:\n  - name: Root\n");
 
@@ -348,13 +514,22 @@ entities:
     const auto Snapshot = Scene.BuildSnapshot();
 
     ASSERT_EQ(Snapshot.Lights.size(), 3u);
-    EXPECT_EQ(Snapshot.Lights[0].Type, LightType::Directional);
-    EXPECT_FLOAT_EQ(Snapshot.Lights[0].Intensity, 100000.0f);
-    EXPECT_EQ(Snapshot.Lights[1].Type, LightType::Point);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Lights[1].Position.x), 2.0f);
-    EXPECT_FLOAT_EQ(Snapshot.Lights[1].RangeMeters, 8.0f);
-    EXPECT_EQ(Snapshot.Lights[2].Type, LightType::Spot);
-    EXPECT_GT(Snapshot.Lights[2].InnerConeCosine, Snapshot.Lights[2].OuterConeCosine);
+    const auto Directional = std::ranges::find_if(Snapshot.Lights, [](const LightSnapshot& Light) -> bool {
+        return Light.Type == LightType::Directional;
+    });
+    const auto Point = std::ranges::find_if(Snapshot.Lights, [](const LightSnapshot& Light) -> bool {
+        return Light.Type == LightType::Point;
+    });
+    const auto Spot = std::ranges::find_if(Snapshot.Lights, [](const LightSnapshot& Light) -> bool {
+        return Light.Type == LightType::Spot;
+    });
+    ASSERT_NE(Directional, Snapshot.Lights.end());
+    ASSERT_NE(Point, Snapshot.Lights.end());
+    ASSERT_NE(Spot, Snapshot.Lights.end());
+    EXPECT_FLOAT_EQ(Directional->Intensity, 100000.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Point->Position.x), 2.0f);
+    EXPECT_FLOAT_EQ(Point->RangeMeters, 8.0f);
+    EXPECT_GT(Spot->InnerConeCosine, Spot->OuterConeCosine);
 
     std::filesystem::remove(FilePath);
 }

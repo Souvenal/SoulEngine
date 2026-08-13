@@ -25,6 +25,9 @@ retaining that handoff.
   nested entity tree rooted at a top-level entity list. It has no explicit
   schema version, persisted entity UUIDs, cross-entity references, merge
   semantics, or patch semantics.
+- Scene Files use the YAML mapping, sequence, and scalar subset only. Anchors,
+  aliases, explicit tags, directives, multiple documents, and duplicate mapping
+  keys are rejected as Structural Errors.
 - YAML is authoring state only. Loading builds a temporary Runtime World and
   atomically replaces the active Scene once required structure is valid.
   Structural errors reject the file. Unknown or invalid optional components
@@ -44,7 +47,7 @@ retaining that handoff.
   persisted fields, validation, and construction policy. Built-in schemas are
   registered deterministically and idempotently before document load or save.
 - YAML persistence stays inside the Scene module in a non-exported IO
-  partition. `yaml-cpp` implementation types do not cross the public Scene API.
+  partition. `libyaml` implementation types do not cross the public Scene API.
 - `Resource::Mesh` exposes imported mesh groups and submeshes with their
   resource handles. Each renderer expands ready submeshes from its own mesh-resource
   cache into renderer-local draw instances. SceneSnapshot carries value-semantic
