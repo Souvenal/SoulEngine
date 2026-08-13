@@ -223,7 +223,7 @@ class VulkanSwapchain {
 
         // ── Create render-complete binary semaphores (one per swapchain image) ──
         Result.m_RenderComplete.reserve(Result.m_Images.size());
-        for (size_t i = 0; i < Result.m_Images.size(); ++i) {
+        for (std::size_t i = 0; i < Result.m_Images.size(); ++i) {
             auto SemRes = Result.m_Device->createSemaphore({});
             if (SemRes.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Failed to create render-complete semaphore"));

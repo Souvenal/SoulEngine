@@ -197,7 +197,7 @@ class VulkanCapability : public Singleton<VulkanCapability> {
         }
         if (!Missing.empty()) {
             String Msg;
-            for (size_t i = 0; i < Missing.size(); ++i) {
+            for (std::size_t i = 0; i < Missing.size(); ++i) {
                 if (i > 0)
                     Msg += ", ";
                 Msg += Missing[i];

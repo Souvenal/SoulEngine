@@ -39,7 +39,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Push a task onto the target thread's queue.
     /// Thread-safe. May be called from any thread.
-    [[nodiscard]] auto Enqueue(ThreadQueue Q, std::move_only_function<void()> Task)
+    [[nodiscard]] auto Enqueue(ThreadQueue Q, std::function<void()> Task)
         -> std::expected<void, ErrorMessage> {
         if (!m_Running.load(std::memory_order_acquire))
             return std::unexpected(ErrorMessage("TaskGraph is not running"));
@@ -55,7 +55,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Push a task onto the background worker queue.
     /// Thread-safe. May be called from any thread.
-    [[nodiscard]] auto EnqueueBackground(std::move_only_function<void()> Task) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto EnqueueBackground(std::function<void()> Task) -> std::expected<void, ErrorMessage> {
         if (!m_Running.load(std::memory_order_acquire))
             return std::unexpected(ErrorMessage("TaskGraph is not running"));
 
@@ -71,7 +71,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Non-blocking dequeue from a thread's queue.
     /// Returns std::nullopt when empty.
-    [[nodiscard]] auto TryDequeue(ThreadQueue Q) -> std::optional<std::move_only_function<void()>> {
+    [[nodiscard]] auto TryDequeue(ThreadQueue Q) -> std::optional<std::function<void()>> {
         auto& [mtx, tasks] = m_Queues[static_cast<std::size_t>(Q)];
         std::scoped_lock Lock(mtx);
         if (tasks.empty())
@@ -121,13 +121,13 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     struct Queue {
         std::mutex                        Mutex;
-        std::deque<std::move_only_function<void()>> Tasks;
+        std::deque<std::function<void()>> Tasks;
     };
 
     auto WorkerLoop(std::stop_token Stop) -> void {
         SetLogThreadRole(LogThreadRole::Worker);
         while (!Stop.stop_requested()) {
-            std::move_only_function<void()> Task;
+            std::function<void()> Task;
             {
                 std::unique_lock Lock(m_BackgroundMutex);
                 m_BackgroundCv.wait(Lock, [&] {
@@ -152,7 +152,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
     std::mutex                        m_LifecycleMutex;
     std::mutex                        m_BackgroundMutex;
     std::condition_variable           m_BackgroundCv;
-    std::deque<std::move_only_function<void()>> m_BackgroundTasks;
+    std::deque<std::function<void()>> m_BackgroundTasks;
     std::vector<std::jthread>         m_Workers;
     // Gates task admission and tells waiting workers to exit during shutdown.
     std::atomic<bool>                 m_Running = false;

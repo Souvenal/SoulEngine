@@ -118,7 +118,7 @@ class MockRenderDevice final : public RHIRenderDevice {
     }
 
   private:
-    std::vector<std::move_only_function<void()>> m_CompletionCallbacks = {};
+    std::vector<std::function<void()>> m_CompletionCallbacks = {};
 };
 
 } // namespace

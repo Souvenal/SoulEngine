@@ -593,7 +593,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         vk::StructureChain<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties> PropsChain;
 
-        for (size_t i = 0; i < DevicesResult.value.size(); ++i) {
+        for (std::size_t i = 0; i < DevicesResult.value.size(); ++i) {
             auto PD = DevicesResult.value[i];
             PD.getProperties2(&PropsChain.get<vk::PhysicalDeviceProperties2>());
             auto& DevProps = PropsChain.get<vk::PhysicalDeviceProperties2>().properties;
@@ -727,7 +727,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     [[nodiscard]] auto ResolveQueueFamilies(std::span<const vk::QueueFamilyProperties2> QueueProps)
         -> std::expected<void, ErrorMessage> {
-        for (size_t i = 0; i < QueueProps.size(); ++i) {
+        for (std::size_t i = 0; i < QueueProps.size(); ++i) {
             LogDebug("Queue family [{}]: count={}, flags={}",
                      i,
                      QueueProps[i].queueFamilyProperties.queueCount,
@@ -736,7 +736,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // Graphics + Present
         {
-            for (size_t i = 0; i < QueueProps.size(); ++i) {
+            for (std::size_t i = 0; i < QueueProps.size(); ++i) {
                 if ((QueueProps[i].queueFamilyProperties.queueFlags & vk::QueueFlagBits::eGraphics) !=
                     vk::QueueFlags{}) {
                     auto [Res, Supported] = m_PhysicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), m_Surface);

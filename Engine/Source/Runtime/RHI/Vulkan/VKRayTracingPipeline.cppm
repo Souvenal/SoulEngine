@@ -401,7 +401,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
 
         const Uint32 GroupCount = static_cast<Uint32>(ShaderStates->Groups.size());
         const Uint64 HandleDataSize = static_cast<Uint64>(GroupCount) * Properties.shaderGroupHandleSize;
-        if (HandleDataSize > std::numeric_limits<size_t>::max())
+        if (HandleDataSize > std::numeric_limits<std::size_t>::max())
             return std::unexpected(ErrorMessage("Ray-tracing shader group handle query size exceeds host address space"));
         std::vector<Uint8> Handles(HandleDataSize);
         const auto HandleResult = RHIPipeline.getRayTracingShaderGroupHandlesKHR(

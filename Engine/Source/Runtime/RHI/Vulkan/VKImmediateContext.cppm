@@ -30,7 +30,7 @@ export enum class VulkanImmediateQueue : Uint8 {
 class VulkanImmediateContext {
   public:
     using CmdFn = std::function<void(const vk::raii::CommandBuffer&)>;
-    using CompletionFn = std::move_only_function<void()>;
+    using CompletionFn = std::function<void()>;
 
     struct CompletionDesc {
         VulkanImmediateQueue ConsumerQueue = VulkanImmediateQueue::Unknown;

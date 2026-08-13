@@ -46,7 +46,7 @@ struct DecodedTexture {
 
 [[nodiscard]] auto SubmitSampledTexturePreparation(
     StringView TexturePath,
-    std::move_only_function<void(RHIRef<RHISampledTexture>)> OnCreated)
+    std::function<void(RHIRef<RHISampledTexture>)> OnCreated)
     -> std::expected<void, ErrorMessage> {
     const auto Path          = NormalizeResourcePath(TexturePath);
     auto       EnqueueResult = TaskGraph::Get().EnqueueBackground([Path, OnCreated = std::move(OnCreated)] mutable {
