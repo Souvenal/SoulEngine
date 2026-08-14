@@ -28,7 +28,7 @@ retaining that handoff.
 - Scene Files use the YAML mapping, sequence, and scalar subset only. Anchors,
   aliases, explicit tags, directives, multiple documents, and duplicate mapping
   keys are rejected as Structural Errors.
-- YAML is authoring state only. Loading builds a temporary Runtime World and
+- YAML is read-only authoring input. Loading builds a temporary Runtime World and
   atomically replaces the active Scene once required structure is valid.
   Structural errors reject the file. Unknown or invalid optional components
   produce warnings and are omitted while the rest of the scene loads.
@@ -38,15 +38,21 @@ retaining that handoff.
   right-handed and Y-up; document rotations are Euler angles in degrees,
   applied in local X → Y → Z order.
 - Optional ECS types use the `XxxComponent` naming convention. Components may
-  contain both persisted authoring fields and component-private runtime fields;
-  only authoring fields are serialized. `CameraComponent`, `MeshComponent`,
+  contain both document-loaded authoring fields and component-private runtime
+  fields. `CameraComponent`, `MeshComponent`,
   and later `LightComponent` are the intended component model. A
   `MeshComponent` persists a project-relative mesh asset path. Renderer-specific
   mesh resource references, uploads, and GPU representations are renderer-owned.
 - `entt::meta` is the single registration source for component document names,
-  persisted fields, validation, and construction policy. Built-in schemas are
-  registered deterministically and idempotently before document load or save.
-- YAML persistence stays inside the Scene module in a non-exported IO
+  YAML-writable fields, validation, and construction policy. Each built-in
+  component statically registers its schema beside its definition; all explicit
+  `meta_data` fields are writable from YAML. Generic loading validates
+  components after the temporary Runtime World has been constructed.
+- `Scene:Components.Core` owns shared component metadata primitives. Each
+  `Scene:Components.<Name>` partition owns one component family and its static
+  metadata registration. `Scene:YamlIO` resolves names and applies metadata
+  without depending on concrete component types.
+- YAML loading stays inside the Scene module in a non-exported IO
   partition. `libyaml` implementation types do not cross the public Scene API.
 - `Resource::Mesh` exposes imported mesh groups and submeshes with their
   resource handles. Each renderer expands ready submeshes from its own mesh-resource
@@ -56,7 +62,7 @@ retaining that handoff.
 
 ## Consequences
 
-YAML can be replaced later by changing the non-public persistence partition
+YAML can be replaced later by changing the non-public loading partition
 without changing the Runtime World or renderer-facing snapshot contract. The
 initial format is intentionally simple and AI-friendly, but cannot yet express
 entity references, prefabs, incremental scene updates, or robust document
@@ -64,7 +70,7 @@ merging; those features require persistent document identity and a later format
 evolution.
 
 Keeping component-private runtime data beside authoring data avoids paired
-component synchronization while preserving a strict serialization boundary.
+component synchronization while preserving a strict document-input boundary.
 The renderer continues to consume immutable snapshots. Renderer-owned mesh
 resource caches retain resource ownership while the renderer resolves asset
 identities from those snapshots.
