@@ -8,269 +8,20 @@ export module Scene;
 export import Core;
 export import Material;
 export import RHI;
+export import :Components.Core;
+export import :Components.Camera;
+export import :Components.Mesh;
+export import :Components.Light;
 import TaskGraph;
 // export import std;
 
 export namespace SoulEngine {
-
-using SceneEntity = entt::entity;
-
-struct Transform {
-    hlslpp::float3   Translation    = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    hlslpp::float3   Rotation       = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    hlslpp::float3   Scale          = hlslpp::float3(1.0f, 1.0f, 1.0f);
-    hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
-
-    [[nodiscard]] auto GetLocalMatrix() const -> hlslpp::float4x4 {
-        const auto RotationRadians = Rotation * (std::numbers::pi_v<float> / 180.0f);
-        return hlslpp::mul(hlslpp::mul(hlslpp::mul(hlslpp::mul(hlslpp::float4x4::scale(Scale),
-                                                               hlslpp::float4x4::rotation_x(RotationRadians.x)),
-                                                   hlslpp::float4x4::rotation_y(RotationRadians.y)),
-                                       hlslpp::float4x4::rotation_z(RotationRadians.z)),
-                           hlslpp::float4x4::translation(Translation));
-    }
-};
-
-/// @brief Immutable render data and resources for one camera/view.
-struct RenderViewSnapshot {
-    hlslpp::float4x4        ViewProjection = hlslpp::float4x4::identity();
-    hlslpp::float3          CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    Float32                 ExposureEV100  = 15.0f;
-    RHIRef<RHIRenderTarget> ColorRT        = nullptr;
-    RHIRef<RHIRenderTarget> DepthRT        = nullptr;
-};
 
 struct SceneNode {
     String                   Name      = {};
     SceneEntity              Parent    = entt::null;
     std::vector<SceneEntity> Children  = {};
     Transform                Transform = {};
-};
-
-/// @brief Simple camera holding world-space position and orientation.
-///
-/// Minimal prototype — projection parameters are included so renderers can
-/// derive view and projection matrices without depending on math headers.
-// TODO: Split Camera into specialized camera types when their ownership and
-// projection policies become concrete. Expected variants include gameplay
-// cameras, editor viewport cameras, and shadow cameras. Keep this base type
-// minimal for now: view parameters plus view-scoped resource refs only.
-/// @brief Reusable lens and view-matrix policy for scene and editor cameras.
-struct Camera {
-    float                   FOV            = 60.0f;
-    float                   NearPlane      = 0.1f;
-    float                   FarPlane       = 100.0f;
-    Float32                 ExposureEV100  = 15.0f;
-    RHIRef<RHIRenderTarget> ColorRT        = nullptr;
-    RHIRef<RHIRenderTarget> DepthRT        = nullptr;
-    Uint32                  ViewportWidth  = 0;
-    Uint32                  ViewportHeight = 0;
-
-    /// @brief Resize the camera-owned output resources.
-    auto ResizeViewport(StringView ResourceKey, Uint32 Width, Uint32 Height) -> void {
-        if (Width == 0 || Height == 0) {
-            ColorRT        = nullptr;
-            DepthRT        = nullptr;
-            ViewportWidth  = 0;
-            ViewportHeight = 0;
-            return;
-        }
-
-        if (ViewportWidth == Width && ViewportHeight == Height && ColorRT && DepthRT)
-            return;
-
-        ViewportWidth  = Width;
-        ViewportHeight = Height;
-        const RHIRenderTargetDesc ColorDesc{
-            .Width  = Width,
-            .Height = Height,
-            .Format = RHIFormat::B8G8R8A8_UNORM,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
-        };
-        const RHIRenderTargetDesc DepthDesc{
-            .Width  = Width,
-            .Height = Height,
-            .Format = RHIFormat::D32_SFLOAT,
-            .Usage  = RHITextureUsage::DepthStencil,
-        };
-        auto Color = RHIRenderDevice::Get().CreateRenderTarget(ColorDesc);
-        if (!Color) {
-            LogError("Failed to queue camera color render target creation: {}", Color.error().ToString());
-            ColorRT = nullptr;
-        } else {
-            ColorRT = std::move(*Color);
-        }
-
-        auto Depth = RHIRenderDevice::Get().CreateRenderTarget(DepthDesc);
-        if (!Depth) {
-            LogError("Failed to queue camera depth render target creation: {}", Depth.error().ToString());
-            DepthRT = nullptr;
-        } else {
-            DepthRT = std::move(*Depth);
-        }
-    }
-
-    /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
-    [[nodiscard]] auto GetProjectionMatrix(float AspectRatio) const -> hlslpp::float4x4 {
-        const float FovRad = FOV * (std::numbers::pi_v<float> / 180.0f);
-        return hlslpp::float4x4::perspective(
-            hlslpp::projection(hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, NearPlane, FarPlane),
-                               hlslpp::zclip::zero,
-                               hlslpp::zdirection::forward,
-                               hlslpp::zplane::finite));
-    }
-
-    [[nodiscard]] auto GetForward(const Transform& CameraTransform) const -> hlslpp::float3 {
-        const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
-        const auto WorldForward = hlslpp::mul(LocalForward, CameraTransform.WorldTransform);
-        return hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-    }
-
-    [[nodiscard]] auto GetViewMatrix(const Transform& CameraTransform) const -> hlslpp::float4x4 {
-        const auto& World    = CameraTransform.WorldTransform;
-        const auto  Position = hlslpp::float3(World[3].x, World[3].y, World[3].z);
-        return hlslpp::float4x4::look_at(
-            Position, Position + GetForward(CameraTransform), hlslpp::float3(0.0f, 1.0f, 0.0f));
-    }
-
-    [[nodiscard]] auto BuildRenderView(const Transform& CameraTransform) const -> std::optional<RenderViewSnapshot> {
-        if (!ColorRT || !DepthRT || ViewportWidth == 0 || ViewportHeight == 0)
-            return std::nullopt;
-
-        auto ColorRTRef = ColorRT;
-        auto DepthRTRef = DepthRT;
-        if (!ColorRTRef.TryGet() || !DepthRTRef.TryGet())
-            return std::nullopt;
-
-        const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
-        const auto& World       = CameraTransform.WorldTransform;
-        return RenderViewSnapshot{
-            .ViewProjection = hlslpp::mul(GetViewMatrix(CameraTransform), GetProjectionMatrix(AspectRatio)),
-            .CameraPosition = hlslpp::float3(World[3].x, World[3].y, World[3].z),
-            .ExposureEV100  = ExposureEV100,
-            .ColorRT        = std::move(ColorRTRef),
-            .DepthRT        = std::move(DepthRTRef),
-        };
-    }
-};
-
-// CameraComponent persists only the camera lens parameters. Camera output
-// resources are non-persisted runtime state.
-struct CameraComponent {
-    Camera Settings = {};
-
-    [[nodiscard]] auto GetFOV() const -> float {
-        return Settings.FOV;
-    }
-
-    auto SetFOV(float Value) -> void {
-        Settings.FOV = Value;
-    }
-
-    [[nodiscard]] auto GetNearPlane() const -> float {
-        return Settings.NearPlane;
-    }
-
-    auto SetNearPlane(float Value) -> void {
-        Settings.NearPlane = Value;
-    }
-
-    [[nodiscard]] auto GetFarPlane() const -> float {
-        return Settings.FarPlane;
-    }
-
-    auto SetFarPlane(float Value) -> void {
-        Settings.FarPlane = Value;
-    }
-
-    [[nodiscard]] auto GetExposureEV100() const -> Float32 {
-        return Settings.ExposureEV100;
-    }
-
-    auto SetExposureEV100(Float32 Value) -> void {
-        Settings.ExposureEV100 = Value;
-    }
-};
-
-/// @brief Scene-authored mesh asset reference.
-///
-/// Paths are relative to the current application Assets directory. Renderer-specific
-/// mesh resources, uploads, and draw representations are
-/// owned by each renderer rather than this component.
-struct MeshComponent {
-    String Asset    = {};
-    /// Scene-local PBR material instance ID. Empty uses the built-in material defaults.
-    String Material = {};
-};
-
-enum class LightType : Uint32 {
-    Unknown = 0,
-    Directional,
-    Point,
-    Spot,
-};
-
-/// @brief Physically authored light attached to a spatial Scene Entity.
-struct LightComponent {
-    LightType        Type                  = LightType::Unknown;
-    Float32          ColorR                = 1.0f;
-    Float32          ColorG                = 1.0f;
-    Float32          ColorB                = 1.0f;
-    Float32          Intensity             = 0.0f;
-    Float32          RangeMeters           = 10.0f;
-    Float32          InnerConeAngleDegrees = 15.0f;
-    Float32          OuterConeAngleDegrees = 25.0f;
-    bool             CastsShadows          = false;
-
-    [[nodiscard]] auto GetType() const -> String {
-        switch (Type) {
-        case LightType::Directional:
-            return "directional";
-        case LightType::Point:
-            return "point";
-        case LightType::Spot:
-            return "spot";
-        case LightType::Unknown:
-            break;
-        }
-        return "unknown";
-    }
-
-    auto SetType(String Value) -> void {
-        if (Value == "directional")
-            Type = LightType::Directional;
-        else if (Value == "point")
-            Type = LightType::Point;
-        else if (Value == "spot")
-            Type = LightType::Spot;
-        else
-            Type = LightType::Unknown;
-    }
-};
-
-/// @brief Immutable world-space light record consumed by renderers.
-struct LightSnapshot {
-    LightType      Type             = LightType::Unknown;
-    hlslpp::float3 Color            = hlslpp::float3(1.0f, 1.0f, 1.0f);
-    Float32        Intensity        = 0.0f;
-    hlslpp::float3 Position         = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    Float32        RangeMeters      = 0.0f;
-    hlslpp::float3 Direction        = hlslpp::float3(0.0f, 0.0f, -1.0f);
-    Float32        InnerConeCosine  = 1.0f;
-    Float32        OuterConeCosine  = 1.0f;
-    bool           CastsShadows     = false;
-};
-
-/// @brief Immutable CPU render record for one mesh asset instance.
-///
-/// It intentionally carries only renderer-neutral asset identity and instance
-/// state. Each renderer resolves it to its own GPU representation.
-struct RenderableInstance {
-    String                       MeshAsset      = {};
-    /// Scene-local material instance ID. Empty identifies the shared built-in material.
-    String                       MaterialId     = {};
-    PbrMetallicRoughnessMaterial Material       = {};
-    hlslpp::float4x4             WorldTransform = hlslpp::float4x4::identity();
 };
 
 struct SceneSnapshot {
@@ -343,9 +94,6 @@ class Scene {
     /// @brief Add or replace a scene-local PBR material instance.
     auto               SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material) -> void;
     [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const PbrMetallicRoughnessMaterial*;
-    [[nodiscard]] auto GetMaterialInstances() const
-        -> const std::map<String, PbrMetallicRoughnessMaterial, std::less<>>&;
-
     [[nodiscard]] auto GetRegistry() -> entt::registry&;
     [[nodiscard]] auto GetRegistry() const -> const entt::registry&;
     [[nodiscard]] auto GetRoots() const -> const std::vector<SceneEntity>&;
@@ -365,7 +113,6 @@ class Scene {
     [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views = {}) -> SceneSnapshot;
 
     [[nodiscard]] auto LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage>;
-    [[nodiscard]] auto SaveToFile(const Path& FilePath) const -> std::expected<void, ErrorMessage>;
 };
 
 } // namespace SoulEngine
@@ -388,11 +135,6 @@ auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material
     if (It == m_MaterialInstances.end())
         return nullptr;
     return &It->second;
-}
-
-[[nodiscard]] auto Scene::GetMaterialInstances() const
-    -> const std::map<String, PbrMetallicRoughnessMaterial, std::less<>>& {
-    return m_MaterialInstances;
 }
 
 [[nodiscard]] auto Scene::GetRegistry() -> entt::registry& {

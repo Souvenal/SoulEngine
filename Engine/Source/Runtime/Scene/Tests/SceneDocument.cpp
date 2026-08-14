@@ -18,6 +18,25 @@ namespace {
     return FilePath;
 }
 
+TEST(SceneMeta, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
+    const auto Camera = entt::resolve(entt::hashed_string{"camera"}.value());
+    ASSERT_TRUE(Camera);
+    EXPECT_TRUE(Camera.data(entt::hashed_string{"fov_degrees"}.value()));
+    EXPECT_TRUE(Camera.data(entt::hashed_string{"near_plane"}.value()));
+    EXPECT_TRUE(Camera.data(entt::hashed_string{"far_plane"}.value()));
+    EXPECT_TRUE(Camera.data(entt::hashed_string{"exposure_ev100"}.value()));
+
+    const auto Mesh = entt::resolve(entt::hashed_string{"mesh"}.value());
+    ASSERT_TRUE(Mesh);
+    EXPECT_TRUE(Mesh.data(entt::hashed_string{"asset"}.value()));
+    EXPECT_TRUE(Mesh.data(entt::hashed_string{"material"}.value()));
+
+    const auto Light = entt::resolve(entt::hashed_string{"light"}.value());
+    ASSERT_TRUE(Light);
+    EXPECT_TRUE(Light.data(entt::hashed_string{"type"}.value()));
+    EXPECT_TRUE(Light.data(entt::hashed_string{"casts_shadows"}.value()));
+}
+
 TEST(SceneDocument, BuildsOrderedHierarchyAndSkipsUnknownComponent) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
@@ -120,30 +139,7 @@ entities:
     std::filesystem::remove(FilePath);
 }
 
-TEST(SceneDocument, SavesMaterialBaseColorTextureAndRejectsLegacyMeshTexture) {
-    const auto FilePath = WriteSceneFile(R"(
-material_instances:
-  wood:
-    base_color_texture: textures/wood.png
-entities:
-  - components:
-      camera: {}
-  - components:
-      mesh:
-        asset: teapot.obj
-        material: wood
-)");
-
-    Scene Scene = {};
-    ASSERT_TRUE(Scene.LoadFromFile(FilePath).has_value());
-    const auto SavedPath = FilePath.parent_path() / "soulengine_scene_saved_test.yaml";
-    ASSERT_TRUE(Scene.SaveToFile(SavedPath).has_value());
-    const auto Saved = ReadFile(SavedPath);
-    ASSERT_TRUE(Saved.has_value()) << Saved.error().ToString();
-    EXPECT_TRUE(Saved->contains("base_color_texture"));
-    EXPECT_TRUE(Saved->contains("emissive"));
-    EXPECT_FALSE(Saved->contains("\n        texture:"));
-
+TEST(SceneDocument, RejectsLegacyMeshTextureField) {
     const auto LegacyPath = WriteSceneFile(R"(
 entities:
   - components:
@@ -160,8 +156,6 @@ entities:
     EXPECT_EQ(LegacyLoaded->Warnings.front().Path, "entities[1].components.mesh.texture");
     EXPECT_TRUE(LegacyScene.BuildSnapshot().Renderables.empty());
 
-    std::filesystem::remove(FilePath);
-    std::filesystem::remove(SavedPath);
     std::filesystem::remove(LegacyPath);
 }
 
@@ -403,44 +397,6 @@ entities:
 
     std::filesystem::remove(ValidPath);
     std::filesystem::remove(InvalidPath);
-}
-
-TEST(SceneDocument, SavesCanonicalYamlLayout) {
-    const auto FilePath = WriteSceneFile(R"(
-entities:
-  - name: "Main Camera"
-    transform:
-      translation: [1.0, 2.0, 3.0]
-    components:
-      camera: {}
-  - components:
-      light:
-        type: directional
-        color_r: 1.0
-        color_g: 1.0
-        color_b: 1.0
-        intensity: 100000.0
-        casts_shadows: true
-)");
-    SoulEngine::Scene SavedScene = {};
-    ASSERT_TRUE(SavedScene.LoadFromFile(FilePath).has_value());
-
-    const auto SavedPath = FilePath.parent_path() / "soulengine_scene_canonical_test.yaml";
-    ASSERT_TRUE(SavedScene.SaveToFile(SavedPath).has_value());
-    const auto Saved = ReadFile(SavedPath);
-    ASSERT_TRUE(Saved.has_value()) << Saved.error().ToString();
-    EXPECT_TRUE(Saved->contains("translation: [1, 2, 3]"));
-    EXPECT_TRUE(Saved->contains("casts_shadows: true"));
-    EXPECT_TRUE(Saved->contains("name: \"Main Camera\""));
-    EXPECT_TRUE(Saved->contains("entities:\n- name:"));
-
-    SoulEngine::Scene Reloaded = {};
-    const auto ReloadedResult = Reloaded.LoadFromFile(SavedPath);
-    ASSERT_TRUE(ReloadedResult.has_value()) << ReloadedResult.error().ToString();
-    EXPECT_EQ(Reloaded.GetRoots().size(), SavedScene.GetRoots().size());
-
-    std::filesystem::remove(FilePath);
-    std::filesystem::remove(SavedPath);
 }
 
 TEST(SceneDocument, RejectsSceneWithoutCamera) {

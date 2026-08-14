@@ -10,14 +10,6 @@ import Scene;
 
 namespace SoulEngine {
 
-// TRY macro: unwraps std::expected, propagates error on failure.
-// Usage: TRY(name, expr) — assigns unwrapped value to `name`, or returns error.
-#define TRY(name, expr)                                                                                                \
-    auto _try_##name = (expr);                                                                                         \
-    if (!_try_##name)                                                                                                  \
-        return std::unexpected(_try_##name.error());                                                                   \
-    auto name = _try_##name.value()
-
 namespace {
 
 struct YamlDocument {
@@ -216,20 +208,6 @@ struct YamlParser {
     auto operator=(const YamlParser&) -> YamlParser& = delete;
 };
 
-struct YamlEmitter {
-    yaml_emitter_t Value       = {};
-    bool           Initialized = false;
-
-    ~YamlEmitter() {
-        if (Initialized)
-            yaml_emitter_delete(&Value);
-    }
-
-    YamlEmitter()                                      = default;
-    YamlEmitter(const YamlEmitter&)                    = delete;
-    auto operator=(const YamlEmitter&) -> YamlEmitter& = delete;
-};
-
 [[nodiscard]] auto MakeYamlParseError(StringView FilePath, const yaml_parser_t& Parser) -> ErrorMessage {
     const auto Problem = Parser.problem ? StringView(Parser.problem) : StringView("unknown YAML parser error");
     const auto Context = Parser.context ? StringView(Parser.context) : StringView();
@@ -246,11 +224,6 @@ struct YamlEmitter {
                                Problem,
                                Parser.problem_mark.line + 1,
                                Parser.problem_mark.column + 1));
-}
-
-[[nodiscard]] auto MakeYamlEmitterError(StringView FilePath, const yaml_emitter_t& Emitter) -> ErrorMessage {
-    const auto Problem = Emitter.problem ? StringView(Emitter.problem) : StringView("unknown YAML emitter error");
-    return ErrorMessage(Format("Failed to emit Scene document '{}': {}", FilePath, Problem));
 }
 
 [[nodiscard]] auto InitializeYamlParser(YamlParser& Parser, const String& Source, StringView FilePath)
@@ -436,256 +409,23 @@ struct YamlEmitter {
     return MakeStructuralError(Path, Format("could not decode {}", Description));
 }
 
-struct YamlBuilder {
-    YamlDocument Document = {};
-
-    [[nodiscard]] auto AddScalar(StringView Value, yaml_scalar_style_t Style) -> std::expected<int, ErrorMessage> {
-        if (Value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-            return std::unexpected(ErrorMessage("YAML scalar is too large to emit"));
-        const auto Id = yaml_document_add_scalar(&Document.Value,
-                                                 reinterpret_cast<const yaml_char_t*>(YAML_STR_TAG),
-                                                 reinterpret_cast<const yaml_char_t*>(Value.data()),
-                                                 static_cast<int>(Value.size()),
-                                                 Style);
-        if (Id == 0)
-            return std::unexpected(ErrorMessage("YAML document could not allocate a scalar node"));
-        return Id;
-    }
-
-    [[nodiscard]] auto AddSequence(yaml_sequence_style_t Style) -> std::expected<int, ErrorMessage> {
-        const auto Id =
-            yaml_document_add_sequence(&Document.Value, reinterpret_cast<const yaml_char_t*>(YAML_SEQ_TAG), Style);
-        if (Id == 0)
-            return std::unexpected(ErrorMessage("YAML document could not allocate a sequence node"));
-        return Id;
-    }
-
-    [[nodiscard]] auto AddMapping(yaml_mapping_style_t Style) -> std::expected<int, ErrorMessage> {
-        const auto Id =
-            yaml_document_add_mapping(&Document.Value, reinterpret_cast<const yaml_char_t*>(YAML_MAP_TAG), Style);
-        if (Id == 0)
-            return std::unexpected(ErrorMessage("YAML document could not allocate a mapping node"));
-        return Id;
-    }
-
-    [[nodiscard]] auto AppendSequence(int Sequence, int Item) -> std::expected<void, ErrorMessage> {
-        if (!yaml_document_append_sequence_item(&Document.Value, Sequence, Item))
-            return std::unexpected(ErrorMessage("YAML document could not append a sequence item"));
-        return {};
-    }
-
-    [[nodiscard]] auto AppendMapping(int Mapping, int Key, int Value) -> std::expected<void, ErrorMessage> {
-        if (!yaml_document_append_mapping_pair(&Document.Value, Mapping, Key, Value))
-            return std::unexpected(ErrorMessage("YAML document could not append a mapping pair"));
-        return {};
-    }
+struct LoadedSceneComponent {
+    const SceneComponentSchema* Schema = nullptr;
+    SceneEntity                 Entity = entt::null;
+    String                      Path   = {};
 };
 
-struct SceneFieldSchema {
-    StringView    Name = {};
-    entt::id_type Id   = {};
-};
-
-struct SceneComponentSchema {
-    entt::meta_any (*Create)(entt::registry&, SceneEntity);
-    void (*Remove)(entt::registry&, SceneEntity);
-    [[nodiscard]] auto (*Has)(const entt::registry&, SceneEntity) -> bool;
-    [[nodiscard]] entt::meta_any (*Get)(entt::registry&, SceneEntity);
-    [[nodiscard]] auto (*Validate)(const Scene&, const entt::meta_any&, String&) -> bool;
-    StringView                        Name   = {};
-    std::span<const SceneFieldSchema> Fields = {};
-};
-
-template <typename T>
-[[nodiscard]] auto CreateComponent(entt::registry& Registry, SceneEntity Entity) -> entt::meta_any {
-    return entt::forward_as_meta(Registry.emplace<T>(Entity));
-}
-
-template <typename T>
-auto RemoveComponent(entt::registry& Registry, SceneEntity Entity) -> void {
-    Registry.remove<T>(Entity);
-}
-
-template <typename T>
-[[nodiscard]] auto HasComponent(const entt::registry& Registry, SceneEntity Entity) -> bool {
-    return Registry.all_of<T>(Entity);
-}
-
-template <typename T>
-[[nodiscard]] auto GetComponent(entt::registry& Registry, SceneEntity Entity) -> entt::meta_any {
-    return entt::forward_as_meta(Registry.get<T>(Entity));
-}
-
-[[nodiscard]] auto ValidateCamera(const Scene&, const entt::meta_any& Value, String& Error) -> bool {
-    const auto* Camera = Value.try_cast<CameraComponent>();
-    if (!Camera) {
-        Error = "Camera component metadata does not contain CameraComponent";
-        return false;
-    }
-    if (Camera->Settings.FOV <= 0.0f || Camera->Settings.FOV >= 179.0f) {
-        Error = "fov_degrees must be in the range (0, 179)";
-        return false;
-    }
-    if (Camera->Settings.NearPlane <= 0.0f) {
-        Error = "near_plane must be greater than zero";
-        return false;
-    }
-    if (Camera->Settings.FarPlane <= Camera->Settings.NearPlane) {
-        Error = "far_plane must be greater than near_plane";
-        return false;
-    }
-    if (!std::isfinite(Camera->Settings.ExposureEV100)) {
-        Error = "exposure_ev100 must be finite";
-        return false;
-    }
-    return true;
-}
-
-[[nodiscard]] auto ValidateMesh(const Scene& Scene, const entt::meta_any& Value, String& Error) -> bool {
-    const auto* Mesh = Value.try_cast<MeshComponent>();
-    if (!Mesh) {
-        Error = "Mesh component metadata does not contain MeshComponent";
-        return false;
-    }
-    if (Mesh->Asset.empty()) {
-        Error = "asset must not be empty";
-        return false;
-    }
-    if (Path(Mesh->Asset).is_absolute()) {
-        Error = "asset must be relative to the current application Assets directory";
-        return false;
-    }
-    if (!Mesh->Material.empty() && !Scene.FindMaterialInstance(Mesh->Material)) {
-        Error = Format("material instance '{}' does not exist", Mesh->Material);
-        return false;
-    }
-    return true;
-}
-
-[[nodiscard]] auto ValidateLight(const Scene&, const entt::meta_any& Value, String& Error) -> bool {
-    const auto* Light = Value.try_cast<LightComponent>();
-    if (!Light) {
-        Error = "Light component metadata does not contain LightComponent";
-        return false;
-    }
-    if (Light->Type == LightType::Unknown) {
-        Error = "type must be directional, point, or spot";
-        return false;
-    }
-    const auto Luminance = 0.2126f * Light->ColorR + 0.7152f * Light->ColorG + 0.0722f * Light->ColorB;
-    if (!std::isfinite(Light->ColorR) || !std::isfinite(Light->ColorG) || !std::isfinite(Light->ColorB) ||
-        !std::isfinite(Light->Intensity) || !std::isfinite(Light->RangeMeters) ||
-        !std::isfinite(Light->InnerConeAngleDegrees) || !std::isfinite(Light->OuterConeAngleDegrees)) {
-        Error = "contains a non-finite value";
-        return false;
-    }
-    if (Light->ColorR < 0.0f || Light->ColorG < 0.0f || Light->ColorB < 0.0f || std::abs(Luminance - 1.0f) > 0.001f) {
-        Error = "color must be non-negative linear sRGB with Rec.709 luminance equal to one";
-        return false;
-    }
-    if (Light->Intensity < 0.0f) {
-        Error = "intensity must be non-negative";
-        return false;
-    }
-    if (Light->Type != LightType::Directional && Light->RangeMeters <= 0.0f) {
-        Error = "range_meters must be greater than zero for point and spot lights";
-        return false;
-    }
-    if (Light->Type == LightType::Spot &&
-        (Light->InnerConeAngleDegrees <= 0.0f || Light->InnerConeAngleDegrees > Light->OuterConeAngleDegrees ||
-         Light->OuterConeAngleDegrees >= 90.0f)) {
-        Error = "spot cone angles must satisfy 0 < inner <= outer < 90 degrees";
-        return false;
-    }
-    return true;
-}
-auto RegisterBuiltInComponentSchemas() -> void {
-    static bool Registered = false;
-    if (Registered)
-        return;
-
-    static const std::array CameraFields{
-        SceneFieldSchema{.Name = "fov_degrees", .Id = entt::hashed_string{"fov_degrees"}.value()},
-        SceneFieldSchema{.Name = "near_plane", .Id = entt::hashed_string{"near_plane"}.value()},
-        SceneFieldSchema{.Name = "far_plane", .Id = entt::hashed_string{"far_plane"}.value()},
-        SceneFieldSchema{.Name = "exposure_ev100", .Id = entt::hashed_string{"exposure_ev100"}.value()},
-    };
-    static const std::array MeshFields{
-        SceneFieldSchema{.Name = "asset", .Id = entt::hashed_string{"asset"}.value()},
-        SceneFieldSchema{.Name = "material", .Id = entt::hashed_string{"material"}.value()},
-    };
-
-    static const std::array LightFields{
-        SceneFieldSchema{.Name = "type", .Id = entt::hashed_string{"type"}.value()},
-        SceneFieldSchema{.Name = "color_r", .Id = entt::hashed_string{"color_r"}.value()},
-        SceneFieldSchema{.Name = "color_g", .Id = entt::hashed_string{"color_g"}.value()},
-        SceneFieldSchema{.Name = "color_b", .Id = entt::hashed_string{"color_b"}.value()},
-        SceneFieldSchema{.Name = "intensity", .Id = entt::hashed_string{"intensity"}.value()},
-        SceneFieldSchema{.Name = "range_meters", .Id = entt::hashed_string{"range_meters"}.value()},
-        SceneFieldSchema{.Name = "inner_cone_angle_degrees",
-                         .Id   = entt::hashed_string{"inner_cone_angle_degrees"}.value()},
-        SceneFieldSchema{.Name = "outer_cone_angle_degrees",
-                         .Id   = entt::hashed_string{"outer_cone_angle_degrees"}.value()},
-        SceneFieldSchema{.Name = "casts_shadows", .Id = entt::hashed_string{"casts_shadows"}.value()},
-    };
-    entt::meta_factory<CameraComponent>{}
-        .type(entt::hashed_string{"camera"}.value())
-        .custom<SceneComponentSchema>(SceneComponentSchema{
-            .Create   = &CreateComponent<CameraComponent>,
-            .Remove   = &RemoveComponent<CameraComponent>,
-            .Has      = &HasComponent<CameraComponent>,
-            .Get      = &GetComponent<CameraComponent>,
-            .Validate = &ValidateCamera,
-            .Name     = "camera",
-            .Fields   = CameraFields,
-        })
-        .data<&CameraComponent::SetFOV, &CameraComponent::GetFOV>(CameraFields[0].Id)
-        .data<&CameraComponent::SetNearPlane, &CameraComponent::GetNearPlane>(CameraFields[1].Id)
-        .data<&CameraComponent::SetFarPlane, &CameraComponent::GetFarPlane>(CameraFields[2].Id)
-        .data<&CameraComponent::SetExposureEV100, &CameraComponent::GetExposureEV100>(CameraFields[3].Id);
-
-    entt::meta_factory<MeshComponent>{}
-        .type(entt::hashed_string{"mesh"}.value())
-        .custom<SceneComponentSchema>(SceneComponentSchema{
-            .Create   = &CreateComponent<MeshComponent>,
-            .Remove   = &RemoveComponent<MeshComponent>,
-            .Has      = &HasComponent<MeshComponent>,
-            .Get      = &GetComponent<MeshComponent>,
-            .Validate = &ValidateMesh,
-            .Name     = "mesh",
-            .Fields   = MeshFields,
-        })
-        .data<&MeshComponent::Asset>(MeshFields[0].Id)
-        .data<&MeshComponent::Material>(MeshFields[1].Id);
-
-    entt::meta_factory<LightComponent>{}
-        .type(entt::hashed_string{"light"}.value())
-        .custom<SceneComponentSchema>(SceneComponentSchema{
-            .Create   = &CreateComponent<LightComponent>,
-            .Remove   = &RemoveComponent<LightComponent>,
-            .Has      = &HasComponent<LightComponent>,
-            .Get      = &GetComponent<LightComponent>,
-            .Validate = &ValidateLight,
-            .Name     = "light",
-            .Fields   = LightFields,
-        })
-        .data<&LightComponent::SetType, &LightComponent::GetType>(LightFields[0].Id)
-        .data<&LightComponent::ColorR>(LightFields[1].Id)
-        .data<&LightComponent::ColorG>(LightFields[2].Id)
-        .data<&LightComponent::ColorB>(LightFields[3].Id)
-        .data<&LightComponent::Intensity>(LightFields[4].Id)
-        .data<&LightComponent::RangeMeters>(LightFields[5].Id)
-        .data<&LightComponent::InnerConeAngleDegrees>(LightFields[6].Id)
-        .data<&LightComponent::OuterConeAngleDegrees>(LightFields[7].Id)
-        .data<&LightComponent::CastsShadows>(LightFields[8].Id);
-    Registered = true;
-}
 [[nodiscard]] auto ValidateSingleCamera(const Scene& Scene, StringView Path) -> std::expected<void, ErrorMessage> {
+    const auto Type = entt::resolve(entt::hashed_string{"camera"}.value());
+    if (!Type)
+        return std::unexpected(ErrorMessage("Camera component metadata is not registered"));
+    const auto* Schema = static_cast<SceneComponentSchema*>(Type.custom());
+    if (!Schema)
+        return std::unexpected(ErrorMessage("Camera component metadata does not contain a Scene component schema"));
+
     std::size_t CameraCount = 0;
-    for (const auto Entity : Scene.GetRegistry().view<CameraComponent>()) {
-        static_cast<void>(Entity);
-        ++CameraCount;
-    }
+    for (const auto Entity : Scene.GetRegistry().view<SceneNode>())
+        CameraCount += Schema->Has(Scene.GetRegistry(), Entity) ? 1u : 0u;
     if (CameraCount != 1)
         return MakeStructuralError(Path, Format("must contain exactly one camera component; found {}", CameraCount));
     return {};
@@ -886,8 +626,17 @@ auto AppendComponentWarning(SceneLoadReport& Report, String Path, String Message
     });
 }
 
-auto LoadComponents(Scene& Scene, SceneEntity Entity, const YamlNode& Node, StringView Path, SceneLoadReport& Report)
-    -> void {
+[[nodiscard]] auto SceneHasMaterialInstance(const void* UserData, StringView Id) -> bool {
+    const auto* Scene = static_cast<const SoulEngine::Scene*>(UserData);
+    return Scene && Scene->FindMaterialInstance(Id);
+}
+
+auto LoadComponents(Scene&                          Scene,
+                    SceneEntity                     Entity,
+                    const YamlNode&                 Node,
+                    StringView                      Path,
+                    SceneLoadReport&                Report,
+                    std::vector<LoadedSceneComponent>& LoadedComponents) -> void {
     if (!Node.IsDefined() || Node.IsNull())
         return;
     if (!Node.IsMap()) {
@@ -908,10 +657,14 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YamlNode& Node, Stri
             continue;
         }
 
-        const auto  Type   = entt::resolve(entt::hashed_string{ComponentName.c_str(), ComponentName.size()}.value());
-        const auto* Schema = static_cast<SceneComponentSchema*>(Type.custom());
-        if (!Type || !Schema) {
+        const auto Type = entt::resolve(entt::hashed_string{ComponentName.c_str(), ComponentName.size()}.value());
+        if (!Type) {
             AppendComponentWarning(Report, ComponentPath, "unknown component; component was omitted");
+            continue;
+        }
+        const auto* Schema = static_cast<SceneComponentSchema*>(Type.custom());
+        if (!Schema) {
+            AppendComponentWarning(Report, ComponentPath, "component does not support Scene document loading; component was omitted");
             continue;
         }
 
@@ -939,18 +692,24 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YamlNode& Node, Stri
             }
         }
 
-        String Error;
-        if (Valid && !Schema->Validate(Scene, Component, Error)) {
-            AppendComponentWarning(Report, ComponentPath, std::move(Error));
-            Valid = false;
-        }
         if (!Valid)
             Schema->Remove(Registry, Entity);
+        else
+            LoadedComponents.emplace_back(LoadedSceneComponent{
+                .Schema = Schema,
+                .Entity = Entity,
+                .Path   = ComponentPath,
+            });
     }
 }
 
 [[nodiscard]] auto
-LoadEntity(Scene& Scene, const YamlNode& Node, SceneEntity Parent, StringView Path, SceneLoadReport& Report)
+LoadEntity(Scene&                          Scene,
+           const YamlNode&                 Node,
+           SceneEntity                     Parent,
+           StringView                      Path,
+           SceneLoadReport&                Report,
+           std::vector<LoadedSceneComponent>& LoadedComponents)
     -> std::expected<void, ErrorMessage> {
     if (!Node.IsMap())
         return MakeStructuralError(Path, "entity must be a mapping");
@@ -984,196 +743,24 @@ LoadEntity(Scene& Scene, const YamlNode& Node, SceneEntity Parent, StringView Pa
 
     const auto Entity                                    = Scene.CreateEntity(std::move(Name), Parent);
     Scene.GetRegistry().get<SceneNode>(Entity).Transform = LocalTransform;
-    LoadComponents(Scene, Entity, Components, MakeYamlPath(Path, "components"), Report);
+    LoadComponents(Scene, Entity, Components, MakeYamlPath(Path, "components"), Report, LoadedComponents);
 
     if (!Children.IsDefined() || Children.IsNull())
         return {};
     if (!Children.IsSequence())
         return MakeStructuralError(MakeYamlPath(Path, "children"), "must be a sequence");
     for (std::size_t Index = 0; Index < Children.size(); ++Index) {
-        if (auto Result = LoadEntity(Scene, Children[Index], Entity, Format("{}.children[{}]", Path, Index), Report);
+        if (auto Result = LoadEntity(
+                Scene, Children[Index], Entity, Format("{}.children[{}]", Path, Index), Report, LoadedComponents);
             !Result)
             return std::unexpected(Result.error());
     }
     return {};
 }
 
-[[nodiscard]] auto FormatYamlFloat(float Value) -> std::expected<String, ErrorMessage> {
-    if (!std::isfinite(Value))
-        return std::unexpected(ErrorMessage("Scene document cannot emit a non-finite floating-point value"));
-    std::array<char, 64> Buffer = {};
-    const auto [End, Error]     = std::to_chars(Buffer.data(), Buffer.data() + Buffer.size(), Value);
-    if (Error != std::errc{})
-        return std::unexpected(ErrorMessage("Scene document could not format a floating-point value"));
-    return String(Buffer.data(), End);
-}
-
-[[nodiscard]] auto AddYamlFloat(YamlBuilder& Builder, float Value) -> std::expected<int, ErrorMessage> {
-    const auto Text = FormatYamlFloat(Value);
-    if (!Text)
-        return std::unexpected(Text.error());
-    return Builder.AddScalar(Text.value(), YAML_PLAIN_SCALAR_STYLE);
-}
-
-[[nodiscard]] auto SaveFloat3(YamlBuilder& Builder, const hlslpp::float3& Value) -> std::expected<int, ErrorMessage> {
-    const auto Result = Builder.AddSequence(YAML_FLOW_SEQUENCE_STYLE);
-    if (!Result)
-        return std::unexpected(Result.error());
-    for (const auto Element : {static_cast<float>(Value.x), static_cast<float>(Value.y), static_cast<float>(Value.z)}) {
-        const auto SavedElement = AddYamlFloat(Builder, Element);
-        if (!SavedElement)
-            return std::unexpected(SavedElement.error());
-        if (auto Appended = Builder.AppendSequence(Result.value(), SavedElement.value()); !Appended)
-            return std::unexpected(Appended.error());
-    }
-    return Result;
-}
-
-[[nodiscard]] auto SaveYamlValue(YamlBuilder& Builder, const entt::meta_data& Field, const entt::meta_any& Component)
-    -> std::expected<int, ErrorMessage> {
-    const auto Value = Field.get(Component);
-    if (!Value)
-        return std::unexpected(ErrorMessage("Scene component metadata could not read a persisted field"));
-    if (const auto* Float = Value.try_cast<float>())
-        return AddYamlFloat(Builder, *Float);
-    if (const auto* Bool = Value.try_cast<bool>())
-        return Builder.AddScalar(*Bool ? "true" : "false", YAML_PLAIN_SCALAR_STYLE);
-    if (const auto* StringValue = Value.try_cast<String>())
-        return Builder.AddScalar(*StringValue, YAML_DOUBLE_QUOTED_SCALAR_STYLE);
-    return std::unexpected(ErrorMessage("Scene component metadata contains an unsupported persisted field type"));
-}
-
-[[nodiscard]] auto AddYamlMappingEntry(YamlBuilder& Builder, int Mapping, StringView Key, int Value)
-    -> std::expected<void, ErrorMessage> {
-    const auto SavedKey = Builder.AddScalar(Key, YAML_PLAIN_SCALAR_STYLE);
-    if (!SavedKey)
-        return std::unexpected(SavedKey.error());
-    return Builder.AppendMapping(Mapping, SavedKey.value(), Value);
-}
-
-[[nodiscard]] auto SaveEntity(YamlBuilder& Builder, const Scene& Scene, SceneEntity Entity)
-    -> std::expected<int, ErrorMessage> {
-    const auto& Registry = Scene.GetRegistry();
-    const auto& Node     = Registry.get<SceneNode>(Entity);
-    TRY(EntityNode, Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE));
-
-    if (!Node.Name.empty()) {
-        TRY(SavedName, Builder.AddScalar(Node.Name, YAML_DOUBLE_QUOTED_SCALAR_STYLE));
-        if (auto R = AddYamlMappingEntry(Builder, EntityNode, "name", SavedName); !R)
-            return std::unexpected(R.error());
-    }
-
-    TRY(TransformNode, Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE));
-    TRY(Translation, SaveFloat3(Builder, Node.Transform.Translation));
-    if (auto R = AddYamlMappingEntry(Builder, TransformNode, "translation", Translation); !R)
-        return std::unexpected(R.error());
-    TRY(Rotation, SaveFloat3(Builder, Node.Transform.Rotation));
-    if (auto R = AddYamlMappingEntry(Builder, TransformNode, "rotation", Rotation); !R)
-        return std::unexpected(R.error());
-    TRY(Scale, SaveFloat3(Builder, Node.Transform.Scale));
-    if (auto R = AddYamlMappingEntry(Builder, TransformNode, "scale", Scale); !R)
-        return std::unexpected(R.error());
-    if (auto R = AddYamlMappingEntry(Builder, EntityNode, "transform", TransformNode); !R)
-        return std::unexpected(R.error());
-
-    TRY(Components, Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE));
-    bool HasComponents = false;
-    for (const auto& [UnusedId, Type] : entt::resolve()) {
-        static_cast<void>(UnusedId);
-        const auto* Schema = static_cast<SceneComponentSchema*>(Type.custom());
-        if (!Schema || !Schema->Has(Registry, Entity))
-            continue;
-
-        TRY(ComponentNode, Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE));
-        const auto Component = Schema->Get(const_cast<entt::registry&>(Registry), Entity);
-        for (const auto& FieldSchema : Schema->Fields) {
-            const auto Field = Type.data(FieldSchema.Id);
-            auto       Value = SaveYamlValue(Builder, Field, Component);
-            if (!Value)
-                return std::unexpected(Value.error().Append(Format("Failed to save component '{}'", Schema->Name)));
-            if (auto Appended = AddYamlMappingEntry(Builder, ComponentNode, FieldSchema.Name, Value.value()); !Appended)
-                return std::unexpected(Appended.error().Append(Format("Failed to save component '{}'", Schema->Name)));
-        }
-        if (auto Appended = AddYamlMappingEntry(Builder, Components, Schema->Name, ComponentNode); !Appended)
-            return std::unexpected(Appended.error().Append(Format("Failed to save component '{}'", Schema->Name)));
-        HasComponents = true;
-    }
-    if (HasComponents) {
-        if (auto R = AddYamlMappingEntry(Builder, EntityNode, "components", Components); !R)
-            return std::unexpected(R.error());
-    }
-
-    if (!Node.Children.empty()) {
-        TRY(Children, Builder.AddSequence(YAML_BLOCK_SEQUENCE_STYLE));
-        for (const auto Child : Node.Children) {
-            TRY(SavedChild, SaveEntity(Builder, Scene, Child));
-            if (auto R = Builder.AppendSequence(Children, SavedChild); !R)
-                return std::unexpected(R.error());
-        }
-        if (auto R = AddYamlMappingEntry(Builder, EntityNode, "children", Children); !R)
-            return std::unexpected(R.error());
-    }
-    return EntityNode;
-}
-
-[[nodiscard]] auto SaveMaterialInstance(YamlBuilder& Builder, const PbrMetallicRoughnessMaterial& Material)
-    -> std::expected<int, ErrorMessage> {
-    const auto MaterialNode = Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE);
-    if (!MaterialNode)
-        return std::unexpected(MaterialNode.error());
-
-    const auto BaseColor = SaveFloat3(Builder, Material.BaseColor);
-    if (!BaseColor)
-        return std::unexpected(BaseColor.error());
-    if (auto Result = AddYamlMappingEntry(Builder, MaterialNode.value(), "base_color", BaseColor.value()); !Result)
-        return std::unexpected(Result.error());
-
-    const auto Metallic = AddYamlFloat(Builder, Material.Metallic);
-    if (!Metallic)
-        return std::unexpected(Metallic.error());
-    if (auto Result = AddYamlMappingEntry(Builder, MaterialNode.value(), "metallic", Metallic.value()); !Result)
-        return std::unexpected(Result.error());
-
-    const auto Roughness = AddYamlFloat(Builder, Material.Roughness);
-    if (!Roughness)
-        return std::unexpected(Roughness.error());
-    if (auto Result = AddYamlMappingEntry(Builder, MaterialNode.value(), "roughness", Roughness.value()); !Result)
-        return std::unexpected(Result.error());
-
-    const auto Emissive = SaveFloat3(Builder, Material.Emissive);
-    if (!Emissive)
-        return std::unexpected(Emissive.error());
-    if (auto Result = AddYamlMappingEntry(Builder, MaterialNode.value(), "emissive", Emissive.value()); !Result)
-        return std::unexpected(Result.error());
-
-    const auto AddTexture = [&](StringView Name, const String& Texture) -> std::expected<void, ErrorMessage> {
-        if (Texture.empty())
-            return {};
-        const auto SavedTexture = Builder.AddScalar(Texture, YAML_DOUBLE_QUOTED_SCALAR_STYLE);
-        if (!SavedTexture)
-            return std::unexpected(SavedTexture.error());
-        return AddYamlMappingEntry(Builder, MaterialNode.value(), Name, SavedTexture.value());
-    };
-    for (const auto& [Name, Texture] : std::array{
-             std::pair<StringView, const String&>{"base_color_texture", Material.BaseColorTexture},
-             std::pair<StringView, const String&>{"normal_texture", Material.NormalTexture},
-             std::pair<StringView, const String&>{"metallic_roughness_texture", Material.MetallicRoughnessTexture},
-             std::pair<StringView, const String&>{"metallic_texture", Material.MetallicTexture},
-             std::pair<StringView, const String&>{"roughness_texture", Material.RoughnessTexture},
-             std::pair<StringView, const String&>{"occlusion_texture", Material.OcclusionTexture},
-             std::pair<StringView, const String&>{"emissive_texture", Material.EmissiveTexture},
-         }) {
-        if (auto Result = AddTexture(Name, Texture); !Result)
-            return std::unexpected(Result.error());
-    }
-    return MaterialNode;
-}
-
 } // namespace
 
 [[nodiscard]] auto Scene::LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage> {
-    RegisterBuiltInComponentSchemas();
-
     const auto Source = ReadFile(FilePath);
     if (!Source)
         return std::unexpected(Source.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
@@ -1213,93 +800,31 @@ LoadEntity(Scene& Scene, const YamlNode& Node, SceneEntity Parent, StringView Pa
     if (auto Result = LoadMaterialInstances(Temporary, MaterialInstances, "material_instances"); !Result)
         return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
 
-    SceneLoadReport Report = {};
+    SceneLoadReport                    Report           = {};
+    std::vector<LoadedSceneComponent> LoadedComponents = {};
     for (std::size_t Index = 0; Index < Entities.size(); ++Index) {
-        if (auto Result = LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report);
+        if (auto Result =
+                LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report, LoadedComponents);
             !Result)
             return std::unexpected(
                 Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
+    }
+    const SceneComponentValidationContext ValidationContext{
+        .UserData             = &Temporary,
+        .HasMaterialInstance = &SceneHasMaterialInstance,
+    };
+    for (const auto& Loaded : LoadedComponents) {
+        String Error = {};
+        if (!Loaded.Schema->Validate(ValidationContext, Temporary.GetRegistry(), Loaded.Entity, Error)) {
+            AppendComponentWarning(Report, Loaded.Path, std::move(Error));
+            Loaded.Schema->Remove(Temporary.GetRegistry(), Loaded.Entity);
+        }
     }
     if (auto Result = ValidateSingleCamera(Temporary, FilePath.string()); !Result)
         return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     Temporary.UpdateWorldTransforms();
     *this = std::move(Temporary);
     return Report;
-}
-
-[[nodiscard]] auto Scene::SaveToFile(const Path& FilePath) const -> std::expected<void, ErrorMessage> {
-    RegisterBuiltInComponentSchemas();
-
-    const auto FilePathString = FilePath.string();
-    const auto Ctx            = [&FilePathString](auto&& R) {
-        return R.error().Append(Format("Failed to save Scene document '{}'", FilePathString));
-    };
-
-    if (auto Result = ValidateSingleCamera(*this, FilePathString); !Result)
-        return std::unexpected(Ctx(Result));
-
-    YamlBuilder Builder = {};
-    if (!yaml_document_initialize(&Builder.Document.Value, nullptr, nullptr, nullptr, 1, 1))
-        return std::unexpected(ErrorMessage(Format("Failed to initialize YAML document for '{}'", FilePathString)));
-    Builder.Document.Initialized = true;
-
-    TRY(Document, Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE));
-
-    if (!m_MaterialInstances.empty()) {
-        TRY(MaterialInstances, Builder.AddMapping(YAML_BLOCK_MAPPING_STYLE));
-        for (const auto& [Id, Material] : GetMaterialInstances()) {
-            TRY(MaterialNode, SaveMaterialInstance(Builder, Material));
-            if (auto Result = AddYamlMappingEntry(Builder, MaterialInstances, Id, MaterialNode); !Result)
-                return std::unexpected(Ctx(Result));
-        }
-        if (auto Result = AddYamlMappingEntry(Builder, Document, "material_instances", MaterialInstances); !Result)
-            return std::unexpected(Ctx(Result));
-    }
-
-    TRY(Entities, Builder.AddSequence(YAML_BLOCK_SEQUENCE_STYLE));
-    for (const auto Root : m_Roots) {
-        TRY(SavedRoot, SaveEntity(Builder, *this, Root));
-        if (auto Result = Builder.AppendSequence(Entities, SavedRoot); !Result)
-            return std::unexpected(Ctx(Result));
-    }
-    if (auto Result = AddYamlMappingEntry(Builder, Document, "entities", Entities); !Result)
-        return std::unexpected(Ctx(Result));
-
-    auto* Output = std::fopen(FilePathString.c_str(), "wb");
-    if (!Output)
-        return std::unexpected(ErrorMessage(Format("Failed to open Scene document '{}' for writing", FilePathString)));
-
-    YamlEmitter Emitter = {};
-    if (!yaml_emitter_initialize(&Emitter.Value)) {
-        std::fclose(Output);
-        return std::unexpected(ErrorMessage(Format("Failed to initialize YAML emitter for '{}'", FilePathString)));
-    }
-    Emitter.Initialized = true;
-    yaml_emitter_set_output_file(&Emitter.Value, Output);
-    yaml_emitter_set_indent(&Emitter.Value, 2);
-    yaml_emitter_set_width(&Emitter.Value, -1);
-
-    if (!yaml_emitter_open(&Emitter.Value)) {
-        std::fclose(Output);
-        return std::unexpected(MakeYamlEmitterError(FilePathString, Emitter.Value));
-    }
-
-    auto       DocumentToEmit  = std::move(Builder.Document);
-    const auto Dumped          = yaml_emitter_dump(&Emitter.Value, &DocumentToEmit.Value);
-    // yaml_emitter_dump() takes and destroys the document even when emission fails.
-    DocumentToEmit.Initialized = false;
-    if (!Dumped) {
-        std::fclose(Output);
-        return std::unexpected(MakeYamlEmitterError(FilePathString, Emitter.Value));
-    }
-
-    if (!yaml_emitter_close(&Emitter.Value)) {
-        std::fclose(Output);
-        return std::unexpected(MakeYamlEmitterError(FilePathString, Emitter.Value));
-    }
-    if (std::fclose(Output) != 0)
-        return std::unexpected(ErrorMessage(Format("Failed to write Scene document '{}'", FilePathString)));
-    return {};
 }
 
 } // namespace SoulEngine
