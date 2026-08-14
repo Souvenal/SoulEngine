@@ -8,20 +8,22 @@ export module Scene;
 export import Core;
 export import Material;
 export import RHI;
-export import :Components.Core;
-export import :Components.Camera;
-export import :Components.Mesh;
-export import :Components.Light;
+export import :Camera;
+export import :Mesh;
+export import :Light;
 import TaskGraph;
 // export import std;
 
 export namespace SoulEngine {
 
+using SceneEntity = entt::entity;
+
 struct SceneNode {
-    String                   Name      = {};
-    SceneEntity              Parent    = entt::null;
-    std::vector<SceneEntity> Children  = {};
-    Transform                Transform = {};
+    String                   Name           = {};
+    SceneEntity              Parent         = entt::null;
+    std::vector<SceneEntity> Children       = {};
+    Transform                LocalTransform = {};
+    hlslpp::float4x4         WorldTransform = hlslpp::float4x4::identity();
 };
 
 struct SceneSnapshot {
@@ -173,10 +175,10 @@ namespace {
 auto UpdateWorldTransformRecursive(entt::registry&         Registry,
                                    SceneEntity             Entity,
                                    const hlslpp::float4x4& ParentTransform) -> void {
-    auto& Node                    = Registry.get<SceneNode>(Entity);
-    Node.Transform.WorldTransform = hlslpp::mul(Node.Transform.GetLocalMatrix(), ParentTransform);
+    auto& Node           = Registry.get<SceneNode>(Entity);
+    Node.WorldTransform  = hlslpp::mul(Node.LocalTransform.GetLocalMatrix(), ParentTransform);
     for (const auto Child : Node.Children)
-        UpdateWorldTransformRecursive(Registry, Child, Node.Transform.WorldTransform);
+        UpdateWorldTransformRecursive(Registry, Child, Node.WorldTransform);
 }
 
 } // namespace
@@ -226,23 +228,22 @@ auto Scene::UpdateWorldTransforms() -> void {
             .MeshAsset      = ResolveAssetPath(Mesh.Asset),
             .MaterialId     = Mesh.Material,
             .Material       = std::move(Material),
-            .WorldTransform = Node.Transform.WorldTransform,
+            .WorldTransform = Node.WorldTransform,
         });
     }
     const auto Lights = m_Registry->view<LightComponent, SceneNode>();
     for (const auto Entity : Lights) {
         const auto& Light = Lights.get<LightComponent>(Entity);
         const auto& Node  = Lights.get<SceneNode>(Entity);
-        const auto WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), Node.Transform.WorldTransform);
+        const auto WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), Node.WorldTransform);
         const auto Direction = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
         const auto AngleScale = std::numbers::pi_v<Float32> / 180.0f;
         Snapshot.Lights.emplace_back(LightSnapshot{
             .Type            = Light.Type,
             .Color           = hlslpp::float3(Light.ColorR, Light.ColorG, Light.ColorB),
             .Intensity       = Light.Intensity,
-            .Position        = hlslpp::float3(Node.Transform.WorldTransform[3].x,
-                                              Node.Transform.WorldTransform[3].y,
-                                              Node.Transform.WorldTransform[3].z),
+            .Position        = hlslpp::float3(
+                Node.WorldTransform[3].x, Node.WorldTransform[3].y, Node.WorldTransform[3].z),
             .RangeMeters     = Light.RangeMeters,
             .Direction       = Direction,
             .InnerConeCosine = std::cos(Light.InnerConeAngleDegrees * AngleScale),

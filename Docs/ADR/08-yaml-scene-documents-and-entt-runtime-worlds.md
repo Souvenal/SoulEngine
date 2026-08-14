@@ -34,24 +34,23 @@ retaining that handoff.
   produce warnings and are omitted while the rest of the scene loads.
 - Scene owns an EnTT Scene Registry. It contains only spatial Scene Entities.
   Every Scene Entity has exactly one mandatory Scene Node, which owns ordered
-  hierarchy links, local Transform, and derived world Transform. The world is
-  right-handed and Y-up; document rotations are Euler angles in degrees,
-  applied in local X → Y → Z order.
+  hierarchy links, a `Core:Math` local Transform, and a derived world matrix.
+  The world is right-handed and Y-up; document rotations are Euler angles in
+  degrees, applied in local X → Y → Z order.
 - Optional ECS types use the `XxxComponent` naming convention. Components may
   contain both document-loaded authoring fields and component-private runtime
   fields. `CameraComponent`, `MeshComponent`,
   and later `LightComponent` are the intended component model. A
   `MeshComponent` persists a project-relative mesh asset path. Renderer-specific
   mesh resource references, uploads, and GPU representations are renderer-owned.
-- `entt::meta` is the single registration source for component document names,
-  YAML-writable fields, validation, and construction policy. Each built-in
-  component statically registers its schema beside its definition; all explicit
-  `meta_data` fields are writable from YAML. Generic loading validates
-  components after the temporary Runtime World has been constructed.
-- `Scene:Components.Core` owns shared component metadata primitives. Each
-  `Scene:Components.<Name>` partition owns one component family and its static
-  metadata registration. `Scene:YamlIO` resolves names and applies metadata
-  without depending on concrete component types.
+- `entt::meta` is the single registration source for component document names
+  and YAML-writable fields. Each built-in component statically registers its
+  type and explicit `meta_data` fields beside its definition. Scene loading
+  directly emplaces and removes the built-in component types.
+- `Scene` owns shared Scene model types. Each component family owns one
+  `Scene:<Name>` partition and its static metadata registration. `Scene:YamlIO`
+  resolves names and applies metadata, then directly emplaces the built-in
+  component types.
 - YAML loading stays inside the Scene module in a non-exported IO
   partition. `libyaml` implementation types do not cross the public Scene API.
 - `Resource::Mesh` exposes imported mesh groups and submeshes with their

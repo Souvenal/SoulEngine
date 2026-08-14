@@ -3,11 +3,21 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Scene:Components.Camera;
+export module Scene:Camera;
 
-import :Components.Core;
+export import Core;
+export import RHI;
 
 export namespace SoulEngine {
+
+/// @brief Immutable render data and resources for one camera/view.
+struct RenderViewSnapshot {
+    hlslpp::float4x4        ViewProjection = hlslpp::float4x4::identity();
+    hlslpp::float3          CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    Float32                 ExposureEV100  = 15.0f;
+    RHIRef<RHIRenderTarget> ColorRT        = nullptr;
+    RHIRef<RHIRenderTarget> DepthRT        = nullptr;
+};
 
 /// @brief Simple camera holding world-space position and orientation.
 ///
@@ -82,20 +92,20 @@ struct Camera {
                                hlslpp::zplane::finite));
     }
 
-    [[nodiscard]] auto GetForward(const Transform& CameraTransform) const -> hlslpp::float3 {
+    [[nodiscard]] auto GetForward(const hlslpp::float4x4& WorldTransform) const -> hlslpp::float3 {
         const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
-        const auto WorldForward = hlslpp::mul(LocalForward, CameraTransform.WorldTransform);
+        const auto WorldForward = hlslpp::mul(LocalForward, WorldTransform);
         return hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
     }
 
-    [[nodiscard]] auto GetViewMatrix(const Transform& CameraTransform) const -> hlslpp::float4x4 {
-        const auto& World    = CameraTransform.WorldTransform;
-        const auto  Position = hlslpp::float3(World[3].x, World[3].y, World[3].z);
+    [[nodiscard]] auto GetViewMatrix(const hlslpp::float4x4& WorldTransform) const -> hlslpp::float4x4 {
+        const auto Position = hlslpp::float3(WorldTransform[3].x, WorldTransform[3].y, WorldTransform[3].z);
         return hlslpp::float4x4::look_at(
-            Position, Position + GetForward(CameraTransform), hlslpp::float3(0.0f, 1.0f, 0.0f));
+            Position, Position + GetForward(WorldTransform), hlslpp::float3(0.0f, 1.0f, 0.0f));
     }
 
-    [[nodiscard]] auto BuildRenderView(const Transform& CameraTransform) const -> std::optional<RenderViewSnapshot> {
+    [[nodiscard]] auto BuildRenderView(const hlslpp::float4x4& WorldTransform) const
+        -> std::optional<RenderViewSnapshot> {
         if (!ColorRT || !DepthRT || ViewportWidth == 0 || ViewportHeight == 0)
             return std::nullopt;
 
@@ -105,10 +115,9 @@ struct Camera {
             return std::nullopt;
 
         const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
-        const auto& World       = CameraTransform.WorldTransform;
         return RenderViewSnapshot{
-            .ViewProjection = hlslpp::mul(GetViewMatrix(CameraTransform), GetProjectionMatrix(AspectRatio)),
-            .CameraPosition = hlslpp::float3(World[3].x, World[3].y, World[3].z),
+            .ViewProjection = hlslpp::mul(GetViewMatrix(WorldTransform), GetProjectionMatrix(AspectRatio)),
+            .CameraPosition = hlslpp::float3(WorldTransform[3].x, WorldTransform[3].y, WorldTransform[3].z),
             .ExposureEV100  = ExposureEV100,
             .ColorRT        = std::move(ColorRTRef),
             .DepthRT        = std::move(DepthRTRef),
@@ -160,44 +169,10 @@ namespace SoulEngine {
 
 namespace {
 
-[[nodiscard]] auto ValidateCameraComponent(const SceneComponentValidationContext&,
-                                           entt::registry& Registry,
-                                           SceneEntity     Entity,
-                                           String&         Error) -> bool {
-    const auto* Camera = Registry.try_get<CameraComponent>(Entity);
-    if (!Camera) {
-        Error = "Camera component metadata does not contain CameraComponent";
-        return false;
-    }
-    if (Camera->Settings.FOV <= 0.0f || Camera->Settings.FOV >= 179.0f) {
-        Error = "fov_degrees must be in the range (0, 179)";
-        return false;
-    }
-    if (Camera->Settings.NearPlane <= 0.0f) {
-        Error = "near_plane must be greater than zero";
-        return false;
-    }
-    if (Camera->Settings.FarPlane <= Camera->Settings.NearPlane) {
-        Error = "far_plane must be greater than near_plane";
-        return false;
-    }
-    if (!std::isfinite(Camera->Settings.ExposureEV100)) {
-        Error = "exposure_ev100 must be finite";
-        return false;
-    }
-    return true;
-}
-
 struct CameraComponentMetaRegistration {
     CameraComponentMetaRegistration() {
         entt::meta_factory<CameraComponent>{}
             .type("camera")
-            .custom<SceneComponentSchema>(SceneComponentSchema{
-                .Create   = &CreateSceneComponent<CameraComponent>,
-                .Remove   = &RemoveSceneComponent<CameraComponent>,
-                .Has      = &HasSceneComponent<CameraComponent>,
-                .Validate = &ValidateCameraComponent,
-            })
             .data<&CameraComponent::SetFOV, &CameraComponent::GetFOV>("fov_degrees")
             .data<&CameraComponent::SetNearPlane, &CameraComponent::GetNearPlane>("near_plane")
             .data<&CameraComponent::SetFarPlane, &CameraComponent::GetFarPlane>("far_plane")

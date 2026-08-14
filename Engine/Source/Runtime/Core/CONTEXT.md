@@ -4,6 +4,14 @@
 
 Foundation types, logging, config, and utilities shared by all other modules.
 
+## Math
+
+**Transform**:
+`Core:Math` provides the reusable local three-dimensional translation, Euler
+rotation in degrees, and scale value. Its local matrix uses X -> Y -> Z
+rotation composition. Scene hierarchy code owns derived world matrices rather
+than this Core value type.
+
 ## Language
 
 ### Type aliases

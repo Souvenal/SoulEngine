@@ -3,10 +3,10 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Scene:Components.Mesh;
+export module Scene:Mesh;
 
+export import Core;
 import Material;
-import :Components.Core;
 
 export namespace SoulEngine {
 
@@ -39,41 +39,10 @@ namespace SoulEngine {
 
 namespace {
 
-[[nodiscard]] auto ValidateMeshComponent(const SceneComponentValidationContext& Context,
-                                         entt::registry&                        Registry,
-                                         SceneEntity                            Entity,
-                                         String&                                Error) -> bool {
-    const auto* Mesh = Registry.try_get<MeshComponent>(Entity);
-    if (!Mesh) {
-        Error = "Mesh component metadata does not contain MeshComponent";
-        return false;
-    }
-    if (Mesh->Asset.empty()) {
-        Error = "asset must not be empty";
-        return false;
-    }
-    if (Path(Mesh->Asset).is_absolute()) {
-        Error = "asset must be relative to the current application Assets directory";
-        return false;
-    }
-    if (!Mesh->Material.empty() &&
-        (!Context.HasMaterialInstance || !Context.HasMaterialInstance(Context.UserData, Mesh->Material))) {
-        Error = Format("material instance '{}' does not exist", Mesh->Material);
-        return false;
-    }
-    return true;
-}
-
 struct MeshComponentMetaRegistration {
     MeshComponentMetaRegistration() {
         entt::meta_factory<MeshComponent>{}
             .type("mesh")
-            .custom<SceneComponentSchema>(SceneComponentSchema{
-                .Create   = &CreateSceneComponent<MeshComponent>,
-                .Remove   = &RemoveSceneComponent<MeshComponent>,
-                .Has      = &HasSceneComponent<MeshComponent>,
-                .Validate = &ValidateMeshComponent,
-            })
             .data<&MeshComponent::Asset>("asset")
             .data<&MeshComponent::Material>("material");
     }
