@@ -409,28 +409,6 @@ struct YamlParser {
     return MakeStructuralError(Path, Format("could not decode {}", Description));
 }
 
-struct LoadedSceneComponent {
-    const SceneComponentSchema* Schema = nullptr;
-    SceneEntity                 Entity = entt::null;
-    String                      Path   = {};
-};
-
-[[nodiscard]] auto ValidateSingleCamera(const Scene& Scene, StringView Path) -> std::expected<void, ErrorMessage> {
-    const auto Type = entt::resolve(entt::hashed_string{"camera"}.value());
-    if (!Type)
-        return std::unexpected(ErrorMessage("Camera component metadata is not registered"));
-    const auto* Schema = static_cast<SceneComponentSchema*>(Type.custom());
-    if (!Schema)
-        return std::unexpected(ErrorMessage("Camera component metadata does not contain a Scene component schema"));
-
-    std::size_t CameraCount = 0;
-    for (const auto Entity : Scene.GetRegistry().view<SceneNode>())
-        CameraCount += Schema->Has(Scene.GetRegistry(), Entity) ? 1u : 0u;
-    if (CameraCount != 1)
-        return MakeStructuralError(Path, Format("must contain exactly one camera component; found {}", CameraCount));
-    return {};
-}
-
 [[nodiscard]] auto ReadFloat3(const YamlNode& Node, StringView Path) -> std::expected<hlslpp::float3, ErrorMessage> {
     if (!Node.IsSequence() || Node.size() != 3)
         return MakeStructuralError(Path, "must be a sequence of exactly three numbers");
@@ -626,17 +604,8 @@ auto AppendComponentWarning(SceneLoadReport& Report, String Path, String Message
     });
 }
 
-[[nodiscard]] auto SceneHasMaterialInstance(const void* UserData, StringView Id) -> bool {
-    const auto* Scene = static_cast<const SoulEngine::Scene*>(UserData);
-    return Scene && Scene->FindMaterialInstance(Id);
-}
-
-auto LoadComponents(Scene&                          Scene,
-                    SceneEntity                     Entity,
-                    const YamlNode&                 Node,
-                    StringView                      Path,
-                    SceneLoadReport&                Report,
-                    std::vector<LoadedSceneComponent>& LoadedComponents) -> void {
+auto LoadComponents(Scene& Scene, SceneEntity Entity, const YamlNode& Node, StringView Path, SceneLoadReport& Report)
+    -> void {
     if (!Node.IsDefined() || Node.IsNull())
         return;
     if (!Node.IsMap()) {
@@ -662,14 +631,18 @@ auto LoadComponents(Scene&                          Scene,
             AppendComponentWarning(Report, ComponentPath, "unknown component; component was omitted");
             continue;
         }
-        const auto* Schema = static_cast<SceneComponentSchema*>(Type.custom());
-        if (!Schema) {
-            AppendComponentWarning(Report, ComponentPath, "component does not support Scene document loading; component was omitted");
+        entt::meta_any Component = {};
+        if (Type == entt::resolve<CameraComponent>()) {
+            Component = entt::forward_as_meta(Registry.emplace<CameraComponent>(Entity));
+        } else if (Type == entt::resolve<MeshComponent>()) {
+            Component = entt::forward_as_meta(Registry.emplace<MeshComponent>(Entity));
+        } else if (Type == entt::resolve<LightComponent>()) {
+            Component = entt::forward_as_meta(Registry.emplace<LightComponent>(Entity));
+        } else {
+            AppendComponentWarning(Report, ComponentPath, "component is not supported by the Scene document loader");
             continue;
         }
-
-        auto Component = Schema->Create(Registry, Entity);
-        bool Valid     = true;
+        bool Valid = true;
         for (const auto FieldEntry : Entry.Second.MapEntries()) {
             if (!FieldEntry.First.IsScalar()) {
                 AppendComponentWarning(Report, ComponentPath, "component field name must be a scalar");
@@ -692,24 +665,19 @@ auto LoadComponents(Scene&                          Scene,
             }
         }
 
-        if (!Valid)
-            Schema->Remove(Registry, Entity);
-        else
-            LoadedComponents.emplace_back(LoadedSceneComponent{
-                .Schema = Schema,
-                .Entity = Entity,
-                .Path   = ComponentPath,
-            });
+        if (!Valid) {
+            if (Type == entt::resolve<CameraComponent>())
+                Registry.remove<CameraComponent>(Entity);
+            else if (Type == entt::resolve<MeshComponent>())
+                Registry.remove<MeshComponent>(Entity);
+            else
+                Registry.remove<LightComponent>(Entity);
+        }
     }
 }
 
 [[nodiscard]] auto
-LoadEntity(Scene&                          Scene,
-           const YamlNode&                 Node,
-           SceneEntity                     Parent,
-           StringView                      Path,
-           SceneLoadReport&                Report,
-           std::vector<LoadedSceneComponent>& LoadedComponents)
+LoadEntity(Scene& Scene, const YamlNode& Node, SceneEntity Parent, StringView Path, SceneLoadReport& Report)
     -> std::expected<void, ErrorMessage> {
     if (!Node.IsMap())
         return MakeStructuralError(Path, "entity must be a mapping");
@@ -741,17 +709,16 @@ LoadEntity(Scene&                          Scene,
         }
     }
 
-    const auto Entity                                    = Scene.CreateEntity(std::move(Name), Parent);
-    Scene.GetRegistry().get<SceneNode>(Entity).Transform = LocalTransform;
-    LoadComponents(Scene, Entity, Components, MakeYamlPath(Path, "components"), Report, LoadedComponents);
+    const auto Entity                                         = Scene.CreateEntity(std::move(Name), Parent);
+    Scene.GetRegistry().get<SceneNode>(Entity).LocalTransform = LocalTransform;
+    LoadComponents(Scene, Entity, Components, MakeYamlPath(Path, "components"), Report);
 
     if (!Children.IsDefined() || Children.IsNull())
         return {};
     if (!Children.IsSequence())
         return MakeStructuralError(MakeYamlPath(Path, "children"), "must be a sequence");
     for (std::size_t Index = 0; Index < Children.size(); ++Index) {
-        if (auto Result = LoadEntity(
-                Scene, Children[Index], Entity, Format("{}.children[{}]", Path, Index), Report, LoadedComponents);
+        if (auto Result = LoadEntity(Scene, Children[Index], Entity, Format("{}.children[{}]", Path, Index), Report);
             !Result)
             return std::unexpected(Result.error());
     }
@@ -800,28 +767,13 @@ LoadEntity(Scene&                          Scene,
     if (auto Result = LoadMaterialInstances(Temporary, MaterialInstances, "material_instances"); !Result)
         return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
 
-    SceneLoadReport                    Report           = {};
-    std::vector<LoadedSceneComponent> LoadedComponents = {};
+    SceneLoadReport Report = {};
     for (std::size_t Index = 0; Index < Entities.size(); ++Index) {
-        if (auto Result =
-                LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report, LoadedComponents);
+        if (auto Result = LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report);
             !Result)
             return std::unexpected(
                 Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     }
-    const SceneComponentValidationContext ValidationContext{
-        .UserData             = &Temporary,
-        .HasMaterialInstance = &SceneHasMaterialInstance,
-    };
-    for (const auto& Loaded : LoadedComponents) {
-        String Error = {};
-        if (!Loaded.Schema->Validate(ValidationContext, Temporary.GetRegistry(), Loaded.Entity, Error)) {
-            AppendComponentWarning(Report, Loaded.Path, std::move(Error));
-            Loaded.Schema->Remove(Temporary.GetRegistry(), Loaded.Entity);
-        }
-    }
-    if (auto Result = ValidateSingleCamera(Temporary, FilePath.string()); !Result)
-        return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     Temporary.UpdateWorldTransforms();
     *this = std::move(Temporary);
     return Report;

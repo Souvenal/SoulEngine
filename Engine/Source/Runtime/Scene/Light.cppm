@@ -3,9 +3,9 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Scene:Components.Light;
+export module Scene:Light;
 
-import :Components.Core;
+export import Core;
 
 export namespace SoulEngine {
 
@@ -73,57 +73,10 @@ namespace SoulEngine {
 
 namespace {
 
-[[nodiscard]] auto ValidateLightComponent(const SceneComponentValidationContext&,
-                                          entt::registry& Registry,
-                                          SceneEntity     Entity,
-                                          String&         Error) -> bool {
-    const auto* Light = Registry.try_get<LightComponent>(Entity);
-    if (!Light) {
-        Error = "Light component metadata does not contain LightComponent";
-        return false;
-    }
-    if (Light->Type == LightType::Unknown) {
-        Error = "type must be directional, point, or spot";
-        return false;
-    }
-    const auto Luminance = 0.2126f * Light->ColorR + 0.7152f * Light->ColorG + 0.0722f * Light->ColorB;
-    if (!std::isfinite(Light->ColorR) || !std::isfinite(Light->ColorG) || !std::isfinite(Light->ColorB) ||
-        !std::isfinite(Light->Intensity) || !std::isfinite(Light->RangeMeters) ||
-        !std::isfinite(Light->InnerConeAngleDegrees) || !std::isfinite(Light->OuterConeAngleDegrees)) {
-        Error = "contains a non-finite value";
-        return false;
-    }
-    if (Light->ColorR < 0.0f || Light->ColorG < 0.0f || Light->ColorB < 0.0f || std::abs(Luminance - 1.0f) > 0.001f) {
-        Error = "color must be non-negative linear sRGB with Rec.709 luminance equal to one";
-        return false;
-    }
-    if (Light->Intensity < 0.0f) {
-        Error = "intensity must be non-negative";
-        return false;
-    }
-    if (Light->Type != LightType::Directional && Light->RangeMeters <= 0.0f) {
-        Error = "range_meters must be greater than zero for point and spot lights";
-        return false;
-    }
-    if (Light->Type == LightType::Spot &&
-        (Light->InnerConeAngleDegrees <= 0.0f || Light->InnerConeAngleDegrees > Light->OuterConeAngleDegrees ||
-         Light->OuterConeAngleDegrees >= 90.0f)) {
-        Error = "spot cone angles must satisfy 0 < inner <= outer < 90 degrees";
-        return false;
-    }
-    return true;
-}
-
 struct LightComponentMetaRegistration {
     LightComponentMetaRegistration() {
         entt::meta_factory<LightComponent>{}
             .type("light")
-            .custom<SceneComponentSchema>(SceneComponentSchema{
-                .Create   = &CreateSceneComponent<LightComponent>,
-                .Remove   = &RemoveSceneComponent<LightComponent>,
-                .Has      = &HasSceneComponent<LightComponent>,
-                .Validate = &ValidateLightComponent,
-            })
             .data<&LightComponent::SetType, &LightComponent::GetType>("type")
             .data<&LightComponent::ColorR>("color_r")
             .data<&LightComponent::ColorG>("color_g")

@@ -160,8 +160,8 @@ class Editor {
                                  (Window.IsKeyPressed(WindowKey::A) ? 1.0f : 0.0f);
         const float VerticalInput = (Window.IsKeyPressed(WindowKey::E) ? 1.0f : 0.0f) -
                                     (Window.IsKeyPressed(WindowKey::Q) ? 1.0f : 0.0f);
-        const auto EditorTransform = GetSceneViewWorldTransform();
-        const auto Forward = m_SceneViewCamera.GetForward(EditorTransform);
+        const auto EditorWorldTransform = GetSceneViewWorldMatrix();
+        const auto Forward = m_SceneViewCamera.GetForward(EditorWorldTransform);
         const auto HorizontalForward = hlslpp::normalize(hlslpp::float3(Forward.x, 0.0f, Forward.z));
         const auto Up = hlslpp::float3(0.0f, 1.0f, 0.0f);
         const auto Right = hlslpp::normalize(hlslpp::cross(HorizontalForward, Up));
@@ -183,7 +183,7 @@ class Editor {
 
     /// @brief Build the editor-owned Scene View render request for this frame.
     [[nodiscard]] auto BuildSceneView() const -> std::optional<RenderViewSnapshot> {
-        return m_SceneViewCamera.BuildRenderView(GetSceneViewWorldTransform());
+        return m_SceneViewCamera.BuildRenderView(GetSceneViewWorldMatrix());
     }
 
     /// @brief Main-thread entry point: build the ImGui frame for this game
@@ -249,10 +249,8 @@ class Editor {
     }
 
   private:
-    [[nodiscard]] auto GetSceneViewWorldTransform() const -> Transform {
-        auto Result = m_SceneViewTransform;
-        Result.WorldTransform = Result.GetLocalMatrix();
-        return Result;
+    [[nodiscard]] auto GetSceneViewWorldMatrix() const -> hlslpp::float4x4 {
+        return m_SceneViewTransform.GetLocalMatrix();
     }
 
     ImGuiContext*          m_ImGuiContext = nullptr;
