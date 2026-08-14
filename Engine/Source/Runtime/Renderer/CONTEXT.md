@@ -3,7 +3,7 @@
 **Namespace:** SoulEngine
 
 Renderer implementations convert renderer-neutral SceneSnapshot input into a
-move-only RHICommandList. Current renderers are ForwardRenderer and
+move-only RHICommandList. Current renderers are RasterRenderer and
 RayTracingRenderer; the selected renderer is cached by the engine and recorded
 into each FrameSlot.
 
@@ -32,7 +32,7 @@ into each FrameSlot.
 - Vulkan retains the submitted command list through its graphics timeline. A
   renderer cache release or Resource transient collection after submission
   cannot destroy an ordinary ref-backed resource still visible to the GPU.
-- ForwardRenderer uses explicit color/depth targets and assigns a present source.
+- RasterRenderer owns the raster GBuffer/deferred-lighting path and assigns a present source.
   RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
   and transient geometry/material/view buffers; Renderer never observes a
   Vulkan device address or descriptor index.

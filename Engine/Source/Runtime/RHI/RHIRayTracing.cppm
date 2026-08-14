@@ -110,6 +110,7 @@ struct RHIRayTracingGeometryDesc {
 struct RHIRayTracingInstanceData {
     Uint32 FirstGeometry = 0;
     Uint32 GeometryCount = 0;
+    Uint32 EntityId      = 0;
 };
 
 /// Shader-visible BDA and layout data for one BLAS geometry.
@@ -134,7 +135,7 @@ struct alignas(8) RHIRayTracingGeometryData {
     Uint32 IndexStride        = 0;
     Uint32 MaterialIndex      = 0;
 };
-static_assert(sizeof(RHIRayTracingInstanceData) == 8);
+static_assert(sizeof(RHIRayTracingInstanceData) == 12);
 static_assert(sizeof(RHIRayTracingGeometryData) == 88);
 static_assert(alignof(RHIRayTracingGeometryData) == 8);
 static_assert(offsetof(RHIRayTracingGeometryData, PositionAddress) == 0);

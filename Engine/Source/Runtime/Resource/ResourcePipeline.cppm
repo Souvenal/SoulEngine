@@ -28,6 +28,8 @@ export namespace SoulEngine {
                         Req.DepthStencil.DepthTestEnable,
                         Req.DepthStencil.DepthWriteEnable);
 
+    for (const auto ColorFormat : Req.ColorFormats)
+        Key += Format("|mrt={}", static_cast<Uint8>(ColorFormat));
     for (const auto& Binding : Req.VertexInputLayout.Bindings)
         Key += Format("|vbind={}:{}", Binding.Binding, Binding.Stride);
     for (const auto& Attribute : Req.VertexInputLayout.Attributes)
@@ -75,6 +77,7 @@ struct PreparedGraphicsPipeline {
                 .Blend             = Req.Blend,
                 .DepthStencil      = Req.DepthStencil,
                 .ColorFormat       = Req.ColorFormat,
+                .ColorFormats      = Req.ColorFormats,
                 .DepthFormat       = Req.DepthFormat,
             },
     };
@@ -116,26 +119,24 @@ struct PreparedGraphicsPipeline {
     std::function<void(RHIRef<RHIRayTracingPipeline>)> OnCreated)
     -> std::expected<void, ErrorMessage> {
     auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
-        const auto&       Cfg = ConfigManager::Get();
+        const auto& Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
-        auto              Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
+        auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
             .RayGeneration = Req.RayGeneration,
-            .MissEntries   = Req.MissEntries,
-            .HitGroups     = Req.HitGroups,
-            .IncludeDirs   = IncludeDirs,
+            .MissEntries = Req.MissEntries,
+            .HitGroups = Req.HitGroups,
+            .IncludeDirs = IncludeDirs,
         });
         if (!Program) {
             LogError("Failed to prepare ray-tracing pipeline: {}", Program.error().ToString());
             return;
         }
-
         auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(
             RHIRayTracingPipelineDesc{.Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth});
         if (!Created) {
             LogError("Failed to queue ray-tracing pipeline creation: {}", Created.error().ToString());
             return;
         }
-
         if (auto Delivery = TaskGraph::Get().Enqueue(
                 ThreadQueue::Render,
                 [OnCreated = std::move(OnCreated), Pipeline = std::move(*Created)] mutable {

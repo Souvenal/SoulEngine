@@ -26,6 +26,7 @@ struct MeshComponent {
 /// It intentionally carries only renderer-neutral asset identity and instance
 /// state. Each renderer resolves it to its own GPU representation.
 struct RenderableInstance {
+    entt::entity                  Entity         = entt::null;
     String                       MeshAsset      = {};
     /// Scene-local material instance ID. Empty identifies the shared built-in material.
     String                       MaterialId     = {};

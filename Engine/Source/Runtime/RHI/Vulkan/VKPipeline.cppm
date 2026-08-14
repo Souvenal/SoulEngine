@@ -399,12 +399,14 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         //
         // TODO: expose this in RHI
         // write through
-        vk::PipelineColorBlendAttachmentState RHIBlendAttachment{
+        std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments(
+            Desc.ColorFormats.empty() ? 1u : static_cast<Uint32>(Desc.ColorFormats.size()),
+            vk::PipelineColorBlendAttachmentState{
             // .blendEnable = Desc.Blend.Attachments[0].BlendEnable,
             .blendEnable    = vk::False,
             .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                               vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
-        };
+        });
         // Alpha blending
         // vk::PipelineColorBlendAttachmentState RHIBlendAttachment{
         //     .blendEnable         = vk::True,
@@ -422,19 +424,21 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             // which will disable blending settings above
             .logicOpEnable   = vk::False,
             .logicOp         = vk::LogicOp::eCopy,
-            .attachmentCount = 1,
-            .pAttachments    = &RHIBlendAttachment,
+            .attachmentCount = static_cast<Uint32>(RHIBlendAttachments.size()),
+            .pAttachments    = RHIBlendAttachments.data(),
         };
 
-        vk::Format ColorVkFormat = ToVkFormat(Desc.ColorFormat);
+        const auto ColorFormats = Desc.ColorFormats.empty()
+                                       ? std::vector<vk::Format>{ToVkFormat(Desc.ColorFormat)}
+                                       : Desc.ColorFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
         vk::Format DepthVkFormat =
             HasDepth ? ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
 
         // Dynamic rendering allows us to specify color, depth, stencil attachments directly
         // after the pipeline is created
         vk::PipelineRenderingCreateInfo RenderingCI{
-            .colorAttachmentCount    = 1,
-            .pColorAttachmentFormats = &ColorVkFormat,
+            .colorAttachmentCount    = static_cast<Uint32>(ColorFormats.size()),
+            .pColorAttachmentFormats = ColorFormats.data(),
             .depthAttachmentFormat   = DepthVkFormat,
         };
         vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> PipelineChain = {

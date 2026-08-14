@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+import Core;
+import Scene;
 import Renderer;
 
 using namespace SoulEngine;

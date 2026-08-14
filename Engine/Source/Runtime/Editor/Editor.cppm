@@ -1,5 +1,6 @@
 module;
 #include <hlsl++.h>
+#include <entt/entity/entity.hpp>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -12,6 +13,7 @@ import :MainMenu;
 
 import Core;
 import RHI;
+import Resource;
 import Scene;
 import WindowSystem;
 
@@ -186,6 +188,111 @@ class Editor {
         return m_SceneViewCamera.BuildRenderView(GetSceneViewWorldMatrix());
     }
 
+    auto UpdateSceneSelection(const SceneSnapshot& Snapshot) -> void {
+        if (!m_ImGuiContext || Snapshot.Views.empty())
+            return;
+        ImGui::SetCurrentContext(m_ImGuiContext);
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ClearSelection();
+            return;
+        }
+        const auto& IO = ImGui::GetIO();
+        if (!IO.MouseClicked[ImGuiMouseButton_Left] || IO.WantCaptureMouse)
+            return;
+        if (m_SceneViewCamera.ViewportWidth == 0 || m_SceneViewCamera.ViewportHeight == 0 ||
+            IO.DisplaySize.x <= 0.0f || IO.DisplaySize.y <= 0.0f)
+            return;
+
+        const float PixelX = IO.MousePos.x;
+        const float PixelY = IO.MousePos.y;
+        const float Width = IO.DisplaySize.x;
+        const float Height = IO.DisplaySize.y;
+        if (PixelX < 0.0f || PixelY < 0.0f || PixelX >= Width || PixelY >= Height) {
+            ClearSelection();
+            return;
+        }
+
+        const auto InverseViewProjection = hlslpp::inverse(Snapshot.Views.front().ViewProjection);
+        const float NdcX = 2.0f * PixelX / Width - 1.0f;
+        const float NdcY = 1.0f - 2.0f * PixelY / Height;
+        const auto NearPoint = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 0.0f, 1.0f}, InverseViewProjection);
+        const auto FarPoint = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 1.0f, 1.0f}, InverseViewProjection);
+        const auto Origin = Snapshot.Views.front().CameraPosition;
+        const auto NearWorld = hlslpp::float3(NearPoint.x / NearPoint.w, NearPoint.y / NearPoint.w, NearPoint.z / NearPoint.w);
+        const auto FarWorld = hlslpp::float3(FarPoint.x / FarPoint.w, FarPoint.y / FarPoint.w, FarPoint.z / FarPoint.w);
+        const auto Direction = hlslpp::normalize(FarWorld - NearWorld);
+
+        std::optional<entt::entity> HitEntity = std::nullopt;
+        float ClosestDistance = std::numeric_limits<float>::max();
+        for (const auto& Renderable : Snapshot.Renderables) {
+            auto MeshRef = ResourceManager::Get().RequestMeshRef(Renderable.MeshAsset);
+            const auto* Mesh = ResourceManager::Get().TryGetReady(MeshRef);
+            if (!Mesh)
+                continue;
+            for (const auto& Group : Mesh->GetMeshGroups()) {
+                for (const auto& SubMesh : Group.SubMeshes) {
+                    if (SubMesh.Positions.empty())
+                        continue;
+                    hlslpp::float3 Min{SubMesh.Positions.front().x, SubMesh.Positions.front().y, SubMesh.Positions.front().z};
+                    hlslpp::float3 Max = Min;
+                    for (const auto& Position : SubMesh.Positions) {
+                        Min.x = std::min(static_cast<float>(Min.x), static_cast<float>(Position.x));
+                        Min.y = std::min(static_cast<float>(Min.y), static_cast<float>(Position.y));
+                        Min.z = std::min(static_cast<float>(Min.z), static_cast<float>(Position.z));
+                        Max.x = std::max(static_cast<float>(Max.x), static_cast<float>(Position.x));
+                        Max.y = std::max(static_cast<float>(Max.y), static_cast<float>(Position.y));
+                        Max.z = std::max(static_cast<float>(Max.z), static_cast<float>(Position.z));
+                    }
+                    const auto LocalCenter = (Min + Max) * 0.5f;
+                    float RadiusSquared = 0.0f;
+                    for (const auto& Position : SubMesh.Positions) {
+                        const auto Offset = hlslpp::float3{Position.x, Position.y, Position.z} - LocalCenter;
+                        RadiusSquared = std::max(RadiusSquared, static_cast<float>(hlslpp::dot(Offset, Offset)));
+                    }
+                    const auto WorldCenter4 = hlslpp::mul(hlslpp::float4{LocalCenter.x, LocalCenter.y, LocalCenter.z, 1.0f}, Renderable.WorldTransform);
+                    float TransformSquared = 0.0f;
+                    for (Uint32 Row = 0; Row < 3; ++Row) {
+                        TransformSquared += Renderable.WorldTransform[Row].x * Renderable.WorldTransform[Row].x;
+                        TransformSquared += Renderable.WorldTransform[Row].y * Renderable.WorldTransform[Row].y;
+                        TransformSquared += Renderable.WorldTransform[Row].z * Renderable.WorldTransform[Row].z;
+                    }
+                    const auto WorldCenter = hlslpp::float3{WorldCenter4.x, WorldCenter4.y, WorldCenter4.z};
+                    const float WorldRadius = std::sqrt(RadiusSquared * TransformSquared);
+                    const auto ToCenter = Origin - WorldCenter;
+                    const float B = hlslpp::dot(ToCenter, Direction);
+                    const float C = hlslpp::dot(ToCenter, ToCenter) - WorldRadius * WorldRadius;
+                    const float Discriminant = B * B - C;
+                    if (Discriminant < 0.0f)
+                        continue;
+                    float Distance = -B - std::sqrt(Discriminant);
+                    if (Distance < 0.0f)
+                        Distance = -B + std::sqrt(Discriminant);
+                    if (Distance >= 0.0f && Distance < ClosestDistance) {
+                        ClosestDistance = Distance;
+                        HitEntity = Renderable.Entity;
+                    }
+                }
+            }
+        }
+        if (HitEntity)
+            SelectEntity(*HitEntity);
+        else
+            ClearSelection();
+    }
+
+
+    [[nodiscard]] auto GetSelectedEntity() const -> std::optional<entt::entity> {
+        return m_SelectedEntity;
+    }
+
+    auto SelectEntity(entt::entity Entity) -> void {
+        m_SelectedEntity = Entity;
+    }
+
+    auto ClearSelection() -> void {
+        m_SelectedEntity.reset();
+    }
+
     /// @brief Main-thread entry point: build the ImGui frame for this game
     /// tick and publish a draw-data snapshot for the render thread.
     auto BeginFrame(ImDrawDataSnapshot& Snapshot) -> void {
@@ -260,6 +367,7 @@ class Editor {
     std::mutex      m_TextureQueueMutex;
 
     Camera m_SceneViewCamera = {};
+    std::optional<entt::entity> m_SelectedEntity = std::nullopt;
     Transform m_SceneViewTransform{
         .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
         .Rotation = hlslpp::float3(28.0f, -32.0f, 0.0f),

@@ -125,6 +125,7 @@ struct GraphicsPipelineRequest {
     RHIBlendState            Blend             = {};
     RHIDepthStencilState     DepthStencil      = {};
     RHIFormat                ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
+    std::vector<RHIFormat>   ColorFormats      = {};
     RHIFormat                DepthFormat       = RHIFormat::Unknown;
 };
 
