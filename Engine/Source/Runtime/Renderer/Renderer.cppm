@@ -4,7 +4,7 @@ import Core;
 import std;
 
 export import :IRenderer;
-export import :ForwardRenderer;
+export import :RasterRenderer;
 export import :RayTracingRenderer;
 
 namespace SoulEngine {
@@ -23,13 +23,13 @@ export namespace SoulEngine {
 
 /// @brief Create the renderer configured by `[Render].DefaultRenderer`.
 ///
-/// @details When the TOML field is absent, `Forward` is selected. Concrete
+/// @details When the TOML field is absent, `Raster` is selected. Concrete
 /// renderer types self-register with RendererFactory in their own partitions.
 /// @return A renderer instance, or an error when the configured name has not
 ///         been registered.
 [[nodiscard]] inline auto CreateDefault() -> std::expected<UPtr<IRenderer>, ErrorMessage> {
     const auto& RenderCfg = ConfigManager::Get().GetConfig().Render;
-    const auto  Name      = RenderCfg.DefaultRenderer.value_or("Forward");
+    const auto  Name      = RenderCfg.DefaultRenderer.value_or("Raster");
     LogInfo("Configured default renderer: '{}'", Name);
 
     if (!RendererFactory::Get().Contains(Name)) {

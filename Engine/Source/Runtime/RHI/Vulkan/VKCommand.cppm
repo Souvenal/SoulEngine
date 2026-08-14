@@ -50,6 +50,7 @@ struct VulkanCommandVisitor {
     auto BeginPass(const RHIRenderingDesc& Desc) -> void {
         // ── Resolve color attachment ──────────────────────────────────
         vk::RenderingAttachmentInfo ColorAttachment{};
+        std::vector<vk::RenderingAttachmentInfo> ColorAttachments = {};
         vk::ImageView               ColorImageView;
         vk::Image                   ColorImage;
         Uint32                      RenderWidth  = 1;
@@ -82,6 +83,29 @@ struct VulkanCommandVisitor {
                                           })},
         };
 
+        ColorAttachments.push_back(ColorAttachment);
+        for (const auto& AdditionalDesc : Desc.ColorAttachments) {
+            if (!AdditionalDesc.TexturePtr)
+                continue;
+            auto& AdditionalRT = static_cast<const VulkanRenderTarget&>(*AdditionalDesc.TexturePtr);
+            auto AdditionalImage = AdditionalRT.GetVkImage();
+            VulkanTransitionImage(Buf, LocalStates, AdditionalImage,
+                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                   vk::AccessFlagBits2::eColorAttachmentWrite,
+                                   vk::ImageLayout::eColorAttachmentOptimal, true,
+                                   ToVkImageAspect(AdditionalRT.GetFormat()));
+            ColorAttachments.push_back(vk::RenderingAttachmentInfo{
+                .imageView = AdditionalRT.GetVkImageView(),
+                .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                .loadOp = vk::AttachmentLoadOp::eClear,
+                .storeOp = vk::AttachmentStoreOp::eStore,
+                .clearValue = vk::ClearValue{.color = vk::ClearColorValue(std::array<float, 4>{
+                    AdditionalDesc.ClearValue.R, AdditionalDesc.ClearValue.G,
+                    AdditionalDesc.ClearValue.B, AdditionalDesc.ClearValue.A})},
+            });
+            RenderWidth = (std::min)(RenderWidth, AdditionalRT.GetWidth());
+            RenderHeight = (std::min)(RenderHeight, AdditionalRT.GetHeight());
+        }
         CurrentRenderExtent = vk::Extent2D{RenderWidth, RenderHeight};
 
         // ── Resolve depth attachment (optional) ───────────────────────
@@ -124,8 +148,8 @@ struct VulkanCommandVisitor {
         vk::RenderingInfo RenderingInfo{
             .renderArea           = vk::Rect2D{{0, 0}, CurrentRenderExtent},
             .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &ColorAttachment,
+            .colorAttachmentCount = static_cast<Uint32>(ColorAttachments.size()),
+            .pColorAttachments    = ColorAttachments.data(),
             .pDepthAttachment     = DepthAttachment.has_value() ? &*DepthAttachment : nullptr,
         };
         Buf.beginRendering(RenderingInfo);
@@ -784,8 +808,12 @@ struct VulkanCommandVisitor {
     }
 
     auto operator()(const RHIDrawCmd& Cmd) -> void {
-        if (!Cmd.PipelineRef.TryGet() || !Cmd.VertexBufferRefs[0].TryGet())
+        if (!Cmd.PipelineRef.TryGet())
             return;
+        if (!Cmd.VertexBufferRefs[0].TryGet()) {
+            Buf.draw(3, 1, 0, 0);
+            return;
+        }
 
         for (Uint32 Binding = 0; Binding < Cmd.VertexBufferRefs.size(); ++Binding) {
             auto* VertexBufferPtr = Cmd.VertexBufferRefs[Binding].TryGet();

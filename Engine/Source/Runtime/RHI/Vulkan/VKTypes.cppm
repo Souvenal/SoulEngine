@@ -27,6 +27,8 @@ namespace SoulEngine {
         return vk::Format::eD24UnormS8Uint;
     case RHIFormat::D32_SFLOAT_S8_UINT:
         return vk::Format::eD32SfloatS8Uint;
+    case RHIFormat::R16G16B16A16_SFLOAT:
+        return vk::Format::eR16G16B16A16Sfloat;
     case RHIFormat::R32G32B32A32_SFLOAT:
         return vk::Format::eR32G32B32A32Sfloat;
     case RHIFormat::R32G32B32_SFLOAT:
@@ -35,6 +37,8 @@ namespace SoulEngine {
         return vk::Format::eR32G32Sfloat;
     case RHIFormat::R32_SFLOAT:
         return vk::Format::eR32Sfloat;
+    case RHIFormat::R32_UINT:
+        return vk::Format::eR32Uint;
     default:
         return vk::Format::eUndefined;
     }

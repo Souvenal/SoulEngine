@@ -596,9 +596,10 @@ enum class RHIFormat : Uint8 {
     R32G32B32_SFLOAT    = 7,
     R32G32_SFLOAT       = 8,
     R32_SFLOAT          = 9,
-    D32_SFLOAT          = 10,
-    D24_UNORM_S8_UINT   = 11,
-    D32_SFLOAT_S8_UINT  = 12,
+    R32_UINT             = 10,
+    D32_SFLOAT          = 11,
+    D24_UNORM_S8_UINT   = 12,
+    D32_SFLOAT_S8_UINT  = 13,
 };
 
 struct RHIVertexInputAttributeDesc {
@@ -706,6 +707,7 @@ struct RHIGraphicsPipelineDesc {
     RHIBlendState                     Blend             = {};
     RHIDepthStencilState              DepthStencil      = {};
     RHIFormat                         ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
+    std::vector<RHIFormat>             ColorFormats      = {};
     RHIFormat                         DepthFormat       = RHIFormat::Unknown;
 };
 
@@ -735,6 +737,7 @@ struct RHIDepthAttachmentDesc {
 
 struct RHIRenderingDesc {
     RHIColorAttachmentDesc                ColorAttachment = {};
+    std::vector<RHIColorAttachmentDesc>   ColorAttachments = {};
     std::optional<RHIDepthAttachmentDesc> DepthAttachment = std::nullopt;
 };
 

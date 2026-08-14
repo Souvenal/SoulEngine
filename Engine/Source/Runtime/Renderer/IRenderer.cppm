@@ -22,7 +22,7 @@ struct RenderResult {
 /// that it resolves before emitting commands each frame.
 ///
 /// Deriving from IRenderer lets you define different pipeline types
-/// (ForwardRenderer, DeferredRenderer, RayTracingRenderer, etc.) while
+/// (RasterRenderer, RayTracingRenderer, etc.) while
 /// sharing the per-frame execution loop and pass management.
 class IRenderer {
   public:

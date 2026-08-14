@@ -124,7 +124,7 @@ class EngineLoop {
         ResourceManager::Get().Init();
 
         auto&      Cfg             = ConfigManager::Get().GetConfig();
-        const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Forward");
+        const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Raster");
         if (auto R = SelectRenderer(InitialRenderer); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Default renderer selection failed"));
@@ -273,9 +273,11 @@ class EngineLoop {
             AppScene.UpdateTime();
             if (auto SceneView = m_Editor.BuildSceneView()) {
                 const std::array Views{std::move(*SceneView)};
-                Slot.SceneData = AppScene.BuildSnapshot(Views);
+                const auto PickSnapshot = AppScene.BuildSnapshot(Views);
+                m_Editor.UpdateSceneSelection(PickSnapshot);
+                Slot.SceneData = AppScene.BuildSnapshot(Views, m_Editor.GetSelectedEntity());
             } else {
-                Slot.SceneData = AppScene.BuildSnapshot();
+                Slot.SceneData = AppScene.BuildSnapshot({}, m_Editor.GetSelectedEntity());
             }
 
             {

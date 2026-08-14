@@ -1,12 +1,13 @@
 import Pbr;
+import GBuffer;
 
-public struct ForwardFrameData {
+public struct RasterFrameData {
     public float time;
     public float exposureEV100;
     public uint  lightCount;
 };
 
-public struct ForwardViewData {
+public struct RasterViewData {
     public float4x4 viewProjection;
     public float4   cameraPosition;
 };
@@ -27,25 +28,27 @@ public struct InstanceData {
     // xyz is the world-space center; w is a conservative world-space radius.
     public float4   boundingSphere;
     public uint     materialIndex;
+    public uint     entityId;
 };
 
-public struct ForwardFrameViewResources {
-    public ConstantBuffer<ForwardFrameData> frame;
-    public ConstantBuffer<ForwardViewData>  view;
+public struct RasterFrameViewResources {
+    public ConstantBuffer<RasterFrameData> frame;
+    public ConstantBuffer<RasterViewData>  view;
     public StructuredBuffer<LightData>       lights;
 };
 
-public ParameterBlock<ForwardFrameViewResources> g_forwardFrameView;
+public ParameterBlock<RasterFrameViewResources> g_rasterFrameView;
 
-public struct ForwardDrawResources {
+public struct RasterDrawResources {
     public StructuredBuffer<InstanceData> instances;
     public StructuredBuffer<PbrMaterialData> materials;
 };
 
-public ParameterBlock<ForwardDrawResources> g_forwardDraw;
+public ParameterBlock<RasterDrawResources> g_rasterDraw;
 
-public struct ForwardInstanceIndex {
+public struct RasterInstanceIndex {
     public uint value;
+    public uint selected;
 };
 
 struct VSInput {
@@ -62,6 +65,7 @@ struct VSOutput {
     float4 tangent;
     float2 uv;
     nointerpolation uint instanceIndex;
+    nointerpolation uint selected;
 };
 
 float3 evaluateDirectLight(LightData light, PbrMaterial material, float3 worldPosition, float3 normal, float3 viewDirection) {
@@ -92,32 +96,39 @@ float3 evaluateDirectLight(LightData light, PbrMaterial material, float3 worldPo
 }
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input, uniform ForwardInstanceIndex instanceIndex) {
+VSOutput vertMain(VSInput input, uniform RasterInstanceIndex instanceIndex) {
     VSOutput output;
+    InstanceData instanceData = g_rasterDraw.instances[instanceIndex.value];
+    float3 localPosition = input.inPosition;
+    if (instanceIndex.selected != 0u)
+        localPosition += normalize(input.inNormal) * 0.02;
     float4 worldPosition =
-        mul(float4(input.inPosition, 1.0), g_forwardDraw.instances[instanceIndex.value].worldTransform);
+        mul(float4(localPosition, 1.0), instanceData.worldTransform);
     output.worldPosition  = worldPosition.xyz;
     output.normal = input.inNormal;
     output.tangent = input.inTangent;
     output.uv = input.inUV;
-    output.instanceIndex      = instanceIndex.value;
-    output.position       = mul(worldPosition, g_forwardFrameView.view.viewProjection);
+    output.instanceIndex = instanceIndex.value;
+    output.selected      = instanceIndex.selected;
+    output.position      = mul(worldPosition, g_rasterFrameView.view.viewProjection);
+    return output;
+}
+
+GBufferPixel MakeGBufferOutput(float4 albedo, float3 normal, uint entityId, float3 worldPosition) {
+    GBufferPixel output;
+    output.albedo = albedo;
+    output.normal = encodeGBufferNormal(normal);
+    output.entityId = entityId;
+    output.worldPosition = float4(worldPosition, 1.0);
     return output;
 }
 
 [shader("fragment")]
-float4 fragMain(VSOutput input) : SV_TARGET {
-    InstanceData instanceData = g_forwardDraw.instances[input.instanceIndex];
+GBufferPixel fragMain(VSOutput input) {
+    InstanceData instanceData = g_rasterDraw.instances[input.instanceIndex];
+    if (input.selected != 0u)
+        return MakeGBufferOutput(float4(1.0, 0.35, 0.0, 1.0), input.normal, instanceData.entityId, input.worldPosition);
     PbrSurfaceMaterial surface = resolvePbrMaterial(
-        g_forwardDraw.materials[instanceData.materialIndex], input.uv, input.normal, input.tangent);
-    PbrMaterial material = surface.material;
-    float3 normal = surface.normal;
-    float3 viewDirection = normalize(g_forwardFrameView.view.cameraPosition.xyz - input.worldPosition);
-    float3 color = 0.035 * material.baseColor * (1.0 - material.metallic) * surface.occlusion + surface.emissive;
-    for (uint lightIndex = 0u; lightIndex < g_forwardFrameView.frame.lightCount; ++lightIndex)
-        color += evaluateDirectLight(g_forwardFrameView.lights[lightIndex], material, input.worldPosition, normal, viewDirection);
-    color *= exp2(-g_forwardFrameView.frame.exposureEV100);
-    color = color / (color + 1.0);
-    color = pow(color, 1.0 / 2.2);
-    return float4(color, 1.0);
+        g_rasterDraw.materials[instanceData.materialIndex], input.uv, input.normal, input.tangent);
+    return MakeGBufferOutput(float4(surface.material.baseColor, 1.0), surface.normal, instanceData.entityId, input.worldPosition);
 }

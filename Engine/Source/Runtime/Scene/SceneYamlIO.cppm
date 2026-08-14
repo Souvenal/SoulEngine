@@ -604,7 +604,7 @@ auto AppendComponentWarning(SceneLoadReport& Report, String Path, String Message
     });
 }
 
-auto LoadComponents(Scene& Scene, SceneEntity Entity, const YamlNode& Node, StringView Path, SceneLoadReport& Report)
+auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, StringView Path, SceneLoadReport& Report)
     -> void {
     if (!Node.IsDefined() || Node.IsNull())
         return;
@@ -677,7 +677,7 @@ auto LoadComponents(Scene& Scene, SceneEntity Entity, const YamlNode& Node, Stri
 }
 
 [[nodiscard]] auto
-LoadEntity(Scene& Scene, const YamlNode& Node, SceneEntity Parent, StringView Path, SceneLoadReport& Report)
+LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView Path, SceneLoadReport& Report)
     -> std::expected<void, ErrorMessage> {
     if (!Node.IsMap())
         return MakeStructuralError(Path, "entity must be a mapping");

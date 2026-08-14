@@ -881,8 +881,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                             return std::unexpected(ErrorMessage(
                                 "Execute: draw pipeline does not match the currently bound graphics pipeline"));
                         }
-                        if (!TypedCmd.VertexBufferRefs[0].TryGet())
-                            return std::unexpected(ErrorMessage("Execute: draw is missing vertex buffer"));
                     } else if constexpr (std::is_same_v<CommandType, RHIWriteTransientConstantBufferCmd>) {
                         if (!TypedCmd.Buffer.IsValid())
                             return std::unexpected(ErrorMessage("Execute: transient constant buffer write has an invalid buffer"));
@@ -1154,6 +1152,16 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                         // Resolve every transient upload before opening the rendering scope.
                         for (const auto& Cmd : TypedScope.Commands) {
                             if (!IsTransientUpload(Cmd))
+                                continue;
+                            if (auto R = RecordCommand(Cmd); !R)
+                                return R;
+                        }
+                        // Storage-image layout transitions are illegal inside dynamic rendering.
+                        // Pre-record pipeline and descriptor bindings so their image barriers land before BeginRendering.
+                        for (const auto& Cmd : TypedScope.Commands) {
+                            if (IsTransientUpload(Cmd) ||
+                                (!std::holds_alternative<RHISetGraphicsPipelineCmd>(Cmd) &&
+                                 !std::holds_alternative<RHIBindShaderParametersCmd>(Cmd)))
                                 continue;
                             if (auto R = RecordCommand(Cmd); !R)
                                 return R;

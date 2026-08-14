@@ -13,6 +13,7 @@ import Resource;
 import Scene;
 import TaskGraph;
 
+import :GBuffer;
 import :IRenderer;
 import :MaterialResolver;
 
@@ -223,21 +224,26 @@ class RayTracingRenderer final : public IRenderer {
             GeometryInstances.push_back(RHIRayTracingInstanceData{
                 .FirstGeometry = FirstGeometry,
                 .GeometryCount = static_cast<Uint32>(MeshGeometries.size()),
+                .EntityId      = GBuffer::EncodeEntityId(Renderable.Entity),
             });
 
             Instances.push_back(RHIAccelerationStructureInstance{
                 .BottomLevelRef = std::move(BlasPayloadRef),
                 .Transform      = ToAccelerationStructureInstanceTransform(Renderable.WorldTransform),
-                .CustomIndex    = InstanceIndex,
+                .CustomIndex    = GBuffer::EncodeEntityId(Renderable.Entity),
             });
         }
         if (Instances.empty())
             return Result;
 
         const auto& View          = Scene.Views.front();
-        auto        ViewOutputRef = View.ColorRT;
+        auto        ViewOutputRef = View.Visibility.AlbedoRT;
+        auto        ViewNormalRef = View.Visibility.NormalRT;
+        auto        ViewEntityIdRef = View.Visibility.EntityIdRT;
         auto*       ViewOutput    = ViewOutputRef.TryGet();
-        if (!ViewOutput)
+        auto*       ViewNormal    = ViewNormalRef.TryGet();
+        auto*       ViewEntityId  = ViewEntityIdRef.TryGet();
+        if (!ViewOutput || !ViewNormal || !ViewEntityId)
             return Result;
         const bool bTargetsChanged = EnsureOutputTargets(ViewOutput->GetWidth(), ViewOutput->GetHeight());
         auto       OutputRef       = m_Output;
@@ -270,6 +276,10 @@ class RayTracingRenderer final : public IRenderer {
             return std::unexpected(R.error().Append("RayTracingRenderer output parameter binding failed"));
         if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.accumulation", Accumulation); !R)
             return std::unexpected(R.error().Append("RayTracingRenderer accumulation parameter binding failed"));
+        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.primaryNormal", ViewNormal); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer primary normal parameter binding failed"));
+        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.primaryEntityId", ViewEntityId); !R)
+            return std::unexpected(R.error().Append("RayTracingRenderer primary entity ID parameter binding failed"));
         const auto GeometryInstanceDataBytes = std::as_bytes(std::span{GeometryInstances});
         auto       GeometryInstanceBuffer =
             RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(GeometryInstanceDataBytes.size_bytes());
@@ -330,7 +340,7 @@ class RayTracingRenderer final : public IRenderer {
                 .SampledTextures = std::vector<RHIRef<RHISampledTexture>>{m_MaterialResolver.GetTextureRefs().begin(),
                                                                           m_MaterialResolver.GetTextureRefs().end()},
                 .Samplers        = {SamplerLinearRef, SamplerAnisoRef},
-                .RenderTargets   = {OutputRef, AccumulationRef},
+                .RenderTargets   = {OutputRef, AccumulationRef, ViewNormalRef, ViewEntityIdRef},
             });
         Pass.TraceRays(PipelineRef, Output->GetWidth(), Output->GetHeight());
         Result.CmdList.Scopes.push_back(std::move(Pass));

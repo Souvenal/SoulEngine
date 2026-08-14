@@ -1,4 +1,5 @@
 import Pbr;
+import GBuffer;
 
 static const float kRayEpsilon = 0.001;
 static const float kRayMaxDistance = 10000.0;
@@ -21,6 +22,7 @@ public struct LightData {
 public struct RayTracingInstanceData {
     public uint firstGeometry;
     public uint geometryCount;
+    public uint entityId;
 };
 
 public struct RayTracingGeometryData {
@@ -46,6 +48,8 @@ public struct RayTracingResources {
     public RaytracingAccelerationStructure tlas;
     public RWTexture2D<float4> output;
     public RWTexture2D<float4> accumulation;
+    public RWTexture2D<float4> primaryNormal;
+    public RWTexture2D<uint> primaryEntityId;
     public ConstantBuffer<RayTracingViewData> view;
     public StructuredBuffer<PbrMaterialData> materials;
     public StructuredBuffer<LightData> lights;
@@ -103,6 +107,7 @@ struct PathPayload {
     float2 uv;
     float4 tangent;
     uint hit;
+    uint entityId;
 };
 
 struct ShadowPayload {
@@ -167,10 +172,13 @@ void rayGenMain() {
     float3 radiance = float3(0.0, 0.0, 0.0);
     float3 throughput = float3(1.0, 1.0, 1.0);
     const float3 environmentRadiance = float3(0.03, 0.05, 0.10);
+    PathPayload primaryPayload = {};
 
     for (uint bounce = 0; bounce < maxBounces; ++bounce) {
         PathPayload payload = {};
         TraceRay(g_rayTracing.tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+        if (bounce == 0u)
+            primaryPayload = payload;
         if (payload.hit == 0) {
             radiance += throughput * environmentRadiance;
             break;
@@ -240,6 +248,15 @@ void rayGenMain() {
         ? radiance
         : (g_rayTracing.accumulation[pixel].xyz * float(sampleIndex) + radiance) / float(sampleIndex + 1u);
     g_rayTracing.accumulation[pixel] = float4(accumulated, 1.0);
+    if (sampleIndex == 0u) {
+        if (primaryPayload.hit != 0u) {
+            g_rayTracing.primaryNormal[pixel] = encodeGBufferNormal(primaryPayload.normal);
+            g_rayTracing.primaryEntityId[pixel] = primaryPayload.entityId;
+        } else {
+            g_rayTracing.primaryNormal[pixel] = float4(0.5, 0.5, 1.0, 1.0);
+            g_rayTracing.primaryEntityId[pixel] = gBufferBackgroundEntityId;
+        }
+    }
     accumulated *= exp2(-g_rayTracing.view.exposureEV100);
     float3 displayColor = accumulated / (accumulated + 1.0);
     displayColor = pow(displayColor, 1.0 / 2.2);
@@ -297,6 +314,7 @@ void closestHitMain(inout PathPayload payload, in BuiltInTriangleIntersectionAtt
     payload.normal = normalize(mul(objectNormal, (float3x3)ObjectToWorld3x4()));
     payload.tangent = float4(normalize(mul(objectTangent.xyz, (float3x3)ObjectToWorld3x4())), objectTangent.w);
     payload.materialIndex = geometry.materialIndex;
+    payload.entityId = instanceData.entityId;
     payload.uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
     payload.hit = 1;
 }

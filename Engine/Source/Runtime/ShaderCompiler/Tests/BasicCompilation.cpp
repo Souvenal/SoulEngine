@@ -54,26 +54,26 @@ TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     });
 }
 
-TEST_F(ShaderCompilerTest, CompileForwardPbrProgramWithExpectedBindings) {
+TEST_F(ShaderCompilerTest, CompileRasterPbrProgramWithExpectedBindings) {
     auto ProjectDir = m_TestShaderPath;
     for (Uint32 Index = 0; Index < 7; ++Index)
         ProjectDir = ProjectDir.parent_path();
 
     const auto ShaderDir  = ProjectDir / "Engine" / "Shaders";
-    const auto ShaderPath = ShaderDir / "ForwardPbr.slang";
+    const auto ShaderPath = ShaderDir / "RasterPbr.slang";
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
         .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = ShaderBackend::Slang},
         .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.frame", ShaderResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.view", ShaderResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardDraw.instances", ShaderResourceType::StorageBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardDraw.materials", ShaderResourceType::StorageBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterFrameView.frame", ShaderResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterFrameView.view", ShaderResourceType::ConstantBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterDraw.instances", ShaderResourceType::StorageBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterDraw.materials", ShaderResourceType::StorageBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_textures.uTextures", ShaderResourceType::SampledTexture));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_samplers.uSamplerLinear", ShaderResourceType::Sampler));
-    EXPECT_EQ(Result->Reflection.Bindings.size(), 7);
+    EXPECT_EQ(Result->Reflection.Bindings.size(), 8);
     ASSERT_FALSE(Result->Reflection.PushConstants.empty());
     EXPECT_EQ(Result->Reflection.PushConstants[0].Offset, 0U);
     EXPECT_GE(Result->Reflection.PushConstants[0].Size, sizeof(Uint32));

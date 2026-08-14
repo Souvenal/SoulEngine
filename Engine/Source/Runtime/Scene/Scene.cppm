@@ -16,21 +16,20 @@ import TaskGraph;
 
 export namespace SoulEngine {
 
-using SceneEntity = entt::entity;
-
 struct SceneNode {
     String                   Name           = {};
-    SceneEntity              Parent         = entt::null;
-    std::vector<SceneEntity> Children       = {};
+    entt::entity              Parent         = entt::null;
+    std::vector<entt::entity> Children       = {};
     Transform                LocalTransform = {};
     hlslpp::float4x4         WorldTransform = hlslpp::float4x4::identity();
 };
 
 struct SceneSnapshot {
-    std::vector<RenderViewSnapshot> Views       = {};
-    std::vector<RenderableInstance> Renderables = {};
-    std::vector<LightSnapshot>      Lights      = {};
-    float                           Time        = 0.0f;
+    std::vector<RenderViewSnapshot> Views           = {};
+    std::vector<RenderableInstance> Renderables     = {};
+    std::vector<LightSnapshot>      Lights          = {};
+    std::optional<entt::entity>      SelectedEntity  = std::nullopt;
+    float                           Time            = 0.0f;
 };
 
 struct ComponentWarning {
@@ -54,7 +53,7 @@ class Scene {
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
     UPtr<entt::registry>                                        m_Registry          = nullptr;
     Path                                                        m_AssetRoot         = {};
-    std::vector<SceneEntity>                                    m_Roots             = {};
+    std::vector<entt::entity>                                    m_Roots             = {};
     std::map<String, PbrMetallicRoughnessMaterial, std::less<>> m_MaterialInstances = {};
     std::vector<String>                                         m_TexturePaths      = {};
     float                                                       m_Time              = 0.0f;
@@ -98,10 +97,10 @@ class Scene {
     [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const PbrMetallicRoughnessMaterial*;
     [[nodiscard]] auto GetRegistry() -> entt::registry&;
     [[nodiscard]] auto GetRegistry() const -> const entt::registry&;
-    [[nodiscard]] auto GetRoots() const -> const std::vector<SceneEntity>&;
-    [[nodiscard]] auto CreateEntity(String Name = {}, SceneEntity Parent = entt::null) -> SceneEntity;
-    [[nodiscard]] auto TryGetSceneNode(SceneEntity Entity) -> SceneNode*;
-    [[nodiscard]] auto TryGetSceneNode(SceneEntity Entity) const -> const SceneNode*;
+    [[nodiscard]] auto GetRoots() const -> const std::vector<entt::entity>&;
+    [[nodiscard]] auto CreateEntity(String Name = {}, entt::entity Parent = entt::null) -> entt::entity;
+    [[nodiscard]] auto TryGetSceneNode(entt::entity Entity) -> SceneNode*;
+    [[nodiscard]] auto TryGetSceneNode(entt::entity Entity) const -> const SceneNode*;
 
     /// @brief Move relative to the camera's horizontal facing direction and world up.
     /// @brief Rotate from relative cursor movement using yaw and pitch angles.
@@ -112,7 +111,8 @@ class Scene {
 
     auto UpdateWorldTransforms() -> void;
 
-    [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views = {}) -> SceneSnapshot;
+    [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views = {},
+                                  std::optional<entt::entity> SelectedEntity = std::nullopt) -> SceneSnapshot;
 
     [[nodiscard]] auto LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage>;
 };
@@ -147,11 +147,11 @@ auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material
     return *m_Registry;
 }
 
-[[nodiscard]] auto Scene::GetRoots() const -> const std::vector<SceneEntity>& {
+[[nodiscard]] auto Scene::GetRoots() const -> const std::vector<entt::entity>& {
     return m_Roots;
 }
 
-[[nodiscard]] auto Scene::CreateEntity(String Name, SceneEntity Parent) -> SceneEntity {
+[[nodiscard]] auto Scene::CreateEntity(String Name, entt::entity Parent) -> entt::entity {
     const auto Entity = m_Registry->create();
     m_Registry->emplace<SceneNode>(Entity, SceneNode{.Name = std::move(Name), .Parent = Parent});
     if (Parent != entt::null && m_Registry->valid(Parent) && m_Registry->all_of<SceneNode>(Parent)) {
@@ -162,18 +162,18 @@ auto Scene::SetMaterialInstance(String Id, PbrMetallicRoughnessMaterial Material
     return Entity;
 }
 
-[[nodiscard]] auto Scene::TryGetSceneNode(SceneEntity Entity) -> SceneNode* {
+[[nodiscard]] auto Scene::TryGetSceneNode(entt::entity Entity) -> SceneNode* {
     return m_Registry->try_get<SceneNode>(Entity);
 }
 
-[[nodiscard]] auto Scene::TryGetSceneNode(SceneEntity Entity) const -> const SceneNode* {
+[[nodiscard]] auto Scene::TryGetSceneNode(entt::entity Entity) const -> const SceneNode* {
     return m_Registry->try_get<SceneNode>(Entity);
 }
 
 namespace {
 
 auto UpdateWorldTransformRecursive(entt::registry&         Registry,
-                                   SceneEntity             Entity,
+                                   entt::entity             Entity,
                                    const hlslpp::float4x4& ParentTransform) -> void {
     auto& Node           = Registry.get<SceneNode>(Entity);
     Node.WorldTransform  = hlslpp::mul(Node.LocalTransform.GetLocalMatrix(), ParentTransform);
@@ -190,11 +190,13 @@ auto Scene::UpdateWorldTransforms() -> void {
     }
 }
 
-[[nodiscard]] auto Scene::BuildSnapshot(std::span<const RenderViewSnapshot> Views) -> SceneSnapshot {
+[[nodiscard]] auto Scene::BuildSnapshot(std::span<const RenderViewSnapshot> Views,
+                          std::optional<entt::entity> SelectedEntity) -> SceneSnapshot {
     UpdateWorldTransforms();
     SceneSnapshot Snapshot{
-        .Views = std::vector<RenderViewSnapshot>(Views.begin(), Views.end()),
-        .Time  = m_Time,
+        .Views          = std::vector<RenderViewSnapshot>(Views.begin(), Views.end()),
+        .SelectedEntity = SelectedEntity && m_Registry->valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
+        .Time            = m_Time,
     };
 
     const auto Meshes = m_Registry->view<MeshComponent, SceneNode>();
@@ -225,6 +227,7 @@ auto Scene::UpdateWorldTransforms() -> void {
         ResolveTextureAsset(Material.EmissiveTexture);
 
         Snapshot.Renderables.emplace_back(RenderableInstance{
+            .Entity         = Entity,
             .MeshAsset      = ResolveAssetPath(Mesh.Asset),
             .MaterialId     = Mesh.Material,
             .Material       = std::move(Material),

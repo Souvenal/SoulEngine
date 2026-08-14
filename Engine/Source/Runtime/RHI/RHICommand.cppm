@@ -162,6 +162,7 @@ using RHICommand = std::variant<RHISetViewportCmd,
 /// Backend automatically wraps each pass with begin/end rendering.
 struct RHIPass {
     RHIRef<RHIRenderTarget> ColorAttachmentRef = nullptr;
+    std::vector<RHIRef<RHIRenderTarget>> ColorAttachmentRefs = {};
     RHIRef<RHIRenderTarget> DepthAttachmentRef = nullptr;
     RHIRenderingDesc        Desc;
     std::vector<RHICommand> Commands;
@@ -308,6 +309,11 @@ struct RHIPass {
             .Height      = Height,
             .Depth       = Depth,
         });
+    }
+    auto Draw(RHIRef<RHIGraphicsPipeline> PipelineRef) -> void {
+        if (!PipelineRef.TryGet())
+            return;
+        Commands.emplace_back(RHIDrawCmd{.PipelineRef = std::move(PipelineRef)});
     }
     auto DrawIndexed(RHIRef<RHIGraphicsPipeline>                                   PipelineRef,
                      std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs,
