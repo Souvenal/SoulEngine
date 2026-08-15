@@ -36,7 +36,6 @@ public ParameterBlock<RasterDrawResources> g_rasterDraw;
 
 public struct RasterInstanceIndex {
     public uint value;
-    public uint selected;
 };
 
 struct VSInput {
@@ -53,7 +52,6 @@ struct VSOutput {
     float4 tangent;
     float2 uv;
     nointerpolation uint instanceIndex;
-    nointerpolation uint selected;
 };
 
 float getTransformOrientation(float3x3 transform) {
@@ -74,8 +72,6 @@ VSOutput vertMain(VSInput input, uniform RasterInstanceIndex instanceIndex) {
     VSOutput output;
     InstanceData instanceData = g_rasterDraw.instances[instanceIndex.value];
     float3 localPosition = input.inPosition;
-    if (instanceIndex.selected != 0u)
-        localPosition += normalize(input.inNormal) * 0.02;
     float4 worldPosition = mul(float4(localPosition, 1.0), instanceData.worldTransform);
     float3x3 worldTransform = (float3x3)instanceData.worldTransform;
     output.worldPosition = worldPosition.xyz;
@@ -85,7 +81,6 @@ VSOutput vertMain(VSInput input, uniform RasterInstanceIndex instanceIndex) {
         input.inTangent.w * getTransformOrientation(worldTransform));
     output.uv = input.inUV;
     output.instanceIndex = instanceIndex.value;
-    output.selected = instanceIndex.selected;
     output.position = mul(worldPosition, g_rasterFrameView.view.viewProjection);
     return output;
 }
@@ -93,13 +88,6 @@ VSOutput vertMain(VSInput input, uniform RasterInstanceIndex instanceIndex) {
 [shader("fragment")]
 GBufferPixel fragMain(VSOutput input) {
     InstanceData instanceData = g_rasterDraw.instances[input.instanceIndex];
-    if (input.selected != 0u)
-        return GBufferPixel(
-            float4(1.0, 0.35, 0.0, 1.0),
-            input.normal,
-            instanceData.materialIndex,
-            instanceData.entityId);
-
     PbrSurfaceMaterial surface = resolvePbrMaterial(
         g_rasterDraw.materials[instanceData.materialIndex],
         input.uv,

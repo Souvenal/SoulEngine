@@ -275,9 +275,11 @@ class EngineLoop {
                 const std::array Views{std::move(*SceneView)};
                 const auto PickSnapshot = AppScene.BuildSnapshot(Views);
                 m_Editor.UpdateSceneSelection(PickSnapshot);
-                Slot.SceneData = AppScene.BuildSnapshot(Views, m_Editor.GetSelectedEntity());
+                Slot.SceneData =
+                    AppScene.BuildSnapshot(Views, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             } else {
-                Slot.SceneData = AppScene.BuildSnapshot({}, m_Editor.GetSelectedEntity());
+                Slot.SceneData =
+                    AppScene.BuildSnapshot({}, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             }
 
             {

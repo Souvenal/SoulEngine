@@ -93,3 +93,20 @@ TEST_F(ShaderCompilerTest, CompileRasterGeometryProgramWithExpectedBindings) {
     EXPECT_EQ(Result->Reflection.VertexInputs[3].SemanticIndex, 0U);
     EXPECT_EQ(Result->Reflection.VertexInputs[3].Location, 3U);
 }
+
+TEST_F(ShaderCompilerTest, CompileEditorSelectionOutlineProgram) {
+    auto ProjectDir = m_TestShaderPath;
+    for (Uint32 Index = 0; Index < 7; ++Index)
+        ProjectDir = ProjectDir.parent_path();
+
+    const auto ShaderPath = ProjectDir / "Engine" / "Shaders" / "EditorSelectionOutline.slang";
+    auto       Result     = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
+        .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = ShaderBackend::Slang},
+        .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = ShaderBackend::Slang},
+    });
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_editorSelection.entityId", ShaderResourceType::SampledTexture));
+    ASSERT_FALSE(Result->Reflection.PushConstants.empty());
+    EXPECT_EQ(Result->Reflection.PushConstants[0].Offset, 0U);
+    EXPECT_GE(Result->Reflection.PushConstants[0].Size, sizeof(Uint32) * 3);
+}

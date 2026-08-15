@@ -16,6 +16,7 @@ import TaskGraph;
 
 import :IRenderer;
 import :MaterialResolver;
+import :PostProcess.EditorPostProcess;
 
 export import std;
 
@@ -82,8 +83,7 @@ static_assert(offsetof(InstanceData, BoundingSphere) == 64);
 static_assert(offsetof(InstanceData, MaterialIndex) == 80);
 
 struct RasterInstanceIndex {
-    Uint32 Value    = 0;
-    Uint32 Selected = 0;
+    Uint32 Value = 0;
 };
 
 struct RasterViewParameterState {
@@ -160,18 +160,11 @@ class RasterRenderer final : public IRenderer {
             return std::unexpected(DeferredPipelineRequest.error().Append("Deferred lighting pipeline request failed"));
         m_DeferredPipeline = std::move(*DeferredPipelineRequest);
 
-        auto SelectionPipelineRequest = SubmitGraphicsPipelinePreparation(GraphicsPipelineRequest{
-            .VertEntry         = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
-            .FragEntry         = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
-            .VertexInputLayout = MakeVertexInputLayout(),
-            .DepthStencil      = {.DepthTestEnable = true, .DepthWriteEnable = false},
-            .ColorFormats      = std::vector<RHIFormat>(GBuffer::ColorFormats.begin(), GBuffer::ColorFormats.end()),
-            .DepthFormat       = GBuffer::DepthFormat,
-        });
-        if (!SelectionPipelineRequest)
-            return std::unexpected(
-                SelectionPipelineRequest.error().Append("Raster selection graphics pipeline request failed"));
-        m_SelectionPipeline = std::move(*SelectionPipelineRequest);
+        auto EditorSelectionPipelineRequest = RequestEditorSelectionPipeline();
+        if (!EditorSelectionPipelineRequest)
+            return std::unexpected(EditorSelectionPipelineRequest.error().Append(
+                "Editor selection post-process pipeline request failed"));
+        m_EditorSelectionPipeline = std::move(*EditorSelectionPipelineRequest);
 
         m_SamplerLinear = RequestSampler({.Profile = RHISamplerProfile::LinearRepeat});
         m_SamplerAniso = RequestSampler({.Profile = RHISamplerProfile::AnisotropicRepeat});
@@ -180,11 +173,11 @@ class RasterRenderer final : public IRenderer {
     }
 
     auto OnDetach() -> void override {
-        m_Pipeline          = {};
-        m_SelectionPipeline = {};
-        m_DeferredPipeline  = {};
-        m_SamplerLinear     = {};
-        m_SamplerAniso      = {};
+        m_Pipeline                = {};
+        m_EditorSelectionPipeline = {};
+        m_DeferredPipeline         = {};
+        m_SamplerLinear            = {};
+        m_SamplerAniso             = {};
         m_MeshCache.clear();
         m_MaterialResolver.Clear();
         m_ViewParameters.clear();
@@ -245,13 +238,13 @@ class RasterRenderer final : public IRenderer {
         const auto& MaterialIdRTRef      = View.Targets.GBuffer.MaterialIdRT;
         const auto& DepthRTRef           = View.Targets.GBuffer.DepthRT;
         const auto& SceneColorRTRef      = View.Targets.SceneColorRT;
-        const auto& PipelineRef          = m_Pipeline;
-        const auto& SelectionPipelineRef = m_SelectionPipeline;
-        const auto& SamplerLinearRef    = m_SamplerLinear;
-        const auto& SamplerAnisoRef     = m_SamplerAniso;
-        const auto& DeferredPipelineRef = m_DeferredPipeline;
+        const auto& PipelineRef                = m_Pipeline;
+        const auto& EditorSelectionPipelineRef = m_EditorSelectionPipeline;
+        const auto& SamplerLinearRef           = m_SamplerLinear;
+        const auto& SamplerAnisoRef            = m_SamplerAniso;
+        const auto& DeferredPipelineRef        = m_DeferredPipeline;
         if (!AlbedoRTRef || !NormalRTRef || !EntityIdRTRef || !MaterialIdRTRef || !DepthRTRef || !SceneColorRTRef ||
-            !PipelineRef || !SelectionPipelineRef || !SamplerLinearRef || !SamplerAnisoRef || !DeferredPipelineRef)
+            !PipelineRef || !EditorSelectionPipelineRef || !SamplerLinearRef || !SamplerAnisoRef || !DeferredPipelineRef)
             return {};
 
         const auto FrameData =
@@ -289,13 +282,6 @@ class RasterRenderer final : public IRenderer {
         };
         if (auto R = BindFrameParameters(Parameters); !R)
             return std::unexpected(R.error());
-        std::optional<RHIShaderParameters> SelectionParameters = std::nullopt;
-        if (SelectionPipelineRef) {
-            SelectionParameters.emplace(RHIShaderParameters::Create(*SelectionPipelineRef));
-            if (auto R = BindFrameParameters(*SelectionParameters); !R)
-                return std::unexpected(R.error());
-        }
-
         RHIPass GeometryPass{
             .Desc =
                 RHIRenderingDesc{
@@ -351,11 +337,6 @@ class RasterRenderer final : public IRenderer {
         const auto Textures = m_MaterialResolver.BuildTextureArray();
         if (auto R = Parameters.SetResourceArray("g_textures.uTextures", Textures); !R)
             return std::unexpected(R.error().Append("Raster geometry texture parameter binding failed"));
-        if (SelectionParameters) {
-            if (auto R = SelectionParameters->SetResourceArray("g_textures.uTextures", Textures); !R)
-                return std::unexpected(R.error().Append("Raster selection texture parameter binding failed"));
-        }
-
         GeometryPass.SetFullViewport();
         GeometryPass.SetFullScissorRect();
         GeometryPass.SetGraphicsPipeline(PipelineRef);
@@ -370,14 +351,6 @@ class RasterRenderer final : public IRenderer {
                 return std::unexpected(R.error().Append("Raster geometry instance-data transient buffer write failed"));
             if (auto R = Parameters.SetTransientShaderStorageBuffer("g_rasterDraw.instances", *InstanceDataBuffer); !R)
                 return std::unexpected(R.error().Append("Raster geometry instance-data storage buffer binding failed"));
-            if (SelectionParameters) {
-                if (auto R = SelectionParameters->SetTransientShaderStorageBuffer("g_rasterDraw.instances",
-                                                                                  *InstanceDataBuffer);
-                    !R)
-                    return std::unexpected(
-                        R.error().Append("Raster selection instance-data storage buffer binding failed"));
-            }
-
             const auto MaterialDataBytes = std::as_bytes(m_MaterialResolver.GetMaterials());
             auto       MaterialDataBuffer =
                 RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(MaterialDataBytes.size_bytes());
@@ -388,13 +361,6 @@ class RasterRenderer final : public IRenderer {
                 return std::unexpected(R.error().Append("Raster geometry material-data transient buffer write failed"));
             if (auto R = Parameters.SetTransientShaderStorageBuffer("g_rasterDraw.materials", *MaterialDataBuffer); !R)
                 return std::unexpected(R.error().Append("Raster geometry material-data storage buffer binding failed"));
-            if (SelectionParameters) {
-                if (auto R = SelectionParameters->SetTransientShaderStorageBuffer("g_rasterDraw.materials",
-                                                                                  *MaterialDataBuffer);
-                    !R)
-                    return std::unexpected(
-                        R.error().Append("Raster selection material-data storage buffer binding failed"));
-            }
         }
         if (!ResolvedDraws.empty()) {
             auto DrawParameters = Parameters;
@@ -408,33 +374,9 @@ class RasterRenderer final : public IRenderer {
                     .Samplers = {SamplerLinearRef, SamplerAnisoRef},
                 });
         }
-        if (SelectionPipelineRef && Scene.SelectedEntity) {
-            GeometryPass.SetGraphicsPipeline(SelectionPipelineRef);
-            GeometryPass.BindShaderParameters(
-                SelectionPipelineRef,
-                std::move(*SelectionParameters),
-                RHIShaderParameterResources{
-                    .SampledTextures =
-                        std::vector<RHIRef<RHISampledTexture>>{m_MaterialResolver.GetTextureRefs().begin(),
-                                                               m_MaterialResolver.GetTextureRefs().end()},
-                    .Samplers = {SamplerLinearRef, SamplerAnisoRef},
-                });
-            for (Uint32 InstanceIndex = 0; InstanceIndex < ResolvedDraws.size(); ++InstanceIndex) {
-                const auto& Draw = ResolvedDraws[InstanceIndex];
-                if (Draw.Entity != *Scene.SelectedEntity)
-                    continue;
-                const RasterInstanceIndex PushData{.Value = InstanceIndex, .Selected = 1};
-                GeometryPass.PushConstants(SelectionPipelineRef, 0, &PushData, sizeof(PushData));
-                GeometryPass.DrawIndexed(SelectionPipelineRef,
-                                 std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings>{
-                                     Draw.PositionVB, Draw.NormalVB, Draw.TangentVB, Draw.UVVB},
-                                 Draw.IndexBuffer);
-            }
-            GeometryPass.SetGraphicsPipeline(PipelineRef);
-        }
         for (Uint32 InstanceIndex = 0; InstanceIndex < ResolvedDraws.size(); ++InstanceIndex) {
             const auto&               Draw = ResolvedDraws[InstanceIndex];
-            const RasterInstanceIndex PushData{.Value = InstanceIndex, .Selected = 0};
+            const RasterInstanceIndex PushData{.Value = InstanceIndex};
             GeometryPass.PushConstants(PipelineRef, 0, &PushData, sizeof(PushData));
             GeometryPass.DrawIndexed(PipelineRef,
                              std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings>{
@@ -536,6 +478,14 @@ class RasterRenderer final : public IRenderer {
 
         CmdList.Scopes.push_back(std::move(GeometryPass));
         CmdList.Scopes.push_back(std::move(LightingPass));
+        if (Scene.SelectedPixel) {
+            auto EditorSelectionPass =
+                BuildEditorSelectionPass(View, *Scene.SelectedPixel, EditorSelectionPipelineRef);
+            if (!EditorSelectionPass)
+                return std::unexpected(EditorSelectionPass.error().Append(
+                    "Editor selection post-process pass construction failed"));
+            CmdList.Scopes.push_back(std::move(*EditorSelectionPass));
+        }
         return {};
     }
 
@@ -698,9 +648,9 @@ class RasterRenderer final : public IRenderer {
         return State.Parameters;
     }
 
-    RHIRef<RHIGraphicsPipeline>           m_Pipeline          = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_SelectionPipeline = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline  = nullptr;
+    RHIRef<RHIGraphicsPipeline>           m_Pipeline                = nullptr;
+    RHIRef<RHIGraphicsPipeline>           m_EditorSelectionPipeline = nullptr;
+    RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline         = nullptr;
     RHIRef<RHISampler>                    m_SamplerLinear     = nullptr;
     RHIRef<RHISampler>                    m_SamplerAniso      = nullptr;
     std::vector<RasterMeshCacheEntry>     m_MeshCache         = {};

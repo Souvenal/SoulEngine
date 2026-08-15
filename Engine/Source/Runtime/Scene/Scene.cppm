@@ -24,11 +24,18 @@ struct SceneNode {
     hlslpp::float4x4         WorldTransform = hlslpp::float4x4::identity();
 };
 
+/// @brief Physical framebuffer coordinate selected by the editor.
+struct RenderPixelCoordinate {
+    Uint32 X = 0;
+    Uint32 Y = 0;
+};
+
 struct SceneSnapshot {
     std::vector<RenderViewSnapshot> Views           = {};
     std::vector<RenderableInstance> Renderables     = {};
     std::vector<LightSnapshot>      Lights          = {};
     std::optional<entt::entity>      SelectedEntity  = std::nullopt;
+    std::optional<RenderPixelCoordinate> SelectedPixel = std::nullopt;
     float                           Time            = 0.0f;
 };
 
@@ -112,7 +119,8 @@ class Scene {
     auto UpdateWorldTransforms() -> void;
 
     [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views = {},
-                                  std::optional<entt::entity> SelectedEntity = std::nullopt) -> SceneSnapshot;
+                                  std::optional<entt::entity> SelectedEntity = std::nullopt,
+                                  std::optional<RenderPixelCoordinate> SelectedPixel = std::nullopt) -> SceneSnapshot;
 
     [[nodiscard]] auto LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage>;
 };
@@ -191,11 +199,13 @@ auto Scene::UpdateWorldTransforms() -> void {
 }
 
 [[nodiscard]] auto Scene::BuildSnapshot(std::span<const RenderViewSnapshot> Views,
-                          std::optional<entt::entity> SelectedEntity) -> SceneSnapshot {
+                          std::optional<entt::entity> SelectedEntity,
+                          std::optional<RenderPixelCoordinate> SelectedPixel) -> SceneSnapshot {
     UpdateWorldTransforms();
     SceneSnapshot Snapshot{
         .Views          = std::vector<RenderViewSnapshot>(Views.begin(), Views.end()),
         .SelectedEntity = SelectedEntity && m_Registry->valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
+        .SelectedPixel  = SelectedPixel,
         .Time            = m_Time,
     };
 

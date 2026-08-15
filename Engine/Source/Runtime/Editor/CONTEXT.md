@@ -13,13 +13,14 @@ UI abstraction layer.
 | **UIDrawFrame** | Self-owning deep copy of one frame of ImGui draw data. Move-only: `Data.CmdLists` points into its own `Lists` storage. |
 | **SnapshotDrawData** | Deep-copies a live `ImDrawData` into a `UIDrawFrame`. Must run on the ImGui thread before the next `NewFrame()`. |
 | **UIPanel / UIPanelCallback** | One registered debug/editor panel: a name plus an ImGui immediate-mode callback invoked in registration order during `BuildFrame()`. |
+| **Selected render pixel** | The latest editor scene-view pixel chosen by the user. It is copied into the immutable SceneSnapshot and consumed by Renderer post-processing to identify the selected EntityId in the G-buffer. |
 
 ## Threading
 
 The ImGui context lives on the engine **main thread**: GLFW callbacks feed
 `ImGuiIO` during `PollEvents()`, and `Editor::BuildFrame(dt)` runs
 `NewFrame` -> panel callbacks -> `Render` each game tick, publishing a
-`UIDrawFrame` snapshot through a latest-wins mailbox. The **render thread**
+`UIDrawFrame` snapshot through a latest-wins mailbox. Editor selection state, including the selected render pixel, is copied into the SceneSnapshot on the game thread. The **render thread**
 is a pure consumer: `OnRender()` takes the newest snapshot and translates it
 into an RHI pass (`TranslateImDrawData`). Backend-native GPU resources (font
 atlas texture, dynamic vertex/index buffers) are created by a one-shot

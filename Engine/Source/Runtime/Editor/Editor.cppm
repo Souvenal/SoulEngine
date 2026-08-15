@@ -212,6 +212,13 @@ class Editor {
             return;
         }
 
+        const auto PixelWidth  = static_cast<float>(m_SceneViewCamera.ViewportWidth);
+        const auto PixelHeight = static_cast<float>(m_SceneViewCamera.ViewportHeight);
+        m_SelectedPixel = RenderPixelCoordinate{
+            .X = (std::min)(static_cast<Uint32>((PixelX / Width) * PixelWidth), m_SceneViewCamera.ViewportWidth - 1),
+            .Y = (std::min)(static_cast<Uint32>((PixelY / Height) * PixelHeight), m_SceneViewCamera.ViewportHeight - 1),
+        };
+
         const auto InverseViewProjection = hlslpp::inverse(Snapshot.Views.front().ViewProjection);
         const float NdcX = 2.0f * PixelX / Width - 1.0f;
         const float NdcY = 1.0f - 2.0f * PixelY / Height;
@@ -285,12 +292,17 @@ class Editor {
         return m_SelectedEntity;
     }
 
+    [[nodiscard]] auto GetSelectedPixel() const -> std::optional<RenderPixelCoordinate> {
+        return m_SelectedPixel;
+    }
+
     auto SelectEntity(entt::entity Entity) -> void {
         m_SelectedEntity = Entity;
     }
 
     auto ClearSelection() -> void {
         m_SelectedEntity.reset();
+        m_SelectedPixel.reset();
     }
 
     /// @brief Main-thread entry point: build the ImGui frame for this game
@@ -367,7 +379,8 @@ class Editor {
     std::mutex      m_TextureQueueMutex;
 
     Camera m_SceneViewCamera = {};
-    std::optional<entt::entity> m_SelectedEntity = std::nullopt;
+    std::optional<entt::entity>          m_SelectedEntity = std::nullopt;
+    std::optional<RenderPixelCoordinate> m_SelectedPixel  = std::nullopt;
     Transform m_SceneViewTransform{
         .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
         .Rotation = hlslpp::float3(28.0f, -32.0f, 0.0f),

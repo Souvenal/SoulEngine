@@ -6,6 +6,7 @@ import std;
 export import :IRenderer;
 export import :RasterRenderer;
 export import :RayTracingRenderer;
+export import :PostProcess.EditorPostProcess;
 
 namespace SoulEngine {
 
