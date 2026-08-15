@@ -89,7 +89,7 @@ struct VulkanCommandVisitor {
             ColorAttachments.push_back(vk::RenderingAttachmentInfo{
                 .imageView   = ColorRT.GetVkImageView(),
                 .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .loadOp      = vk::AttachmentLoadOp::eClear,
+                .loadOp      = AttachmentDesc.Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
                 .storeOp     = vk::AttachmentStoreOp::eStore,
                 .clearValue  = vk::ClearValue{.color = ToVkClearColor(AttachmentDesc.ClearValue)},
             });
@@ -123,7 +123,7 @@ struct VulkanCommandVisitor {
             DepthAttachment = vk::RenderingAttachmentInfo{
                 .imageView   = DepthView,
                 .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-                .loadOp      = vk::AttachmentLoadOp::eClear,
+                .loadOp      = Desc.DepthAttachment->Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
                 .storeOp     = vk::AttachmentStoreOp::eStore,
                 .clearValue  = vk::ClearValue{.depthStencil =
                                                   vk::ClearDepthStencilValue{Desc.DepthAttachment->ClearValue.Depth,

@@ -19,6 +19,8 @@ into each FrameSlot.
 | **ViewRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
 | **Geometry pass** | Raster RHIPass that writes the four G-buffer color attachments and the shared depth attachment. |
 | **Lighting pass** | Separate raster RHIPass that samples the G-buffer, including shared depth, and writes SceneColorRT. |
+| **Post-process pass** | A raster RHIPass appended after scene lighting. Post-process builders live under `Renderer/PostProcess/` and operate on the current view's ref-backed targets. |
+| **Editor selection outline** | Editor post-process that reads the EntityId G-buffer at the selected pixel, then marks pixels adjacent to the selected ID with the orange outline color while preserving SceneColorRT for non-outline pixels. |
 | **Present source** | Ref-backed final engine-owned SceneColorRT assigned to RHICommandList::PresentSourceRef; it is presented by the backend, not rendered directly into the swapchain by Renderer. |
 
 ## Relationships
@@ -36,7 +38,7 @@ into each FrameSlot.
 - Vulkan retains the submitted command list through its graphics timeline. A
   renderer cache release or Resource transient collection after submission
   cannot destroy an ordinary ref-backed resource still visible to the GPU.
-- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, and assigns SceneColorRT as the present source.
+- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and assigns SceneColorRT as the present source.
   RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
   and transient geometry/material/view buffers; Renderer never observes a
   Vulkan device address or descriptor index.

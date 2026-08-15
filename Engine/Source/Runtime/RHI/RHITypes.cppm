@@ -745,11 +745,13 @@ struct RHIClearDepthStencilValue {
 struct RHIColorAttachmentDesc {
     RHIRef<RHIRenderTarget>   TextureRef = nullptr;
     RHIClearColorValue        ClearValue = {};
+    bool                      Clear      = true;
 };
 
 struct RHIDepthAttachmentDesc {
     RHIRef<RHIRenderTarget>   TextureRef = nullptr;
     RHIClearDepthStencilValue ClearValue = {};
+    bool                      Clear      = true;
 };
 
 struct RHIRenderingDesc {
