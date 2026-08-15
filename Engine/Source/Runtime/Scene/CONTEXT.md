@@ -29,12 +29,12 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **Runtime State** | Ephemeral state created while a Scene runs. It is not represented in a Scene Document. Component-private Runtime State may live beside that component's Authoring State; only shared or renderer-owned state must live elsewhere. |
 | **World Coordinate System** | The Scene uses a right-handed, Y-up coordinate system. Asset-format coordinate differences are converted at an asset-import boundary. |
 | **Transform** | `Core:Math` local translation, rotation, and scale data. Scene Documents express rotation as Euler angles in degrees, applied in local X → Y → Z order; Scene Node owns the world matrix derived through the Scene Hierarchy. |
-| **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views, value-semantic `RenderableInstance` records, and optional editor selection input. Renderer consumes this snapshot, not the mutable `Scene`. |
+| **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views, value-semantic `MeshInfo` records, and optional editor selection input. Material values are not part of the snapshot: the renderer resolves instance IDs through the engine-wide `MaterialManager`. Renderer consumes this snapshot, not the mutable `Scene`. |
 | **RenderPixelCoordinate** | A physical framebuffer pixel coordinate carried as optional editor selection input. The renderer post-process reads the EntityId G-buffer at this coordinate to determine the selected ID. |
 | **GBuffer** | Camera-owned ref-backed render-target set containing albedo, normal, material ID, entity ID, and one shared depth target. The depth target is both the geometry-pass depth attachment and the deferred lighting sampled depth resource. |
 | **ViewRenderTargets** | Camera-owned output bundle containing the GBuffer and the final SceneColorRT render target. Post-process passes load SceneColorRT so they can overlay results without replacing the lighting image. |
 | **RenderViewSnapshot** | One immutable camera/view record defined with the Camera component family: view-projection data plus ref-backed ViewRenderTargets. Renderers allocate their own transient constant buffers while recording the frame. |
-| **RenderableInstance** | Value-semantic SceneSnapshot record for one mesh asset instance. It carries normalized absolute mesh and optional base-color texture asset identities plus the derived world transform, but no renderer-specific GPU resource or draw representation. |
+| **MeshInfo** | Value-semantic SceneSnapshot record for one mesh entity. It carries the integer entity ID, normalized absolute mesh asset identity, scene-local material ID, and derived world transform, but no material payload or renderer-specific GPU resource. The material ID resolves through `MaterialManager` on the render thread. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
 
@@ -50,6 +50,10 @@ at the end of the GameLoop. The renderer consumes `SceneSnapshot` each frame
 via `IRenderer::Render()`. Mesh instances are represented as Renderable Instances,
 which pair an absolute asset identity with an entity-derived world transform.
 Each renderer resolves that identity into its own draw-instance representation.
+Material instances resolve through `MaterialManager`: scene load publishes
+`material_instances`, mesh import publishes per-slot asset instances, and the
+renderer applies the chain scene ID -> mesh-imported asset instance -> built-in
+default, warning and falling through when a reference is missing.
 
 `Scene` owns shared Scene model types. Each component family owns one
 `Scene:<Name>` partition and its internal static EnTT meta registration.

@@ -31,6 +31,9 @@ into each FrameSlot.
   RenderReady; it does not make Vulkan calls.
 - Renderer requests textures, meshes, buffers, pipelines, samplers, BLAS, and
   TLAS through ResourceManager. Native creation is queued to the RHI thread.
+- Renderer resolves each draw's material through MaterialManager (scene instance
+  -> mesh-imported asset instance -> built-in default) and PbrMaterialResolver
+  deduplicates GPU entries by (instance ID, HasUV0, HasTangents).
 - A renderer records only ready refs. The command list copies refs for pass
   attachments, pipelines, vertex/index buffers, shader parameter resources,
   TLAS/BLAS instances, and the present source. Do not store a raw pointer
@@ -42,6 +45,9 @@ into each FrameSlot.
   RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
   and transient geometry/material/view buffers; Renderer never observes a
   Vulkan device address or descriptor index.
+  RasterRenderer uses a typed transient SubMesh geometry table and GPU indirect
+  commands for vertex pulling; the table command retains independent source
+  buffer refs while Vulkan resolves device addresses during command recording.
 
 ## Dependencies
 

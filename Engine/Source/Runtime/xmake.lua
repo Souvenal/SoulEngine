@@ -53,3 +53,19 @@ target("SoulEngine")
 
     add_deps("Core", "Launch")
     add_files("main.cpp")
+
+    -- ShaderCompiler is a moduleonly target; its shared-library packages
+    -- (slang) are not linked through an archive, so xmake does not
+    -- automatically propagate their lib dirs into the consumer RPATH.
+    -- Add slang's libdir explicitly so dyld can resolve
+    -- @rpath/libslang-compiler.*.dylib at launch without DYLD_LIBRARY_PATH
+    -- (needed by IDE debuggers like VSCode/Zed which don't inherit env).
+    add_packages("slang")
+    on_load(function(target)
+        local slang = target:pkg("slang")
+        if slang then
+            for _, linkdir in ipairs(slang:get("linkdirs")) do
+                target:add("rpathdirs", linkdir, {force = true})
+            end
+        end
+    end)

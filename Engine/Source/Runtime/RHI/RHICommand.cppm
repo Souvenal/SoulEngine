@@ -6,6 +6,7 @@ export module RHI:Command;
 
 export import :Types;
 export import :RayTracing;
+export import :RasterGeometry;
 import :Ref;
 
 export import std;
@@ -106,12 +107,27 @@ struct RHIDrawCmd {
     std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs = {};
 };
 
+/// @brief Draw non-indexed primitives from GPU-written indirect commands.
+struct RHIDrawIndirectCmd {
+    RHIRef<RHIGraphicsPipeline>      PipelineRef    = nullptr;
+    RHITransientShaderStorageBuffer  IndirectBuffer = {};
+    Uint64                           Offset         = 0;
+    Uint32                           DrawCount      = 1;
+    Uint32                           Stride         = sizeof(Uint32) * 4;
+};
+
 /// Resolve logical ray-tracing geometry sources into transient shader-storage buffers.
 struct RHIWriteRayTracingGeometryDataCmd {
     RHITransientShaderStorageBuffer        InstanceBuffer = {};
     RHITransientShaderStorageBuffer        GeometryBuffer = {};
     std::vector<RHIRayTracingInstanceData> Instances      = {};
     std::vector<RHIRayTracingGeometryDesc> Geometries     = {};
+};
+
+/// @brief Resolve raster SubMesh refs into a shader-visible BDA geometry table.
+struct RHIWriteRasterGeometryDataCmd {
+    RHITransientShaderStorageBuffer      GeometryBuffer = {};
+    std::vector<RHIRasterGeometrySource> Sources        = {};
 };
 
 /// @brief Upload a CPU snapshot into a RenderDevice-allocated transient constant buffer.
@@ -152,7 +168,9 @@ using RHICommand = std::variant<RHISetViewportCmd,
                                 RHIBindShaderParametersCmd,
                                 RHIDrawIndexedCmd,
                                 RHIDrawCmd,
+                                RHIDrawIndirectCmd,
                                 RHIWriteRayTracingGeometryDataCmd,
+                                RHIWriteRasterGeometryDataCmd,
                                 RHIWriteTransientConstantBufferCmd,
                                 RHIWriteTransientShaderStorageBufferCmd,
                                 RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
@@ -251,6 +269,15 @@ struct RHIPass {
             .Geometries     = std::move(Geometries),
         });
     }
+    auto WriteRasterGeometryData(RHITransientShaderStorageBuffer GeometryBuffer,
+                                 std::vector<RHIRasterGeometrySource> Sources) -> void {
+        if (!GeometryBuffer.IsValid() || Sources.empty())
+            return;
+        Commands.emplace_back(RHIWriteRasterGeometryDataCmd{
+            .GeometryBuffer = GeometryBuffer,
+            .Sources        = std::move(Sources),
+        });
+    }
     [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
         -> std::expected<void, ErrorMessage> {
         if (!Buffer.IsValid())
@@ -303,6 +330,21 @@ struct RHIPass {
         if (!PipelineRef)
             return;
         Commands.emplace_back(RHIDrawCmd{.PipelineRef = std::move(PipelineRef)});
+    }
+    auto DrawIndirect(RHIRef<RHIGraphicsPipeline> PipelineRef,
+                      RHITransientShaderStorageBuffer IndirectBuffer,
+                      Uint64 Offset = 0,
+                      Uint32 DrawCount = 1,
+                      Uint32 Stride = sizeof(Uint32) * 4) -> void {
+        if (!PipelineRef || !IndirectBuffer.IsValid() || DrawCount == 0 || Stride < sizeof(Uint32) * 4)
+            return;
+        Commands.emplace_back(RHIDrawIndirectCmd{
+            .PipelineRef = std::move(PipelineRef),
+            .IndirectBuffer = IndirectBuffer,
+            .Offset = Offset,
+            .DrawCount = DrawCount,
+            .Stride = Stride,
+        });
     }
     auto DrawIndexed(RHIRef<RHIGraphicsPipeline>                                   PipelineRef,
                      std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs,
@@ -392,6 +434,15 @@ struct RHINonRenderingPass {
             .GeometryBuffer = GeometryBuffer,
             .Instances      = std::move(Instances),
             .Geometries     = std::move(Geometries),
+        });
+    }
+    auto WriteRasterGeometryData(RHITransientShaderStorageBuffer GeometryBuffer,
+                                 std::vector<RHIRasterGeometrySource> Sources) -> void {
+        if (!GeometryBuffer.IsValid() || Sources.empty())
+            return;
+        Commands.emplace_back(RHIWriteRasterGeometryDataCmd{
+            .GeometryBuffer = GeometryBuffer,
+            .Sources        = std::move(Sources),
         });
     }
     [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)

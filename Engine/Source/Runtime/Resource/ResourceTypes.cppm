@@ -391,16 +391,10 @@ struct SubMesh {
     RHIRef<RHIVertexBuffer> UVVB       = nullptr;
     RHIRef<RHIIndexBuffer>  IB         = nullptr;
 
-    Uint32 VertexCount  = 0;
-    Uint32 MaterialSlot = 0;
-    bool   HasUV0       = false;
-    bool   HasTangents  = false;
-};
-
-/// @brief PBR material imported with a mesh asset and addressed by Assimp material slot.
-struct ImportedPbrMaterial {
-    String                       Name     = {};
-    PbrMetallicRoughnessMaterial Material = {};
+    Uint32 VertexCount = 0;
+    Uint32 MaterialId  = 0;  ///< MaterialManager ID assigned during mesh import. 0 = Default.
+    bool   HasUV0      = false;
+    bool   HasTangents = false;
 };
 
 struct MeshGroup {
@@ -413,9 +407,8 @@ class ResourceMesh {
   private:
     friend auto ParseAssimpMeshes(StringView, ResourceMesh&) -> std::expected<void, ErrorMessage>;
 
-    std::vector<MeshGroup>           m_MeshGroups        = {};
-    std::vector<ImportedPbrMaterial> m_ImportedMaterials = {};
-    String                           m_Name              = {};
+    std::vector<MeshGroup> m_MeshGroups = {};
+    String                 m_Name       = {};
 
   public:
     ResourceMesh() = default;
@@ -426,8 +419,6 @@ class ResourceMesh {
 
     [[nodiscard]] auto GetMeshGroups() -> std::vector<MeshGroup>&;
     [[nodiscard]] auto GetMeshGroups() const -> const std::vector<MeshGroup>&;
-    [[nodiscard]] auto GetImportedMaterials() const -> const std::vector<ImportedPbrMaterial>&;
-    [[nodiscard]] auto GetImportedMaterial(Uint32 MaterialSlot) const -> const PbrMetallicRoughnessMaterial*;
 };
 
 /// Policy for lowering a mesh asset into one reusable BLAS payload.

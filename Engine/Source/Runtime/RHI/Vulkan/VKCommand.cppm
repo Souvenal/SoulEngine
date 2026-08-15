@@ -512,6 +512,46 @@ struct VulkanCommandVisitor {
         return {};
     }
 
+    auto operator()(const RHIWriteRasterGeometryDataCmd& Cmd) -> void {
+        if (Cmd.Sources.empty()) {
+            Error = ErrorMessage("Raster geometry data upload has no sources");
+            return;
+        }
+        std::vector<RHIRasterGeometryData> GeometryData;
+        GeometryData.reserve(Cmd.Sources.size());
+        for (const auto& Source : Cmd.Sources) {
+            auto* PositionPtr = Source.PositionBufferRef.TryGet();
+            auto* NormalPtr   = Source.NormalBufferRef.TryGet();
+            auto* TangentPtr  = Source.TangentBufferRef.TryGet();
+            auto* TexCoordPtr = Source.TexCoordBufferRef.TryGet();
+            auto* IndexPtr    = Source.IndexBufferRef.TryGet();
+            if (!PositionPtr || !NormalPtr || !TangentPtr || !TexCoordPtr || !IndexPtr || Source.IndexCount == 0) {
+                Error = ErrorMessage("Raster geometry data has an unset source buffer or empty index range");
+                return;
+            }
+            const auto PositionAddress = static_cast<const VulkanVertexBuffer&>(*PositionPtr).GetDeviceAddress();
+            const auto NormalAddress   = static_cast<const VulkanVertexBuffer&>(*NormalPtr).GetDeviceAddress();
+            const auto TangentAddress  = static_cast<const VulkanVertexBuffer&>(*TangentPtr).GetDeviceAddress();
+            const auto TexCoordAddress = static_cast<const VulkanVertexBuffer&>(*TexCoordPtr).GetDeviceAddress();
+            const auto IndexAddress    = static_cast<const VulkanIndexBuffer&>(*IndexPtr).GetDeviceAddress();
+            if (PositionAddress == 0 || NormalAddress == 0 || TangentAddress == 0 || TexCoordAddress == 0 || IndexAddress == 0) {
+                Error = ErrorMessage("Raster geometry data has a source buffer without a device address");
+                return;
+            }
+            GeometryData.emplace_back(RHIRasterGeometryData{
+                .PositionAddress = PositionAddress,
+                .NormalAddress   = NormalAddress,
+                .TangentAddress  = TangentAddress,
+                .TexCoordAddress = TexCoordAddress,
+                .IndexAddress    = IndexAddress,
+                .IndexCount      = Source.IndexCount,
+                .MaterialID      = Source.MaterialID,
+            });
+        }
+        if (auto R = WriteTransientShaderStorageBuffer(Cmd.GeometryBuffer, std::as_bytes(std::span{GeometryData})); !R)
+            Error = R.error().Append("Raster geometry table upload failed");
+    }
+
     auto operator()(const RHIWriteRayTracingGeometryDataCmd& Cmd) -> void {
         if (Cmd.Instances.empty() || Cmd.Geometries.empty()) {
             Error = ErrorMessage("Ray-tracing geometry data upload has no instances or geometries");
@@ -835,6 +875,26 @@ struct VulkanCommandVisitor {
         }
         const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*Cmd.VertexBufferRefs[0].TryGet());
         Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
+    }
+    auto operator()(const RHIDrawIndirectCmd& Cmd) -> void {
+        if (!Cmd.PipelineRef.TryGet() || !TransientShaderStorageArena || !TransientShaderStorageBuffers)
+            return;
+        const auto It = std::ranges::find_if(
+            *TransientShaderStorageBuffers,
+            [&Cmd](const auto& Entry) -> bool { return Entry.first == Cmd.IndirectBuffer; });
+        if (It == TransientShaderStorageBuffers->end()) {
+            Error = ErrorMessage("Indirect draw references an unresolved transient storage buffer");
+            return;
+        }
+        if (Cmd.Offset > It->second.Size || Cmd.Stride < sizeof(Uint32) * 4 ||
+            Cmd.DrawCount > (It->second.Size - Cmd.Offset) / Cmd.Stride) {
+            Error = ErrorMessage("Indirect draw range exceeds its transient buffer");
+            return;
+        }
+        Buf.drawIndirect(TransientShaderStorageArena->GetVkBuffer(),
+                         It->second.Offset + Cmd.Offset,
+                         Cmd.DrawCount,
+                         Cmd.Stride);
     }
 };
 

@@ -21,7 +21,7 @@ struct EditorSelectionConstants {
 [[nodiscard]] auto RequestEditorSelectionPipeline()
     -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> {
     const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "EditorSelectionOutline.slang";
-    return SubmitGraphicsPipelinePreparation(GraphicsPipelineRequest{
+    return RequestGraphicsPipeline(GraphicsPipelineRequest{
         .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
         .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
         .DepthStencil = {.DepthTestEnable = false, .DepthWriteEnable = false},

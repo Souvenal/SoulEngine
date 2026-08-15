@@ -44,7 +44,7 @@ namespace SoulEngine {
     return Key;
 }
 
-export [[nodiscard]] auto SubmitGraphicsPipelinePreparation(const GraphicsPipelineRequest& Req)
+export [[nodiscard]] auto RequestGraphicsPipeline(const GraphicsPipelineRequest& Req)
     -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIGraphicsPipeline>::Create();
     auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef] {
@@ -92,7 +92,7 @@ export [[nodiscard]] auto SubmitGraphicsPipelinePreparation(const GraphicsPipeli
     return PipelineRef;
 }
 
-export [[nodiscard]] auto SubmitRayTracingPipelinePreparation(const RayTracingPipelineRequest& Req)
+export [[nodiscard]] auto RequestRayTracingPipeline(const RayTracingPipelineRequest& Req)
     -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIRayTracingPipeline>::Create();
     auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef] {

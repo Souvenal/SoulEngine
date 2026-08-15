@@ -6,6 +6,7 @@
 #include <hlsl++.h>
 
 import Scene;
+import Resource;
 
 using namespace SoulEngine;
 
@@ -104,31 +105,38 @@ entities:
     EXPECT_TRUE(Loaded->Warnings.empty());
 
     const auto Snapshot = Scene.BuildSnapshot();
-    ASSERT_EQ(Snapshot.Renderables.size(), 1u);
-    EXPECT_EQ(Snapshot.Renderables.front().MeshAsset,
+    ASSERT_EQ(Snapshot.Meshes.size(), 1u);
+    EXPECT_EQ(Snapshot.Meshes.front().MeshAsset,
               (FilePath.parent_path() / "Assets" / "teapot.obj").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().MaterialId, "gold");
-    EXPECT_EQ(Snapshot.Renderables.front().Material.BaseColorTexture,
+    EXPECT_EQ(Snapshot.Meshes.front().MaterialId, "gold");
+
+    // Scene material instances are published to the engine-wide MaterialManager on
+    // load, with texture paths resolved against the scene Assets root.
+    const auto GoldId = MaterialManager::Get().FindMaterialId("gold");
+    ASSERT_NE(GoldId, 0u);
+    const auto* Gold = MaterialManager::Get().GetMaterial(GoldId);
+    ASSERT_NE(Gold, nullptr);
+    EXPECT_EQ(Gold->Value.BaseColorTexture,
               (FilePath.parent_path() / "Assets" / "wood.png").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().Material.NormalTexture,
+    EXPECT_EQ(Gold->Value.NormalTexture,
               (FilePath.parent_path() / "Assets" / "textures" / "wood_normal.png").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().Material.MetallicRoughnessTexture,
+    EXPECT_EQ(Gold->Value.MetallicRoughnessTexture,
               (FilePath.parent_path() / "Assets" / "textures" / "wood_mr.png").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().Material.MetallicTexture,
+    EXPECT_EQ(Gold->Value.MetallicTexture,
               (FilePath.parent_path() / "Assets" / "textures" / "wood_metallic.png").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().Material.RoughnessTexture,
+    EXPECT_EQ(Gold->Value.RoughnessTexture,
               (FilePath.parent_path() / "Assets" / "textures" / "wood_roughness.png").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().Material.OcclusionTexture,
+    EXPECT_EQ(Gold->Value.OcclusionTexture,
               (FilePath.parent_path() / "Assets" / "textures" / "wood_occlusion.png").lexically_normal().string());
-    EXPECT_EQ(Snapshot.Renderables.front().Material.EmissiveTexture,
+    EXPECT_EQ(Gold->Value.EmissiveTexture,
               (FilePath.parent_path() / "Assets" / "textures" / "wood_emissive.png").lexically_normal().string());
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.Emissive.x), 0.1f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.Emissive.y), 0.2f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.Emissive.z), 0.3f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.x), 1.0f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Renderables.front().Material.BaseColor.y), 0.71f);
-    EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Metallic, 1.0f);
-    EXPECT_FLOAT_EQ(Snapshot.Renderables.front().Material.Roughness, 0.18f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.Emissive.x), 0.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.Emissive.y), 0.2f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.Emissive.z), 0.3f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.BaseColor.x), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.BaseColor.y), 0.71f);
+    EXPECT_FLOAT_EQ(Gold->Value.Metallic, 1.0f);
+    EXPECT_FLOAT_EQ(Gold->Value.Roughness, 0.18f);
     const auto Cameras        = Scene.GetRegistry().view<CameraComponent>();
     const auto CameraIterator = Cameras.begin();
     ASSERT_NE(CameraIterator, Cameras.end());
@@ -155,7 +163,7 @@ entities:
     ASSERT_TRUE(LegacyLoaded.has_value()) << LegacyLoaded.error().ToString();
     ASSERT_EQ(LegacyLoaded->Warnings.size(), 1u);
     EXPECT_EQ(LegacyLoaded->Warnings.front().Path, "entities[1].components.mesh.texture");
-    EXPECT_TRUE(LegacyScene.BuildSnapshot().Renderables.empty());
+    EXPECT_TRUE(LegacyScene.BuildSnapshot().Meshes.empty());
 
     std::filesystem::remove(LegacyPath);
 }
@@ -181,7 +189,11 @@ entities:
         ++MeshCount;
     }
     EXPECT_EQ(MeshCount, 1u);
-    EXPECT_TRUE(Scene.BuildSnapshot().Renderables.empty());
+    // A missing scene material instance no longer drops the mesh from the snapshot:
+    // the renderer falls back to the mesh-imported material, then the built-in default.
+    const auto Snapshot = Scene.BuildSnapshot();
+    ASSERT_EQ(Snapshot.Meshes.size(), 1u);
+    EXPECT_EQ(Snapshot.Meshes.front().MaterialId, "missing");
 
     std::filesystem::remove(FilePath);
 }

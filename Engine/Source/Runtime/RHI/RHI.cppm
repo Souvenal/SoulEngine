@@ -4,6 +4,7 @@ export import Core;
 export import :Types;
 export import :Ref;
 export import :RayTracing;
+export import :RasterGeometry;
 export import :RenderDevice;
 export import :Command;      // RHICommandList, RHIPass, RHICommand variant
 

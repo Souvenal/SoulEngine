@@ -45,7 +45,8 @@ namespace SoulEngine {
     return vk::PresentModeKHR::eFifo;
 }
 
-[[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps) -> vk::Extent2D {
+[[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps)
+    -> vk::Extent2D {
     // currentExtent is the window size in pixels, clamped to surface limits.
     // When it equals UINT32_MAX the surface doesn't dictate a size (e.g. some
     // compositors) — we must query the framebuffer dimensions.
@@ -65,8 +66,9 @@ namespace SoulEngine {
     const auto Extent = Provider.GetFramebufferExtent();
 
     return vk::Extent2D{
-        .width  = std::clamp(static_cast<uint32_t>(Extent.Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
-        .height = std::clamp(static_cast<uint32_t>(Extent.Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
+        .width = std::clamp(static_cast<uint32_t>(Extent.Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
+        .height =
+            std::clamp(static_cast<uint32_t>(Extent.Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
     };
 }
 
@@ -131,6 +133,7 @@ class VulkanSwapchain {
         vk::SurfaceFormatKHR ChosenFormat = ResolveSurfaceFormat(Formats);
         Result.m_Format                   = ChosenFormat;
         vk::PresentModeKHR PresentMode    = ResolvePresentMode(PresentModes);
+        LogInfo("Swapchain PresentMode: {}", vk::to_string(PresentMode));
 
         // ── Resolve extent ────────────────────────────────────────────
         Result.m_Extent = ResolveExtent(*Result.m_SurfaceProvider, Caps);
@@ -148,7 +151,8 @@ class VulkanSwapchain {
 
         const auto RequiredUsage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eColorAttachment;
         if ((Caps.supportedUsageFlags & RequiredUsage) != RequiredUsage)
-            return std::unexpected(ErrorMessage("VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
+            return std::unexpected(ErrorMessage(
+                "VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
 
         // ── Create swapchain ────────────────────────────────────────────
         vk::SwapchainCreateInfoKHR SwapchainCI{
@@ -196,28 +200,29 @@ class VulkanSwapchain {
         // ── Retrieve swapchain images ───────────────────────────────────
         auto ImagesResult = Result.m_Swapchain.getImages();
         if (ImagesResult.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage(
-                Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
+            return std::unexpected(
+                ErrorMessage(Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
         Result.m_Images = std::move(ImagesResult.value);
 
         Result.m_ImageViews.reserve(Result.m_Images.size());
         for (const auto Image : Result.m_Images) {
             vk::ImageViewCreateInfo ImageViewCI{
-                .image            = Image,
-                .viewType         = vk::ImageViewType::e2D,
-                .format           = Result.m_Format.format,
-                .subresourceRange = {
-                    .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                    .baseMipLevel   = 0,
-                    .levelCount     = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount     = 1,
-                },
+                .image    = Image,
+                .viewType = vk::ImageViewType::e2D,
+                .format   = Result.m_Format.format,
+                .subresourceRange =
+                    {
+                        .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                        .baseMipLevel   = 0,
+                        .levelCount     = 1,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
             };
             auto ViewResult = Result.m_Device->createImageView(ImageViewCI);
             if (ViewResult.result != vk::Result::eSuccess)
-                return std::unexpected(
-                    ErrorMessage(Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
+                return std::unexpected(ErrorMessage(
+                    Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
             Result.m_ImageViews.emplace_back(std::move(ViewResult.value));
         }
 
@@ -322,9 +327,9 @@ class VulkanSwapchain {
   private:
     // ── Non-owning pointers (set in Create) ─────────────────────────────
 
-    vk::raii::Device*         m_Device     = nullptr;
-    vk::raii::PhysicalDevice* m_PhysDevice = nullptr;
-    vk::raii::SurfaceKHR*     m_Surface    = nullptr;
+    vk::raii::Device*         m_Device          = nullptr;
+    vk::raii::PhysicalDevice* m_PhysDevice      = nullptr;
+    vk::raii::SurfaceKHR*     m_Surface         = nullptr;
     IVulkanSurfaceProvider*   m_SurfaceProvider = nullptr;
 
     // ── Owned resources ──────────────────────────────────────────────────

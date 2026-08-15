@@ -8,6 +8,7 @@ import std;
 import Core;
 import Application;
 import Renderer;
+import :UIManager;
 
 export namespace SoulEngine {
 
@@ -46,6 +47,14 @@ auto DrawMainMenu() -> void {
         }
         ImGui::EndMenu();
     }
+
+    if (ImGui::BeginMenu("Debug")) {
+        if (ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials"))) {
+            UIManager::Get().ToggleUI("Debug.ShowMaterials");
+        }
+        ImGui::EndMenu();
+    }
+
     ImGui::EndMainMenuBar();
 }
 

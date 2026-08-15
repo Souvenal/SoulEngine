@@ -6,7 +6,6 @@ module;
 export module Scene:Mesh;
 
 export import Core;
-import Material;
 
 export namespace SoulEngine {
 
@@ -17,21 +16,21 @@ export namespace SoulEngine {
 /// owned by each renderer rather than this component.
 struct MeshComponent {
     String Asset    = {};
-    /// Scene-local PBR material instance ID. Empty uses the built-in material defaults.
+    /// Scene-local PBR material instance ID (registered in MaterialManager on scene load).
+    /// Empty falls back to the mesh-imported material instance, then the built-in default.
     String Material = {};
 };
 
-/// @brief Immutable CPU render record for one mesh asset instance.
+/// @brief Immutable scene snapshot information for one mesh entity.
 ///
-/// It intentionally carries only renderer-neutral asset identity and instance
-/// state. Each renderer resolves it to its own GPU representation.
-struct RenderableInstance {
-    entt::entity                  Entity         = entt::null;
-    String                       MeshAsset      = {};
-    /// Scene-local material instance ID. Empty identifies the shared built-in material.
-    String                       MaterialId     = {};
-    PbrMetallicRoughnessMaterial Material       = {};
-    hlslpp::float4x4             WorldTransform = hlslpp::float4x4::identity();
+/// Each renderer resolves this renderer-neutral data into its own draw representation.
+struct MeshInfo {
+    Uint32           EntityId       = 0;
+    String           MeshAsset      = {};
+    /// Scene-local material instance ID. Empty falls back to the mesh-imported
+    /// material instance, then the built-in default.
+    String           MaterialId     = {};
+    hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
 };
 
 } // namespace SoulEngine

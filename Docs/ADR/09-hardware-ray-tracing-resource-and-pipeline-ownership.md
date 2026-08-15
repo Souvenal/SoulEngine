@@ -44,7 +44,7 @@ geometry policy. For the first implementation, one Mesh produces one
 multi-geometry BLAS composed from all of its eligible submeshes.
 
 The BLAS is therefore shared by instances, renderer instances, and views. It is
-not a Scene component and is not duplicated for every `RenderableInstance`.
+not a Scene component and is not duplicated for every `MeshInfo`.
 
 `Resource::TopLevelAccelerationStructure` is also an independent Resource type.
 It owns an `RHI::TopLevelAccelerationStructure` payload and is scoped to one

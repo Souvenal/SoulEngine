@@ -533,7 +533,10 @@ class VulkanTransientShaderStorageArena final {
                 ErrorMessage("VulkanTransientShaderStorageArena::Create: total buffer size overflow"));
 
         auto Buffer = VulkanHostBuffer::Create(
-            CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eStorageBuffer, Dev, Alloc);
+            CapacityPerFrame * FramesInFlight,
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer,
+            Dev,
+            Alloc);
         if (!Buffer) {
             return std::unexpected(
                 Buffer.error().Append("VulkanTransientShaderStorageArena::Create: VulkanHostBuffer creation failed"));

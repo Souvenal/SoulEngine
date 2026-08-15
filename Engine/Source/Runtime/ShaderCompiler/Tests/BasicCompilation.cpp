@@ -73,25 +73,15 @@ TEST_F(ShaderCompilerTest, CompileRasterGeometryProgramWithExpectedBindings) {
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterFrameView.frame", ShaderResourceType::ConstantBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterFrameView.view", ShaderResourceType::ConstantBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterDraw.instances", ShaderResourceType::StorageBuffer));
+    EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterDraw.geometries", ShaderResourceType::StorageBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_rasterDraw.materials", ShaderResourceType::StorageBuffer));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_textures.uTextures", ShaderResourceType::SampledTexture));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_samplers.uSamplerLinear", ShaderResourceType::Sampler));
-    EXPECT_EQ(Result->Reflection.Bindings.size(), 8);
+    EXPECT_EQ(Result->Reflection.Bindings.size(), 9);
     ASSERT_FALSE(Result->Reflection.PushConstants.empty());
     EXPECT_EQ(Result->Reflection.PushConstants[0].Offset, 0U);
     EXPECT_GE(Result->Reflection.PushConstants[0].Size, sizeof(Uint32));
-    ASSERT_EQ(Result->Reflection.VertexInputs.size(), 4U);
-    EXPECT_EQ(Result->Reflection.VertexInputs[0].SemanticName, "POSITION");
-    EXPECT_EQ(Result->Reflection.VertexInputs[0].Location, 0U);
-    EXPECT_EQ(Result->Reflection.VertexInputs[0].ValueType.ScalarType, ShaderScalarType::Float32);
-    EXPECT_EQ(Result->Reflection.VertexInputs[0].ValueType.ColumnCount, 3U);
-    EXPECT_EQ(Result->Reflection.VertexInputs[1].SemanticName, "NORMAL");
-    EXPECT_EQ(Result->Reflection.VertexInputs[1].Location, 1U);
-    EXPECT_EQ(Result->Reflection.VertexInputs[2].SemanticName, "TANGENT");
-    EXPECT_EQ(Result->Reflection.VertexInputs[2].Location, 2U);
-    EXPECT_EQ(Result->Reflection.VertexInputs[3].SemanticName, "TEXCOORD");
-    EXPECT_EQ(Result->Reflection.VertexInputs[3].SemanticIndex, 0U);
-    EXPECT_EQ(Result->Reflection.VertexInputs[3].Location, 3U);
+    EXPECT_TRUE(Result->Reflection.VertexInputs.empty());
 }
 
 TEST_F(ShaderCompilerTest, CompileEditorSelectionOutlineProgram) {
