@@ -9,10 +9,10 @@ import ShaderCompiler;
 import TaskGraph;
 export import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 [[nodiscard]] auto MakePipelineKey(const GraphicsPipelineRequest& Req) -> String {
-    String Key = Format("vp={}:{}:{}|fp={}:{}:{}|topo={}|cf={}|df={}|rs={}:{}:{}|ds={}:{}",
+    String Key = Format("vp={}:{}:{}|fp={}:{}:{}|topo={}|df={}|rs={}:{}:{}|ds={}:{}",
                         Req.VertEntry.SourcePath.lexically_normal().string(),
                         Req.VertEntry.EntryPoint,
                         static_cast<Uint8>(Req.VertEntry.Backend),
@@ -20,7 +20,6 @@ export namespace SoulEngine {
                         Req.FragEntry.EntryPoint,
                         static_cast<Uint8>(Req.FragEntry.Backend),
                         static_cast<Uint8>(Req.Topology),
-                        static_cast<Uint8>(Req.ColorFormat),
                         static_cast<Uint8>(Req.DepthFormat),
                         Req.Rasterizer.FillMode,
                         Req.Rasterizer.CullMode,
@@ -45,30 +44,30 @@ export namespace SoulEngine {
     return Key;
 }
 
-struct PreparedGraphicsPipeline {
-    RHIGraphicsPipelineDesc Desc = {};
-};
+export [[nodiscard]] auto SubmitGraphicsPipelinePreparation(const GraphicsPipelineRequest& Req)
+    -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> {
+    auto PipelineRef   = RHIRef<RHIGraphicsPipeline>::Create();
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef] {
+        const auto&       Cfg = ConfigManager::Get();
+        std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
 
-[[nodiscard]] auto PrepareGraphicsPipeline(const GraphicsPipelineRequest& Req)
-    -> std::expected<PreparedGraphicsPipeline, ErrorMessage> {
-    const auto&       Cfg = ConfigManager::Get();
-    std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+        auto Program = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
+            .Vertex      = Req.VertEntry,
+            .Fragment    = Req.FragEntry,
+            .IncludeDirs = IncludeDirs,
+        });
+        if (!Program) {
+            auto Error = Program.error().Append(Format("Graphics pipeline shaders '{}'/'{}' + '{}'/'{}'",
+                                                       Req.VertEntry.SourcePath.string(),
+                                                       Req.VertEntry.EntryPoint,
+                                                       Req.FragEntry.SourcePath.string(),
+                                                       Req.FragEntry.EntryPoint));
+            LogError("Failed to prepare graphics pipeline: {}", Error.ToString());
+            PipelineRef.MarkFailed(std::move(Error));
+            return;
+        }
 
-    auto Program = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex      = Req.VertEntry,
-        .Fragment    = Req.FragEntry,
-        .IncludeDirs = IncludeDirs,
-    });
-    if (!Program) {
-        return std::unexpected(Program.error().Append(Format("Graphics pipeline shaders '{}'/'{}' + '{}'/'{}'",
-                                                             Req.VertEntry.SourcePath.string(),
-                                                             Req.VertEntry.EntryPoint,
-                                                             Req.FragEntry.SourcePath.string(),
-                                                             Req.FragEntry.EntryPoint)));
-    }
-
-    return PreparedGraphicsPipeline{
-        .Desc =
+        auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(
             RHIGraphicsPipelineDesc{
                 .Program           = std::move(*Program),
                 .VertexInputLayout = Req.VertexInputLayout,
@@ -76,79 +75,54 @@ struct PreparedGraphicsPipeline {
                 .Rasterizer        = Req.Rasterizer,
                 .Blend             = Req.Blend,
                 .DepthStencil      = Req.DepthStencil,
-                .ColorFormat       = Req.ColorFormat,
                 .ColorFormats      = Req.ColorFormats,
                 .DepthFormat       = Req.DepthFormat,
             },
-    };
-}
-
-[[nodiscard]] auto SubmitGraphicsPipelinePreparation(
-    const GraphicsPipelineRequest& Req,
-    std::function<void(RHIRef<RHIGraphicsPipeline>)> OnCreated)
-    -> std::expected<void, ErrorMessage> {
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
-        auto Prepared = PrepareGraphicsPipeline(Req);
-        if (!Prepared) {
-            LogError("Failed to prepare graphics pipeline: {}", Prepared.error().ToString());
-            return;
-        }
-
-        auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(Prepared->Desc);
+            PipelineRef);
         if (!Created) {
             LogError("Failed to queue graphics pipeline creation: {}", Created.error().ToString());
+            PipelineRef.MarkFailed(Created.error());
             return;
         }
-
-        if (auto Delivery = TaskGraph::Get().Enqueue(
-                ThreadQueue::Render,
-                [OnCreated = std::move(OnCreated), Pipeline = std::move(*Created)] mutable {
-                    OnCreated(std::move(Pipeline));
-                });
-            !Delivery) {
-            LogError("Failed to deliver graphics pipeline creation result: {}", Delivery.error().ToString());
-        }
     });
-    if (!EnqueueResult)
+    if (!EnqueueResult) {
+        PipelineRef.MarkFailed(EnqueueResult.error());
         return std::unexpected(EnqueueResult.error());
-    return {};
+    }
+    return PipelineRef;
 }
 
-[[nodiscard]] auto SubmitRayTracingPipelinePreparation(
-    const RayTracingPipelineRequest& Req,
-    std::function<void(RHIRef<RHIRayTracingPipeline>)> OnCreated)
-    -> std::expected<void, ErrorMessage> {
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, OnCreated = std::move(OnCreated)] mutable {
-        const auto& Cfg = ConfigManager::Get();
+export [[nodiscard]] auto SubmitRayTracingPipelinePreparation(const RayTracingPipelineRequest& Req)
+    -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> {
+    auto PipelineRef   = RHIRef<RHIRayTracingPipeline>::Create();
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef] {
+        const auto&       Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
-        auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
+        auto              Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
             .RayGeneration = Req.RayGeneration,
-            .MissEntries = Req.MissEntries,
-            .HitGroups = Req.HitGroups,
-            .IncludeDirs = IncludeDirs,
+            .MissEntries   = Req.MissEntries,
+            .HitGroups     = Req.HitGroups,
+            .IncludeDirs   = IncludeDirs,
         });
         if (!Program) {
             LogError("Failed to prepare ray-tracing pipeline: {}", Program.error().ToString());
+            PipelineRef.MarkFailed(Program.error());
             return;
         }
         auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(
-            RHIRayTracingPipelineDesc{.Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth});
+            RHIRayTracingPipelineDesc{.Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth},
+            PipelineRef);
         if (!Created) {
             LogError("Failed to queue ray-tracing pipeline creation: {}", Created.error().ToString());
+            PipelineRef.MarkFailed(Created.error());
             return;
         }
-        if (auto Delivery = TaskGraph::Get().Enqueue(
-                ThreadQueue::Render,
-                [OnCreated = std::move(OnCreated), Pipeline = std::move(*Created)] mutable {
-                    OnCreated(std::move(Pipeline));
-                });
-            !Delivery) {
-            LogError("Failed to deliver ray-tracing pipeline creation result: {}", Delivery.error().ToString());
-        }
     });
-    if (!EnqueueResult)
+    if (!EnqueueResult) {
+        PipelineRef.MarkFailed(EnqueueResult.error());
         return std::unexpected(EnqueueResult.error());
-    return {};
+    }
+    return PipelineRef;
 }
 
 } // namespace SoulEngine

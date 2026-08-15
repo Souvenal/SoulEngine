@@ -36,8 +36,10 @@ class ShaderCompilerTest : public ::testing::Test {
 
 TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
+        .Vertex =
+            ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment =
+            ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
@@ -48,20 +50,21 @@ TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     EXPECT_FALSE(Result->Reflection.Bindings.empty());
 }
 
-[[nodiscard]] static auto HasBinding(const ShaderReflection& InReflection, StringView BindingPath, ShaderResourceType Type) -> bool {
+[[nodiscard]] static auto
+HasBinding(const ShaderReflection& InReflection, StringView BindingPath, ShaderResourceType Type) -> bool {
     return std::ranges::any_of(InReflection.Bindings, [&](const ShaderBinding& InBinding) {
         return InBinding.ParameterPath == BindingPath && InBinding.Type == Type;
     });
 }
 
-TEST_F(ShaderCompilerTest, CompileRasterPbrProgramWithExpectedBindings) {
+TEST_F(ShaderCompilerTest, CompileRasterGeometryProgramWithExpectedBindings) {
     auto ProjectDir = m_TestShaderPath;
     for (Uint32 Index = 0; Index < 7; ++Index)
         ProjectDir = ProjectDir.parent_path();
 
     const auto ShaderDir  = ProjectDir / "Engine" / "Shaders";
-    const auto ShaderPath = ShaderDir / "RasterPbr.slang";
-    auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
+    const auto ShaderPath = ShaderDir / "RasterGeometry.slang";
+    auto       Result     = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
         .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = ShaderBackend::Slang},
         .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = ShaderBackend::Slang},
     });

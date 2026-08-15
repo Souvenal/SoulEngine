@@ -387,7 +387,17 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> override {
-        return EnqueueResourceCreation<RHIGraphicsPipeline>(
+        auto Resource = RHIRef<RHIGraphicsPipeline>::Create();
+        if (auto Result = CreateGraphicsPipeline(Desc, Resource); !Result)
+            return std::unexpected(Result.error());
+        return Resource;
+    }
+
+    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc,
+                                              RHIRef<RHIGraphicsPipeline> Target)
+        -> std::expected<void, ErrorMessage> override {
+        return EnqueueResourceCreation(
+            std::move(Target),
             [this, Desc](RHIRef<RHIGraphicsPipeline>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Result = VulkanGraphicsPipeline::Create(*m_ResourceContext, Desc);
                 if (!Result) {
@@ -401,7 +411,17 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> override {
-        return EnqueueResourceCreation<RHIRayTracingPipeline>(
+        auto Resource = RHIRef<RHIRayTracingPipeline>::Create();
+        if (auto Result = CreateRayTracingPipeline(Desc, Resource); !Result)
+            return std::unexpected(Result.error());
+        return Resource;
+    }
+
+    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc,
+                                                RHIRef<RHIRayTracingPipeline> Target)
+        -> std::expected<void, ErrorMessage> override {
+        return EnqueueResourceCreation(
+            std::move(Target),
             [this, Desc](RHIRef<RHIRayTracingPipeline>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Result = VulkanRayTracingPipeline::Create(*m_ResourceContext, Desc);
                 if (!Result) {
@@ -527,10 +547,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     template <typename T, typename CreateFn>
-    [[nodiscard]] auto EnqueueResourceCreation(CreateFn&& Create)
-        -> std::expected<RHIRef<T>, ErrorMessage> {
-        auto Resource = RHIRef<T>::Create();
-        auto TaskRef  = Resource;
+    [[nodiscard]] auto EnqueueResourceCreation(RHIRef<T> Resource, CreateFn&& Create)
+        -> std::expected<void, ErrorMessage> {
+        auto TaskRef = Resource;
         auto EnqueueResult = TaskGraph::Get().Enqueue(
             ThreadQueue::RHI,
             [TaskRef = std::move(TaskRef), Create = std::forward<CreateFn>(Create)] mutable {
@@ -541,6 +560,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             Resource.MarkFailed(EnqueueResult.error());
             return std::unexpected(EnqueueResult.error());
         }
+        return {};
+    }
+
+    template <typename T, typename CreateFn>
+    [[nodiscard]] auto EnqueueResourceCreation(CreateFn&& Create)
+        -> std::expected<RHIRef<T>, ErrorMessage> {
+        auto Resource = RHIRef<T>::Create();
+        if (auto Result = EnqueueResourceCreation(Resource, std::forward<CreateFn>(Create)); !Result)
+            return std::unexpected(Result.error());
         return Resource;
     }
     [[nodiscard]] auto CreateInstance(vk::raii::Context& Context, IVulkanSurfaceProvider& SurfaceProvider)
@@ -937,7 +965,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             const auto ValidateScope = [&ValidateCommands](const auto& TypedScope) -> std::expected<void, ErrorMessage> {
                 using ScopeType = std::decay_t<decltype(TypedScope)>;
                 if constexpr (std::is_same_v<ScopeType, RHIPass>) {
-                    if (!TypedScope.Desc.ColorAttachment.TexturePtr) {
+                    if (TypedScope.Desc.ColorAttachments.empty()) {
                         return std::unexpected(
                             ErrorMessage("Execute: pass color attachment must be an explicit render target"));
                     }

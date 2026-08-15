@@ -11,16 +11,16 @@ handles and record declarative commands.
 
 | Term | Definition |
 |------|------------|
-| **RHIRef<T>** | Copyable handle to a shared RHIRefPayload<T>. It represents a particular backend-native resource without exposing ownership of the native T. States are RhiCommitting, GpuPending, Ready, and Failed. TryGet() returns a raw read-only payload pointer only in Ready. |
+| **RHIRef<T>** | Copyable handle to a shared RHIRefPayload<T>. It represents a particular backend-native resource without exposing ownership of the native T. States are RhiCommitting, GpuPending, Ready, and Failed. Its explicit `operator bool()` is true only when the payload exists and is Ready; `operator->`/`operator*` provide access after that guard. `TryGet()` remains the explicit nullable access path for backend lowering. |
 | **RHIRef payload** | Shared state containing the atomic availability state, optional error, and the native UPtr<T>. Its final destruction moves the native object into the deferred-deletion queue rather than destroying it on the releasing thread. |
 | **Deferred deletion queue** | Thread-safe queue of move-only destruction callbacks owned by RHIRenderDevice. Last-ref release may enqueue from any thread; RHIRenderDevice::Tick() drains it on the RHI thread. It is valid only between RHIRenderDevice::Create() and Destroy(). |
 | **CommandList** | Move-only frame packet containing ordered rendering/non-rendering scopes, a final PresentSourceRef, and optionally an ImGui presentation overlay. Every normal command field that names a persistent RHI resource uses RHIRef<T> rather than an owning or observer pointer. |
-| **Pass / scope** | A rendering RHIPass or a RHINonRenderingPass. Pass attachments, pipelines, draw buffers, shader-parameter resources, TLAS/BLAS instances, and presentation source are ref-backed. Transient-buffer commands carry logical handles plus byte snapshots and do not name persistent resources. |
+| **Pass / scope** | A rendering RHIPass or a RHINonRenderingPass. One RHIPass owns an ordered color-attachment list plus an optional depth attachment and may bind multiple compatible graphics pipelines. Attachments, pipelines, draw buffers, shader-parameter resources, TLAS/BLAS instances, and presentation source are ref-backed. |
 | **In-flight submission** | Backend-owned retention record for a submitted command list and auxiliary retirement callbacks. Vulkan retains this record until its graphics timeline reaches the submission value. |
 | **Shader parameters** | Copyable CPU-side values partitioned by reflected descriptor-set layout. RHIShaderParameterResources carries ref-backed sampled textures, samplers, and render targets used by that snapshot. |
 | **Transient buffers and arenas** | RenderDevice allocates typed logical transient uniform/storage-buffer handles. Renderers write byte snapshots into commands; the RHI thread maps each handle to the current backend frame arena during execution. |
 | **RenderDevice** | Process-wide RHI singleton. Its create APIs return RHIRef<T> immediately and queue backend-native construction to ThreadQueue::RHI; Execute() consumes a command list; Tick() retires backend completions then deferred destruction. |
-| **Ready resource** | A ref whose payload can be read through TryGet(). GPU-uploaded buffers/textures become ready only when their immediate-context completion callback retires. |
+| **Ready resource** | A ref for which `operator bool()` is true and whose payload can be read through `operator->`, `operator*`, or `TryGet()`. GPU-uploaded buffers/textures become ready only when their immediate-context completion callback retires. |
 | **Render target / present source** | Engine-owned ref-backed attachment image. PresentSourceRef is the final color output; the backend copies/blits/renders it into a backend-private swapchain image. |
 | **Swapchain image** | Backend-private presentation image; never a Resource-managed sampled texture or an RHIRef exposed to Renderer. |
 | **Graphics / ray-tracing pipeline** | Backend-polymorphic pipeline payload retained by bind, draw, push-constant, parameter-binding, or trace commands. |
@@ -29,9 +29,9 @@ handles and record declarative commands.
 
 1. A caller asks RHIRenderDevice to create a resource and receives an RHIRef.
    The Vulkan backend queues the native creation closure on ThreadQueue::RHI.
-2. Render code records only ready refs. The command list takes copies/moves of
-   those refs, so normal command recording no longer depends on a live
-   ResourceRef<T> or raw RHI observer after recording.
+2. Render code records only refs whose `operator bool()` is true. The command
+   list takes copies/moves of those refs, so normal command recording no longer
+   depends on a live ResourceRef<T> or raw RHI observer after recording.
 3. Vulkan records and submits the list, then moves the complete list into
    m_InFlightSubmissions with the graphics timeline value signalled by that
    submission. RetireInFlightSubmissions() releases it only after the timeline
@@ -58,7 +58,7 @@ to ordinary RHI resources.
 
 | Operation | Required thread / current behavior |
 |-----------|------------------------------------|
-| CPU request preparation and RHIRef state reads | Any producer/consumer thread. TryGet() is a state-gated read, not permission to mutate native state. |
+| CPU request preparation and RHIRef state reads | Any producer/consumer thread. `operator bool()` is the Ready guard; `TryGet()` and `operator->` are state-gated reads, not permission to mutate native state. |
 | Native resource creation, upload submission, completion publication, Execute(), Tick(), and deferred deletion drain | RHI thread during normal runtime. |
 | RHIRef last-release | Any thread; it only enqueues the native destructor. |
 | Device initialization and final shutdown | Main thread today: RHIRenderDevice::Create() runs during EngineLoop::Init(), and Destroy()/backend Shutdown() run after the RHI thread joins. These are explicit lifecycle exceptions, so the code does **not** yet enforce a strict all-RHI-context-calls-on-RHI-thread rule. |

@@ -42,9 +42,10 @@ payload creation, submission lifetime, and native destruction.
    native objects become Ready; uploads remain GpuPending until an
    immediate-context completion callback runs on the RHI thread.
 4. Renderers read Resource readiness, retrieve a ready RHIRef<T> from the
-   wrapper, and copy it into commands. A raw TryGet() pointer is only for
-   recording-time inspection and backend lowering; it is never the command
-   lifetime carrier.
+   wrapper, and copy it into commands. `RHIRef::operator bool()` is the Ready
+   guard; `operator->`, `operator*`, or `TryGet()` may access the payload for
+   recording-time inspection or backend lowering, but the raw pointer is never
+   the command lifetime carrier.
 5. ResourceManager may collect a released transient entry after RHILoop submits
    the command. Vulkan holds the command list through its graphics timeline,
    so the copied RHIRef prevents premature native destruction.

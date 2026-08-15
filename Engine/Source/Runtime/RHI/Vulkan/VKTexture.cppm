@@ -274,6 +274,8 @@ class VulkanRenderTarget final : public RHIRenderTarget {
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::FrameOutput)) != 0;
         const bool IsStorage =
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0;
+        const bool IsShaderResource =
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::ShaderResource)) != 0;
         if (IsStorage && IsDepth)
             return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: storage usage is not supported for depth targets"));
         if (!IsDepth && !IsColor)
@@ -288,6 +290,8 @@ class VulkanRenderTarget final : public RHIRenderTarget {
             Usage |= vk::ImageUsageFlagBits::eTransferSrc;
         if (IsStorage)
             Usage |= vk::ImageUsageFlagBits::eStorage;
+        if (IsShaderResource)
+            Usage |= vk::ImageUsageFlagBits::eSampled;
 
         const auto VkFmt = ToVkFormat(Desc.Format);
         const bool bConcurrentSharing = Context.GraphicsFamily != Context.TransferFamily;

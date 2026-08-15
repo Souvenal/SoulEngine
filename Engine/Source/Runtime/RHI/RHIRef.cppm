@@ -125,12 +125,16 @@ class RHIRef {
         return Ref;
     }
 
-    [[nodiscard]] auto IsValid() const noexcept -> bool {
-        return m_Payload != nullptr;
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return m_Payload != nullptr && TryGet() != nullptr;
     }
 
-    [[nodiscard]] explicit operator bool() const noexcept {
-        return IsValid();
+    [[nodiscard]] auto operator->() const noexcept -> T* {
+        return TryGet();
+    }
+
+    [[nodiscard]] auto operator*() const -> T& {
+        return *TryGet();
     }
 
     [[nodiscard]] auto TryGet() const -> T* {

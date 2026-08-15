@@ -250,11 +250,11 @@ void rayGenMain() {
     g_rayTracing.accumulation[pixel] = float4(accumulated, 1.0);
     if (sampleIndex == 0u) {
         if (primaryPayload.hit != 0u) {
-            g_rayTracing.primaryNormal[pixel] = encodeGBufferNormal(primaryPayload.normal);
+            g_rayTracing.primaryNormal[pixel] = float4(normalize(primaryPayload.normal), 1.0);
             g_rayTracing.primaryEntityId[pixel] = primaryPayload.entityId;
         } else {
-            g_rayTracing.primaryNormal[pixel] = float4(0.5, 0.5, 1.0, 1.0);
-            g_rayTracing.primaryEntityId[pixel] = gBufferBackgroundEntityId;
+            g_rayTracing.primaryNormal[pixel] = float4(0.0, 0.0, 1.0, 1.0);
+            g_rayTracing.primaryEntityId[pixel] = 0xffffffffu;
         }
     }
     accumulated *= exp2(-g_rayTracing.view.exposureEV100);

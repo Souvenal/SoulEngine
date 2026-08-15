@@ -1,6 +1,15 @@
+import Pbr;
+import GBuffer;
+
 public struct DeferredFrameData {
     public float exposureEV100;
     public uint  lightCount;
+};
+
+public struct DeferredViewData {
+    public float4x4 inverseViewProjection;
+    public float4   cameraPosition;
+    public float2   viewportSize;
 };
 
 public struct DeferredLightData {
@@ -11,14 +20,14 @@ public struct DeferredLightData {
 };
 
 public struct DeferredResources {
-    public RWTexture2D<float4> albedo;
-    public RWTexture2D<float4> normal;
-    public RWTexture2D<float4> worldPosition;
     public ConstantBuffer<DeferredFrameData> frame;
+    public ConstantBuffer<DeferredViewData>  view;
+    public StructuredBuffer<PbrMaterialData> materials;
     public StructuredBuffer<DeferredLightData> lights;
 };
 
 public ParameterBlock<DeferredResources> g_deferred;
+public ParameterBlock<GBuffer> g_gbuffer;
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -36,10 +45,16 @@ VSOutput vertMain(uint vertexId : SV_VertexID) {
     return output;
 }
 
-float3 evaluateDeferredLight(DeferredLightData light, float3 worldPosition, float3 normal) {
+float3 evaluateDeferredLight(
+    DeferredLightData light,
+    PbrMaterial material,
+    float3 worldPosition,
+    float3 normal,
+    float3 viewDirection)
+{
     uint lightType = uint(light.directionType.w);
-    float3 lightDirection;
-    float3 illuminance;
+    float3 lightDirection = float3(0.0);
+    float3 illuminance = float3(0.0);
     if (lightType == 1u) {
         lightDirection = normalize(-light.directionType.xyz);
         illuminance = light.colorIntensity.rgb * light.colorIntensity.w;
@@ -58,19 +73,38 @@ float3 evaluateDeferredLight(DeferredLightData light, float3 worldPosition, floa
             illuminance *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
         }
     }
-    return illuminance * saturate(dot(normal, lightDirection));
+    float nDotL = saturate(dot(normal, lightDirection));
+    if (nDotL <= 0.0)
+        return float3(0.0);
+    return evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * illuminance * nDotL;
 }
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target0 {
     uint2 pixel = uint2(input.position.xy);
-    float4 albedoSample = g_deferred.albedo.Load(int2(pixel));
-    float3 normal = normalize(g_deferred.normal.Load(int2(pixel)).xyz * 2.0 - 1.0);
-    float3 worldPosition = g_deferred.worldPosition.Load(int2(pixel)).xyz;
+    float depth = g_gbuffer.depth.Load(int3(pixel, 0));
+    if (depth >= 1.0)
+        return float4(0.025, 0.035, 0.055, 1.0);
 
-    float3 color = 0.035 * albedoSample.rgb;
+    float3 worldPosition = reconstructGBufferWorldPosition(
+        pixel,
+        depth,
+        g_deferred.view.viewportSize,
+        g_deferred.view.inverseViewProjection);
+    float3 normal = normalize(g_gbuffer.normal.Load(int3(pixel, 0)));
+    float3 albedo = g_gbuffer.albedo.Load(int3(pixel, 0)).rgb;
+    uint materialId = g_gbuffer.materialId.Load(int3(pixel, 0));
+    PbrMaterialData materialData = g_deferred.materials[materialId];
+    PbrMaterial material = makePbrMaterial(
+        albedo,
+        materialData.metallicFactor,
+        materialData.roughnessFactor);
+    float3 viewDirection = normalize(g_deferred.view.cameraPosition.xyz - worldPosition);
+
+    float3 color = 0.035 * albedo;
     for (uint lightIndex = 0u; lightIndex < g_deferred.frame.lightCount; ++lightIndex)
-        color += albedoSample.rgb * evaluateDeferredLight(g_deferred.lights[lightIndex], worldPosition, normal);
+        color += evaluateDeferredLight(
+            g_deferred.lights[lightIndex], material, worldPosition, normal, viewDirection);
 
     color *= exp2(-g_deferred.frame.exposureEV100);
     color = color / (color + 1.0);

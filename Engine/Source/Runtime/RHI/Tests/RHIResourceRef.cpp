@@ -83,8 +83,18 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock graphics-pipeline creation is not implemented"));
     }
 
+    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc&, RHIRef<RHIGraphicsPipeline>)
+        -> std::expected<void, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock graphics-pipeline creation is not implemented"));
+    }
+
     [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc&)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock ray-tracing-pipeline creation is not implemented"));
+    }
+
+    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc&, RHIRef<RHIRayTracingPipeline>)
+        -> std::expected<void, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock ray-tracing-pipeline creation is not implemented"));
     }
 
@@ -126,7 +136,7 @@ class MockRenderDevice final : public RHIRenderDevice {
 TEST(RHIResourceRefTest, DefaultConstructedRefIsEmpty) {
     RHIRef<RHISampler> Ref = {};
 
-    EXPECT_FALSE(Ref.IsValid());
+    EXPECT_FALSE(Ref);
     EXPECT_EQ(Ref.GetState(), RHIRefState::Unknown);
     EXPECT_EQ(Ref.TryGet(), nullptr);
     EXPECT_FALSE(Ref.GetError().has_value());
@@ -140,6 +150,7 @@ TEST(RHIResourceRefTest, CopiesObserveTheSamePublishedState) {
 
         EXPECT_EQ(Ref.GetState(), RHIRefState::RhiCommitting);
         EXPECT_EQ(Copy.GetState(), RHIRefState::RhiCommitting);
+        EXPECT_FALSE(Copy);
 
         Ref.MarkFailed(ErrorMessage("enqueue failure"));
         EXPECT_EQ(Copy.GetState(), RHIRefState::Failed);
@@ -176,6 +187,7 @@ TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
     Device.m_GpuComplete = true;
     Device.Tick();
     EXPECT_EQ(Copy.GetState(), RHIRefState::Ready);
+    EXPECT_TRUE(Copy);
     EXPECT_NE(Copy.TryGet(), nullptr);
 
     Buffer = nullptr;
