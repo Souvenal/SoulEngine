@@ -5,6 +5,7 @@ module;
 export module RHI:Types;
 
 export import Core;
+import :Ref;
 import Shader;
 
 export import std;
@@ -530,6 +531,16 @@ class RHIShaderParameters {
         return Set(ParameterPath, ShaderResourceType::StorageTexture, false, Target);
     }
 
+    [[nodiscard]] auto SetSampledRenderTarget(StringView ParameterPath, RHIRenderTarget* Target)
+        -> std::expected<void, ErrorMessage> {
+        return Set(ParameterPath, ShaderResourceType::SampledTexture, false, Target);
+    }
+
+    [[nodiscard]] auto SetSampledRenderTarget(StringView ParameterPath, const RHIRef<RHIRenderTarget>& Target)
+        -> std::expected<void, ErrorMessage> {
+        return SetSampledRenderTarget(ParameterPath, Target.operator->());
+    }
+
     template <ShaderParameterArrayResource T>
     [[nodiscard]] auto SetResourceArray(StringView ParameterPath, const RHIResourceArray<T>& Array)
         -> std::expected<void, ErrorMessage> {
@@ -538,6 +549,11 @@ class RHIShaderParameters {
 
     [[nodiscard]] auto SetSampler(StringView ParameterPath, RHISampler* SamplerPtr) -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, ShaderResourceType::Sampler, false, SamplerPtr);
+    }
+
+    [[nodiscard]] auto SetSampler(StringView ParameterPath, const RHIRef<RHISampler>& SamplerRef)
+        -> std::expected<void, ErrorMessage> {
+        return SetSampler(ParameterPath, SamplerRef.operator->());
     }
 
   private:
@@ -706,9 +722,8 @@ struct RHIGraphicsPipelineDesc {
     RHIRasterizerState                Rasterizer        = {};
     RHIBlendState                     Blend             = {};
     RHIDepthStencilState              DepthStencil      = {};
-    RHIFormat                         ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
-    std::vector<RHIFormat>             ColorFormats      = {};
-    RHIFormat                         DepthFormat       = RHIFormat::Unknown;
+    std::vector<RHIFormat>             ColorFormats = {RHIFormat::B8G8R8A8_UNORM};
+    RHIFormat                          DepthFormat  = RHIFormat::Unknown;
 };
 
 // ── Clear values ─────────────────────────────────────────────────────────────
@@ -718,6 +733,8 @@ struct RHIClearColorValue {
     Float32 G = 0.0f;
     Float32 B = 0.0f;
     Float32 A = 1.0f;
+    bool    UseUInt = false;
+    std::array<Uint32, 4> UInt = {};
 };
 
 struct RHIClearDepthStencilValue {
@@ -726,19 +743,18 @@ struct RHIClearDepthStencilValue {
 };
 
 struct RHIColorAttachmentDesc {
-    RHIRenderTarget*   TexturePtr = nullptr;
-    RHIClearColorValue ClearValue = {};
+    RHIRef<RHIRenderTarget>   TextureRef = nullptr;
+    RHIClearColorValue        ClearValue = {};
 };
 
 struct RHIDepthAttachmentDesc {
-    RHIRenderTarget*          TexturePtr = nullptr;
+    RHIRef<RHIRenderTarget>   TextureRef = nullptr;
     RHIClearDepthStencilValue ClearValue = {};
 };
 
 struct RHIRenderingDesc {
-    RHIColorAttachmentDesc                ColorAttachment = {};
     std::vector<RHIColorAttachmentDesc>   ColorAttachments = {};
-    std::optional<RHIDepthAttachmentDesc> DepthAttachment = std::nullopt;
+    std::optional<RHIDepthAttachmentDesc> DepthAttachment  = std::nullopt;
 };
 
 } // namespace SoulEngine

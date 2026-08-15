@@ -50,8 +50,16 @@ class RHIRenderDevice {
     [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> = 0;
 
+    [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc,
+                                                      RHIRef<RHIGraphicsPipeline> Target)
+        -> std::expected<void, ErrorMessage> = 0;
+
     [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc,
+                                                        RHIRef<RHIRayTracingPipeline> Target)
+        -> std::expected<void, ErrorMessage> = 0;
 
     [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> = 0;

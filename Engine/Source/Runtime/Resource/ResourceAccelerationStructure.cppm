@@ -70,7 +70,7 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
     std::vector<RHITriangleAccelerationStructureGeometryDesc> Geometries;
     for (const auto& Group : MeshResource->GetMeshGroups()) {
         for (const auto& SubMesh : Group.SubMeshes) {
-            if (!SubMesh.PositionVB.IsValid() || !SubMesh.IB.IsValid() || SubMesh.VertexCount == 0 ||
+            if (!SubMesh.PositionVB || !SubMesh.IB || SubMesh.VertexCount == 0 ||
                 SubMesh.Indices.empty()) {
                 PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
                     Context,

@@ -400,7 +400,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         // TODO: expose this in RHI
         // write through
         std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments(
-            Desc.ColorFormats.empty() ? 1u : static_cast<Uint32>(Desc.ColorFormats.size()),
+            static_cast<Uint32>(Desc.ColorFormats.size()),
             vk::PipelineColorBlendAttachmentState{
             // .blendEnable = Desc.Blend.Attachments[0].BlendEnable,
             .blendEnable    = vk::False,
@@ -428,9 +428,8 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             .pAttachments    = RHIBlendAttachments.data(),
         };
 
-        const auto ColorFormats = Desc.ColorFormats.empty()
-                                       ? std::vector<vk::Format>{ToVkFormat(Desc.ColorFormat)}
-                                       : Desc.ColorFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
+        const auto ColorFormats =
+            Desc.ColorFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
         vk::Format DepthVkFormat =
             HasDepth ? ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
 
@@ -475,6 +474,8 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         Ret->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
         Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
         Ret->m_PushConstantSize   = MaxPushConstantSize(Desc.Program.Reflection);
+        Ret->m_ColorFormats       = Desc.ColorFormats;
+        Ret->m_DepthFormat        = Desc.DepthFormat;
         Ret->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
         return Ret;
     }
@@ -519,6 +520,10 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         return m_PushConstantSize;
     }
 
+    [[nodiscard]] auto IsCompatibleWith(std::span<const RHIFormat> ColorFormats, RHIFormat DepthFormat) const -> bool {
+        return std::ranges::equal(m_ColorFormats, ColorFormats) && m_DepthFormat == DepthFormat;
+    }
+
     [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
                                                          Uint32             FrameIndex,
                                                          Uint32             SetIndex,
@@ -536,6 +541,8 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     Uint32                                           m_DescriptorSetCount = 0;
     Uint32                                           m_DynamicOffsetCount = 0;
     Uint32                                           m_PushConstantSize   = 0;
+    std::vector<RHIFormat>                           m_ColorFormats       = {};
+    RHIFormat                                        m_DepthFormat        = RHIFormat::Unknown;
 };
 
 auto VulkanGraphicsPipeline::GetDescriptorSetLayout(Uint32 Set) const -> vk::DescriptorSetLayout {

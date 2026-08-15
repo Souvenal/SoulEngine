@@ -10,22 +10,37 @@ export import RHI;
 
 export namespace SoulEngine {
 
-/// @brief Renderer-neutral visibility and material targets for one camera/view.
-struct GBufferTargets {
-    RHIRef<RHIRenderTarget> AlbedoRT        = nullptr;
-    RHIRef<RHIRenderTarget> NormalRT        = nullptr;
-    RHIRef<RHIRenderTarget> EntityIdRT      = nullptr;
-    RHIRef<RHIRenderTarget> WorldPositionRT = nullptr;
-    RHIRef<RHIRenderTarget> DepthRT         = nullptr;
-    RHIRef<RHIRenderTarget> LightingRT      = nullptr;
+/// @brief G-buffer resources for one camera/view.
+struct GBuffer {
+    static constexpr Uint32                                      ColorAttachmentCount = 4;
+    static constexpr RHIFormat                                   DepthFormat          = RHIFormat::D32_SFLOAT;
+    static constexpr std::array<RHIFormat, ColorAttachmentCount> ColorFormats         = {
+        RHIFormat::B8G8R8A8_UNORM,
+        RHIFormat::R16G16B16A16_SFLOAT,
+        RHIFormat::R32_UINT,
+        RHIFormat::R32_UINT,
+    };
+    static constexpr Uint32 BackgroundEntityId = std::numeric_limits<Uint32>::max();
+
+    RHIRef<RHIRenderTarget> AlbedoRT     = nullptr;
+    RHIRef<RHIRenderTarget> NormalRT     = nullptr;
+    RHIRef<RHIRenderTarget> MaterialIdRT = nullptr;
+    RHIRef<RHIRenderTarget> EntityIdRT   = nullptr;
+    RHIRef<RHIRenderTarget> DepthRT      = nullptr;
+};
+
+/// @brief Render targets shared by all passes for one camera/view.
+struct ViewRenderTargets {
+    GBuffer                 GBuffer      = {};
+    RHIRef<RHIRenderTarget> SceneColorRT = nullptr;
 };
 
 /// @brief Immutable render data and resources for one camera/view.
 struct RenderViewSnapshot {
-    hlslpp::float4x4 ViewProjection = hlslpp::float4x4::identity();
-    hlslpp::float3   CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    Float32          ExposureEV100  = 15.0f;
-    GBufferTargets   Visibility     = {};
+    hlslpp::float4x4  ViewProjection = hlslpp::float4x4::identity();
+    hlslpp::float3    CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    Float32           ExposureEV100  = 15.0f;
+    ViewRenderTargets Targets        = {};
 };
 
 /// @brief Simple camera holding world-space position and orientation.
@@ -38,25 +53,26 @@ struct RenderViewSnapshot {
 // minimal for now: view parameters plus view-scoped resource refs only.
 /// @brief Reusable lens and view-matrix policy for scene and editor cameras.
 struct Camera {
-    float                   FOV            = 60.0f;
-    float                   NearPlane      = 0.1f;
-    float                   FarPlane       = 100.0f;
-    Float32                 ExposureEV100  = 15.0f;
-    GBufferTargets          Visibility      = {};
-    Uint32                  ViewportWidth  = 0;
-    Uint32                  ViewportHeight = 0;
+    float             FOV            = 60.0f;
+    float             NearPlane      = 0.1f;
+    float             FarPlane       = 100.0f;
+    Float32           ExposureEV100  = 15.0f;
+    ViewRenderTargets Targets        = {};
+    Uint32            ViewportWidth  = 0;
+    Uint32            ViewportHeight = 0;
 
     /// @brief Resize the camera-owned output resources.
     auto ResizeViewport(StringView ResourceKey, Uint32 Width, Uint32 Height) -> void {
         if (Width == 0 || Height == 0) {
-            Visibility      = {};
+            Targets        = {};
             ViewportWidth  = 0;
             ViewportHeight = 0;
             return;
         }
 
-        if (ViewportWidth == Width && ViewportHeight == Height && Visibility.AlbedoRT && Visibility.NormalRT &&
-            Visibility.EntityIdRT && Visibility.WorldPositionRT && Visibility.DepthRT && Visibility.LightingRT)
+        if (ViewportWidth == Width && ViewportHeight == Height && Targets.GBuffer.AlbedoRT &&
+            Targets.GBuffer.NormalRT && Targets.GBuffer.EntityIdRT && Targets.GBuffer.MaterialIdRT &&
+            Targets.GBuffer.DepthRT && Targets.SceneColorRT)
             return;
 
         ViewportWidth  = Width;
@@ -65,33 +81,33 @@ struct Camera {
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::B8G8R8A8_UNORM,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput | RHITextureUsage::ShaderStorage,
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput | RHITextureUsage::ShaderResource,
         };
         const RHIRenderTargetDesc NormalDesc{
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::R16G16B16A16_SFLOAT,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource | RHITextureUsage::ShaderStorage,
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource,
         };
         const RHIRenderTargetDesc EntityIdDesc{
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::R32_UINT,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource | RHITextureUsage::ShaderStorage,
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource,
         };
-        const RHIRenderTargetDesc WorldPositionDesc{
+        const RHIRenderTargetDesc MaterialIdDesc{
             .Width  = Width,
             .Height = Height,
-            .Format = RHIFormat::R16G16B16A16_SFLOAT,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderStorage,
+            .Format = RHIFormat::R32_UINT,
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource,
         };
         const RHIRenderTargetDesc DepthDesc{
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::D32_SFLOAT,
-            .Usage  = RHITextureUsage::DepthStencil,
+            .Usage  = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource,
         };
-        const RHIRenderTargetDesc LightingDesc{
+        const RHIRenderTargetDesc SceneColorDesc{
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::B8G8R8A8_UNORM,
@@ -100,49 +116,49 @@ struct Camera {
         auto Color = RHIRenderDevice::Get().CreateRenderTarget(ColorDesc);
         if (!Color) {
             LogError("Failed to queue camera color render target creation: {}", Color.error().ToString());
-            Visibility.AlbedoRT = nullptr;
+            Targets.GBuffer.AlbedoRT = nullptr;
         } else {
-            Visibility.AlbedoRT = std::move(*Color);
+            Targets.GBuffer.AlbedoRT = std::move(*Color);
         }
 
         auto Normal = RHIRenderDevice::Get().CreateRenderTarget(NormalDesc);
         if (!Normal) {
             LogError("Failed to queue camera normal render target creation: {}", Normal.error().ToString());
-            Visibility.NormalRT = nullptr;
+            Targets.GBuffer.NormalRT = nullptr;
         } else {
-            Visibility.NormalRT = std::move(*Normal);
+            Targets.GBuffer.NormalRT = std::move(*Normal);
         }
 
         auto EntityId = RHIRenderDevice::Get().CreateRenderTarget(EntityIdDesc);
         if (!EntityId) {
             LogError("Failed to queue camera entity ID render target creation: {}", EntityId.error().ToString());
-            Visibility.EntityIdRT = nullptr;
+            Targets.GBuffer.EntityIdRT = nullptr;
         } else {
-            Visibility.EntityIdRT = std::move(*EntityId);
+            Targets.GBuffer.EntityIdRT = std::move(*EntityId);
         }
 
-        auto WorldPosition = RHIRenderDevice::Get().CreateRenderTarget(WorldPositionDesc);
-        if (!WorldPosition) {
-            LogError("Failed to queue camera world-position render target creation: {}", WorldPosition.error().ToString());
-            Visibility.WorldPositionRT = nullptr;
+        auto MaterialId = RHIRenderDevice::Get().CreateRenderTarget(MaterialIdDesc);
+        if (!MaterialId) {
+            LogError("Failed to queue camera material ID render target creation: {}", MaterialId.error().ToString());
+            Targets.GBuffer.MaterialIdRT = nullptr;
         } else {
-            Visibility.WorldPositionRT = std::move(*WorldPosition);
+            Targets.GBuffer.MaterialIdRT = std::move(*MaterialId);
         }
 
         auto Depth = RHIRenderDevice::Get().CreateRenderTarget(DepthDesc);
         if (!Depth) {
             LogError("Failed to queue camera depth render target creation: {}", Depth.error().ToString());
-            Visibility.DepthRT = nullptr;
+            Targets.GBuffer.DepthRT = nullptr;
         } else {
-            Visibility.DepthRT = std::move(*Depth);
+            Targets.GBuffer.DepthRT = std::move(*Depth);
         }
 
-        auto Lighting = RHIRenderDevice::Get().CreateRenderTarget(LightingDesc);
+        auto Lighting = RHIRenderDevice::Get().CreateRenderTarget(SceneColorDesc);
         if (!Lighting) {
             LogError("Failed to queue camera lighting render target creation: {}", Lighting.error().ToString());
-            Visibility.LightingRT = nullptr;
+            Targets.SceneColorRT = nullptr;
         } else {
-            Visibility.LightingRT = std::move(*Lighting);
+            Targets.SceneColorRT = std::move(*Lighting);
         }
     }
 
@@ -170,15 +186,9 @@ struct Camera {
 
     [[nodiscard]] auto BuildRenderView(const hlslpp::float4x4& WorldTransform) const
         -> std::optional<RenderViewSnapshot> {
-        if (!Visibility.AlbedoRT || !Visibility.NormalRT || !Visibility.EntityIdRT ||
-            !Visibility.WorldPositionRT || !Visibility.DepthRT || !Visibility.LightingRT ||
-            ViewportWidth == 0 || ViewportHeight == 0)
-            return std::nullopt;
-
-        auto VisibilityRef = Visibility;
-        if (!VisibilityRef.AlbedoRT.TryGet() || !VisibilityRef.NormalRT.TryGet() ||
-            !VisibilityRef.EntityIdRT.TryGet() || !VisibilityRef.WorldPositionRT.TryGet() ||
-            !VisibilityRef.DepthRT.TryGet() || !VisibilityRef.LightingRT.TryGet())
+        if (!Targets.GBuffer.AlbedoRT || !Targets.GBuffer.NormalRT || !Targets.GBuffer.EntityIdRT ||
+            !Targets.GBuffer.MaterialIdRT || !Targets.GBuffer.DepthRT || !Targets.SceneColorRT || ViewportWidth == 0 ||
+            ViewportHeight == 0)
             return std::nullopt;
 
         const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
@@ -186,7 +196,7 @@ struct Camera {
             .ViewProjection = hlslpp::mul(GetViewMatrix(WorldTransform), GetProjectionMatrix(AspectRatio)),
             .CameraPosition = hlslpp::float3(WorldTransform[3].x, WorldTransform[3].y, WorldTransform[3].z),
             .ExposureEV100  = ExposureEV100,
-            .Visibility     = std::move(VisibilityRef),
+            .Targets        = Targets,
         };
     }
 };

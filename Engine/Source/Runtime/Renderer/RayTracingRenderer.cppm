@@ -2,6 +2,7 @@ module;
 
 // needed for offsetof
 #include <cstddef>
+#include <entt/entity/entity.hpp>
 #include <hlsl++.h>
 
 export module Renderer:RayTracingRenderer;
@@ -13,7 +14,6 @@ import Resource;
 import Scene;
 import TaskGraph;
 
-import :GBuffer;
 import :IRenderer;
 import :MaterialResolver;
 
@@ -100,16 +100,15 @@ class RayTracingRenderer final : public IRenderer {
                         {.Type       = ShaderRayTracingHitGroupType::Triangles,
                          .ClosestHit = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "shadowClosestHitMain"}},
                     },
-            },
-            [this](RHIRef<RHIRayTracingPipeline> Pipeline) { m_Pipeline = std::move(Pipeline); });
+            }
+        );
         m_Tlas          = Resources.RequestTopLevelAccelerationStructureRef("ray_tracing_renderer_main",
                                                                             {.InitialInstanceCapacity = 16});
         m_SamplerLinear = RequestSampler({.Profile = RHISamplerProfile::LinearRepeat});
         m_SamplerAniso  = RequestSampler({.Profile = RHISamplerProfile::AnisotropicRepeat});
-        if (!PipelineRequest || !m_Tlas || !m_SamplerLinear || !m_SamplerAniso)
-            return std::unexpected(PipelineRequest
-                                       ? ErrorMessage("RayTracingRenderer resource request failed")
-                                       : PipelineRequest.error().Append("RayTracingRenderer pipeline request failed"));
+        if (!PipelineRequest)
+            return std::unexpected(PipelineRequest.error().Append("RayTracingRenderer pipeline request failed"));
+        m_Pipeline = std::move(*PipelineRequest);
         return {};
     }
 
@@ -224,22 +223,22 @@ class RayTracingRenderer final : public IRenderer {
             GeometryInstances.push_back(RHIRayTracingInstanceData{
                 .FirstGeometry = FirstGeometry,
                 .GeometryCount = static_cast<Uint32>(MeshGeometries.size()),
-                .EntityId      = GBuffer::EncodeEntityId(Renderable.Entity),
+                .EntityId      = entt::to_integral(Renderable.Entity),
             });
 
             Instances.push_back(RHIAccelerationStructureInstance{
                 .BottomLevelRef = std::move(BlasPayloadRef),
                 .Transform      = ToAccelerationStructureInstanceTransform(Renderable.WorldTransform),
-                .CustomIndex    = GBuffer::EncodeEntityId(Renderable.Entity),
+                .CustomIndex    = entt::to_integral(Renderable.Entity),
             });
         }
         if (Instances.empty())
             return Result;
 
         const auto& View          = Scene.Views.front();
-        auto        ViewOutputRef = View.Visibility.AlbedoRT;
-        auto        ViewNormalRef = View.Visibility.NormalRT;
-        auto        ViewEntityIdRef = View.Visibility.EntityIdRT;
+        auto        ViewOutputRef = View.Targets.GBuffer.AlbedoRT;
+        auto        ViewNormalRef = View.Targets.GBuffer.NormalRT;
+        auto        ViewEntityIdRef = View.Targets.GBuffer.EntityIdRT;
         auto*       ViewOutput    = ViewOutputRef.TryGet();
         auto*       ViewNormal    = ViewNormalRef.TryGet();
         auto*       ViewEntityId  = ViewEntityIdRef.TryGet();

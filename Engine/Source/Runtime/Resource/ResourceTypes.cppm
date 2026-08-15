@@ -124,9 +124,8 @@ struct GraphicsPipelineRequest {
     RHIRasterizerState       Rasterizer        = {};
     RHIBlendState            Blend             = {};
     RHIDepthStencilState     DepthStencil      = {};
-    RHIFormat                ColorFormat       = RHIFormat::B8G8R8A8_UNORM;
-    std::vector<RHIFormat>   ColorFormats      = {};
-    RHIFormat                DepthFormat       = RHIFormat::Unknown;
+    std::vector<RHIFormat>   ColorFormats = {RHIFormat::B8G8R8A8_UNORM};
+    RHIFormat                 DepthFormat  = RHIFormat::Unknown;
 };
 
 /// @brief Async hardware ray-tracing pipeline request descriptor.

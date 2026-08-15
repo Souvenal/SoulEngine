@@ -30,7 +30,9 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **World Coordinate System** | The Scene uses a right-handed, Y-up coordinate system. Asset-format coordinate differences are converted at an asset-import boundary. |
 | **Transform** | `Core:Math` local translation, rotation, and scale data. Scene Documents express rotation as Euler angles in degrees, applied in local X → Y → Z order; Scene Node owns the world matrix derived through the Scene Hierarchy. |
 | **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views and value-semantic `RenderableInstance` records. Renderer consumes this snapshot, not the mutable `Scene`. |
-| **RenderViewSnapshot** | One immutable camera/view record defined with the Camera component family: view-projection data plus renderer-neutral GBuffer handles for albedo, normal, entity ID, and depth. Renderers allocate their own transient constant buffers while recording the frame. |
+| **GBuffer** | Camera-owned ref-backed render-target set containing albedo, normal, material ID, entity ID, and one shared depth target. The depth target is both the geometry-pass depth attachment and the deferred lighting sampled depth resource. |
+| **ViewRenderTargets** | Camera-owned output bundle containing the GBuffer and the final SceneColorRT render target. |
+| **RenderViewSnapshot** | One immutable camera/view record defined with the Camera component family: view-projection data plus ref-backed ViewRenderTargets. Renderers allocate their own transient constant buffers while recording the frame. |
 | **RenderableInstance** | Value-semantic SceneSnapshot record for one mesh asset instance. It carries normalized absolute mesh and optional base-color texture asset identities plus the derived world transform, but no renderer-specific GPU resource or draw representation. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
@@ -62,8 +64,9 @@ reports Component Warnings while omitting only invalid optional components.
 
 Authoring State and component-private Runtime State may coexist in one
 component type. Each component's explicitly registered EnTT meta data fields
-participate in Scene Document loading. Renderer-owned resource caches retain resource ownership while resolving the
-asset identities in snapshots; SceneSnapshot itself contains no GPU handles.
+participate in Scene Document loading. Renderer-owned resource caches retain asset-resource ownership while resolving the
+asset identities in snapshots. RenderViewSnapshot additionally carries the camera-owned
+RHIRef render-target bundle needed by the renderer; it carries no native raw pointers.
 ## Dependencies
 
 - `Core` — types, error handling
@@ -74,8 +77,8 @@ asset identities in snapshots; SceneSnapshot itself contains no GPU handles.
 
 ## RHI ownership boundary
 
-SceneSnapshot is renderer-neutral and carries no native RHI payloads. Scene
-components and snapshots must not store backend pointers to extend GPU lifetime.
-Renderer-local Resource wrappers provide ready RHIRef<T> values when they
-record the frame; command-list copies and then Vulkan submission retention own
-the GPU-use lifetime.
+Scene authoring components remain renderer-neutral and must not store backend raw
+pointers. Camera-owned ViewRenderTargets are the explicit runtime exception: they
+carry copyable RHIRef<RHIRenderTarget> handles for the view's render outputs, never
+native pointers. Renderers record only Ready refs, and command-list copies followed
+by Vulkan submission retention own the GPU-use lifetime.

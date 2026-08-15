@@ -23,6 +23,18 @@ struct VulkanTransientBufferSlice {
     Uint64 Size   = 0;
 };
 
+[[nodiscard]] static auto ToVkClearColor(const RHIClearColorValue& Value) -> vk::ClearColorValue {
+    if (Value.UseUInt) {
+        vk::ClearColorValue Result = {};
+        Result.uint32[0] = Value.UInt[0];
+        Result.uint32[1] = Value.UInt[1];
+        Result.uint32[2] = Value.UInt[2];
+        Result.uint32[3] = Value.UInt[3];
+        return Result;
+    }
+    return vk::ClearColorValue(std::array<float, 4>{Value.R, Value.G, Value.B, Value.A});
+}
+
 /// Callable for std::visit over RHICommand variants.
 struct VulkanCommandVisitor {
     vk::raii::CommandBuffer&                   Buf;
@@ -36,6 +48,8 @@ struct VulkanCommandVisitor {
     std::vector<std::function<void()>>* RetiredPayloads = nullptr;
     Uint32                                     FrameIndex                 = 0;
     vk::Extent2D                               CurrentRenderExtent        = {1, 1};
+    std::vector<RHIFormat>                      CurrentColorFormats        = {};
+    RHIFormat                                   CurrentDepthFormat         = RHIFormat::Unknown;
     enum class BoundPipelineType : Uint8 {
         Unknown = 0,
         Graphics,
@@ -49,69 +63,52 @@ struct VulkanCommandVisitor {
     /// Begin rendering scope from RHIPass desc.
     auto BeginPass(const RHIRenderingDesc& Desc) -> void {
         // ── Resolve color attachment ──────────────────────────────────
-        vk::RenderingAttachmentInfo ColorAttachment{};
         std::vector<vk::RenderingAttachmentInfo> ColorAttachments = {};
-        vk::ImageView               ColorImageView;
-        vk::Image                   ColorImage;
-        Uint32                      RenderWidth  = 1;
-        Uint32                      RenderHeight = 1;
+        ColorAttachments.reserve(Desc.ColorAttachments.size());
+        CurrentColorFormats.clear();
+        CurrentColorFormats.reserve(Desc.ColorAttachments.size());
+        CurrentDepthFormat = RHIFormat::Unknown;
+        Uint32 RenderWidth  = 0;
+        Uint32 RenderHeight = 0;
 
-        auto& VkRT     = static_cast<const VulkanRenderTarget&>(*Desc.ColorAttachment.TexturePtr);
-        ColorImage     = VkRT.GetVkImage();
-        ColorImageView = VkRT.GetVkImageView();
-        RenderWidth    = VkRT.GetWidth();
-        RenderHeight   = VkRT.GetHeight();
-        VulkanTransitionImage(Buf,
-                        LocalStates,
-                        ColorImage,
-                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                        vk::AccessFlagBits2::eColorAttachmentWrite,
-                        vk::ImageLayout::eColorAttachmentOptimal,
-                        true,
-                        ToVkImageAspect(VkRT.GetFormat()));
-
-        ColorAttachment = vk::RenderingAttachmentInfo{
-            .imageView   = ColorImageView,
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp      = vk::AttachmentLoadOp::eClear,
-            .storeOp     = vk::AttachmentStoreOp::eStore,
-            .clearValue  = vk::ClearValue{.color = vk::ClearColorValue(std::array<float, 4>{
-                                              Desc.ColorAttachment.ClearValue.R,
-                                              Desc.ColorAttachment.ClearValue.G,
-                                              Desc.ColorAttachment.ClearValue.B,
-                                              Desc.ColorAttachment.ClearValue.A,
-                                          })},
-        };
-
-        ColorAttachments.push_back(ColorAttachment);
-        for (const auto& AdditionalDesc : Desc.ColorAttachments) {
-            if (!AdditionalDesc.TexturePtr)
-                continue;
-            auto& AdditionalRT = static_cast<const VulkanRenderTarget&>(*AdditionalDesc.TexturePtr);
-            auto AdditionalImage = AdditionalRT.GetVkImage();
-            VulkanTransitionImage(Buf, LocalStates, AdditionalImage,
-                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                   vk::AccessFlagBits2::eColorAttachmentWrite,
-                                   vk::ImageLayout::eColorAttachmentOptimal, true,
-                                   ToVkImageAspect(AdditionalRT.GetFormat()));
+        for (const auto& AttachmentDesc : Desc.ColorAttachments) {
+            auto* ColorTarget = AttachmentDesc.TextureRef.TryGet();
+            if (!ColorTarget) {
+                Error = ErrorMessage("Rendering pass color attachment is not ready");
+                return;
+            }
+            const auto& ColorRT = static_cast<const VulkanRenderTarget&>(*ColorTarget);
+            VulkanTransitionImage(Buf,
+                                  LocalStates,
+                                  ColorRT.GetVkImage(),
+                                  vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                  vk::AccessFlagBits2::eColorAttachmentWrite,
+                                  vk::ImageLayout::eColorAttachmentOptimal,
+                                  true,
+                                  ToVkImageAspect(ColorRT.GetFormat()));
             ColorAttachments.push_back(vk::RenderingAttachmentInfo{
-                .imageView = AdditionalRT.GetVkImageView(),
+                .imageView   = ColorRT.GetVkImageView(),
                 .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .loadOp = vk::AttachmentLoadOp::eClear,
-                .storeOp = vk::AttachmentStoreOp::eStore,
-                .clearValue = vk::ClearValue{.color = vk::ClearColorValue(std::array<float, 4>{
-                    AdditionalDesc.ClearValue.R, AdditionalDesc.ClearValue.G,
-                    AdditionalDesc.ClearValue.B, AdditionalDesc.ClearValue.A})},
+                .loadOp      = vk::AttachmentLoadOp::eClear,
+                .storeOp     = vk::AttachmentStoreOp::eStore,
+                .clearValue  = vk::ClearValue{.color = ToVkClearColor(AttachmentDesc.ClearValue)},
             });
-            RenderWidth = (std::min)(RenderWidth, AdditionalRT.GetWidth());
-            RenderHeight = (std::min)(RenderHeight, AdditionalRT.GetHeight());
+            CurrentColorFormats.push_back(ColorRT.GetFormat());
+            RenderWidth  = RenderWidth == 0 ? ColorRT.GetWidth() : (std::min)(RenderWidth, ColorRT.GetWidth());
+            RenderHeight = RenderHeight == 0 ? ColorRT.GetHeight() : (std::min)(RenderHeight, ColorRT.GetHeight());
         }
         CurrentRenderExtent = vk::Extent2D{RenderWidth, RenderHeight};
 
         // ── Resolve depth attachment (optional) ───────────────────────
         std::optional<vk::RenderingAttachmentInfo> DepthAttachment = std::nullopt;
-        if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr) {
-            auto& VkDepthRT   = static_cast<const VulkanRenderTarget&>(*Desc.DepthAttachment->TexturePtr);
+        if (Desc.DepthAttachment.has_value()) {
+            auto* DepthTarget = Desc.DepthAttachment->TextureRef.TryGet();
+            if (!DepthTarget) {
+                Error = ErrorMessage("Rendering pass depth attachment is not ready");
+                return;
+            }
+            auto& VkDepthRT   = static_cast<const VulkanRenderTarget&>(*DepthTarget);
+            CurrentDepthFormat = VkDepthRT.GetFormat();
             auto  DepthImage  = VkDepthRT.GetVkImage();
             auto  DepthView   = VkDepthRT.GetVkImageView();
             auto  DepthAspect = ToVkImageAspect(VkDepthRT.GetFormat());
@@ -138,8 +135,11 @@ struct VulkanCommandVisitor {
         // requires every attachment imageView extent ≥ renderArea, so if
         // the depth RT is smaller than the color RT (or vice versa) we
         // must shrink renderArea to fit the minimum.
-        if (Desc.DepthAttachment.has_value() && Desc.DepthAttachment->TexturePtr) {
-            auto& VkDepthRT            = static_cast<const VulkanRenderTarget&>(*Desc.DepthAttachment->TexturePtr);
+        if (Desc.DepthAttachment.has_value()) {
+            auto* DepthTarget           = Desc.DepthAttachment->TextureRef.TryGet();
+            if (!DepthTarget)
+                return;
+            auto& VkDepthRT            = static_cast<const VulkanRenderTarget&>(*DepthTarget);
             CurrentRenderExtent.width  = (std::min)(CurrentRenderExtent.width, VkDepthRT.GetWidth());
             CurrentRenderExtent.height = (std::min)(CurrentRenderExtent.height, VkDepthRT.GetHeight());
         }
@@ -245,23 +245,30 @@ struct VulkanCommandVisitor {
                 if (const auto* Target = std::get_if<RHIRenderTarget*>(&Value)) {
                     if (!*Target) {
                         Error = ErrorMessage(Format(
-                            "Shader parameter '{}' has a null storage render target", Binding.ParameterPath));
+                            "Shader parameter '{}' has a null render target", Binding.ParameterPath));
                         return;
                     }
                     const auto& VkTarget = static_cast<const VulkanRenderTarget&>(**Target);
+                    const bool IsSampled = Binding.Type == ShaderResourceType::SampledTexture;
                     VulkanTransitionImage(Buf,
                                     LocalStates,
                                     VkTarget.GetVkImage(),
                                     ShaderStage,
-                                    vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-                                    vk::ImageLayout::eGeneral,
+                                    IsSampled ? vk::AccessFlagBits2::eShaderRead
+                                              : vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
+                                    IsSampled ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eGeneral,
                                     false,
-                                    vk::ImageAspectFlagBits::eColor);
+                                    ToVkImageAspect(VkTarget.GetFormat()));
                     if (bUpdateDescriptors) {
                         auto& ResourceBindings = (*Instance)->ResourceBindings;
                         if (!(*Instance)->Initialized || ResourceBindings[Binding.Binding] != *Target) {
-                            Descriptors->WriteStorageImageDescriptor(
-                                *(*Instance)->Set, Binding.Binding, VkTarget.GetVkImageView());
+                            if (IsSampled)
+                                Descriptors->WriteSampledTextureDescriptor(
+                                    *(*Instance)->Set, Binding.Binding, 0, VkTarget.GetVkImageView(),
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+                            else
+                                Descriptors->WriteStorageImageDescriptor(
+                                    *(*Instance)->Set, Binding.Binding, VkTarget.GetVkImageView());
                             ResourceBindings[Binding.Binding] = *Target;
                         }
                     }
@@ -446,6 +453,10 @@ struct VulkanCommandVisitor {
             return;
 
         auto& Pipeline = static_cast<VulkanGraphicsPipeline&>(*PipelinePtr);
+        if (!CurrentColorFormats.empty() && !Pipeline.IsCompatibleWith(CurrentColorFormats, CurrentDepthFormat)) {
+            Error = ErrorMessage("Graphics pipeline attachment formats do not match the active rendering pass");
+            return;
+        }
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
         m_BoundPipeline     = PipelinePtr;
         m_BoundPipelineType = BoundPipelineType::Graphics;
