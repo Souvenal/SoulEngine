@@ -132,7 +132,7 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
 
 } // namespace
 
-[[nodiscard]] auto SubmitBottomLevelAccelerationStructureRequest(ResourceContext&                    Context,
+[[nodiscard]] auto RequestBottomLevelAccelerationStructure(ResourceContext&                    Context,
                                                                  const ResourceHandle<ResourceMesh>& MeshHandle,
                                                                  const BottomLevelAccelerationStructureRequest& Request)
     -> ResourceHandle<ResourceBottomLevelAccelerationStructure> {
@@ -162,7 +162,7 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
     return Work.Handle;
 }
 
-[[nodiscard]] auto SubmitTopLevelAccelerationStructureRequest(ResourceContext&                            Context,
+[[nodiscard]] auto RequestTopLevelAccelerationStructure(ResourceContext&                            Context,
                                                               StringView                                  ScopeKey,
                                                               const RHITopLevelAccelerationStructureDesc& Desc)
     -> ResourceHandle<ResourceTopLevelAccelerationStructure> {

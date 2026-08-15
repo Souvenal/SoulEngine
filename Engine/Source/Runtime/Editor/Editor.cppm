@@ -10,6 +10,8 @@ module;
 export module Editor;
 
 import :MainMenu;
+import :UIManager;
+import :UIPanels;
 
 import Core;
 import RHI;
@@ -66,6 +68,9 @@ class Editor {
 
         ImGui::SetCurrentContext(m_ImGuiContext);
         ImGui::StyleColorsDark();
+        
+        // 注册所有 UI 面板
+        RegisterAllUI();
         return {};
     }
 
@@ -231,7 +236,7 @@ class Editor {
 
         std::optional<entt::entity> HitEntity = std::nullopt;
         float ClosestDistance = std::numeric_limits<float>::max();
-        for (const auto& Renderable : Snapshot.Renderables) {
+        for (const auto& Renderable : Snapshot.Meshes) {
             auto MeshRef = ResourceManager::Get().RequestMeshRef(Renderable.MeshAsset);
             const auto* Mesh = ResourceManager::Get().TryGetReady(MeshRef);
             if (!Mesh)
@@ -276,7 +281,7 @@ class Editor {
                         Distance = -B + std::sqrt(Discriminant);
                     if (Distance >= 0.0f && Distance < ClosestDistance) {
                         ClosestDistance = Distance;
-                        HitEntity = Renderable.Entity;
+                        HitEntity = static_cast<entt::entity>(Renderable.EntityId);
                     }
                 }
             }
@@ -335,6 +340,13 @@ class Editor {
         }
         ImGui::NewFrame();
         DrawMainMenu();
+        
+        // 绘制所有显示的 UI
+        for (auto& [name, entry] : UIManager::Get().GetAll()) {
+            if (entry.Show) {
+                entry.Callback();
+            }
+        }
         for (auto& Panel : m_Panels)
             Panel.Callback();
         ImGui::Render();

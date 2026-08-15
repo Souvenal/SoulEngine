@@ -1164,7 +1164,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 const auto IsTransientUpload = [](const RHICommand& Cmd) -> bool {
                     return std::holds_alternative<RHIWriteTransientConstantBufferCmd>(Cmd) ||
                            std::holds_alternative<RHIWriteTransientShaderStorageBufferCmd>(Cmd) ||
-                           std::holds_alternative<RHIWriteRayTracingGeometryDataCmd>(Cmd);
+                           std::holds_alternative<RHIWriteRayTracingGeometryDataCmd>(Cmd) ||
+                           std::holds_alternative<RHIWriteRasterGeometryDataCmd>(Cmd);
                 };
                 const auto RecordCommand = [&Visitor](const RHICommand& Cmd) -> std::expected<void, ErrorMessage> {
                     std::visit(Visitor, Cmd);

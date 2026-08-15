@@ -24,6 +24,7 @@ handles and record declarative commands.
 | **Render target / present source** | Engine-owned ref-backed attachment image. PresentSourceRef is the final color output; the backend copies/blits/renders it into a backend-private swapchain image. |
 | **Swapchain image** | Backend-private presentation image; never a Resource-managed sampled texture or an RHIRef exposed to Renderer. |
 | **Graphics / ray-tracing pipeline** | Backend-polymorphic pipeline payload retained by bind, draw, push-constant, parameter-binding, or trace commands. |
+| **GPU-driven raster geometry** | A transient shader-storage geometry table containing backend-resolved SubMesh buffer addresses, retained source `RHIRef` values, and a matching transient indirect-command buffer. Renderer records the typed command; Vulkan resolves the table to BDA records. |
 
 ## Submission and destruction contract
 

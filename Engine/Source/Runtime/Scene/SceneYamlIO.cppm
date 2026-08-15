@@ -7,6 +7,7 @@ module;
 module Scene:YamlIO;
 
 import Scene;
+import Resource;
 
 namespace SoulEngine {
 
@@ -424,11 +425,11 @@ struct YamlParser {
 }
 
 [[nodiscard]] auto ReadMaterialInstance(const YamlNode& Node, StringView Path)
-    -> std::expected<PbrMetallicRoughnessMaterial, ErrorMessage> {
+    -> std::expected<PbrMaterial, ErrorMessage> {
     if (!Node.IsMap())
         return MakeStructuralError(Path, "must be a mapping");
 
-    PbrMetallicRoughnessMaterial Result = {};
+    PbrMaterial Result = {};
     for (const auto Entry : Node.MapEntries()) {
         if (!Entry.First.IsScalar())
             return MakeStructuralError(Path, "contains a non-scalar key");
@@ -775,6 +776,30 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
                 Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     }
     Temporary.UpdateWorldTransforms();
+
+    // Publish the scene's material instances to the engine-wide manager. Texture paths
+    // are resolved against the scene Assets root here, so the render thread always reads
+    // canonical absolute paths. Scene replacement clears the whole table first, so a
+    // new scene never inherits stale instances. Both happen only after the whole
+    // document validated successfully, so a failed load leaves the previous manager
+    // state (and the previous Scene) untouched.
+    MaterialManager::Get().Clear();
+    for (const auto& [Id, Material] : Temporary.m_MaterialInstances) {
+        auto       Copy               = Material;
+        const auto ResolveTexturePath = [&](String& Texture) -> void {
+            if (!Texture.empty())
+                Texture = Temporary.ResolveAssetPath(Texture);
+        };
+        ResolveTexturePath(Copy.BaseColorTexture);
+        ResolveTexturePath(Copy.NormalTexture);
+        ResolveTexturePath(Copy.MetallicRoughnessTexture);
+        ResolveTexturePath(Copy.MetallicTexture);
+        ResolveTexturePath(Copy.RoughnessTexture);
+        ResolveTexturePath(Copy.OcclusionTexture);
+        ResolveTexturePath(Copy.EmissiveTexture);
+        MaterialManager::Get().RegisterMaterial(String(Id), Copy);
+    }
+
     *this = std::move(Temporary);
     return Report;
 }

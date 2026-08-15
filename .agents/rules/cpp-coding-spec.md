@@ -57,7 +57,11 @@ Code form and readability only, not behavior.
 
 - In `class` types, prefix all non-static data members with `m_`. `struct` types are exempt — their data members need no prefix. Static data members should use no prefix regardless of type. This does not apply to union members, bitfields of size 0, or anonymous struct/union members.
 
-- Do not use separate forward declarations for functions across translation units. Within a single translation unit, allow forward declarations only when necessary for mutually recursive free functions; require a comment explaining the recursion and mark with `ALLOW-FWD-RECURSION`. Prefer defining functions at first use. For public APIs intended for reuse across translation units, use module interface units.
+- **DRY (Don't Repeat Yourself) — one definition per function.** A function's signature must be written exactly once, at its definition site. Function declarations (a signature without a definition) are forbidden unless necessary:
+  - Do not split a member function into an in-class declaration plus an out-of-class definition (`ReturnType Class::Method(...) { ... }`). Define member functions inline in the class body so the signature appears once.
+  - Do not use separate forward declarations for functions across translation units.
+  - Within a single translation unit, forward declarations are allowed only when necessary for mutually recursive free functions; require a comment explaining the recursion and mark with `ALLOW-FWD-RECURSION`. Prefer defining functions at first use.
+  - For public APIs intended for reuse across translation units, use module interface units; the exported definition is the single declaration.
 
 - Module partition naming: allow exactly one colon separator in the form `A:B`. To express logical nesting beyond one level, use a single dot inside the partition name, for example `A:B.C`. Treat the dot as part of the partition identifier and ensure build tools map `A:B.C` to a single module partition name.
 
@@ -89,6 +93,7 @@ Code form and readability only, not behavior.
 | `-fno-rtti` (no `typeid`/`dynamic_cast`) | All code | Compiler flag |
 | No raw `new`/`delete` | All code | Review |
 | Trailing return types | Functions (not ctor/dtor) | Review |
+| DRY — no separate declarations; in-class member definitions | All functions | Review |
 | `m_` prefix on non-static data members | `class` types only | Review |
 | Doxygen `///` comments | Public API | Review |
 | Aggregate init (`{ .Field = ... }`) | Structs | Review |

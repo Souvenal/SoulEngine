@@ -11,6 +11,11 @@ export import std;
 
 export namespace SoulEngine {
 
+/// Request descriptor for sampled texture creation.
+struct SampledTextureRequest {
+    StringView TexturePath = {};
+};
+
 struct DecodedTexture {
     std::vector<Uint8> Pixels;
     Uint32             Width  = 0;
@@ -44,43 +49,28 @@ struct DecodedTexture {
     };
 }
 
-[[nodiscard]] auto SubmitSampledTexturePreparation(
-    StringView TexturePath,
-    std::function<void(RHIRef<RHISampledTexture>)> OnCreated)
-    -> std::expected<void, ErrorMessage> {
-    const auto Path          = NormalizeResourcePath(TexturePath);
-    auto       EnqueueResult = TaskGraph::Get().EnqueueBackground([Path, OnCreated = std::move(OnCreated)] mutable {
-        auto Decoded = DecodeTexture(Path);
-        if (!Decoded) {
-            LogError("Failed to decode sampled texture {}: {}", Path, Decoded.error().ToString());
-            return;
-        }
+[[nodiscard]] auto RequestSampledTexture(const SampledTextureRequest& Req)
+    -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> {
+    const auto Path = NormalizeResourcePath(Req.TexturePath);
+    
+    auto Decoded = DecodeTexture(Path);
+    if (!Decoded) {
+        return std::unexpected(Decoded.error());
+    }
 
-        auto Created = RHIRenderDevice::Get().CreateSampledTexture(RHISampledTextureDesc{
-            .Data     = std::as_bytes(std::span{Decoded->Pixels}),
-            .Width    = Decoded->Width,
-            .Height   = Decoded->Height,
-            .Channels = 4,
-            .Format   = RHIFormat::R8G8B8A8_UNORM,
-            .Usage    = RHITextureUsage::ShaderResource,
-        });
-        if (!Created) {
-            LogError("Failed to queue sampled texture creation: {}", Created.error().ToString());
-            return;
-        }
-
-        if (auto Delivery = TaskGraph::Get().Enqueue(
-                ThreadQueue::Render,
-                [OnCreated = std::move(OnCreated), Texture = std::move(*Created)] mutable {
-                    OnCreated(std::move(Texture));
-                });
-            !Delivery) {
-            LogError("Failed to deliver sampled texture creation result: {}", Delivery.error().ToString());
-        }
+    auto Created = RHIRenderDevice::Get().CreateSampledTexture(RHISampledTextureDesc{
+        .Data     = std::as_bytes(std::span{Decoded->Pixels}),
+        .Width    = Decoded->Width,
+        .Height   = Decoded->Height,
+        .Channels = 4,
+        .Format   = RHIFormat::R8G8B8A8_UNORM,
+        .Usage    = RHITextureUsage::ShaderResource,
     });
-    if (!EnqueueResult)
-        return std::unexpected(EnqueueResult.error());
-    return {};
+    if (!Created) {
+        return std::unexpected(Created.error());
+    }
+
+    return *Created;
 }
 
 } // namespace SoulEngine
