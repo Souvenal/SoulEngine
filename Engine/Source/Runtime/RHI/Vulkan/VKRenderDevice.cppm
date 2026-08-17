@@ -1195,6 +1195,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                                 return R;
                         }
                         Visitor.BeginPass(TypedScope.Desc);
+                        if (Visitor.Error)
+                            return std::unexpected(*Visitor.Error);
                         for (const auto& Cmd : TypedScope.Commands) {
                             if (IsTransientUpload(Cmd))
                                 continue;

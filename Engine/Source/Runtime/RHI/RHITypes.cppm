@@ -45,12 +45,12 @@ struct RHISamplerDesc {
 /// ResourceManager owns RHIVertexBuffer instances; command lists only observe them.
 class RHIVertexBuffer {
   public:
-    RHIVertexBuffer()                                       = default;
+    RHIVertexBuffer()                                          = default;
     RHIVertexBuffer(const RHIVertexBuffer&)                    = delete;
     auto operator=(const RHIVertexBuffer&) -> RHIVertexBuffer& = delete;
     RHIVertexBuffer(RHIVertexBuffer&&)                         = delete;
     auto operator=(RHIVertexBuffer&&) -> RHIVertexBuffer&      = delete;
-    virtual ~RHIVertexBuffer()                              = default;
+    virtual ~RHIVertexBuffer()                                 = default;
 
     [[nodiscard]] auto GetVertexCount() const noexcept -> Uint64 {
         return m_VertexCount;
@@ -72,20 +72,19 @@ class RHIVertexBuffer {
 /// Same role as RHIVertexBuffer, for Uint32 index data.
 class RHIIndexBuffer {
   public:
-    RHIIndexBuffer()                                      = default;
+    RHIIndexBuffer()                                         = default;
     RHIIndexBuffer(const RHIIndexBuffer&)                    = delete;
     auto operator=(const RHIIndexBuffer&) -> RHIIndexBuffer& = delete;
     RHIIndexBuffer(RHIIndexBuffer&&)                         = delete;
     auto operator=(RHIIndexBuffer&&) -> RHIIndexBuffer&      = delete;
-    virtual ~RHIIndexBuffer()                             = default;
+    virtual ~RHIIndexBuffer()                                = default;
 
     [[nodiscard]] auto GetIndexCount() const noexcept -> Uint64 {
         return m_IndexCount;
     }
 
   protected:
-    explicit RHIIndexBuffer(const RHIIndexBufferDesc& Desc)
-        : m_IndexCount(Desc.IndexCount) {}
+    explicit RHIIndexBuffer(const RHIIndexBufferDesc& Desc) : m_IndexCount(Desc.IndexCount) {}
 
   private:
     Uint64 m_IndexCount = 0;
@@ -111,8 +110,7 @@ class RHITransientConstantBuffer final {
   private:
     friend class RHIRenderDevice;
 
-    RHITransientConstantBuffer(Uint64 Id, Uint64 Size)
-        : m_Id(Id), m_Size(Size) {}
+    RHITransientConstantBuffer(Uint64 Id, Uint64 Size) : m_Id(Id), m_Size(Size) {}
 
     Uint64 m_Id   = 0;
     Uint64 m_Size = 0;
@@ -138,8 +136,7 @@ class RHITransientShaderStorageBuffer final {
   private:
     friend class RHIRenderDevice;
 
-    RHITransientShaderStorageBuffer(Uint64 Id, Uint64 Size)
-        : m_Id(Id), m_Size(Size) {}
+    RHITransientShaderStorageBuffer(Uint64 Id, Uint64 Size) : m_Id(Id), m_Size(Size) {}
 
     Uint64 m_Id   = 0;
     Uint64 m_Size = 0;
@@ -158,7 +155,7 @@ class RHISampler {
     auto operator=(const RHISampler&) -> RHISampler& = delete;
     RHISampler(RHISampler&&)                         = delete;
     auto operator=(RHISampler&&) -> RHISampler&      = delete;
-    virtual ~RHISampler()                         = default;
+    virtual ~RHISampler()                            = default;
 
     [[nodiscard]] auto GetDesc() const -> const RHISamplerDesc& {
         return m_Desc;
@@ -170,10 +167,10 @@ class RHISampler {
 
 /// @brief One reflected resource binding in a shader parameter-set layout.
 struct RHIShaderParameterBindingLayout {
-    String               ParameterPath = {};
-    Uint32               Binding       = 0;
+    String             ParameterPath = {};
+    Uint32             Binding       = 0;
     ShaderResourceType Type          = ShaderResourceType::Unknown;
-    Uint32               ArrayCount    = 1;
+    Uint32             ArrayCount    = 1;
 };
 
 /// @brief Immutable reflected layout for one shader descriptor set.
@@ -200,7 +197,7 @@ class RHIShaderParameterSetLayout {
   private:
     friend class RHIShaderParameterLayout;
 
-    Uint32                                        m_SetIndex = 0;
+    Uint32                                       m_SetIndex = 0;
     std::vector<RHIShaderParameterBindingLayout> m_Bindings = {};
 };
 
@@ -231,12 +228,12 @@ class RHIShaderParameterLayout {
         }
 
         for (auto& Set : Result.m_Sets) {
-            std::sort(Set.m_Bindings.begin(),
-                      Set.m_Bindings.end(),
-                      [](const RHIShaderParameterBindingLayout& Left,
-                         const RHIShaderParameterBindingLayout& Right) -> bool {
-                          return Left.Binding < Right.Binding;
-                      });
+            std::sort(
+                Set.m_Bindings.begin(),
+                Set.m_Bindings.end(),
+                [](const RHIShaderParameterBindingLayout& Left, const RHIShaderParameterBindingLayout& Right) -> bool {
+                    return Left.Binding < Right.Binding;
+                });
         }
 
         return Result;
@@ -262,19 +259,19 @@ class RHIShaderParameterLayout {
         return Next.fetch_add(1, std::memory_order_relaxed);
     }
 
-    Uint64                                m_Id   = 0;
+    Uint64                                   m_Id   = 0;
     std::vector<RHIShaderParameterSetLayout> m_Sets = {};
 };
 
 /// Common polymorphic base for pipelines that consume reflection-derived shader parameters.
 class RHIPipeline {
   public:
-    RHIPipeline()                                  = default;
+    RHIPipeline()                                      = default;
     RHIPipeline(const RHIPipeline&)                    = delete;
     auto operator=(const RHIPipeline&) -> RHIPipeline& = delete;
     RHIPipeline(RHIPipeline&&)                         = delete;
     auto operator=(RHIPipeline&&) -> RHIPipeline&      = delete;
-    virtual ~RHIPipeline()                          = default;
+    virtual ~RHIPipeline()                             = default;
 
     [[nodiscard]] auto GetShaderParameterLayout() const -> const RHIShaderParameterLayout& {
         return m_ShaderParameterLayout;
@@ -294,12 +291,12 @@ class RHIPipeline {
 /// pipeline. ResourceManager owns RHIGraphicsPipeline instances.
 class RHIGraphicsPipeline : public RHIPipeline {
   public:
-    RHIGraphicsPipeline()                                           = default;
+    RHIGraphicsPipeline()                                              = default;
     RHIGraphicsPipeline(const RHIGraphicsPipeline&)                    = delete;
     auto operator=(const RHIGraphicsPipeline&) -> RHIGraphicsPipeline& = delete;
     RHIGraphicsPipeline(RHIGraphicsPipeline&&)                         = delete;
     auto operator=(RHIGraphicsPipeline&&) -> RHIGraphicsPipeline&      = delete;
-    virtual ~RHIGraphicsPipeline()                                  = default;
+    virtual ~RHIGraphicsPipeline()                                     = default;
 
     [[nodiscard]] auto GetShaderParameterLayout() const -> const RHIShaderParameterLayout& {
         return RHIPipeline::GetShaderParameterLayout();
@@ -318,12 +315,12 @@ class RHIGraphicsPipeline : public RHIPipeline {
 /// ResourceManager owns RHISampledTexture instances.
 class RHISampledTexture {
   public:
-    RHISampledTexture()                                         = default;
+    RHISampledTexture()                                            = default;
     RHISampledTexture(const RHISampledTexture&)                    = delete;
     auto operator=(const RHISampledTexture&) -> RHISampledTexture& = delete;
     RHISampledTexture(RHISampledTexture&&)                         = delete;
     auto operator=(RHISampledTexture&&) -> RHISampledTexture&      = delete;
-    virtual ~RHISampledTexture()                                = default;
+    virtual ~RHISampledTexture()                                   = default;
 
     [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
     [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
@@ -380,15 +377,15 @@ concept ShaderParameterArrayResource = requires {
 
 /// @brief One value assigned to a reflected shader parameter binding.
 using RHIShaderParameterValue = std::variant<std::monostate,
-                                          RHISampledTexture*,
-                                          RHIVertexBuffer*,
-                                          RHIIndexBuffer*,
-                                          RHITransientConstantBuffer,
-                                          RHITransientShaderStorageBuffer,
-                                          RHIResourceArray<RHISampledTexture>,
-                                          RHISampler*,
-                                          RHITopLevelAccelerationStructure*,
-                                          RHIRenderTarget*>;
+                                             RHISampledTexture*,
+                                             RHIVertexBuffer*,
+                                             RHIIndexBuffer*,
+                                             RHITransientConstantBuffer,
+                                             RHITransientShaderStorageBuffer,
+                                             RHIResourceArray<RHISampledTexture>,
+                                             RHISampler*,
+                                             RHITopLevelAccelerationStructure*,
+                                             RHIRenderTarget*>;
 
 /// @brief Runtime values for one reflected shader descriptor set.
 class RHIShaderParameterSet {
@@ -450,9 +447,9 @@ class RHIShaderParameterSet {
             Right);
     }
 
-    RHIShaderParameterSetLayout           m_Layout   = {};
-    std::vector<RHIShaderParameterValue>  m_Values   = {};
-    Uint64                              m_Revision = 0;
+    RHIShaderParameterSetLayout          m_Layout   = {};
+    std::vector<RHIShaderParameterValue> m_Values   = {};
+    Uint64                               m_Revision = 0;
 };
 
 /// @brief Renderer-facing shader binding values automatically partitioned by reflection.
@@ -504,24 +501,22 @@ class RHIShaderParameters {
         return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }
 
-    [[nodiscard]] auto SetTransientConstantBuffer(StringView                  ParameterPath,
-                                                   RHITransientConstantBuffer Buffer)
+    [[nodiscard]] auto SetTransientConstantBuffer(StringView ParameterPath, RHITransientConstantBuffer Buffer)
         -> std::expected<void, ErrorMessage> {
         if (!Buffer.IsValid())
             return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
         return Set(ParameterPath, ShaderResourceType::ConstantBuffer, false, Buffer);
     }
 
-    [[nodiscard]] auto SetTransientShaderStorageBuffer(StringView                         ParameterPath,
-                                                        RHITransientShaderStorageBuffer Buffer)
+    [[nodiscard]] auto SetTransientShaderStorageBuffer(StringView ParameterPath, RHITransientShaderStorageBuffer Buffer)
         -> std::expected<void, ErrorMessage> {
         if (!Buffer.IsValid())
             return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
         return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }
 
-    [[nodiscard]] auto SetTopLevelAccelerationStructure(StringView                         ParameterPath,
-                                                         RHITopLevelAccelerationStructure* RHIAccelerationStructure)
+    [[nodiscard]] auto SetTopLevelAccelerationStructure(StringView                        ParameterPath,
+                                                        RHITopLevelAccelerationStructure* RHIAccelerationStructure)
         -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, ShaderResourceType::AccelerationStructure, false, RHIAccelerationStructure);
     }
@@ -547,7 +542,8 @@ class RHIShaderParameters {
         return Set(ParameterPath, RHIShaderParameterResourceTraits<T>::Type, true, Array);
     }
 
-    [[nodiscard]] auto SetSampler(StringView ParameterPath, RHISampler* SamplerPtr) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto SetSampler(StringView ParameterPath, RHISampler* SamplerPtr)
+        -> std::expected<void, ErrorMessage> {
         return Set(ParameterPath, ShaderResourceType::Sampler, false, SamplerPtr);
     }
 
@@ -591,12 +587,13 @@ class RHIShaderParameters {
             return {};
         }
 
-        return std::unexpected(ErrorMessage(Format("Shader parameter '{}' is not present in the pipeline layout", ParameterPath)));
+        return std::unexpected(
+            ErrorMessage(Format("Shader parameter '{}' is not present in the pipeline layout", ParameterPath)));
     }
 
-    Uint64                           m_Id       = 0;
-    Uint64                           m_LayoutId = 0;
-    std::vector<RHIShaderParameterSet> m_Sets = {};
+    Uint64                             m_Id       = 0;
+    Uint64                             m_LayoutId = 0;
+    std::vector<RHIShaderParameterSet> m_Sets     = {};
 };
 
 // ── Texture ──────────────────────────────────────────────────────────────────
@@ -612,17 +609,17 @@ enum class RHIFormat : Uint8 {
     R32G32B32_SFLOAT    = 7,
     R32G32_SFLOAT       = 8,
     R32_SFLOAT          = 9,
-    R32_UINT             = 10,
+    R32_UINT            = 10,
     D32_SFLOAT          = 11,
     D24_UNORM_S8_UINT   = 12,
     D32_SFLOAT_S8_UINT  = 13,
 };
 
 struct RHIVertexInputAttributeDesc {
-    Uint32 Location = 0;
-    Uint32 Binding  = 0;
+    Uint32    Location = 0;
+    Uint32    Binding  = 0;
     RHIFormat Format   = RHIFormat::Unknown;
-    Uint32 Offset   = 0;
+    Uint32    Offset   = 0;
 };
 
 struct RHIVertexInputBindingDesc {
@@ -655,15 +652,15 @@ enum class RHITextureUsage : Uint32 {
 /// Backend concrete class owns GPU allocation. ResourceManager owns render targets.
 class RHIRenderTarget {
   public:
-    RHIRenderTarget()                                       = default;
+    RHIRenderTarget()                                          = default;
     RHIRenderTarget(const RHIRenderTarget&)                    = delete;
     auto operator=(const RHIRenderTarget&) -> RHIRenderTarget& = delete;
     RHIRenderTarget(RHIRenderTarget&&)                         = delete;
     auto operator=(RHIRenderTarget&&) -> RHIRenderTarget&      = delete;
-    virtual ~RHIRenderTarget()                              = default;
+    virtual ~RHIRenderTarget()                                 = default;
 
-    [[nodiscard]] virtual auto GetWidth() const -> Uint32       = 0;
-    [[nodiscard]] virtual auto GetHeight() const -> Uint32      = 0;
+    [[nodiscard]] virtual auto GetWidth() const -> Uint32          = 0;
+    [[nodiscard]] virtual auto GetHeight() const -> Uint32         = 0;
     [[nodiscard]] virtual auto GetFormat() const -> RHIFormat      = 0;
     [[nodiscard]] virtual auto GetUsage() const -> RHITextureUsage = 0;
 };
@@ -678,8 +675,8 @@ struct RHISampledTextureDesc {
 };
 
 struct RHIRenderTargetDesc {
-    Uint32       Width  = 1;
-    Uint32       Height = 1;
+    Uint32          Width  = 1;
+    Uint32          Height = 1;
     RHIFormat       Format = RHIFormat::B8G8R8A8_UNORM;
     RHITextureUsage Usage  = RHITextureUsage::RenderTarget;
 };
@@ -716,26 +713,20 @@ struct RHIDepthStencilState {
 };
 
 struct RHIGraphicsPipelineDesc {
-    ShaderGraphicsProgram        Program           = {};
-    RHIVertexInputLayoutDesc          VertexInputLayout = {};
-    RHIPrimitiveTopology              Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState                Rasterizer        = {};
-    RHIBlendState                     Blend             = {};
-    RHIDepthStencilState              DepthStencil      = {};
-    std::vector<RHIFormat>             ColorFormats = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                          DepthFormat  = RHIFormat::Unknown;
+    ShaderGraphicsProgram    Program           = {};
+    RHIVertexInputLayoutDesc VertexInputLayout = {};
+    RHIPrimitiveTopology     Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState       Rasterizer        = {};
+    RHIBlendState            Blend             = {};
+    RHIDepthStencilState     DepthStencil      = {};
+    std::vector<RHIFormat>   ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
+    RHIFormat                DepthFormat       = RHIFormat::Unknown;
 };
 
 // ── Clear values ─────────────────────────────────────────────────────────────
 
-struct RHIClearColorValue {
-    Float32 R = 0.0f;
-    Float32 G = 0.0f;
-    Float32 B = 0.0f;
-    Float32 A = 1.0f;
-    bool    UseUInt = false;
-    std::array<Uint32, 4> UInt = {};
-};
+using RHIClearColorValue =
+    std::variant<std::monostate, std::array<Float32, 4>, std::array<Int32, 4>, std::array<Uint32, 4>>;
 
 struct RHIClearDepthStencilValue {
     Float32 Depth   = 1.0f;
@@ -743,9 +734,9 @@ struct RHIClearDepthStencilValue {
 };
 
 struct RHIColorAttachmentDesc {
-    RHIRef<RHIRenderTarget>   TextureRef = nullptr;
-    RHIClearColorValue        ClearValue = {};
-    bool                      Clear      = true;
+    RHIRef<RHIRenderTarget> TextureRef = nullptr;
+    RHIClearColorValue      ClearValue = {};
+    bool                    Clear      = true;
 };
 
 struct RHIDepthAttachmentDesc {
