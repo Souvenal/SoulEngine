@@ -7,7 +7,7 @@ RHI = "Vulkan"
 FramesInFlight = 2
 # Renderer selected by applications that support the shared default.
 # Supported values: "Raster", "RayTracing". When omitted: "Raster".
-DefaultRenderer = "RayTracing"
+DefaultRenderer = "Raster"
 
 [Log]
 ConsoleLevel = "Info"
@@ -22,6 +22,14 @@ Name = "Test"
 DebugInfo = true
 
 [RHI.Vulkan]
+# Enable VK_LAYER_KHRONOS_validation.
+# When omitted, the Vulkan backend currently defaults to true.
+Validation = true
+
+# Enable VK_EXT_debug_utils and debug-message logging.
+# When omitted, the Vulkan backend currently defaults to true.
+DebugUtils = true
+
 # Per-frame dynamic constant arena capacity in bytes.
 # Logical ConstantBuffer resources reserve aligned slots in this arena.
 # When omitted the backend defaults to 4096 bytes.

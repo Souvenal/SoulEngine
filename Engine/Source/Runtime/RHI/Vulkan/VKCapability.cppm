@@ -7,10 +7,10 @@ import std;
 namespace SoulEngine {
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Extension request
+// Instance and device capability requests
 // ═════════════════════════════════════════════════════════════════════════════
 
-struct VulkanExtensionRequest {
+struct VulkanCapabilityRequest {
     const char* Name     = nullptr;
     bool        Required = false;
     bool        Enabled  = false; // set during resolve
@@ -39,19 +39,70 @@ using VulkanPropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
 class VulkanCapability : public Singleton<VulkanCapability> {
     friend class Singleton<VulkanCapability>;
 
+  private:
+    auto AddRequiredRequests(std::vector<VulkanCapabilityRequest>& Requests, std::span<const char*> RequiredNames)
+        -> void {
+        for (const auto* RequiredName : RequiredNames) {
+            auto It = std::ranges::find_if(Requests, [&](const auto& Request) {
+                return Request.Name && std::strcmp(Request.Name, RequiredName) == 0;
+            });
+            if (It != Requests.end()) {
+                It->Required = true;
+                It->Enabled  = false;
+            } else {
+                Requests.emplace_back(RequiredName, true, false);
+            }
+        }
+    }
+
+    template <typename PropertyType, typename GetName>
+    [[nodiscard]] auto MatchRequests(std::vector<VulkanCapabilityRequest>& Requests,
+                                     const std::vector<PropertyType>&      Available,
+                                     GetName&&                             GetPropertyName,
+                                     StringView RequestKind) -> std::expected<std::vector<const char*>, ErrorMessage> {
+        for (auto& Request : Requests)
+            if (Request.Name)
+                Request.Enabled = false;
+
+        for (auto& Request : Requests) {
+            if (!Request.Name)
+                continue;
+            if (std::ranges::any_of(Available, [&](const auto& Property) {
+                    return std::strcmp(GetPropertyName(Property), Request.Name) == 0;
+                }))
+                Request.Enabled = true;
+        }
+
+        std::vector<StringView> Missing;
+        for (const auto& Request : Requests) {
+            if (Request.Name && Request.Required && !Request.Enabled)
+                Missing.emplace_back(Request.Name);
+        }
+        if (!Missing.empty()) {
+            String Msg;
+            for (std::size_t i = 0; i < Missing.size(); ++i) {
+                if (i > 0)
+                    Msg += ", ";
+                Msg += Missing[i];
+            }
+            return std::unexpected(ErrorMessage(Format("Required Vulkan {} not supported: {}", RequestKind, Msg)));
+        }
+
+        std::vector<const char*> EnabledNames;
+        for (const auto& Request : Requests) {
+            if (Request.Name && Request.Enabled)
+                EnabledNames.emplace_back(Request.Name);
+        }
+        return EnabledNames;
+    }
+
   public:
     // ── Phase 1: Resolve instance extensions ─────────────────────────────
 
     [[nodiscard]] auto ResolveInstanceExtensions(vk::raii::Context& Ctx, std::span<const char*> RequiredExtensions)
         -> std::expected<std::vector<const char*>, ErrorMessage> {
-        for (const auto* RequiredExtension : RequiredExtensions) {
-            auto It = std::ranges::find_if(
-                m_InstanceExts, [&](const auto& E) { return E.Name && std::strcmp(E.Name, RequiredExtension) == 0; });
-            if (It != m_InstanceExts.end())
-                It->Enabled = false;
-            else
-                m_InstanceExts.emplace_back(RequiredExtension, true, false);
-        }
+        auto InstanceExtensions = m_InstanceExts;
+        AddRequiredRequests(InstanceExtensions, RequiredExtensions);
 
         // Enumerate available instance extensions
         auto ExtPropsRes = Ctx.enumerateInstanceExtensionProperties();
@@ -59,10 +110,36 @@ class VulkanCapability : public Singleton<VulkanCapability> {
             return std::unexpected(ErrorMessage("Failed to enumerate Vulkan instance extension properties"));
         auto& ExtProps = ExtPropsRes.value;
 
-        for (auto& Prop : ExtProps)
-            LogDebug("Available Vulkan instance extension: {}", static_cast<const char*>(Prop.extensionName));
+        auto EnabledExtensions = MatchRequests(
+            InstanceExtensions,
+            ExtProps,
+            [](const vk::ExtensionProperties& Prop) { return static_cast<const char*>(Prop.extensionName); },
+            "extensions");
+        if (!EnabledExtensions)
+            return std::unexpected(EnabledExtensions.error());
+        m_EnabledInstanceExtensionNames = *EnabledExtensions;
+        return m_EnabledInstanceExtensionNames;
+    }
 
-        return MatchExtensions(m_InstanceExts, ExtProps);
+    [[nodiscard]] auto ResolveInstanceLayers(vk::raii::Context& Ctx)
+        -> std::expected<std::vector<const char*>, ErrorMessage> {
+        std::vector<VulkanCapabilityRequest> InstanceLayers;
+        const bool Validation = ConfigManager::Get().GetConfig().RhiVulkan.Validation.value_or(true);
+        if (!Validation)
+            return {};
+        const char* ValidationLayer = "VK_LAYER_KHRONOS_validation";
+        AddRequiredRequests(InstanceLayers, {&ValidationLayer, 1});
+
+        auto LayerPropsRes = Ctx.enumerateInstanceLayerProperties();
+        if (LayerPropsRes.result != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage("Failed to enumerate Vulkan instance layer properties"));
+        auto& LayerProps = LayerPropsRes.value;
+
+        return MatchRequests(
+            InstanceLayers,
+            LayerProps,
+            [](const vk::LayerProperties& Prop) { return static_cast<const char*>(Prop.layerName); },
+            "layers");
     }
 
     // ── Phase 2: Resolve device extensions + query features ──────────────
@@ -74,11 +151,13 @@ class VulkanCapability : public Singleton<VulkanCapability> {
         if (ExtPropsRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to enumerate device extension properties"));
         auto& ExtProps = ExtPropsRes.value;
-        for (auto& Prop : ExtProps)
-            LogDebug("Available device extension: {}", static_cast<const char*>(Prop.extensionName));
 
         // Match extensions
-        auto Result = MatchExtensions(m_DeviceExts, ExtProps);
+        auto Result = MatchRequests(
+            m_DeviceExts,
+            ExtProps,
+            [](const vk::ExtensionProperties& Prop) { return static_cast<const char*>(Prop.extensionName); },
+            "extensions");
         if (!Result)
             return std::unexpected(Result.error());
         m_EnabledDeviceNames = std::move(*Result);
@@ -143,13 +222,12 @@ class VulkanCapability : public Singleton<VulkanCapability> {
     }
 
     [[nodiscard]] auto IsInstanceExtensionEnabled(const char* Name) -> bool {
-        auto It = std::ranges::find_if(m_InstanceExts,
-                                       [&](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
-        return It != m_InstanceExts.end() && It->Enabled;
+        return std::ranges::any_of(m_EnabledInstanceExtensionNames,
+                                   [Name](const auto* EnabledName) { return std::strcmp(EnabledName, Name) == 0; });
     }
 
     [[nodiscard]] auto IsDeviceExtensionEnabled(const char* Name) -> bool {
-        const auto IsEnabled = [Name](const std::vector<VulkanExtensionRequest>& Extensions) -> bool {
+        const auto IsEnabled = [Name](const std::vector<VulkanCapabilityRequest>& Extensions) -> bool {
             auto It = std::ranges::find_if(Extensions,
                                            [Name](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
             return It != Extensions.end() && It->Enabled;
@@ -159,47 +237,6 @@ class VulkanCapability : public Singleton<VulkanCapability> {
 
     [[nodiscard]] auto IsRayTracingAvailable() -> bool {
         return IsDeviceExtensionEnabled(vk::KHRAccelerationStructureExtensionName);
-    }
-
-  private:
-    // ── Shared match logic ───────────────────────────────────────────────
-
-    [[nodiscard]] auto MatchExtensions(std::vector<VulkanExtensionRequest>&     Exts,
-                                       std::span<const vk::ExtensionProperties> Available)
-        -> std::expected<std::vector<const char*>, ErrorMessage> {
-        for (auto& E : Exts)
-            if (E.Name)
-                E.Enabled = false;
-
-        for (auto& E : Exts) {
-            if (!E.Name)
-                continue;
-            if (std::ranges::any_of(Available,
-                                    [&](const auto& P) { return std::strcmp(P.extensionName, E.Name) == 0; }))
-                E.Enabled = true;
-        }
-
-        std::vector<StringView> Missing;
-        for (const auto& E : Exts) {
-            if (E.Name && E.Required && !E.Enabled)
-                Missing.emplace_back(E.Name);
-        }
-        if (!Missing.empty()) {
-            String Msg;
-            for (std::size_t i = 0; i < Missing.size(); ++i) {
-                if (i > 0)
-                    Msg += ", ";
-                Msg += Missing[i];
-            }
-            return std::unexpected(ErrorMessage(Format("Required Vulkan extensions not supported: {}", Msg)));
-        }
-
-        std::vector<const char*> EnabledNames;
-        for (const auto& E : Exts) {
-            if (E.Name && E.Enabled)
-                EnabledNames.emplace_back(E.Name);
-        }
-        return EnabledNames;
     }
 
   private:
@@ -232,10 +269,11 @@ class VulkanCapability : public Singleton<VulkanCapability> {
 
     // ── Members ─────────────────────────────────────────────────────────
 
-    std::vector<VulkanExtensionRequest> m_InstanceExts;
-    std::vector<VulkanExtensionRequest> m_DeviceExts;
-    std::vector<VulkanExtensionRequest> m_RayTracingExts;
-    std::vector<const char*>            m_EnabledDeviceNames;
+    std::vector<VulkanCapabilityRequest> m_InstanceExts;
+    std::vector<VulkanCapabilityRequest> m_DeviceExts;
+    std::vector<VulkanCapabilityRequest> m_RayTracingExts;
+    std::vector<const char*>             m_EnabledInstanceExtensionNames;
+    std::vector<const char*>             m_EnabledDeviceNames;
 
     VulkanFeaturesChain   m_SupportedFeatures; ///< Queried from physical device
     VulkanPropertiesChain m_Properties;        ///< Queried from physical device
