@@ -85,7 +85,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
     [[nodiscard]] static auto Create(const VulkanResourceContext&                  Context,
                                      const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<RHIBottomLevelAccelerationStructure>, ErrorMessage> {
-        if (!VulkanCapability::Get().GetRayTracingSupport().Available)
+        if (!VulkanCapability::Get().IsRayTracingAvailable())
             return std::unexpected(ErrorMessage("Cannot create BLAS because hardware ray tracing is unavailable"));
         if (Desc.Geometries.empty())
             return std::unexpected(ErrorMessage("Bottom-level acceleration structure requires at least one geometry"));
@@ -205,7 +205,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     [[nodiscard]] static auto Create(const VulkanResourceContext&               Context,
                                      const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> {
-        if (!VulkanCapability::Get().GetRayTracingSupport().Available)
+        if (!VulkanCapability::Get().IsRayTracingAvailable())
             return std::unexpected(ErrorMessage("Cannot create TLAS because hardware ray tracing is unavailable"));
         if (Desc.InitialInstanceCapacity == 0)
             return std::unexpected(ErrorMessage("Top-level acceleration structure requires non-zero initial capacity"));

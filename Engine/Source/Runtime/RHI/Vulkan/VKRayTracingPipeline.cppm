@@ -364,10 +364,8 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
                                      const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanRayTracingPipeline>, ErrorMessage> {
-        const auto& Support = VulkanCapability::Get().GetRayTracingSupport();
-        if (!Support.Available)
-            return std::unexpected(ErrorMessage(Format(
-                "Hardware ray tracing is unavailable: {}", Support.UnavailableReason)));
+        if (!VulkanCapability::Get().IsRayTracingAvailable())
+            return std::unexpected(ErrorMessage("Hardware ray tracing is unavailable"));
 
         const auto& Properties = VulkanCapability::Get().GetProperties<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
         if (Desc.MaxRecursionDepth == 0 || Desc.MaxRecursionDepth > Properties.maxRayRecursionDepth) {

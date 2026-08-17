@@ -10,8 +10,6 @@
       "args": ["lua", "-c", "os.runv(\"xmake\", {\"f\", \"-m\", \"debug\"}); os.runv(\"xmake\", {})"],
       "cwd": "$ZED_WORKTREE_ROOT"
     },
-    // TODO: debug in zed isn't available now, for some rpath issues
-    //       try to fix it.
     "program": "$ZED_WORKTREE_ROOT/Engine/Binaries/SoulEngine",
     "request": "launch",
     "adapter": "CodeLLDB"

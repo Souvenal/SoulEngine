@@ -16,8 +16,9 @@ import :Context;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto ToVkDescriptorType(const ShaderBinding& Binding)
-    -> std::expected<vk::DescriptorType, ErrorMessage> {
+constexpr Uint32 kMaxBindlessSampledImageCount = 4096;
+
+[[nodiscard]] auto ToVkDescriptorType(const ShaderBinding& Binding) -> std::expected<vk::DescriptorType, ErrorMessage> {
     switch (Binding.Type) {
     case ShaderResourceType::ConstantBuffer:
         return vk::DescriptorType::eUniformBufferDynamic;
@@ -34,19 +35,52 @@ namespace SoulEngine {
     case ShaderResourceType::Unknown:
         break;
     }
-    return std::unexpected(
-        ErrorMessage(Format("Unsupported reflected resource type for '{}'", Binding.ParameterPath)));
+    return std::unexpected(ErrorMessage(Format("Unsupported reflected resource type for '{}'", Binding.ParameterPath)));
 }
 
 [[nodiscard]] auto GetMaxRuntimeSampledTextureCount() -> Uint32 {
     const auto& DescriptorIndexingProperties =
         VulkanCapability::Get().GetProperties<vk::PhysicalDeviceVulkan12Properties>();
-    return std::min(DescriptorIndexingProperties.maxPerStageDescriptorUpdateAfterBindSampledImages,
-                    DescriptorIndexingProperties.maxDescriptorSetUpdateAfterBindSampledImages);
+    return std::min(kMaxBindlessSampledImageCount,
+                    std::min(DescriptorIndexingProperties.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                             DescriptorIndexingProperties.maxDescriptorSetUpdateAfterBindSampledImages));
 }
-[[nodiscard]] auto CreateDescriptorSetLayout(vk::raii::Device&                Device,
+
+[[nodiscard]] auto ValidateSampledImageDescriptorLimits(const ShaderReflection& Reflection)
+    -> std::expected<void, ErrorMessage> {
+    const auto& DescriptorIndexingProperties =
+        VulkanCapability::Get().GetProperties<vk::PhysicalDeviceVulkan12Properties>();
+
+    Uint64 DescriptorCount = 0;
+    for (const auto& Binding : Reflection.Bindings) {
+        if (Binding.Type != ShaderResourceType::SampledTexture)
+            continue;
+
+        const bool bUnboundedArray  = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
+        DescriptorCount            += bUnboundedArray ? GetMaxRuntimeSampledTextureCount() : Binding.ArrayCount;
+    }
+
+    const Uint64 PerStageLimit = DescriptorIndexingProperties.maxPerStageDescriptorUpdateAfterBindSampledImages;
+    if (DescriptorCount > PerStageLimit) {
+        return std::unexpected(ErrorMessage(Format("Pipeline layout declares {} sampled-image descriptors, exceeding "
+                                                   "the per-stage update-after-bind limit of {}",
+                                                   DescriptorCount,
+                                                   PerStageLimit)));
+    }
+
+    const Uint64 PipelineLayoutLimit = DescriptorIndexingProperties.maxDescriptorSetUpdateAfterBindSampledImages;
+    if (DescriptorCount > PipelineLayoutLimit) {
+        return std::unexpected(ErrorMessage(Format("Pipeline layout declares {} sampled-image descriptors, exceeding "
+                                                   "the update-after-bind pipeline-layout limit of {}",
+                                                   DescriptorCount,
+                                                   PipelineLayoutLimit)));
+    }
+
+    return {};
+}
+[[nodiscard]] auto CreateDescriptorSetLayout(vk::raii::Device&              Device,
                                              std::span<const ShaderBinding> Bindings,
-                                             vk::ShaderStageFlags              ShaderStages)
+                                             vk::ShaderStageFlags           ShaderStages)
     -> std::expected<vk::raii::DescriptorSetLayout, ErrorMessage> {
     // RHIPipeline layouts are generated from linked shader reflection. The reflected
     // set/binding numbers are consumed only inside Vulkan; renderer code binds by
@@ -58,17 +92,17 @@ namespace SoulEngine {
 
     bool bHasBindingFlags = false;
     for (Uint32 BindingIndex = 0; BindingIndex < Bindings.size(); ++BindingIndex) {
-        const auto& Binding = Bindings[BindingIndex];
-        auto DescriptorType = ToVkDescriptorType(Binding);
+        const auto& Binding        = Bindings[BindingIndex];
+        auto        DescriptorType = ToVkDescriptorType(Binding);
         if (!DescriptorType)
             return std::unexpected(DescriptorType.error());
 
-        const bool   bUnboundedArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
+        const bool bUnboundedArray = Binding.ArrayCount == std::numeric_limits<Uint32>::max();
         if (bUnboundedArray &&
             (Binding.Type != ShaderResourceType::SampledTexture || BindingIndex + 1 != Bindings.size())) {
-            return std::unexpected(ErrorMessage(Format(
-                "Reflected runtime array '{}' must be the final sampled-texture binding in its descriptor set",
-                Binding.ParameterPath)));
+            return std::unexpected(ErrorMessage(
+                Format("Reflected runtime array '{}' must be the final sampled-texture binding in its descriptor set",
+                       Binding.ParameterPath)));
         }
         const Uint32 DescriptorCount = bUnboundedArray ? GetMaxRuntimeSampledTextureCount() : Binding.ArrayCount;
         if (DescriptorCount == 0)
@@ -87,8 +121,7 @@ namespace SoulEngine {
         // count and update-after-bind flags.
         auto Flags = vk::DescriptorBindingFlags{};
         if (bUnboundedArray && Binding.Type == ShaderResourceType::SampledTexture) {
-            Flags = vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-                    vk::DescriptorBindingFlagBits::ePartiallyBound |
+            Flags = vk::DescriptorBindingFlagBits::eUpdateAfterBind | vk::DescriptorBindingFlagBits::ePartiallyBound |
                     vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
             bHasBindingFlags = true;
         }
@@ -125,31 +158,33 @@ namespace SoulEngine {
     return std::move(Result.value);
 }
 
-[[nodiscard]] auto CreatePipelineLayout(vk::raii::Device&             Device,
-                                        const ShaderReflection&     Reflection,
-                                        vk::ShaderStageFlags          ShaderStages = vk::ShaderStageFlagBits::eAllGraphics)
+[[nodiscard]] auto CreatePipelineLayout(vk::raii::Device&       Device,
+                                        const ShaderReflection& Reflection,
+                                        vk::ShaderStageFlags    ShaderStages = vk::ShaderStageFlagBits::eAllGraphics)
     -> std::expected<std::pair<std::vector<vk::raii::DescriptorSetLayout>, vk::raii::PipelineLayout>, ErrorMessage> {
     const Uint32 MaxBoundDescriptorSets = VulkanCapability::Get().GetProperties().limits.maxBoundDescriptorSets;
-    Uint32 MaxSet = 0;
+    Uint32       MaxSet                 = 0;
     for (const auto& Binding : Reflection.Bindings) {
         if (Binding.Set >= MaxBoundDescriptorSets)
-            return std::unexpected(ErrorMessage(Format(
-                "Reflected binding '{}' uses set {} which exceeds the device limit of {} bound descriptor sets",
-                Binding.ParameterPath,
-                Binding.Set,
-                MaxBoundDescriptorSets)));
+            return std::unexpected(ErrorMessage(
+                Format("Reflected binding '{}' uses set {} which exceeds the device limit of {} bound descriptor sets",
+                       Binding.ParameterPath,
+                       Binding.Set,
+                       MaxBoundDescriptorSets)));
         MaxSet = (std::max)(MaxSet, Binding.Set);
     }
+
+    if (auto R = ValidateSampledImageDescriptorLimits(Reflection); !R)
+        return std::unexpected(R.error());
 
     std::vector<std::vector<ShaderBinding>> BindingsBySet(MaxSet + 1);
     for (const auto& Binding : Reflection.Bindings)
         BindingsBySet[Binding.Set].push_back(Binding);
     for (auto& SetBindings : BindingsBySet) {
-        std::sort(SetBindings.begin(),
-                  SetBindings.end(),
-                  [](const ShaderBinding& Left, const ShaderBinding& Right) -> bool {
-                      return Left.BindingIndex < Right.BindingIndex;
-                  });
+        std::sort(
+            SetBindings.begin(), SetBindings.end(), [](const ShaderBinding& Left, const ShaderBinding& Right) -> bool {
+                return Left.BindingIndex < Right.BindingIndex;
+            });
     }
 
     std::vector<vk::raii::DescriptorSetLayout> SetLayouts;
@@ -199,20 +234,20 @@ namespace SoulEngine {
 }
 
 struct VulkanReflectedDescriptorBinding {
-    String               ParameterPath      = {};
-    Uint32               Set                = 0;
-    Uint32               Binding            = 0;
+    String             ParameterPath      = {};
+    Uint32             Set                = 0;
+    Uint32             Binding            = 0;
     ShaderResourceType Type               = ShaderResourceType::Unknown;
-    Uint32               ArrayCount         = 1;
-    Uint32               DynamicOffsetIndex = std::numeric_limits<Uint32>::max();
+    Uint32             ArrayCount         = 1;
+    Uint32             DynamicOffsetIndex = std::numeric_limits<Uint32>::max();
 };
 
 struct VulkanDescriptorSetInstance {
-    vk::raii::DescriptorSet                  Set                     = nullptr;
-    Uint32                                   VariableDescriptorCount = 0;
-    Uint64                                   ParameterRevision       = 0;
-    bool                                     Initialized             = false;
-    std::unordered_map<Uint32, const void*> ResourceBindings = {};
+    vk::raii::DescriptorSet                 Set                     = nullptr;
+    Uint32                                  VariableDescriptorCount = 0;
+    Uint64                                  ParameterRevision       = 0;
+    bool                                    Initialized             = false;
+    std::unordered_map<Uint32, const void*> ResourceBindings        = {};
 };
 
 struct VulkanPipelineParameterSetInstances {
@@ -232,12 +267,12 @@ struct VulkanPipelineParameterSetInstances {
     Result.reserve(Sorted.size());
     Uint32 DynamicOffsetIndex = 0;
     for (const auto& Binding : Sorted) {
-        auto& Out          = Result.emplace_back();
-        Out.ParameterPath  = Binding.ParameterPath;
-        Out.Set            = Binding.Set;
-        Out.Binding        = Binding.BindingIndex;
-        Out.Type           = Binding.Type;
-        Out.ArrayCount     = Binding.ArrayCount;
+        auto& Out         = Result.emplace_back();
+        Out.ParameterPath = Binding.ParameterPath;
+        Out.Set           = Binding.Set;
+        Out.Binding       = Binding.BindingIndex;
+        Out.Type          = Binding.Type;
+        Out.ArrayCount    = Binding.ArrayCount;
         if (Binding.Type == ShaderResourceType::ConstantBuffer)
             Out.DynamicOffsetIndex = DynamicOffsetIndex++;
     }
@@ -272,8 +307,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     ///
     /// Uses a pipeline layout generated from pipeline-level shader reflection. Shader
     /// modules are transient — destroyed when this function returns.
-    [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
-                                     const RHIGraphicsPipelineDesc& Desc)
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanGraphicsPipeline>, ErrorMessage> {
 
         auto LayoutObjects = CreatePipelineLayout(Context.Device, Desc.Program.Reflection);
@@ -402,11 +436,11 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments(
             static_cast<Uint32>(Desc.ColorFormats.size()),
             vk::PipelineColorBlendAttachmentState{
-            // .blendEnable = Desc.Blend.Attachments[0].BlendEnable,
-            .blendEnable    = vk::False,
-            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
-        });
+                // .blendEnable = Desc.Blend.Attachments[0].BlendEnable,
+                .blendEnable    = vk::False,
+                .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+            });
         // Alpha blending
         // vk::PipelineColorBlendAttachmentState RHIBlendAttachment{
         //     .blendEnable         = vk::True,
@@ -430,8 +464,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
 
         const auto ColorFormats =
             Desc.ColorFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
-        vk::Format DepthVkFormat =
-            HasDepth ? ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
+        vk::Format DepthVkFormat = HasDepth ? ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
 
         // Dynamic rendering allows us to specify color, depth, stencil attachments directly
         // after the pipeline is created
@@ -462,9 +495,9 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             return std::unexpected(
                 ErrorMessage(Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
-        auto Ret             = std::make_unique<VulkanGraphicsPipeline>();
-        Ret->m_Pipeline           = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
-        Ret->m_SetLayouts         =
+        auto Ret        = std::make_unique<VulkanGraphicsPipeline>();
+        Ret->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
+        Ret->m_SetLayouts =
             std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));
         Ret->m_PipelineLayout     = std::make_shared<vk::raii::PipelineLayout>(std::move(LayoutObjects->second));
         Ret->m_DescriptorSetCount = static_cast<Uint32>(Ret->m_SetLayouts->size());
@@ -524,25 +557,25 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         return std::ranges::equal(m_ColorFormats, ColorFormats) && m_DepthFormat == DepthFormat;
     }
 
-    [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
-                                                         Uint32             FrameIndex,
-                                                         Uint32             SetIndex,
-                                                         Uint32             VariableDescriptorCount,
-                                                         VulkanDescriptorManager& Descriptors)
+    [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64                   ParameterId,
+                                                        Uint32                   FrameIndex,
+                                                        Uint32                   SetIndex,
+                                                        Uint32                   VariableDescriptorCount,
+                                                        VulkanDescriptorManager& Descriptors)
         -> std::expected<VulkanDescriptorSetInstance*, ErrorMessage>;
 
   private:
-    SPtr<vk::raii::Pipeline>                         m_Pipeline           = nullptr;
-    SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout     = nullptr;
-    SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts         = nullptr;
-    std::vector<vk::DescriptorSetLayout>             m_RawSetLayouts      = {};
-    std::vector<VulkanReflectedDescriptorBinding>          m_Bindings           = {};
-    SPtr<VulkanPipelineParameterSetInstances>              m_ParameterSets      = std::make_shared<VulkanPipelineParameterSetInstances>();
-    Uint32                                           m_DescriptorSetCount = 0;
-    Uint32                                           m_DynamicOffsetCount = 0;
-    Uint32                                           m_PushConstantSize   = 0;
-    std::vector<RHIFormat>                           m_ColorFormats       = {};
-    RHIFormat                                        m_DepthFormat        = RHIFormat::Unknown;
+    SPtr<vk::raii::Pipeline>                         m_Pipeline       = nullptr;
+    SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout = nullptr;
+    SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts     = nullptr;
+    std::vector<vk::DescriptorSetLayout>             m_RawSetLayouts  = {};
+    std::vector<VulkanReflectedDescriptorBinding>    m_Bindings       = {};
+    SPtr<VulkanPipelineParameterSetInstances> m_ParameterSets = std::make_shared<VulkanPipelineParameterSetInstances>();
+    Uint32                                    m_DescriptorSetCount = 0;
+    Uint32                                    m_DynamicOffsetCount = 0;
+    Uint32                                    m_PushConstantSize   = 0;
+    std::vector<RHIFormat>                    m_ColorFormats       = {};
+    RHIFormat                                 m_DepthFormat        = RHIFormat::Unknown;
 };
 
 auto VulkanGraphicsPipeline::GetDescriptorSetLayout(Uint32 Set) const -> vk::DescriptorSetLayout {
@@ -551,11 +584,11 @@ auto VulkanGraphicsPipeline::GetDescriptorSetLayout(Uint32 Set) const -> vk::Des
     return m_RawSetLayouts[Set];
 }
 
-auto VulkanGraphicsPipeline::GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
-                                                         Uint32             FrameIndex,
-                                                         Uint32             SetIndex,
-                                                         Uint32             VariableDescriptorCount,
-                                                         VulkanDescriptorManager& Descriptors)
+auto VulkanGraphicsPipeline::GetOrCreateDescriptorSetInstance(Uint64                   ParameterId,
+                                                              Uint32                   FrameIndex,
+                                                              Uint32                   SetIndex,
+                                                              Uint32                   VariableDescriptorCount,
+                                                              VulkanDescriptorManager& Descriptors)
     -> std::expected<VulkanDescriptorSetInstance*, ErrorMessage> {
     if (SetIndex >= m_RawSetLayouts.size())
         return std::unexpected(ErrorMessage(Format("Parameter set uses missing descriptor set {}", SetIndex)));

@@ -9,9 +9,8 @@ export module Renderer:RasterRenderer;
 
 import Core;
 import Material;
-import Resource;
+import Resource;  // Resource already exports :Geometry partition
 import RHI;
-import Resource;
 import Scene;
 import TaskGraph;
 
@@ -105,22 +104,13 @@ struct RasterViewParameterState {
 /// @brief One concrete indexed draw consumed by the forward raster pass.
 struct InstanceData {
     Uint32                       EntityId       = 0;
-    RHIRef<RHIVertexBuffer>      PositionVB     = nullptr;
-    RHIRef<RHIVertexBuffer>      NormalVB       = nullptr;
-    RHIRef<RHIVertexBuffer>      TangentVB      = nullptr;
-    RHIRef<RHIVertexBuffer>      UVVB           = nullptr;
-    RHIRef<RHIIndexBuffer>       IndexBuffer    = nullptr;
+    Uint32                       GeometryID     = 0;  ///< Index into GeometryRecord array
     Uint32                       MaterialID     = 0;
-    bool                         HasUV0             = false;
-    bool                         HasTangents        = false;
     hlslpp::float4x4             WorldTransform = hlslpp::float4x4::identity();
     hlslpp::interop::float4      BoundingSphere = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 };
 
-struct RasterMeshCacheEntry {
-    String                    Asset = {};
-    ResourceRef<ResourceMesh> Mesh  = {};
-};
+// RasterMeshCacheEntry has been removed. Use GeometryManager for geometry lookup.
 
 /// @brief Single-material metallic-roughness forward renderer.
 class RasterRenderer final : public IRenderer {
@@ -179,7 +169,6 @@ class RasterRenderer final : public IRenderer {
         m_DeferredPipeline         = {};
         m_SamplerLinear            = {};
         m_SamplerAniso             = {};
-        m_MeshCache.clear();
         m_ViewParameters.clear();
     }
 
@@ -291,26 +280,27 @@ class RasterRenderer final : public IRenderer {
         if (CmdList.PresentSourceRef.GetState() == RHIRefState::Unknown)
             CmdList.PresentSourceRef = SceneColorRTRef;
 
-        std::vector<InstanceGpuData>               Instances       = {};
-        std::vector<RHIRasterGeometrySource>    GeometrySources = {};
+        std::vector<InstanceGpuData> Instances = {};
         Instances.reserve(DrawInstances.size());
-        GeometrySources.reserve(DrawInstances.size());
 
         for (const auto& Instance : DrawInstances) {
-            if (!Instance.PositionVB || !Instance.NormalVB || !Instance.TangentVB || !Instance.UVVB ||
-                !Instance.IndexBuffer)
-                continue;
+            Instances.emplace_back(BuildInstanceData(Instance, Instance.MaterialID, Instance.GeometryID));
+        }
 
-            const auto GeometryID = static_cast<Uint32>(Instances.size());
-            Instances.emplace_back(BuildInstanceData(Instance, Instance.MaterialID, GeometryID));
+        // Get all geometry records for GPU upload
+        auto& GeometryMgr = GeometryManager::Get();
+        auto  AllGeometryRecords = GeometryMgr.GetAllGeometryRecordsFlat();
+        std::vector<RHIRasterGeometrySource> GeometrySources;
+        GeometrySources.reserve(AllGeometryRecords.size());
+        for (const auto* Record : AllGeometryRecords) {
             GeometrySources.emplace_back(RHIRasterGeometrySource{
-                .PositionBufferRef = Instance.PositionVB,
-                .NormalBufferRef   = Instance.NormalVB,
-                .TangentBufferRef  = Instance.TangentVB,
-                .TexCoordBufferRef = Instance.UVVB,
-                .IndexBufferRef    = Instance.IndexBuffer,
-                .IndexCount        = static_cast<Uint32>(Instance.IndexBuffer->GetIndexCount()),
-                .MaterialID        = Instance.MaterialID,
+                .PositionBufferRef = Record->PositionBuffer,
+                .NormalBufferRef   = Record->NormalBuffer,
+                .TangentBufferRef  = Record->TangentBuffer,
+                .TexCoordBufferRef = Record->TexCoordBuffer,
+                .IndexBufferRef    = Record->IndexBuffer,
+                .IndexCount        = Record->IndexCount,
+                .MaterialID        = Record->MaterialId,
             });
         }
 
@@ -493,67 +483,49 @@ class RasterRenderer final : public IRenderer {
         return {};
     }
 
-    [[nodiscard]] auto GetOrRequestMesh(StringView Asset) -> ResourceRef<ResourceMesh>& {
-        for (auto& Entry : m_MeshCache) {
-            if (Entry.Asset == Asset)
-                return Entry.Mesh;
-        }
-
-        auto& Entry = m_MeshCache.emplace_back(RasterMeshCacheEntry{
-            .Asset = String(Asset),
-            .Mesh  = ResourceManager::Get().RequestMeshRef(Asset),
-        });
-        return Entry.Mesh;
-    }
+    // GetOrRequestMesh has been removed. Use GeometryManager::FindGeometryRecords() instead.
 
     [[nodiscard]] auto BuildDrawInstances(const SceneSnapshot& Scene) -> std::vector<InstanceData> {
         std::vector<InstanceData> DrawInstances = {};
-        auto&                     Resources     = ResourceManager::Get();
+        auto&                     GeometryMgr   = GeometryManager::Get();
         auto&                     MaterialMgr   = MaterialManager::Get();
 
         for (const auto& Renderable : Scene.Meshes) {
             if (Renderable.MeshAsset.empty())
                 continue;
 
-            const auto* Mesh = Resources.TryGetReady(GetOrRequestMesh(Renderable.MeshAsset));
-            if (!Mesh)
+            // Get geometry records from GeometryManager
+            auto GeometryRecords = GeometryMgr.FindGeometryRecords(Renderable.MeshAsset);
+            if (GeometryRecords.empty())
                 continue;
 
-            // Resolve material ID: prefer scene material, fallback to submesh material, then default
+            // Resolve material ID: prefer scene material, fallback to default
             Uint32 MaterialID = Renderable.MaterialId.empty() ? 0 : MaterialMgr.FindMaterialId(Renderable.MaterialId);
 
-            for (const auto& Group : Mesh->GetMeshGroups()) {
-                for (const auto& SubMesh : Group.SubMeshes) {
-                    auto PositionVB  = SubMesh.PositionVB;
-                    auto NormalVB    = SubMesh.NormalVB;
-                    auto TangentVB   = SubMesh.TangentVB;
-                    auto UVVB        = SubMesh.UVVB;
-                    auto IndexBuffer = SubMesh.IB;
-                    if (!PositionVB || !NormalVB || !TangentVB || !IndexBuffer)
-                        continue;
-                    if (!UVVB)
-                        UVVB = PositionVB;
+            // Iterate over geometry records
+            for (size_t i = 0; i < GeometryRecords.size(); ++i) {
+                const auto& Record = GeometryRecords[i];
 
-                    // If scene material not found, try submesh material
-                    Uint32 SubMeshMaterialID = MaterialID;
-                    if (SubMeshMaterialID == 0 && SubMesh.MaterialId != 0) {
-                        SubMeshMaterialID = SubMesh.MaterialId;
-                    }
+                // Skip if essential buffers not ready
+                if (!Record.PositionBuffer || !Record.NormalBuffer || !Record.IndexBuffer)
+                    continue;
 
-                    DrawInstances.emplace_back(InstanceData{
-                        .EntityId       = Renderable.EntityId,
-                        .PositionVB     = std::move(PositionVB),
-                        .NormalVB       = std::move(NormalVB),
-                        .TangentVB      = std::move(TangentVB),
-                        .UVVB           = std::move(UVVB),
-                        .IndexBuffer    = std::move(IndexBuffer),
-                        .MaterialID     = SubMeshMaterialID,
-                        .HasUV0         = SubMesh.HasUV0,
-                        .HasTangents    = SubMesh.HasTangents,
-                        .WorldTransform = Renderable.WorldTransform,
-                        .BoundingSphere = BuildWorldBoundingSphere(SubMesh.Positions, Renderable.WorldTransform),
-                    });
+                // Use submesh material if scene material not found
+                Uint32 SubMeshMaterialID = MaterialID;
+                if (SubMeshMaterialID == 0 && Record.MaterialId != 0) {
+                    SubMeshMaterialID = Record.MaterialId;
                 }
+
+                // Get geometry ID (index in the global geometry array)
+                Uint32 GeometryID = GeometryMgr.GetGeometryID(Renderable.MeshAsset, i);
+
+                DrawInstances.emplace_back(InstanceData{
+                    .EntityId       = Renderable.EntityId,
+                    .GeometryID     = GeometryID,
+                    .MaterialID     = SubMeshMaterialID,
+                    .WorldTransform = Renderable.WorldTransform,
+                    .BoundingSphere = BuildWorldBoundingSphere(Record.Positions, Renderable.WorldTransform),
+                });
             }
         }
 
@@ -667,7 +639,7 @@ class RasterRenderer final : public IRenderer {
     RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline         = nullptr;
     RHIRef<RHISampler>                    m_SamplerLinear     = nullptr;
     RHIRef<RHISampler>                    m_SamplerAniso      = nullptr;
-    std::vector<RasterMeshCacheEntry>     m_MeshCache         = {};
+    // m_MeshCache has been removed. Use GeometryManager for geometry lookup.
     std::vector<RasterViewParameterState> m_ViewParameters    = {};
 };
 

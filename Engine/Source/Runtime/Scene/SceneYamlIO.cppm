@@ -1,5 +1,8 @@
 module;
 
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 #include <yaml.h>
@@ -798,6 +801,42 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
         ResolveTexturePath(Copy.OcclusionTexture);
         ResolveTexturePath(Copy.EmissiveTexture);
         MaterialManager::Get().RegisterMaterial(String(Id), Copy);
+    }
+
+    // Register all mesh assets with GeometryManager
+    auto& GeometryMgr = GeometryManager::Get();
+    GeometryMgr.Clear();
+    
+    // Collect unique mesh asset paths
+    std::unordered_set<String> MeshAssets;
+    const auto Meshes = Temporary.m_Registry->view<MeshComponent>();
+    for (const auto Entity : Meshes) {
+        const auto& Mesh = Meshes.get<MeshComponent>(Entity);
+        if (!Mesh.Asset.empty()) {
+            MeshAssets.insert(Temporary.ResolveAssetPath(Mesh.Asset));
+        }
+    }
+    
+    // Load and register each unique mesh
+    for (const auto& MeshPath : MeshAssets) {
+        Assimp::Importer Importer;
+        constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
+                                 aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
+                                 aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes;
+
+        const auto* Scene = Importer.ReadFile(MeshPath.c_str(), Flags);
+        if (!Scene || !Scene->mRootNode || Scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) {
+            LogWarning("Failed to load mesh '{}': {}", MeshPath, Importer.GetErrorString());
+            continue;
+        }
+
+        const Path MeshDirectory = Path(MeshPath).parent_path();
+        
+        // Register materials from the mesh
+        MaterialManager::Get().RegisterMaterialsFromScene(Scene, MeshDirectory);
+        
+        // Register geometry
+        GeometryMgr.RegisterScene(Scene, MeshDirectory, MeshPath);
     }
 
     *this = std::move(Temporary);

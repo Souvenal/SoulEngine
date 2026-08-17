@@ -21,25 +21,20 @@ struct VulkanExtensionRequest {
 // ═════════════════════════════════════════════════════════════════════════════
 
 using VulkanFeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
-                                         vk::PhysicalDeviceVulkan11Features,
-                                         vk::PhysicalDeviceVulkan12Features,
-                                         vk::PhysicalDeviceVulkan13Features,
-                                         vk::PhysicalDeviceVulkan14Features,
-                                         vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
-                                         vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>;
+                                               vk::PhysicalDeviceVulkan11Features,
+                                               vk::PhysicalDeviceVulkan12Features,
+                                               vk::PhysicalDeviceVulkan13Features,
+                                               vk::PhysicalDeviceVulkan14Features,
+                                               vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+                                               vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>;
 
 using VulkanPropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
-                                           vk::PhysicalDeviceVulkan11Properties,
-                                           vk::PhysicalDeviceVulkan12Properties,
-                                           vk::PhysicalDeviceVulkan13Properties,
-                                           vk::PhysicalDeviceVulkan14Properties,
-                                           vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
-                                           vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>;
-
-struct VulkanRayTracingSupport {
-    bool   Available         = false;
-    String UnavailableReason = {};
-};
+                                                 vk::PhysicalDeviceVulkan11Properties,
+                                                 vk::PhysicalDeviceVulkan12Properties,
+                                                 vk::PhysicalDeviceVulkan13Properties,
+                                                 vk::PhysicalDeviceVulkan14Properties,
+                                                 vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
+                                                 vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>;
 
 class VulkanCapability : public Singleton<VulkanCapability> {
     friend class Singleton<VulkanCapability>;
@@ -47,13 +42,11 @@ class VulkanCapability : public Singleton<VulkanCapability> {
   public:
     // ── Phase 1: Resolve instance extensions ─────────────────────────────
 
-    [[nodiscard]] auto ResolveInstanceExtensions(vk::raii::Context&      Ctx,
-                                                 std::span<const char*> RequiredExtensions)
+    [[nodiscard]] auto ResolveInstanceExtensions(vk::raii::Context& Ctx, std::span<const char*> RequiredExtensions)
         -> std::expected<std::vector<const char*>, ErrorMessage> {
         for (const auto* RequiredExtension : RequiredExtensions) {
-            auto It = std::ranges::find_if(m_InstanceExts, [&](const auto& E) {
-                return E.Name && std::strcmp(E.Name, RequiredExtension) == 0;
-            });
+            auto It = std::ranges::find_if(
+                m_InstanceExts, [&](const auto& E) { return E.Name && std::strcmp(E.Name, RequiredExtension) == 0; });
             if (It != m_InstanceExts.end())
                 It->Enabled = false;
             else
@@ -99,18 +92,14 @@ class VulkanCapability : public Singleton<VulkanCapability> {
                                               vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
                                               vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
 
-        ResolveRayTracingSupport(ExtProps, PD.getProperties().apiVersion);
-        if (m_RayTracingSupport.Available) {
-            for (const auto& Ext : m_RayTracingExts)
+        // Add ray tracing extensions if they are available
+        for (const auto& Ext : m_RayTracingExts) {
+            if (Ext.Enabled)
                 m_EnabledDeviceNames.emplace_back(Ext.Name);
-        } else {
-            // These extension feature structs are included in the common query chain.
-            // Do not request them from a device unless the full extension/feature bundle is enabled.
-            m_SupportedFeatures.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure = false;
-            m_SupportedFeatures.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline = false;
         }
 
-        return std::tuple<std::vector<const char*>, const VulkanFeaturesChain&>{m_EnabledDeviceNames, m_SupportedFeatures};
+        return std::tuple<std::vector<const char*>, const VulkanFeaturesChain&>{m_EnabledDeviceNames,
+                                                                                m_SupportedFeatures};
     }
 
     // ── Phase 3: Query device properties ────────────────────────────────
@@ -161,21 +150,21 @@ class VulkanCapability : public Singleton<VulkanCapability> {
 
     [[nodiscard]] auto IsDeviceExtensionEnabled(const char* Name) -> bool {
         const auto IsEnabled = [Name](const std::vector<VulkanExtensionRequest>& Extensions) -> bool {
-            auto It = std::ranges::find_if(
-                Extensions, [Name](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
+            auto It = std::ranges::find_if(Extensions,
+                                           [Name](const auto& E) { return E.Name && std::strcmp(E.Name, Name) == 0; });
             return It != Extensions.end() && It->Enabled;
         };
-        return IsEnabled(m_DeviceExts) || (m_RayTracingSupport.Available && IsEnabled(m_RayTracingExts));
+        return IsEnabled(m_DeviceExts) || IsEnabled(m_RayTracingExts);
     }
 
-    [[nodiscard]] auto GetRayTracingSupport() const -> const VulkanRayTracingSupport& {
-        return m_RayTracingSupport;
+    [[nodiscard]] auto IsRayTracingAvailable() -> bool {
+        return IsDeviceExtensionEnabled(vk::KHRAccelerationStructureExtensionName);
     }
 
   private:
     // ── Shared match logic ───────────────────────────────────────────────
 
-    [[nodiscard]] auto MatchExtensions(std::vector<VulkanExtensionRequest>&           Exts,
+    [[nodiscard]] auto MatchExtensions(std::vector<VulkanExtensionRequest>&     Exts,
                                        std::span<const vk::ExtensionProperties> Available)
         -> std::expected<std::vector<const char*>, ErrorMessage> {
         for (auto& E : Exts)
@@ -232,10 +221,6 @@ class VulkanCapability : public Singleton<VulkanCapability> {
         m_DeviceExts.push_back({vk::KHRPortabilitySubsetExtensionName, false});
         // VK_EXT_memory_budget — used by VMA
         m_DeviceExts.push_back({vk::EXTMemoryBudgetExtensionName, false});
-        // VK_KHR_buffer_device_address is promoted to core Vulkan 1.2. Keep
-        // the extension enabled when a pre-1.2 RT device exposes it so the
-        // Vulkan-Hpp dispatcher can resolve vkGetBufferDeviceAddress.
-        m_DeviceExts.push_back({vk::KHRBufferDeviceAddressExtensionName, false});
 
         // Hardware ray tracing is an optional all-or-nothing device capability.
         // These extensions are appended only after ResolveRayTracingSupport validates
@@ -245,57 +230,12 @@ class VulkanCapability : public Singleton<VulkanCapability> {
         m_RayTracingExts.push_back({vk::KHRDeferredHostOperationsExtensionName, false});
     }
 
-    auto ResolveRayTracingSupport(std::span<const vk::ExtensionProperties> AvailableExtensions, Uint32 ApiVersion) -> void {
-        m_RayTracingSupport = {};
-        const auto HasExtension = [AvailableExtensions](const char* Name) -> bool {
-            return std::ranges::any_of(
-                AvailableExtensions, [Name](const auto& Property) { return std::strcmp(Property.extensionName, Name) == 0; });
-        };
-        for (auto& Ext : m_RayTracingExts) {
-            Ext.Enabled = HasExtension(Ext.Name);
-            if (!Ext.Enabled) {
-                m_RayTracingSupport.UnavailableReason = Format("Missing required ray-tracing device extension '{}'", Ext.Name);
-                return;
-            }
-        }
-
-        if (ApiVersion < vk::ApiVersion12 && !HasExtension(vk::KHRBufferDeviceAddressExtensionName)) {
-            m_RayTracingSupport.UnavailableReason = "VK_KHR_buffer_device_address is required before Vulkan 1.2";
-            return;
-        }
-        if (ApiVersion < vk::ApiVersion12 && !HasExtension(vk::KHRSpirv14ExtensionName)) {
-            m_RayTracingSupport.UnavailableReason = "VK_KHR_spirv_1_4 is required before Vulkan 1.2";
-            return;
-        }
-        if (ApiVersion < vk::ApiVersion12 && !HasExtension(vk::KHRShaderFloatControlsExtensionName)) {
-            m_RayTracingSupport.UnavailableReason = "VK_KHR_shader_float_controls is required before Vulkan 1.2";
-            return;
-        }
-
-        const auto& V12 = m_SupportedFeatures.get<vk::PhysicalDeviceVulkan12Features>();
-        if (!V12.bufferDeviceAddress) {
-            m_RayTracingSupport.UnavailableReason = "bufferDeviceAddress feature is not supported";
-            return;
-        }
-        if (!m_SupportedFeatures.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure) {
-            m_RayTracingSupport.UnavailableReason = "accelerationStructure feature is not supported";
-            return;
-        }
-        if (!m_SupportedFeatures.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline) {
-            m_RayTracingSupport.UnavailableReason = "rayTracingPipeline feature is not supported";
-            return;
-        }
-
-        m_RayTracingSupport.Available = true;
-    }
-
     // ── Members ─────────────────────────────────────────────────────────
 
     std::vector<VulkanExtensionRequest> m_InstanceExts;
     std::vector<VulkanExtensionRequest> m_DeviceExts;
     std::vector<VulkanExtensionRequest> m_RayTracingExts;
-    std::vector<const char*>      m_EnabledDeviceNames;
-    VulkanRayTracingSupport             m_RayTracingSupport = {};
+    std::vector<const char*>            m_EnabledDeviceNames;
 
     VulkanFeaturesChain   m_SupportedFeatures; ///< Queried from physical device
     VulkanPropertiesChain m_Properties;        ///< Queried from physical device

@@ -201,6 +201,9 @@ class EngineLoop {
 
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
+        
+        // Release GPU geometry buffers before VMA allocator dies.
+        GeometryManager::Get().Clear();
 
         RHIRenderDevice::Destroy();
         if (m_WindowSystem) {

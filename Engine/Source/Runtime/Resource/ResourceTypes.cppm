@@ -377,60 +377,41 @@ class ResourceRef {
 template <ManagedResource T>
 [[nodiscard]] auto AcquireResourceRef(ResourceContext& Context, const ResourceHandle<T>& Handle) -> ResourceRef<T>;
 
-/// @brief Single drawable submesh using structure-of-arrays vertex buffers.
-struct SubMesh {
-    std::vector<hlslpp::interop::float3> Positions = {};
-    std::vector<hlslpp::interop::float3> Normals   = {};
-    std::vector<hlslpp::interop::float4> Tangents  = {};
-    std::vector<hlslpp::interop::float2> UVs       = {};
-    std::vector<Uint32>                  Indices   = {};
-
-    RHIRef<RHIVertexBuffer> PositionVB = nullptr;
-    RHIRef<RHIVertexBuffer> NormalVB   = nullptr;
-    RHIRef<RHIVertexBuffer> TangentVB  = nullptr;
-    RHIRef<RHIVertexBuffer> UVVB       = nullptr;
-    RHIRef<RHIIndexBuffer>  IB         = nullptr;
-
-    Uint32 VertexCount = 0;
-    Uint32 MaterialId  = 0;  ///< MaterialManager ID assigned during mesh import. 0 = Default.
-    bool   HasUV0      = false;
-    bool   HasTangents = false;
-};
-
-struct MeshGroup {
-    String               Name      = {};
-    std::vector<SubMesh> SubMeshes = {};
-};
+// SubMesh and MeshGroup have been replaced by GeometryRecord in Resource:Geometry module.
+// Use GeometryManager for centralized geometry management.
 
 /// @brief High-level imported mesh asset.
+///
+/// After the GeometryManager refactoring, ResourceMesh only stores the mesh name.
+/// Actual geometry data is managed by GeometryManager.
 class ResourceMesh {
   private:
-    friend auto ParseAssimpMeshes(StringView, ResourceMesh&) -> std::expected<void, ErrorMessage>;
-
-    std::vector<MeshGroup> m_MeshGroups = {};
-    String                 m_Name       = {};
+    String m_MeshName = {};
 
   public:
     ResourceMesh() = default;
 
-    [[nodiscard]] auto GetName() const -> const String& {
-        return m_Name;
+    explicit ResourceMesh(String name) : m_MeshName(std::move(name)) {}
+
+    [[nodiscard]] auto GetMeshName() const -> const String& {
+        return m_MeshName;
     }
 
-    [[nodiscard]] auto GetMeshGroups() -> std::vector<MeshGroup>&;
-    [[nodiscard]] auto GetMeshGroups() const -> const std::vector<MeshGroup>&;
+    auto SetMeshName(String name) -> void {
+        m_MeshName = std::move(name);
+    }
 };
 
 /// Policy for lowering a mesh asset into one reusable BLAS payload.
 enum class BottomLevelAccelerationStructureGeometryPolicy : Uint8 {
     Unknown = 0,
-    AllMeshSubMeshes,
+    AllGeometryRecords,  ///< Use all GeometryRecords from GeometryManager
 };
 
 /// Request options contributing to a reusable BLAS identity.
 struct BottomLevelAccelerationStructureRequest {
     BottomLevelAccelerationStructureGeometryPolicy GeometryPolicy =
-        BottomLevelAccelerationStructureGeometryPolicy::AllMeshSubMeshes;
+        BottomLevelAccelerationStructureGeometryPolicy::AllGeometryRecords;
 };
 
 /// Independent resource payload for reusable object-space acceleration geometry.

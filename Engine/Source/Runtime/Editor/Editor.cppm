@@ -236,53 +236,53 @@ class Editor {
 
         std::optional<entt::entity> HitEntity = std::nullopt;
         float ClosestDistance = std::numeric_limits<float>::max();
+        auto& GeometryMgr = GeometryManager::Get();
         for (const auto& Renderable : Snapshot.Meshes) {
-            auto MeshRef = ResourceManager::Get().RequestMeshRef(Renderable.MeshAsset);
-            const auto* Mesh = ResourceManager::Get().TryGetReady(MeshRef);
-            if (!Mesh)
+            // Get geometry records from GeometryManager
+            auto GeometryRecords = GeometryMgr.FindGeometryRecords(Renderable.MeshAsset);
+            if (GeometryRecords.empty())
                 continue;
-            for (const auto& Group : Mesh->GetMeshGroups()) {
-                for (const auto& SubMesh : Group.SubMeshes) {
-                    if (SubMesh.Positions.empty())
-                        continue;
-                    hlslpp::float3 Min{SubMesh.Positions.front().x, SubMesh.Positions.front().y, SubMesh.Positions.front().z};
-                    hlslpp::float3 Max = Min;
-                    for (const auto& Position : SubMesh.Positions) {
-                        Min.x = std::min(static_cast<float>(Min.x), static_cast<float>(Position.x));
-                        Min.y = std::min(static_cast<float>(Min.y), static_cast<float>(Position.y));
-                        Min.z = std::min(static_cast<float>(Min.z), static_cast<float>(Position.z));
-                        Max.x = std::max(static_cast<float>(Max.x), static_cast<float>(Position.x));
-                        Max.y = std::max(static_cast<float>(Max.y), static_cast<float>(Position.y));
-                        Max.z = std::max(static_cast<float>(Max.z), static_cast<float>(Position.z));
-                    }
-                    const auto LocalCenter = (Min + Max) * 0.5f;
-                    float RadiusSquared = 0.0f;
-                    for (const auto& Position : SubMesh.Positions) {
-                        const auto Offset = hlslpp::float3{Position.x, Position.y, Position.z} - LocalCenter;
-                        RadiusSquared = std::max(RadiusSquared, static_cast<float>(hlslpp::dot(Offset, Offset)));
-                    }
-                    const auto WorldCenter4 = hlslpp::mul(hlslpp::float4{LocalCenter.x, LocalCenter.y, LocalCenter.z, 1.0f}, Renderable.WorldTransform);
-                    float TransformSquared = 0.0f;
-                    for (Uint32 Row = 0; Row < 3; ++Row) {
-                        TransformSquared += Renderable.WorldTransform[Row].x * Renderable.WorldTransform[Row].x;
-                        TransformSquared += Renderable.WorldTransform[Row].y * Renderable.WorldTransform[Row].y;
-                        TransformSquared += Renderable.WorldTransform[Row].z * Renderable.WorldTransform[Row].z;
-                    }
-                    const auto WorldCenter = hlslpp::float3{WorldCenter4.x, WorldCenter4.y, WorldCenter4.z};
-                    const float WorldRadius = std::sqrt(RadiusSquared * TransformSquared);
-                    const auto ToCenter = Origin - WorldCenter;
-                    const float B = hlslpp::dot(ToCenter, Direction);
-                    const float C = hlslpp::dot(ToCenter, ToCenter) - WorldRadius * WorldRadius;
-                    const float Discriminant = B * B - C;
-                    if (Discriminant < 0.0f)
-                        continue;
-                    float Distance = -B - std::sqrt(Discriminant);
-                    if (Distance < 0.0f)
-                        Distance = -B + std::sqrt(Discriminant);
-                    if (Distance >= 0.0f && Distance < ClosestDistance) {
-                        ClosestDistance = Distance;
-                        HitEntity = static_cast<entt::entity>(Renderable.EntityId);
-                    }
+
+            for (const auto& Record : GeometryRecords) {
+                if (Record.Positions.empty())
+                    continue;
+                hlslpp::float3 Min{Record.Positions.front().x, Record.Positions.front().y, Record.Positions.front().z};
+                hlslpp::float3 Max = Min;
+                for (const auto& Position : Record.Positions) {
+                    Min.x = std::min(static_cast<float>(Min.x), static_cast<float>(Position.x));
+                    Min.y = std::min(static_cast<float>(Min.y), static_cast<float>(Position.y));
+                    Min.z = std::min(static_cast<float>(Min.z), static_cast<float>(Position.z));
+                    Max.x = std::max(static_cast<float>(Max.x), static_cast<float>(Position.x));
+                    Max.y = std::max(static_cast<float>(Max.y), static_cast<float>(Position.y));
+                    Max.z = std::max(static_cast<float>(Max.z), static_cast<float>(Position.z));
+                }
+                const auto LocalCenter = (Min + Max) * 0.5f;
+                float RadiusSquared = 0.0f;
+                for (const auto& Position : Record.Positions) {
+                    const auto Offset = hlslpp::float3{Position.x, Position.y, Position.z} - LocalCenter;
+                    RadiusSquared = std::max(RadiusSquared, static_cast<float>(hlslpp::dot(Offset, Offset)));
+                }
+                const auto WorldCenter4 = hlslpp::mul(hlslpp::float4{LocalCenter.x, LocalCenter.y, LocalCenter.z, 1.0f}, Renderable.WorldTransform);
+                float TransformSquared = 0.0f;
+                for (Uint32 Row = 0; Row < 3; ++Row) {
+                    TransformSquared += Renderable.WorldTransform[Row].x * Renderable.WorldTransform[Row].x;
+                    TransformSquared += Renderable.WorldTransform[Row].y * Renderable.WorldTransform[Row].y;
+                    TransformSquared += Renderable.WorldTransform[Row].z * Renderable.WorldTransform[Row].z;
+                }
+                const auto WorldCenter = hlslpp::float3{WorldCenter4.x, WorldCenter4.y, WorldCenter4.z};
+                const float WorldRadius = std::sqrt(RadiusSquared * TransformSquared);
+                const auto ToCenter = Origin - WorldCenter;
+                const float B = hlslpp::dot(ToCenter, Direction);
+                const float C = hlslpp::dot(ToCenter, ToCenter) - WorldRadius * WorldRadius;
+                const float Discriminant = B * B - C;
+                if (Discriminant < 0.0f)
+                    continue;
+                float Distance = -B - std::sqrt(Discriminant);
+                if (Distance < 0.0f)
+                    Distance = -B + std::sqrt(Discriminant);
+                if (Distance >= 0.0f && Distance < ClosestDistance) {
+                    ClosestDistance = Distance;
+                    HitEntity = static_cast<entt::entity>(Renderable.EntityId);
                 }
             }
         }
