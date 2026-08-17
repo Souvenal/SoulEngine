@@ -525,16 +525,16 @@ struct VulkanCommandVisitor {
             auto* TangentPtr  = Source.TangentBufferRef.TryGet();
             auto* TexCoordPtr = Source.TexCoordBufferRef.TryGet();
             auto* IndexPtr    = Source.IndexBufferRef.TryGet();
-            if (!PositionPtr || !NormalPtr || !TangentPtr || !TexCoordPtr || !IndexPtr || Source.IndexCount == 0) {
+            if (!PositionPtr || !NormalPtr || !IndexPtr || Source.IndexCount == 0) {
                 Error = ErrorMessage("Raster geometry data has an unset source buffer or empty index range");
                 return;
             }
             const auto PositionAddress = static_cast<const VulkanVertexBuffer&>(*PositionPtr).GetDeviceAddress();
             const auto NormalAddress   = static_cast<const VulkanVertexBuffer&>(*NormalPtr).GetDeviceAddress();
-            const auto TangentAddress  = static_cast<const VulkanVertexBuffer&>(*TangentPtr).GetDeviceAddress();
-            const auto TexCoordAddress = static_cast<const VulkanVertexBuffer&>(*TexCoordPtr).GetDeviceAddress();
+            const auto TangentAddress  = TangentPtr ? static_cast<const VulkanVertexBuffer&>(*TangentPtr).GetDeviceAddress() : 0;
+            const auto TexCoordAddress = TexCoordPtr ? static_cast<const VulkanVertexBuffer&>(*TexCoordPtr).GetDeviceAddress() : 0;
             const auto IndexAddress    = static_cast<const VulkanIndexBuffer&>(*IndexPtr).GetDeviceAddress();
-            if (PositionAddress == 0 || NormalAddress == 0 || TangentAddress == 0 || TexCoordAddress == 0 || IndexAddress == 0) {
+            if (PositionAddress == 0 || NormalAddress == 0 || IndexAddress == 0) {
                 Error = ErrorMessage("Raster geometry data has a source buffer without a device address");
                 return;
             }

@@ -85,7 +85,7 @@ class VulkanDescriptorManager {
             vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, ImGuiDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, ImGuiDescriptorCount},
         };
-        if (VulkanCapability::Get().GetRayTracingSupport().Available)
+        if (VulkanCapability::Get().IsRayTracingAvailable())
             PoolSizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, ScratchDescriptorCount);
         Uint32 MaxSets = SharedDescriptorCount + 1;
         vk::DescriptorPoolCreateInfo PoolCI{

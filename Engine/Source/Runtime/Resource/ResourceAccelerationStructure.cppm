@@ -7,6 +7,7 @@ export module Resource:AccelerationStructure;
 export import Core;
 export import RHI;
 import :Context;
+import :Geometry;  // NEW: Import GeometryManager
 import :RequestCommon;
 export import :Types;
 import TaskGraph;
@@ -59,47 +60,56 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
     if (!MeshResource)
         return false;
 
-    if (Pending->Request.GeometryPolicy != BottomLevelAccelerationStructureGeometryPolicy::AllMeshSubMeshes) {
+    if (Pending->Request.GeometryPolicy != BottomLevelAccelerationStructureGeometryPolicy::AllGeometryRecords) {
         PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
             Context, Pending->Generation, Pending->Key, ErrorMessage("Unsupported BLAS geometry policy"));
+        return true;
+    }
+
+    // Get geometry records from GeometryManager using mesh file path
+    auto& GeometryMgr = GeometryManager::Get();
+    auto GeometryRecords = GeometryMgr.FindGeometryRecords(MeshHandle.GetKey());
+    if (GeometryRecords.empty()) {
+        PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
+            Context,
+            Pending->Generation,
+            Pending->Key,
+            ErrorMessage("No geometry records found for mesh"));
         return true;
     }
 
     std::vector<RHIRef<RHIVertexBuffer>>                      PositionRefs;
     std::vector<RHIRef<RHIIndexBuffer>>                       IndexRefs;
     std::vector<RHITriangleAccelerationStructureGeometryDesc> Geometries;
-    for (const auto& Group : MeshResource->GetMeshGroups()) {
-        for (const auto& SubMesh : Group.SubMeshes) {
-            if (!SubMesh.PositionVB || !SubMesh.IB || SubMesh.VertexCount == 0 ||
-                SubMesh.Indices.empty()) {
-                PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
-                    Context,
-                    Pending->Generation,
-                    Pending->Key,
-                    ErrorMessage("ResourceMesh submesh has no valid position/index geometry for BLAS"));
-                return true;
-            }
-
-            auto  PositionRef    = SubMesh.PositionVB;
-            auto  IndexRef       = SubMesh.IB;
-            auto* PositionBuffer = PositionRef.TryGet();
-            auto* IndexBuffer    = IndexRef.TryGet();
-            if (!PositionBuffer || !IndexBuffer) {
-                PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
-                    Context,
-                    Pending->Generation,
-                    Pending->Key,
-                    ErrorMessage("BLAS geometry buffer dependency became unavailable"));
-                return true;
-            }
-
-            Geometries.push_back(RHITriangleAccelerationStructureGeometryDesc{
-                .VertexBufferRef = PositionRef,
-                .IndexBufferRef  = IndexRef,
-            });
-            PositionRefs.push_back(std::move(PositionRef));
-            IndexRefs.push_back(std::move(IndexRef));
+    for (const auto& Record : GeometryRecords) {
+        if (!Record.PositionBuffer || !Record.IndexBuffer || Record.IndexCount == 0) {
+            PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
+                Context,
+                Pending->Generation,
+                Pending->Key,
+                ErrorMessage("GeometryRecord has no valid position/index geometry for BLAS"));
+            return true;
         }
+
+        auto  PositionRef    = Record.PositionBuffer;
+        auto  IndexRef       = Record.IndexBuffer;
+        auto* PositionBuffer = PositionRef.TryGet();
+        auto* IndexBuffer    = IndexRef.TryGet();
+        if (!PositionBuffer || !IndexBuffer) {
+            PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
+                Context,
+                Pending->Generation,
+                Pending->Key,
+                ErrorMessage("BLAS geometry buffer dependency became unavailable"));
+            return true;
+        }
+
+        Geometries.push_back(RHITriangleAccelerationStructureGeometryDesc{
+            .VertexBufferRef = PositionRef,
+            .IndexBufferRef  = IndexRef,
+        });
+        PositionRefs.push_back(std::move(PositionRef));
+        IndexRefs.push_back(std::move(IndexRef));
     }
 
     if (Geometries.empty()) {
@@ -107,7 +117,7 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
             Context,
             Pending->Generation,
             Pending->Key,
-            ErrorMessage("ResourceMesh contains no triangle geometry for BLAS"));
+            ErrorMessage("Mesh contains no triangle geometry for BLAS"));
         return true;
     }
 

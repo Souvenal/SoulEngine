@@ -301,7 +301,7 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
 
         auto Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
                      vk::BufferUsageFlagBits::eTransferDst;
-        if (VulkanCapability::Get().GetRayTracingSupport().Available)
+        if (VulkanCapability::Get().IsRayTracingAvailable())
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         auto DevRes = VulkanDeviceBuffer::Create(Size, Usage, Context);
         if (!DevRes)
@@ -372,7 +372,7 @@ class VulkanIndexBuffer final : public RHIIndexBuffer {
 
         auto Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
                      vk::BufferUsageFlagBits::eTransferDst;
-        if (VulkanCapability::Get().GetRayTracingSupport().Available)
+        if (VulkanCapability::Get().IsRayTracingAvailable())
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         auto DevRes = VulkanDeviceBuffer::Create(Size, Usage, Context);
         if (!DevRes)

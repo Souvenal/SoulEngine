@@ -9,9 +9,8 @@ export module Renderer:RayTracingRenderer;
 
 import Core;
 import Material;
-import Resource;
+import Resource;  // Resource already exports :Geometry partition
 import RHI;
-import Resource;
 import Scene;
 import TaskGraph;
 
@@ -150,76 +149,77 @@ class RayTracingRenderer final : public IRenderer {
         std::vector<RHIRayTracingInstanceData> GeometryInstances = {};
         GeometryInstances.reserve(Scene.Meshes.size());
         std::vector<RHIRayTracingGeometryDesc> GeometrySources = {};
+        auto& GeometryMgr = GeometryManager::Get();
         auto& MaterialMgr = MaterialManager::Get();
         for (const auto& Renderable : Scene.Meshes) {
             if (Renderable.MeshAsset.empty())
                 continue;
 
+            // Request mesh resource and BLAS
             auto  MeshRef        = Resources.RequestMeshRef(Renderable.MeshAsset);
             auto  BlasRef        = Resources.RequestBottomLevelAccelerationStructureRef(MeshRef);
             auto* Blas           = Resources.TryGetReady(BlasRef);
             auto  BlasPayloadRef = Blas ? Blas->GetRhiPayloadRef() : RHIRef<RHIBottomLevelAccelerationStructure>{nullptr};
             auto* BlasPayload    = BlasPayloadRef.TryGet();
-            auto* Mesh           = Resources.TryGetReady(MeshRef);
-            if (!Blas || !BlasPayload || !Mesh)
+            if (!Blas || !BlasPayload)
+                continue;
+
+            // Get geometry records from GeometryManager
+            auto GeometryRecords = GeometryMgr.FindGeometryRecords(Renderable.MeshAsset);
+            if (GeometryRecords.empty())
                 continue;
 
             // Resolve material ID
             Uint32 RenderableMaterialID = Renderable.MaterialId.empty() ? 0 : MaterialMgr.FindMaterialId(Renderable.MaterialId);
 
             std::vector<RHIRayTracingGeometryDesc> MeshGeometries = {};
-            for (const auto& Group : Mesh->GetMeshGroups()) {
-                for (const auto& SubMesh : Group.SubMeshes) {
-                    auto       PositionRef      = SubMesh.PositionVB;
-                    auto       NormalRef        = SubMesh.NormalVB;
-                    auto       TangentRef       = SubMesh.TangentVB;
-                    auto       TexCoordRef      = SubMesh.UVVB;
-                    auto       IndexRef         = SubMesh.IB;
-                    auto*      Position         = PositionRef.TryGet();
-                    auto*      Normal           = NormalRef.TryGet();
-                    auto*      Tangent          = TangentRef.TryGet();
-                    auto*      TexCoord         = TexCoordRef.TryGet();
-                    auto*      Index            = IndexRef.TryGet();
-                    const bool HasReadyTangents = SubMesh.HasTangents && Tangent != nullptr;
-                    const bool HasReadyUV0      = SubMesh.HasUV0 && TexCoord != nullptr;
-                    if (!Tangent) {
-                        TangentRef = PositionRef;
-                        Tangent    = Position;
-                    }
-                    if (!TexCoord) {
-                        TexCoordRef = PositionRef;
-                        TexCoord    = Position;
-                    }
-                    if (!Position || !Normal || !Tangent || !TexCoord || !Index || SubMesh.VertexCount == 0 ||
-                        SubMesh.Indices.empty()) {
-                        MeshGeometries.clear();
-                        break;
-                    }
-
-                    // Resolve submesh material
-                    Uint32 SubMeshMaterialID = RenderableMaterialID;
-                    if (SubMeshMaterialID == 0 && SubMesh.MaterialId != 0) {
-                        SubMeshMaterialID = SubMesh.MaterialId;
-                    }
-
-                    MeshGeometries.push_back(RHIRayTracingGeometryDesc{
-                        .PositionBufferRef = PositionRef,
-                        .NormalBufferRef   = NormalRef,
-                        .TangentBufferRef  = TangentRef,
-                        .TexCoordBufferRef = TexCoordRef,
-                        .IndexBufferRef    = IndexRef,
-                        .PositionStride    = sizeof(hlslpp::interop::float3),
-                        .NormalStride      = sizeof(hlslpp::interop::float3),
-                        .TangentStride     = sizeof(hlslpp::interop::float4),
-                        .TexCoordStride    = sizeof(hlslpp::interop::float2),
-                        .IndexStride       = sizeof(Uint32),
-                        .VertexCount       = SubMesh.VertexCount,
-                        .IndexCount        = static_cast<Uint32>(SubMesh.Indices.size()),
-                        .MaterialIndex     = SubMeshMaterialID,
-                    });
+            for (const auto& Record : GeometryRecords) {
+                auto       PositionRef      = Record.PositionBuffer;
+                auto       NormalRef        = Record.NormalBuffer;
+                auto       TangentRef       = Record.TangentBuffer;
+                auto       TexCoordRef      = Record.TexCoordBuffer;
+                auto       IndexRef         = Record.IndexBuffer;
+                auto*      Position         = PositionRef.TryGet();
+                auto*      Normal           = NormalRef.TryGet();
+                auto*      Tangent          = TangentRef.TryGet();
+                auto*      TexCoord         = TexCoordRef.TryGet();
+                auto*      Index            = IndexRef.TryGet();
+                const bool HasReadyTangents = Record.HasTangents && Tangent != nullptr;
+                const bool HasReadyUV0      = Record.HasUV0 && TexCoord != nullptr;
+                if (!Tangent) {
+                    TangentRef = PositionRef;
+                    Tangent    = Position;
                 }
-                if (MeshGeometries.empty())
+                if (!TexCoord) {
+                    TexCoordRef = PositionRef;
+                    TexCoord    = Position;
+                }
+                if (!Position || !Normal || !Tangent || !TexCoord || !Index || Record.IndexCount == 0) {
+                    MeshGeometries.clear();
                     break;
+                }
+
+                // Resolve submesh material
+                Uint32 SubMeshMaterialID = RenderableMaterialID;
+                if (SubMeshMaterialID == 0 && Record.MaterialId != 0) {
+                    SubMeshMaterialID = Record.MaterialId;
+                }
+
+                MeshGeometries.push_back(RHIRayTracingGeometryDesc{
+                    .PositionBufferRef = PositionRef,
+                    .NormalBufferRef   = NormalRef,
+                    .TangentBufferRef  = TangentRef,
+                    .TexCoordBufferRef = TexCoordRef,
+                    .IndexBufferRef    = IndexRef,
+                    .PositionStride    = sizeof(hlslpp::interop::float3),
+                    .NormalStride      = sizeof(hlslpp::interop::float3),
+                    .TangentStride     = sizeof(hlslpp::interop::float4),
+                    .TexCoordStride    = sizeof(hlslpp::interop::float2),
+                    .IndexStride       = sizeof(Uint32),
+                    .VertexCount       = Record.IndexCount,  // TODO: Verify this is correct
+                    .IndexCount        = Record.IndexCount,
+                    .MaterialIndex     = SubMeshMaterialID,
+                });
             }
             if (MeshGeometries.empty())
                 continue;

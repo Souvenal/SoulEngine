@@ -718,11 +718,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_TransferQueue = m_Device.getQueue(m_TransferFamily, 0);
 
         VulkanCapability::Get().ResolveDeviceProperties(m_PhysicalDevice);
-        const auto& RHIRayTracing = VulkanCapability::Get().GetRayTracingSupport();
-        if (RHIRayTracing.Available)
+        if (VulkanCapability::Get().IsRayTracingAvailable())
             LogInfo("Hardware ray tracing capability is available on the selected GPU");
         else
-            LogInfo("Hardware ray tracing capability is unavailable: {}", RHIRayTracing.UnavailableReason);
+            LogInfo("Hardware ray tracing capability is unavailable");
 
         return {};
     }
