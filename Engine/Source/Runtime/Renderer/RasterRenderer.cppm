@@ -9,7 +9,7 @@ export module Renderer:RasterRenderer;
 
 import Core;
 import Material;
-import Resource;  // Resource already exports :Geometry partition
+import Resource; // Resource already exports :Geometry partition
 import RHI;
 import Scene;
 import TaskGraph;
@@ -103,11 +103,11 @@ struct RasterViewParameterState {
 
 /// @brief One concrete indexed draw consumed by the forward raster pass.
 struct InstanceData {
-    Uint32                       EntityId       = 0;
-    Uint32                       GeometryID     = 0;  ///< Index into GeometryRecord array
-    Uint32                       MaterialID     = 0;
-    hlslpp::float4x4             WorldTransform = hlslpp::float4x4::identity();
-    hlslpp::interop::float4      BoundingSphere = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
+    Uint32                  EntityId       = 0;
+    Uint32                  GeometryID     = 0; ///< Index into GeometryRecord array
+    Uint32                  MaterialID     = 0;
+    hlslpp::float4x4        WorldTransform = hlslpp::float4x4::identity();
+    hlslpp::interop::float4 BoundingSphere = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 };
 
 // RasterMeshCacheEntry has been removed. Use GeometryManager for geometry lookup.
@@ -134,8 +134,8 @@ class RasterRenderer final : public IRenderer {
                     .SourcePath = ShaderPath,
                     .EntryPoint = "fragMain",
                 },
-            .ColorFormats      = std::vector<RHIFormat>(GBuffer::ColorFormats.begin(), GBuffer::ColorFormats.end()),
-            .DepthFormat       = GBuffer::DepthFormat,
+            .ColorFormats = std::vector<RHIFormat>(GBuffer::ColorFormats.begin(), GBuffer::ColorFormats.end()),
+            .DepthFormat  = GBuffer::DepthFormat,
         });
         if (!PipelineRequest)
             return std::unexpected(PipelineRequest.error().Append("Raster geometry graphics pipeline request failed"));
@@ -153,12 +153,12 @@ class RasterRenderer final : public IRenderer {
 
         auto EditorSelectionPipelineRequest = RequestEditorSelectionPipeline();
         if (!EditorSelectionPipelineRequest)
-            return std::unexpected(EditorSelectionPipelineRequest.error().Append(
-                "Editor selection post-process pipeline request failed"));
+            return std::unexpected(
+                EditorSelectionPipelineRequest.error().Append("Editor selection post-process pipeline request failed"));
         m_EditorSelectionPipeline = std::move(*EditorSelectionPipelineRequest);
 
         m_SamplerLinear = RequestSampler({.Profile = RHISamplerProfile::LinearRepeat});
-        m_SamplerAniso = RequestSampler({.Profile = RHISamplerProfile::AnisotropicRepeat});
+        m_SamplerAniso  = RequestSampler({.Profile = RHISamplerProfile::AnisotropicRepeat});
 
         return {};
     }
@@ -166,9 +166,9 @@ class RasterRenderer final : public IRenderer {
     auto OnDetach() -> void override {
         m_Pipeline                = {};
         m_EditorSelectionPipeline = {};
-        m_DeferredPipeline         = {};
-        m_SamplerLinear            = {};
-        m_SamplerAniso             = {};
+        m_DeferredPipeline        = {};
+        m_SamplerLinear           = {};
+        m_SamplerAniso            = {};
         m_ViewParameters.clear();
     }
 
@@ -196,25 +196,26 @@ class RasterRenderer final : public IRenderer {
         return std::move(*Sampler);
     }
 
-    [[nodiscard]] auto RenderView(RHICommandList&                     CmdList,
+    [[nodiscard]] auto RenderView(RHICommandList&               CmdList,
                                   std::span<const InstanceData> DrawInstances,
-                                  const RenderViewSnapshot&           View,
-                                  const SceneSnapshot&                Scene) -> std::expected<void, ErrorMessage> {
+                                  const RenderViewSnapshot&     View,
+                                  const SceneSnapshot&          Scene) -> std::expected<void, ErrorMessage> {
         auto& Resources = ResourceManager::Get();
 
-        const auto& AlbedoRTRef          = View.Targets.GBuffer.AlbedoRT;
-        const auto& NormalRTRef          = View.Targets.GBuffer.NormalRT;
-        const auto& EntityIdRTRef        = View.Targets.GBuffer.EntityIdRT;
-        const auto& MaterialIdRTRef      = View.Targets.GBuffer.MaterialIdRT;
-        const auto& DepthRTRef           = View.Targets.GBuffer.DepthRT;
-        const auto& SceneColorRTRef      = View.Targets.SceneColorRT;
+        const auto& AlbedoRTRef                = View.Targets.GBuffer.AlbedoRT;
+        const auto& NormalRTRef                = View.Targets.GBuffer.NormalRT;
+        const auto& EntityIdRTRef              = View.Targets.GBuffer.EntityIdRT;
+        const auto& MaterialIdRTRef            = View.Targets.GBuffer.MaterialIdRT;
+        const auto& DepthRTRef                 = View.Targets.GBuffer.DepthRT;
+        const auto& SceneColorRTRef            = View.Targets.SceneColorRT;
         const auto& PipelineRef                = m_Pipeline;
         const auto& EditorSelectionPipelineRef = m_EditorSelectionPipeline;
         const auto& SamplerLinearRef           = m_SamplerLinear;
         const auto& SamplerAnisoRef            = m_SamplerAniso;
         const auto& DeferredPipelineRef        = m_DeferredPipeline;
         if (!AlbedoRTRef || !NormalRTRef || !EntityIdRTRef || !MaterialIdRTRef || !DepthRTRef || !SceneColorRTRef ||
-            !PipelineRef || !EditorSelectionPipelineRef || !SamplerLinearRef || !SamplerAnisoRef || !DeferredPipelineRef)
+            !PipelineRef || !EditorSelectionPipelineRef || !SamplerLinearRef || !SamplerAnisoRef ||
+            !DeferredPipelineRef)
             return {};
 
         const auto FrameData =
@@ -258,11 +259,12 @@ class RasterRenderer final : public IRenderer {
                     .ColorAttachments =
                         {
                             {.TextureRef = AlbedoRTRef,
-                             .ClearValue = {.R = 0.025f, .G = 0.035f, .B = 0.055f, .A = 1.0f}},
-                            {.TextureRef = NormalRTRef, .ClearValue = {.R = 0.0f, .G = 0.0f, .B = 1.0f, .A = 1.0f}},
-                            {.TextureRef = MaterialIdRTRef, .ClearValue = {.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f}},
+                             .ClearValue = std::array<Float32, 4>{0.025f, 0.035f, 0.055f, 1.0f}},
+                            {.TextureRef = NormalRTRef, .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 1.0f, 1.0f}},
+                            {.TextureRef = MaterialIdRTRef,
+                             .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 0.0f, 1.0f}},
                             {.TextureRef = EntityIdRTRef,
-                             .ClearValue = {.UseUInt = true, .UInt = {GBuffer::BackgroundEntityId, 0, 0, 0}}},
+                             .ClearValue = std::array<Uint32, 4>{GBuffer::BackgroundEntityId, 0, 0, 0}},
                         },
                     .DepthAttachment =
                         RHIDepthAttachmentDesc{
@@ -273,7 +275,8 @@ class RasterRenderer final : public IRenderer {
         };
         if (auto R = GeometryPass.WriteTransientShaderStorageBuffer(*LightBuffer, LightBytes); !R)
             return std::unexpected(R.error().Append("Raster geometry light transient storage write failed"));
-        if (auto R = GeometryPass.WriteTransientConstantBuffer(*FrameBuffer, std::as_bytes(std::span{&FrameData, 1})); !R)
+        if (auto R = GeometryPass.WriteTransientConstantBuffer(*FrameBuffer, std::as_bytes(std::span{&FrameData, 1}));
+            !R)
             return std::unexpected(R.error().Append("Raster geometry frame transient constant write failed"));
         if (auto R = GeometryPass.WriteTransientConstantBuffer(*ViewBuffer, std::as_bytes(std::span{&ViewData, 1})); !R)
             return std::unexpected(R.error().Append("Raster geometry view transient constant write failed"));
@@ -288,8 +291,8 @@ class RasterRenderer final : public IRenderer {
         }
 
         // Get all geometry records for GPU upload
-        auto& GeometryMgr = GeometryManager::Get();
-        auto  AllGeometryRecords = GeometryMgr.GetAllGeometryRecordsFlat();
+        auto&                                GeometryMgr        = GeometryManager::Get();
+        auto                                 AllGeometryRecords = GeometryMgr.GetAllGeometryRecordsFlat();
         std::vector<RHIRasterGeometrySource> GeometrySources;
         GeometrySources.reserve(AllGeometryRecords.size());
         for (const auto* Record : AllGeometryRecords) {
@@ -304,8 +307,8 @@ class RasterRenderer final : public IRenderer {
             });
         }
 
-        auto& MaterialMgr = MaterialManager::Get();
-        const auto& Textures = MaterialMgr.GetMaterialTextures();
+        auto&       MaterialMgr = MaterialManager::Get();
+        const auto& Textures    = MaterialMgr.GetMaterialTextures();
         if (auto R = Parameters.SetResourceArray("g_textures.uTextures", Textures); !R)
             return std::unexpected(R.error().Append("Raster geometry texture parameter binding failed"));
         GeometryPass.SetFullViewport();
@@ -323,12 +326,11 @@ class RasterRenderer final : public IRenderer {
             if (auto R = Parameters.SetTransientShaderStorageBuffer("g_rasterDraw.instances", *InstanceDataBuffer); !R)
                 return std::unexpected(R.error().Append("Raster geometry instance-data storage buffer binding failed"));
 
-            auto GeometryDataBuffer =
-                RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(
-                    GeometrySources.size() * sizeof(RHIRasterGeometryData));
+            auto GeometryDataBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(
+                GeometrySources.size() * sizeof(RHIRasterGeometryData));
             if (!GeometryDataBuffer)
-                return std::unexpected(GeometryDataBuffer.error().Append(
-                    "Raster geometry table transient buffer allocation failed"));
+                return std::unexpected(
+                    GeometryDataBuffer.error().Append("Raster geometry table transient buffer allocation failed"));
             if (auto R = Parameters.SetTransientShaderStorageBuffer("g_rasterDraw.geometries", *GeometryDataBuffer); !R)
                 return std::unexpected(R.error().Append("Raster geometry table binding failed"));
 
@@ -345,13 +347,14 @@ class RasterRenderer final : public IRenderer {
             auto IndirectBuffer = RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(
                 std::as_bytes(std::span{IndirectCommands}).size_bytes());
             if (!IndirectBuffer)
-                return std::unexpected(IndirectBuffer.error().Append(
-                    "Raster indirect command transient buffer allocation failed"));
-            if (auto R = GeometryPass.WriteTransientShaderStorageBuffer(
-                    *IndirectBuffer, std::as_bytes(std::span{IndirectCommands})); !R)
+                return std::unexpected(
+                    IndirectBuffer.error().Append("Raster indirect command transient buffer allocation failed"));
+            if (auto R = GeometryPass.WriteTransientShaderStorageBuffer(*IndirectBuffer,
+                                                                        std::as_bytes(std::span{IndirectCommands}));
+                !R)
                 return std::unexpected(R.error().Append("Raster indirect command buffer write failed"));
 
-            const auto MaterialRecords = MaterialMgr.GetMaterialRecords();
+            const auto MaterialRecords   = MaterialMgr.GetMaterialRecords();
             const auto MaterialDataBytes = std::as_bytes(MaterialRecords);
             auto       MaterialDataBuffer =
                 RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(MaterialDataBytes.size_bytes());
@@ -363,12 +366,11 @@ class RasterRenderer final : public IRenderer {
             if (auto R = Parameters.SetTransientShaderStorageBuffer("g_rasterDraw.materials", *MaterialDataBuffer); !R)
                 return std::unexpected(R.error().Append("Raster geometry material-data storage buffer binding failed"));
 
-            GeometryPass.BindShaderParameters(
-                PipelineRef,
-                Parameters,
-                RHIShaderParameterResources{
-                    .Samplers = {SamplerLinearRef, SamplerAnisoRef},
-                });
+            GeometryPass.BindShaderParameters(PipelineRef,
+                                              Parameters,
+                                              RHIShaderParameterResources{
+                                                  .Samplers = {SamplerLinearRef, SamplerAnisoRef},
+                                              });
             for (Uint32 InstanceIndex = 0; InstanceIndex < IndirectCommands.size(); ++InstanceIndex) {
                 const RasterInstanceIndex PushData{.Value = InstanceIndex};
                 GeometryPass.PushConstants(PipelineRef, 0, &PushData, sizeof(PushData));
@@ -398,10 +400,10 @@ class RasterRenderer final : public IRenderer {
             .InverseViewProjection = hlslpp::inverse(View.ViewProjection),
             .CameraPosition        = hlslpp::interop::float4{hlslpp::float4{
                 View.CameraPosition.x, View.CameraPosition.y, View.CameraPosition.z, 1.0f}},
-            .ViewportSize          = hlslpp::interop::float2{hlslpp::float2{static_cast<float>(AlbedoRTRef->GetWidth()),
-                                                                            static_cast<float>(AlbedoRTRef->GetHeight())}},
+            .ViewportSize = hlslpp::interop::float2{hlslpp::float2{static_cast<float>(AlbedoRTRef->GetWidth()),
+                                                                   static_cast<float>(AlbedoRTRef->GetHeight())}},
         };
-        const auto DeferredMaterialRecords = MaterialMgr.GetMaterialRecords();
+        const auto DeferredMaterialRecords   = MaterialMgr.GetMaterialRecords();
         const auto DeferredMaterialDataBytes = std::as_bytes(DeferredMaterialRecords);
         auto       DeferredMaterialBuffer =
             RHIRenderDevice::Get().AllocateTransientShaderStorageBuffer(DeferredMaterialDataBytes.size_bytes());
@@ -415,7 +417,7 @@ class RasterRenderer final : public IRenderer {
                     .ColorAttachments =
                         {
                             {.TextureRef = SceneColorRTRef,
-                             .ClearValue = {.R = 0.025f, .G = 0.035f, .B = 0.055f, .A = 1.0f}},
+                             .ClearValue = std::array<Float32, 4>{0.025f, 0.035f, 0.055f, 1.0f}},
                         },
                 },
         };
@@ -473,11 +475,10 @@ class RasterRenderer final : public IRenderer {
         CmdList.Scopes.push_back(std::move(GeometryPass));
         CmdList.Scopes.push_back(std::move(LightingPass));
         if (Scene.SelectedPixel) {
-            auto EditorSelectionPass =
-                BuildEditorSelectionPass(View, *Scene.SelectedPixel, EditorSelectionPipelineRef);
+            auto EditorSelectionPass = BuildEditorSelectionPass(View, *Scene.SelectedPixel, EditorSelectionPipelineRef);
             if (!EditorSelectionPass)
-                return std::unexpected(EditorSelectionPass.error().Append(
-                    "Editor selection post-process pass construction failed"));
+                return std::unexpected(
+                    EditorSelectionPass.error().Append("Editor selection post-process pass construction failed"));
             CmdList.Scopes.push_back(std::move(*EditorSelectionPass));
         }
         return {};
@@ -596,9 +597,8 @@ class RasterRenderer final : public IRenderer {
             WorldCenter.x, WorldCenter.y, WorldCenter.z, std::sqrt(RadiusSquared * LinearTransformSquared)}};
     }
 
-    [[nodiscard]] static auto BuildInstanceData(const InstanceData& Instance,
-                                                   Uint32                 MaterialIndex,
-                                                   Uint32                 GeometryID) -> InstanceGpuData {
+    [[nodiscard]] static auto BuildInstanceData(const InstanceData& Instance, Uint32 MaterialIndex, Uint32 GeometryID)
+        -> InstanceGpuData {
         return InstanceGpuData{
             .WorldTransform = Instance.WorldTransform,
             .BoundingSphere = Instance.BoundingSphere,
@@ -636,11 +636,11 @@ class RasterRenderer final : public IRenderer {
 
     RHIRef<RHIGraphicsPipeline>           m_Pipeline                = nullptr;
     RHIRef<RHIGraphicsPipeline>           m_EditorSelectionPipeline = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline         = nullptr;
-    RHIRef<RHISampler>                    m_SamplerLinear     = nullptr;
-    RHIRef<RHISampler>                    m_SamplerAniso      = nullptr;
+    RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline        = nullptr;
+    RHIRef<RHISampler>                    m_SamplerLinear           = nullptr;
+    RHIRef<RHISampler>                    m_SamplerAniso            = nullptr;
     // m_MeshCache has been removed. Use GeometryManager for geometry lookup.
-    std::vector<RasterViewParameterState> m_ViewParameters    = {};
+    std::vector<RasterViewParameterState> m_ViewParameters          = {};
 };
 
 RendererFactory::AutoRegistrar<RasterRenderer> RegRasterRenderer{"Raster"};
