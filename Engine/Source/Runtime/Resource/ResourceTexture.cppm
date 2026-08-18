@@ -58,7 +58,7 @@ struct DecodedTexture {
         return std::unexpected(Decoded.error());
     }
 
-    auto Created = RHIRenderDevice::Get().CreateSampledTexture(RHISampledTextureDesc{
+    auto Created = RHIRenderDevice::Get().CreateSampledTexture(Path, RHISampledTextureDesc{
         .Data     = std::as_bytes(std::span{Decoded->Pixels}),
         .Width    = Decoded->Width,
         .Height   = Decoded->Height,

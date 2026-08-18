@@ -67,7 +67,7 @@ public:
             return;
         }
 
-        auto recordResult = ImportMesh(aiMesh, meshDirectory);
+        auto recordResult = ImportMesh(aiMesh, meshDirectory, meshFilePath);
         if (!recordResult) {
             LogWarning("Failed to import mesh '{}': {}", meshFilePath, recordResult.error().ToString());
             return;
@@ -149,7 +149,7 @@ private:
     /// @brief Import a single Assimp mesh into a geometry record.
     ///
     /// Extracts CPU data and requests GPU buffers asynchronously.
-    [[nodiscard]] auto ImportMesh(const aiMesh* aiMesh, const Path& meshDirectory)
+    [[nodiscard]] auto ImportMesh(const aiMesh* aiMesh, const Path& meshDirectory, StringView meshFilePath)
         -> std::expected<GeometryRecord, ErrorMessage>
     {
         if (!aiMesh) {
@@ -209,7 +209,8 @@ private:
         // Request GPU buffers asynchronously (only when data exists)
         auto& device = RHIRenderDevice::Get();
         
-        auto positionBuffer = device.CreateVertexBuffer({
+        const auto BufferNamePrefix = Format("{}/{}", meshFilePath, aiMesh->mName.C_Str());
+        auto positionBuffer = device.CreateVertexBuffer(Format("{}/Position", BufferNamePrefix), {
             .Data = std::as_bytes(std::span{positions}),
             .VertexCount = positions.size(),
             .Stride = sizeof(hlslpp::interop::float3)
@@ -218,7 +219,7 @@ private:
             return std::unexpected(positionBuffer.error().Append("Failed to create position buffer"));
         }
 
-        auto normalBuffer = device.CreateVertexBuffer({
+        auto normalBuffer = device.CreateVertexBuffer(Format("{}/Normal", BufferNamePrefix), {
             .Data = std::as_bytes(std::span{normals}),
             .VertexCount = normals.size(),
             .Stride = sizeof(hlslpp::interop::float3)
@@ -230,7 +231,7 @@ private:
         // Only create tangent buffer if data exists
         RHIRef<RHIVertexBuffer> tangentBuffer = nullptr;
         if (hasTangents && !tangents.empty()) {
-            auto tangentResult = device.CreateVertexBuffer({
+            auto tangentResult = device.CreateVertexBuffer(Format("{}/Tangent", BufferNamePrefix), {
                 .Data = std::as_bytes(std::span{tangents}),
                 .VertexCount = tangents.size(),
                 .Stride = sizeof(hlslpp::interop::float4)
@@ -244,7 +245,7 @@ private:
         // Only create texCoord buffer if data exists
         RHIRef<RHIVertexBuffer> texCoordBuffer = nullptr;
         if (hasUV0 && !uvs.empty()) {
-            auto texCoordResult = device.CreateVertexBuffer({
+            auto texCoordResult = device.CreateVertexBuffer(Format("{}/TexCoord", BufferNamePrefix), {
                 .Data = std::as_bytes(std::span{uvs}),
                 .VertexCount = uvs.size(),
                 .Stride = sizeof(hlslpp::interop::float2)
@@ -255,7 +256,7 @@ private:
             texCoordBuffer = std::move(*texCoordResult);
         }
 
-        auto indexBuffer = device.CreateIndexBuffer({
+        auto indexBuffer = device.CreateIndexBuffer(Format("{}/Index", BufferNamePrefix), {
             .Data = std::as_bytes(std::span{indices}),
             .IndexCount = indices.size()
         });

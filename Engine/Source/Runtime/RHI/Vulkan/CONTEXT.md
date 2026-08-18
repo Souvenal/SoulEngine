@@ -18,6 +18,44 @@ submission-owned RHIRef contract described by the RHI context.
 | **Deferred deletion queue** | Base render-device queue. Final RHIRef release enqueues native destruction; normal-runtime RHIRenderDevice::Tick() drains it on the RHI thread. |
 | **Transient arena** | Host-visible per-frame uniform or shader-storage backing buffer. The current arena segment is reused only after the matching frame-context timeline wait. |
 | **Swapchain image** | Backend-private image acquired for presentation. PresentSourceRef is transitioned/copied or rendered into it; it is not a Resource payload. |
+| **Vulkan object naming** | Application-defined `VK_EXT_debug_utils` labels assigned through `VulkanDebugUtils::SetObjectName`. Every Vulkan handle created or allocated and owned by SoulEngine, including internal handles, is required to receive a deterministic name after successful creation. |
+
+## Debug utilities and object naming
+
+`VulkanDebugUtils` is the only supported path for assigning
+`VK_EXT_debug_utils` object names. Callers must not invoke
+`setDebugUtilsObjectNameEXT` directly. The service intentionally becomes a
+no-op when debug utils are disabled or unavailable, when the name is empty, or
+when the handle is null; these cases do not require caller-side branching.
+
+Every Vulkan handle created or allocated by the backend and retained by
+SoulEngine must be named immediately after successful creation, before the
+handle is moved into its owning object. This includes persistent RHI resources,
+their backing and auxiliary objects, and internal objects such as frame
+contexts, descriptor resources, swapchain resources, shader modules, and
+immediate-context resources. Handles borrowed from an external owner are not
+owned creation sites and are not renamed by this contract.
+
+Persistent RHI resources use their logical RHI name as the base name. Derived
+native objects use the following grammar:
+
+- `Base` identifies the primary native object.
+- `Base#Role` identifies backing or auxiliary storage, such as an image,
+  staging buffer, scratch buffer, or shader binding table.
+- `Base::Role` identifies related Vulkan state, such as a pipeline layout or
+  descriptor-set layout.
+- `Frame[index]::Role` identifies frame-scoped backend objects.
+
+Names must be deterministic, non-empty, and describe the object's role. New
+creation sites must follow this grammar instead of introducing ad hoc
+delimiters.
+
+The current implementation does not yet satisfy this contract at every
+creation site. Known follow-up coverage includes swapchain image views and
+semaphores, immediate-context command pools and command buffers, shader
+modules, and descriptor-pool/set objects. Until those sites are updated, this
+document describes the required target behavior rather than claiming complete
+runtime coverage.
 
 ## Frame submission lifetime
 

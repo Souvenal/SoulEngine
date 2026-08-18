@@ -113,7 +113,7 @@ struct Camera {
             .Format = RHIFormat::B8G8R8A8_UNORM,
             .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
         };
-        auto Color = RHIRenderDevice::Get().CreateRenderTarget(ColorDesc);
+        auto Color = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/Albedo", ResourceKey), ColorDesc);
         if (!Color) {
             LogError("Failed to queue camera color render target creation: {}", Color.error().ToString());
             Targets.GBuffer.AlbedoRT = nullptr;
@@ -121,7 +121,7 @@ struct Camera {
             Targets.GBuffer.AlbedoRT = std::move(*Color);
         }
 
-        auto Normal = RHIRenderDevice::Get().CreateRenderTarget(NormalDesc);
+        auto Normal = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/Normal", ResourceKey), NormalDesc);
         if (!Normal) {
             LogError("Failed to queue camera normal render target creation: {}", Normal.error().ToString());
             Targets.GBuffer.NormalRT = nullptr;
@@ -129,7 +129,7 @@ struct Camera {
             Targets.GBuffer.NormalRT = std::move(*Normal);
         }
 
-        auto EntityId = RHIRenderDevice::Get().CreateRenderTarget(EntityIdDesc);
+        auto EntityId = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/EntityId", ResourceKey), EntityIdDesc);
         if (!EntityId) {
             LogError("Failed to queue camera entity ID render target creation: {}", EntityId.error().ToString());
             Targets.GBuffer.EntityIdRT = nullptr;
@@ -137,7 +137,8 @@ struct Camera {
             Targets.GBuffer.EntityIdRT = std::move(*EntityId);
         }
 
-        auto MaterialId = RHIRenderDevice::Get().CreateRenderTarget(MaterialIdDesc);
+        auto MaterialId =
+            RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/MaterialId", ResourceKey), MaterialIdDesc);
         if (!MaterialId) {
             LogError("Failed to queue camera material ID render target creation: {}", MaterialId.error().ToString());
             Targets.GBuffer.MaterialIdRT = nullptr;
@@ -145,7 +146,7 @@ struct Camera {
             Targets.GBuffer.MaterialIdRT = std::move(*MaterialId);
         }
 
-        auto Depth = RHIRenderDevice::Get().CreateRenderTarget(DepthDesc);
+        auto Depth = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/Depth", ResourceKey), DepthDesc);
         if (!Depth) {
             LogError("Failed to queue camera depth render target creation: {}", Depth.error().ToString());
             Targets.GBuffer.DepthRT = nullptr;
@@ -153,7 +154,7 @@ struct Camera {
             Targets.GBuffer.DepthRT = std::move(*Depth);
         }
 
-        auto Lighting = RHIRenderDevice::Get().CreateRenderTarget(SceneColorDesc);
+        auto Lighting = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/SceneColor", ResourceKey), SceneColorDesc);
         if (!Lighting) {
             LogError("Failed to queue camera lighting render target creation: {}", Lighting.error().ToString());
             Targets.SceneColorRT = nullptr;

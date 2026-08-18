@@ -44,6 +44,35 @@ auto                       VertexInputCI = ShaderStates->GetPipelineVertexInputS
 
 The suffix keeps variable names compact while making it immediately obvious that the variable is a CreateInfo struct, not the resulting object.
 
+## Object naming
+
+Every Vulkan handle created or allocated by SoulEngine and retained by the
+backend must receive a deterministic `VK_EXT_debug_utils` name immediately
+after successful creation, before ownership is moved. This requirement applies
+to public RHI resources, native backing objects, and internal objects such as
+frame resources, swapchain resources, shader modules, descriptor resources,
+and immediate-context resources.
+
+Use `VulkanDebugUtils::SetObjectName` for all object naming. Do not call
+`setDebugUtilsObjectNameEXT` directly outside `VKDebug.cppm`. The helper
+already handles disabled or unavailable debug utils, empty names, null handles,
+and reports naming failures.
+
+Use the owning RHI object's logical name as the base name. Derived names must
+follow this grammar:
+
+```text
+Base                 primary native object
+Base#Role            backing or auxiliary object
+Base::Role           related Vulkan state
+Frame[index]::Role   frame-scoped object
+```
+
+Names must be stable, non-empty, and role-specific. Do not introduce ad hoc
+delimiters or name only the top-level object when the creation site also owns
+backing or related Vulkan objects. Handles borrowed from an external owner are
+not renamed by this rule.
+
 ## No C-style Vulkan (except VMA)
 
 Prefer `vk::raii::*` types and C++ Vulkan-Hpp wrappers. Raw C Vulkan types (`VkBuffer`, `VkDevice`, `VkCommandBuffer`, etc.) and raw C API calls (`vkFreeCommandBuffers`, `vkDestroy*`, etc.) are banned.

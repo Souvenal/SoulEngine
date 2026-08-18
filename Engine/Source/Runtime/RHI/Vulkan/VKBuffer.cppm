@@ -12,6 +12,7 @@ import std;
 import :Capability;
 import :Types;
 import :Context;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -21,14 +22,15 @@ namespace SoulEngine {
 
 /// Internal mappable buffer for staging uploads.
 /// Created via static Create(). Move-only.
-class VulkanHostBuffer {
+class VulkanHostBuffer : public RHIObject {
   public:
-    VulkanHostBuffer() = default;
+    explicit VulkanHostBuffer(String Name) : RHIObject(std::move(Name)) {}
 
-    [[nodiscard]] static auto Create(Uint64 Size, vk::BufferUsageFlags Usage, vk::raii::Device& Dev, VmaAllocator Alloc)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, Uint64 Size, vk::BufferUsageFlags Usage)
         -> std::expected<VulkanHostBuffer, ErrorMessage> {
-        VulkanHostBuffer Buf;
-        Buf.m_Allocator = Alloc;
+        VulkanHostBuffer Buf{String(Name)};
+        Buf.m_Allocator = Context.Allocator;
         Buf.m_Size      = Size;
 
         vk::BufferCreateInfo BufCI{
@@ -42,7 +44,7 @@ class VulkanHostBuffer {
             .usage = VMA_MEMORY_USAGE_AUTO,
         };
 
-        if (vmaCreateBuffer(Alloc,
+        if (vmaCreateBuffer(Context.Allocator,
                             reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
                             &AllocInfo,
                             reinterpret_cast<VkBuffer*>(&Buf.m_Buffer),
@@ -54,9 +56,10 @@ class VulkanHostBuffer {
         if (static_cast<bool>(Usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) &&
             VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress) {
             const auto AddressInfo = vk::BufferDeviceAddressInfo{.buffer = Buf.m_Buffer};
-            Buf.m_DeviceAddress    = Dev.getBufferAddress(AddressInfo);
+            Buf.m_DeviceAddress    = Context.Device.getBufferAddress(AddressInfo);
         }
 
+        Context.DebugUtils.SetObjectName(Buf.m_Buffer, Buf.GetName());
         return Buf;
     }
 
@@ -65,7 +68,8 @@ class VulkanHostBuffer {
     }
 
     VulkanHostBuffer(VulkanHostBuffer&& Other) noexcept
-        : m_Allocator(Other.m_Allocator),
+        : RHIObject(std::move(Other)),
+          m_Allocator(Other.m_Allocator),
           m_Buffer(Other.m_Buffer),
           m_Allocation(Other.m_Allocation),
           m_DeviceAddress(Other.m_DeviceAddress),
@@ -78,6 +82,7 @@ class VulkanHostBuffer {
 
     auto operator=(VulkanHostBuffer&& Other) noexcept -> VulkanHostBuffer& {
         if (this != &Other) {
+            RHIObject::operator=(std::move(Other));
             std::swap(m_Allocator, Other.m_Allocator);
             std::swap(m_Buffer, Other.m_Buffer);
             std::swap(m_Allocation, Other.m_Allocation);
@@ -138,13 +143,14 @@ class VulkanHostBuffer {
 
 /// Internal device-local buffer for GPU-only access.
 /// Move-only. Data transferred via CopyFrom with a VulkanHostBuffer staging source.
-class VulkanDeviceBuffer {
+class VulkanDeviceBuffer : public RHIObject {
   public:
-    VulkanDeviceBuffer() = default;
+    explicit VulkanDeviceBuffer(String Name) : RHIObject(std::move(Name)) {}
 
-    [[nodiscard]] static auto Create(Uint64 Size, vk::BufferUsageFlags Usage, const VulkanResourceContext& Context)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, Uint64 Size, vk::BufferUsageFlags Usage)
         -> std::expected<VulkanDeviceBuffer, ErrorMessage> {
-        VulkanDeviceBuffer Buf;
+        VulkanDeviceBuffer Buf{String(Name)};
         Buf.m_Allocator = Context.Allocator;
         const std::array QueueFamilies{Context.GraphicsFamily, Context.TransferFamily};
         const std::span  SharingFamilies = Context.GraphicsFamily != Context.TransferFamily
@@ -183,6 +189,7 @@ class VulkanDeviceBuffer {
             Buf.m_DeviceAddress    = Context.Device.getBufferAddress(AddressInfo);
         }
 
+        Context.DebugUtils.SetObjectName(Buf.m_Buffer, Buf.GetName());
         return Buf;
     }
 
@@ -191,7 +198,8 @@ class VulkanDeviceBuffer {
     }
 
     VulkanDeviceBuffer(VulkanDeviceBuffer&& Other) noexcept
-        : m_Allocator(Other.m_Allocator),
+        : RHIObject(std::move(Other)),
+          m_Allocator(Other.m_Allocator),
           m_Buffer(Other.m_Buffer),
           m_Allocation(Other.m_Allocation),
           m_DeviceAddress(Other.m_DeviceAddress),
@@ -204,6 +212,7 @@ class VulkanDeviceBuffer {
 
     auto operator=(VulkanDeviceBuffer&& Other) noexcept -> VulkanDeviceBuffer& {
         if (this != &Other) {
+            RHIObject::operator=(std::move(Other));
             std::swap(m_Allocator, Other.m_Allocator);
             std::swap(m_Buffer, Other.m_Buffer);
             std::swap(m_Allocation, Other.m_Allocation);
@@ -228,18 +237,18 @@ class VulkanDeviceBuffer {
 
     /// Copy full contents from a VulkanHostBuffer staging source via VulkanImmediateContext.
     /// Copies min(SrcSize, this->Size) bytes and returns the transfer completion token.
-    [[nodiscard]] auto CopyFrom(VulkanHostBuffer& Src,
-                                VulkanImmediateContext& Ctx,
-                                VulkanImmediateContext::CompletionDesc Completion)
+    [[nodiscard]] auto
+    CopyFrom(VulkanHostBuffer& Src, VulkanImmediateContext& Ctx, VulkanImmediateContext::CompletionDesc Completion)
         -> std::expected<void, ErrorMessage> {
         const Uint64 CopySize = std::min(Src.GetSize(), m_Size);
-        if (auto R = Ctx.Submit(VulkanImmediateQueue::Transfer,
-                                vk::PipelineStageFlagBits2::eTransfer,
-                                [&](const vk::raii::CommandBuffer& CmdBuf) {
-                                    vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
-                                    CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
-                                },
-                                std::move(Completion));
+        if (auto R = Ctx.Submit(
+                VulkanImmediateQueue::Transfer,
+                vk::PipelineStageFlagBits2::eTransfer,
+                [&](const vk::raii::CommandBuffer& CmdBuf) {
+                    vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
+                    CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
+                },
+                std::move(Completion));
             !R) {
             return std::unexpected(R.error().Append("VulkanDeviceBuffer::CopyFrom failed"));
         }
@@ -265,16 +274,17 @@ class VulkanDeviceBuffer {
 
 class VulkanVertexBuffer final : public RHIVertexBuffer {
   public:
-    VulkanVertexBuffer(SPtr<VulkanDeviceBuffer> Buf, const RHIVertexBufferDesc& Desc)
-        : RHIVertexBuffer(Desc), m_Buffer(std::move(Buf)) {}
+    VulkanVertexBuffer(String Name, SPtr<VulkanDeviceBuffer> Buf, const RHIVertexBufferDesc& Desc)
+        : RHIVertexBuffer(std::move(Name), Desc), m_Buffer(std::move(Buf)) {}
 
     ~VulkanVertexBuffer() override = default;
 
     /// Static factory: creates staging buffer, uploads data, copies to
     /// device-local buffer via VulkanImmediateContext, and defers staging destruction
     /// to VulkanTransferCompletionQueue.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     const RHIVertexBufferDesc& Desc,
+    [[nodiscard]] static auto Create(const VulkanResourceContext&         Context,
+                                     StringView                           Name,
+                                     const RHIVertexBufferDesc&           Desc,
                                      VulkanImmediateContext::CompletionFn OnReady)
         -> std::expected<UPtr<VulkanVertexBuffer>, ErrorMessage> {
         if (Desc.Data.empty())
@@ -292,7 +302,8 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
         if (Desc.Data.size_bytes() != Size)
             return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: data size does not match vertex layout"));
 
-        auto StagingRes = VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
+        auto StagingRes =
+            VulkanHostBuffer::Create(Context, Format("{}#Staging", Name), Size, vk::BufferUsageFlagBits::eTransferSrc);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VulkanVertexBuffer::Create: staging creation failed"));
         auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
@@ -303,22 +314,22 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
                      vk::BufferUsageFlagBits::eTransferDst;
         if (VulkanCapability::Get().IsRayTracingAvailable())
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
-        auto DevRes = VulkanDeviceBuffer::Create(Size, Usage, Context);
+        auto DevRes = VulkanDeviceBuffer::Create(Context, Format("{}#Device", Name), Size, Usage);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("VulkanVertexBuffer::Create: device buffer creation failed"));
-        auto Buffer = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
-
+        auto Buffer     = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
         auto Completion = VulkanImmediateContext::CompletionDesc{
             .ConsumerQueue = VulkanImmediateQueue::Graphics,
-            .OnComplete = [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
-                if (OnReady)
-                    OnReady();
-            },
+            .OnComplete =
+                [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
+                    if (OnReady)
+                        OnReady();
+                },
         };
         if (auto R = Buffer->CopyFrom(*Staging, Context.Immediate, std::move(Completion)); !R)
             return std::unexpected(R.error().Append("VulkanVertexBuffer::Create: staging copy failed"));
 
-        return std::make_unique<VulkanVertexBuffer>(std::move(Buffer), Desc);
+        return std::make_unique<VulkanVertexBuffer>(String(Name), std::move(Buffer), Desc);
     }
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer->Get();
@@ -341,15 +352,16 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
 
 class VulkanIndexBuffer final : public RHIIndexBuffer {
   public:
-    VulkanIndexBuffer(SPtr<VulkanDeviceBuffer> Buf, const RHIIndexBufferDesc& Desc)
-        : RHIIndexBuffer(Desc), m_Buffer(std::move(Buf)) {}
+    VulkanIndexBuffer(String Name, SPtr<VulkanDeviceBuffer> Buf, const RHIIndexBufferDesc& Desc)
+        : RHIIndexBuffer(std::move(Name), Desc), m_Buffer(std::move(Buf)) {}
 
     ~VulkanIndexBuffer() override = default;
 
     /// Static factory: same pattern as VulkanVertexBuffer::Create.
     /// Index type is hardcoded to uint32 (eUint32).  uint16 is not supported.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     const RHIIndexBufferDesc& Desc,
+    [[nodiscard]] static auto Create(const VulkanResourceContext&         Context,
+                                     StringView                           Name,
+                                     const RHIIndexBufferDesc&            Desc,
                                      VulkanImmediateContext::CompletionFn OnReady)
         -> std::expected<UPtr<VulkanIndexBuffer>, ErrorMessage> {
         if (Desc.Data.empty())
@@ -363,7 +375,8 @@ class VulkanIndexBuffer final : public RHIIndexBuffer {
         if (Desc.Data.size_bytes() != Size)
             return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: data size does not match index count"));
 
-        auto StagingRes = VulkanHostBuffer::Create(Size, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
+        auto StagingRes =
+            VulkanHostBuffer::Create(Context, Format("{}#Staging", Name), Size, vk::BufferUsageFlagBits::eTransferSrc);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VulkanIndexBuffer::Create: staging creation failed"));
         auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
@@ -374,22 +387,22 @@ class VulkanIndexBuffer final : public RHIIndexBuffer {
                      vk::BufferUsageFlagBits::eTransferDst;
         if (VulkanCapability::Get().IsRayTracingAvailable())
             Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
-        auto DevRes = VulkanDeviceBuffer::Create(Size, Usage, Context);
+        auto DevRes = VulkanDeviceBuffer::Create(Context, Format("{}#Device", Name), Size, Usage);
         if (!DevRes)
             return std::unexpected(DevRes.error().Append("VulkanIndexBuffer::Create: device buffer creation failed"));
-        auto Buffer = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
-
+        auto Buffer     = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
         auto Completion = VulkanImmediateContext::CompletionDesc{
             .ConsumerQueue = VulkanImmediateQueue::Graphics,
-            .OnComplete = [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
-                if (OnReady)
-                    OnReady();
-            },
+            .OnComplete =
+                [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
+                    if (OnReady)
+                        OnReady();
+                },
         };
         if (auto R = Buffer->CopyFrom(*Staging, Context.Immediate, std::move(Completion)); !R)
             return std::unexpected(R.error().Append("VulkanIndexBuffer::Create: staging copy failed"));
 
-        return std::make_unique<VulkanIndexBuffer>(std::move(Buffer), Desc);
+        return std::make_unique<VulkanIndexBuffer>(String(Name), std::move(Buffer), Desc);
     }
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer->Get();
@@ -416,7 +429,7 @@ class VulkanTransientUniformArena final {
         : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_NextOffsets(FramesInFlight) {}
 
     [[nodiscard]] static auto
-    Create(Uint64 CapacityPerFrame, vk::raii::Device& Dev, VmaAllocator Alloc, Uint32 FramesInFlight)
+    Create(StringView Name, Uint64 CapacityPerFrame, const VulkanResourceContext& Context, Uint32 FramesInFlight)
         -> std::expected<VulkanTransientUniformArena, ErrorMessage> {
         if (CapacityPerFrame == 0)
             return std::unexpected(
@@ -428,7 +441,7 @@ class VulkanTransientUniformArena final {
             return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Create: total buffer size overflow"));
 
         auto Buffer = VulkanHostBuffer::Create(
-            CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eUniformBuffer, Dev, Alloc);
+            Context, String(Name), CapacityPerFrame * FramesInFlight, vk::BufferUsageFlagBits::eUniformBuffer);
         if (!Buffer)
             return std::unexpected(
                 Buffer.error().Append("VulkanTransientUniformArena::Create: VulkanHostBuffer creation failed"));
@@ -506,7 +519,7 @@ class VulkanTransientUniformArena final {
         return ((Value + Alignment - 1) / Alignment) * Alignment;
     }
 
-    VulkanHostBuffer    m_Buffer        = {};
+    VulkanHostBuffer    m_Buffer        = VulkanHostBuffer{String{}};
     Uint64              m_FrameCapacity = 0;
     std::vector<Uint64> m_NextOffsets   = {};
 };
@@ -520,7 +533,7 @@ class VulkanTransientShaderStorageArena final {
         : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_NextOffsets(FramesInFlight) {}
 
     [[nodiscard]] static auto
-    Create(Uint64 CapacityPerFrame, vk::raii::Device& Dev, VmaAllocator Alloc, Uint32 FramesInFlight)
+    Create(StringView Name, Uint64 CapacityPerFrame, const VulkanResourceContext& Context, Uint32 FramesInFlight)
         -> std::expected<VulkanTransientShaderStorageArena, ErrorMessage> {
         if (CapacityPerFrame == 0)
             return std::unexpected(
@@ -532,11 +545,11 @@ class VulkanTransientShaderStorageArena final {
             return std::unexpected(
                 ErrorMessage("VulkanTransientShaderStorageArena::Create: total buffer size overflow"));
 
-        auto Buffer = VulkanHostBuffer::Create(
-            CapacityPerFrame * FramesInFlight,
-            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer,
-            Dev,
-            Alloc);
+        auto Buffer = VulkanHostBuffer::Create(Context,
+                                               String(Name),
+                                               CapacityPerFrame * FramesInFlight,
+                                               vk::BufferUsageFlagBits::eStorageBuffer |
+                                                   vk::BufferUsageFlagBits::eIndirectBuffer);
         if (!Buffer) {
             return std::unexpected(
                 Buffer.error().Append("VulkanTransientShaderStorageArena::Create: VulkanHostBuffer creation failed"));
@@ -618,7 +631,7 @@ class VulkanTransientShaderStorageArena final {
         return ((Value + Alignment - 1) / Alignment) * Alignment;
     }
 
-    VulkanHostBuffer    m_Buffer        = {};
+    VulkanHostBuffer    m_Buffer        = VulkanHostBuffer{String{}};
     Uint64              m_FrameCapacity = 0;
     std::vector<Uint64> m_NextOffsets   = {};
 };

@@ -13,6 +13,7 @@ import :Buffer;
 import :Capability;
 import :Pipeline;
 import :Context;
+import :Debug;
 
 export namespace SoulEngine {
 
@@ -354,7 +355,7 @@ export auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
 /// Vulkan realization of a ray-tracing pipeline and its immutable shader-binding table.
 class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
-    VulkanRayTracingPipeline() = default;
+    explicit VulkanRayTracingPipeline(String Name) : RHIRayTracingPipeline(std::move(Name)) {}
 
     ~VulkanRayTracingPipeline() override = default;
 
@@ -362,6 +363,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     auto operator=(const VulkanRayTracingPipeline&) -> VulkanRayTracingPipeline& = delete;
 
     [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
+                                     StringView                      Name,
                                      const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanRayTracingPipeline>, ErrorMessage> {
         if (!VulkanCapability::Get().IsRayTracingAvailable())
@@ -396,6 +398,11 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
             return std::unexpected(ErrorMessage(Format(
                 "Failed to create ray-tracing pipeline: {}", vk::to_string(PipelineResult))));
         }
+        Context.DebugUtils.SetObjectName(*RHIPipeline, Name);
+        Context.DebugUtils.SetObjectName(*LayoutObjects->second, Format("{}::PipelineLayout", Name));
+        for (Uint32 SetIndex = 0; SetIndex < LayoutObjects->first.size(); ++SetIndex)
+            Context.DebugUtils.SetObjectName(
+                *LayoutObjects->first[SetIndex], Format("{}::SetLayout[{}]", Name, SetIndex));
 
         const Uint32 GroupCount = static_cast<Uint32>(ShaderStates->Groups.size());
         const Uint64 HandleDataSize = static_cast<Uint64>(GroupCount) * Properties.shaderGroupHandleSize;
@@ -427,11 +434,11 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         if (!SbtData)
             return std::unexpected(SbtData.error().Append("Failed to populate shader-binding-table records"));
 
-        auto SbtBuffer = VulkanHostBuffer::Create(SbtLayout->TotalSize,
-                                            vk::BufferUsageFlagBits::eShaderBindingTableKHR |
-                                                vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                            Context.Device,
-                                            Context.Allocator);
+        auto SbtBuffer = VulkanHostBuffer::Create(
+            Context,
+            Format("{}#ShaderBindingTable", Name),
+            SbtLayout->TotalSize,
+            vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress);
         if (!SbtBuffer)
             return std::unexpected(SbtBuffer.error().Append("Failed to allocate shader-binding-table buffer"));
         if (auto R = SbtBuffer->Upload(SbtData->data(), SbtData->size()); !R)
@@ -446,7 +453,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
                 Properties.shaderGroupBaseAlignment)));
         }
 
-        auto Result = std::make_unique<VulkanRayTracingPipeline>();
+        auto Result = std::make_unique<VulkanRayTracingPipeline>(String(Name));
         Result->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
         Result->m_SetLayouts =
             std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));

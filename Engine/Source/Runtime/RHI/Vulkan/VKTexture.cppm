@@ -12,6 +12,7 @@ import std;
 import :Types;
 import :Buffer;
 import :Context;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -19,13 +20,91 @@ namespace SoulEngine {
 // VulkanDeviceTexture — reusable GPU image wrapper
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Owns VkImage + VkImageView + VMA allocation lifecycle.
-class VulkanDeviceTexture {
-  public:
-    VulkanDeviceTexture() = default;
+struct VulkanDeviceTextureCreateDesc {
+    Uint32                Width             = 0;
+    Uint32                Height            = 0;
+    vk::Format            Format            = vk::Format::eUndefined;
+    vk::ImageUsageFlags   Usage             = {};
+    vk::ImageAspectFlags  Aspect            = vk::ImageAspectFlagBits::eColor;
+    bool                  ConcurrentSharing = false;
+};
 
-    VulkanDeviceTexture(VmaAllocator Alloc, vk::Image Image, VmaAllocation Allocation, vk::raii::ImageView&& ImageView)
-        : m_Allocator(Alloc), m_Image(Image), m_Allocation(Allocation), m_ImageView(std::move(ImageView)) {}
+/// Owns VkImage + VkImageView + VMA allocation lifecycle.
+class VulkanDeviceTexture : public RHIObject {
+  public:
+    explicit VulkanDeviceTexture(String Name,
+                                 VmaAllocator Alloc,
+                                 vk::Image Image,
+                                 VmaAllocation Allocation,
+                                 vk::raii::ImageView&& ImageView,
+                                 VulkanDebugUtils& DebugUtils)
+        : RHIObject(std::move(Name)),
+          m_Allocator(Alloc),
+          m_Image(Image),
+          m_Allocation(Allocation),
+          m_ImageView(std::move(ImageView)) {
+        DebugUtils.SetObjectName(m_Image, Format("{}#Image", GetName()));
+        DebugUtils.SetObjectName(GetImageView(), Format("{}#ImageView", GetName()));
+    }
+
+    [[nodiscard]] static auto Create(const VulkanResourceContext&       Context,
+                                     StringView                         Name,
+                                     const VulkanDeviceTextureCreateDesc& Desc)
+        -> std::expected<SPtr<VulkanDeviceTexture>, ErrorMessage> {
+        if (Desc.Width == 0 || Desc.Height == 0)
+            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: invalid dimensions"));
+        if (Desc.Format == vk::Format::eUndefined)
+            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: invalid format"));
+
+        const bool         bConcurrentSharing = Desc.ConcurrentSharing &&
+                                                Context.GraphicsFamily != Context.TransferFamily;
+        const std::array   QueueFamilies{Context.GraphicsFamily, Context.TransferFamily};
+        vk::ImageCreateInfo ImageCI{
+            .imageType             = vk::ImageType::e2D,
+            .format                = Desc.Format,
+            .extent                = {Desc.Width, Desc.Height, 1},
+            .mipLevels             = 1,
+            .arrayLayers           = 1,
+            .samples               = vk::SampleCountFlagBits::e1,
+            .tiling                = vk::ImageTiling::eOptimal,
+            .usage                 = Desc.Usage,
+            .sharingMode           = bConcurrentSharing ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
+            .queueFamilyIndexCount = bConcurrentSharing ? static_cast<Uint32>(QueueFamilies.size()) : 0,
+            .pQueueFamilyIndices   = bConcurrentSharing ? QueueFamilies.data() : nullptr,
+            .initialLayout         = vk::ImageLayout::eUndefined,
+        };
+        VmaAllocationCreateInfo ImageAllocInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+
+        VkImage           RawImage = nullptr;
+        VmaAllocation     RawAlloc = nullptr;
+        VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
+        if (vmaCreateImage(Context.Allocator, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
+            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: vmaCreateImage failed"));
+
+        const auto VkImage = static_cast<vk::Image>(RawImage);
+        vk::ImageViewCreateInfo ViewCI{
+            .image            = VkImage,
+            .viewType         = vk::ImageViewType::e2D,
+            .format           = Desc.Format,
+            .components       = {vk::ComponentSwizzle::eIdentity,
+                                 vk::ComponentSwizzle::eIdentity,
+                                 vk::ComponentSwizzle::eIdentity,
+                                 vk::ComponentSwizzle::eIdentity},
+            .subresourceRange = {.aspectMask     = Desc.Aspect,
+                                 .baseMipLevel   = 0,
+                                 .levelCount     = 1,
+                                 .baseArrayLayer = 0,
+                                 .layerCount     = 1},
+        };
+        auto ViewRes = Context.Device.createImageView(ViewCI);
+        if (ViewRes.result != vk::Result::eSuccess) {
+            vmaDestroyImage(Context.Allocator, RawImage, RawAlloc);
+            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: vkCreateImageView failed"));
+        }
+
+        return std::make_shared<VulkanDeviceTexture>(
+            String(Name), Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value), Context.DebugUtils);
+    }
 
     ~VulkanDeviceTexture() {
         if (m_Allocation)
@@ -34,13 +113,15 @@ class VulkanDeviceTexture {
 
     // Move-only.
     VulkanDeviceTexture(VulkanDeviceTexture&& Other) noexcept
-        : m_Allocator(std::exchange(Other.m_Allocator, nullptr)),
+        : RHIObject(std::move(Other)),
+          m_Allocator(std::exchange(Other.m_Allocator, nullptr)),
           m_Image(std::exchange(Other.m_Image, nullptr)),
           m_Allocation(std::exchange(Other.m_Allocation, nullptr)),
           m_ImageView(std::move(Other.m_ImageView)) {}
 
     auto operator=(VulkanDeviceTexture&& Other) noexcept -> VulkanDeviceTexture& {
         if (this != &Other) {
+            RHIObject::operator=(std::move(Other));
             std::swap(m_Allocator, Other.m_Allocator);
             std::swap(m_Image, Other.m_Image);
             std::swap(m_Allocation, Other.m_Allocation);
@@ -144,8 +225,11 @@ class VulkanDeviceTexture {
 
 class VulkanSampledTexture final : public RHISampledTexture {
   public:
-    VulkanSampledTexture(SPtr<VulkanDeviceTexture> Tex, Uint32 Width, Uint32 Height)
-        : m_Texture(std::move(Tex)), m_Width(Width), m_Height(Height) {}
+    VulkanSampledTexture(String Name, SPtr<VulkanDeviceTexture> Tex, Uint32 Width, Uint32 Height)
+        : RHISampledTexture(std::move(Name)),
+          m_Texture(std::move(Tex)),
+          m_Width(Width),
+          m_Height(Height) {}
 
     ~VulkanSampledTexture() override = default;
 
@@ -156,6 +240,7 @@ class VulkanSampledTexture final : public RHISampledTexture {
 
     /// Static factory: upload pixel data to GPU texture via staging buffer.
     [[nodiscard]] static auto Create(const VulkanResourceContext&         Context,
+                                     StringView                           Name,
                                      const RHISampledTextureDesc&         Desc,
                                      VulkanImmediateContext::CompletionFn OnReady)
         -> std::expected<UPtr<VulkanSampledTexture>, ErrorMessage> {
@@ -173,7 +258,7 @@ class VulkanSampledTexture final : public RHISampledTexture {
                 ErrorMessage("VulkanSampledTexture::Create: data size does not match texture dimensions"));
 
         auto StagingRes = VulkanHostBuffer::Create(
-            PixelSize, vk::BufferUsageFlagBits::eTransferSrc, Context.Device, Context.Allocator);
+            Context, Format("{}#Staging", Name), PixelSize, vk::BufferUsageFlagBits::eTransferSrc);
         if (!StagingRes)
             return std::unexpected(StagingRes.error().Append("VulkanSampledTexture::Create: staging creation failed"));
         auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
@@ -183,64 +268,32 @@ class VulkanSampledTexture final : public RHISampledTexture {
         const auto VkFmt = ToVkFormat(Desc.Format);
         if (VkFmt == vk::Format::eUndefined)
             return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: unsupported texture format"));
-        const std::array    QueueFamilies{Context.GraphicsFamily, Context.TransferFamily};
-        const bool          bConcurrentSharing = Context.GraphicsFamily != Context.TransferFamily;
-        vk::ImageCreateInfo ImageCI{
-            .imageType             = vk::ImageType::e2D,
-            .format                = VkFmt,
-            .extent                = {Desc.Width, Desc.Height, 1},
-            .mipLevels             = 1,
-            .arrayLayers           = 1,
-            .samples               = vk::SampleCountFlagBits::e1,
-            .tiling                = vk::ImageTiling::eOptimal,
-            .usage                 = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-            .sharingMode           = bConcurrentSharing ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
-            .queueFamilyIndexCount = bConcurrentSharing ? static_cast<Uint32>(QueueFamilies.size()) : 0,
-            .pQueueFamilyIndices   = bConcurrentSharing ? QueueFamilies.data() : nullptr,
-            .initialLayout         = vk::ImageLayout::eUndefined,
-        };
-        VmaAllocationCreateInfo ImageAllocInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-        VkImage                 RawImage = nullptr;
-        VmaAllocation           RawAlloc = nullptr;
-        VkImageCreateInfo       RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
-        if (vmaCreateImage(Context.Allocator, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: vmaCreateImage failed"));
-        const auto              VkImage = static_cast<vk::Image>(RawImage);
-        vk::ImageViewCreateInfo ViewCI{
-            .image            = VkImage,
-            .viewType         = vk::ImageViewType::e2D,
-            .format           = VkFmt,
-            .components       = {vk::ComponentSwizzle::eIdentity,
-                                 vk::ComponentSwizzle::eIdentity,
-                                 vk::ComponentSwizzle::eIdentity,
-                                 vk::ComponentSwizzle::eIdentity},
-            .subresourceRange = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                 .baseMipLevel   = 0,
-                                 .levelCount     = 1,
-                                 .baseArrayLayer = 0,
-                                 .layerCount     = 1},
-        };
-        auto ViewRes = Context.Device.createImageView(ViewCI);
-        if (ViewRes.result != vk::Result::eSuccess) {
-            vmaDestroyImage(Context.Allocator, RawImage, RawAlloc);
-            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: vkCreateImageView failed"));
-        }
-
-        auto Texture =
-            std::make_shared<VulkanDeviceTexture>(Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value));
+        auto Texture = VulkanDeviceTexture::Create(Context,
+                                                   Name,
+                                                   VulkanDeviceTextureCreateDesc{
+                                                       .Width             = Desc.Width,
+                                                       .Height            = Desc.Height,
+                                                       .Format            = VkFmt,
+                                                       .Usage             = vk::ImageUsageFlagBits::eTransferDst |
+                                                                    vk::ImageUsageFlagBits::eSampled,
+                                                       .Aspect            = vk::ImageAspectFlagBits::eColor,
+                                                       .ConcurrentSharing = true,
+                                                   });
+        if (!Texture)
+            return std::unexpected(Texture.error().Append("VulkanSampledTexture::Create: device texture creation failed"));
         auto Completion = VulkanImmediateContext::CompletionDesc{
             .ConsumerQueue = VulkanImmediateQueue::Graphics,
             .OnComplete =
-                [Staging, Texture, OnReady = std::move(OnReady)]() mutable {
+                [Staging, Texture = *Texture, OnReady = std::move(OnReady)]() mutable {
                     if (OnReady)
                         OnReady();
                 },
         };
         if (auto R =
-                Texture->CopyFrom(*Staging, Context.Immediate, Desc.Width, Desc.Height, VkFmt, std::move(Completion));
+                (*Texture)->CopyFrom(*Staging, Context.Immediate, Desc.Width, Desc.Height, VkFmt, std::move(Completion));
             !R)
             return std::unexpected(R.error().Append("VulkanSampledTexture::Create: transfer submission failed"));
-        return std::make_unique<VulkanSampledTexture>(std::move(Texture), Desc.Width, Desc.Height);
+        return std::make_unique<VulkanSampledTexture>(String(Name), std::move(*Texture), Desc.Width, Desc.Height);
     }
 
     // ── RHISampledTexture interface ──────────────────────────────────
@@ -269,9 +322,18 @@ class VulkanSampledTexture final : public RHISampledTexture {
 
 class VulkanRenderTarget final : public RHIRenderTarget {
   public:
-    VulkanRenderTarget(
-        SPtr<VulkanDeviceTexture> Tex, Uint32 Width, Uint32 Height, RHIFormat Format, RHITextureUsage Usage)
-        : m_Texture(std::move(Tex)), m_Width(Width), m_Height(Height), m_Format(Format), m_Usage(Usage) {}
+    VulkanRenderTarget(String Name,
+                       SPtr<VulkanDeviceTexture> Tex,
+                       Uint32 Width,
+                       Uint32 Height,
+                       RHIFormat Format,
+                       RHITextureUsage Usage)
+        : RHIRenderTarget(std::move(Name)),
+          m_Texture(std::move(Tex)),
+          m_Width(Width),
+          m_Height(Height),
+          m_Format(Format),
+          m_Usage(Usage) {}
 
     ~VulkanRenderTarget() override = default;
 
@@ -280,7 +342,7 @@ class VulkanRenderTarget final : public RHIRenderTarget {
     VulkanRenderTarget(VulkanRenderTarget&&)                         = delete;
     auto operator=(VulkanRenderTarget&&) -> VulkanRenderTarget&      = delete;
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHIRenderTargetDesc& Desc)
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, StringView Name, const RHIRenderTargetDesc& Desc)
         -> std::expected<UPtr<VulkanRenderTarget>, ErrorMessage> {
         if (Desc.Width == 0 || Desc.Height == 0)
             return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: invalid desc (zero dimensions)"));
@@ -315,53 +377,22 @@ class VulkanRenderTarget final : public RHIRenderTarget {
         if (IsShaderResource)
             Usage |= vk::ImageUsageFlagBits::eSampled;
 
-        const auto          VkFmt              = ToVkFormat(Desc.Format);
-        const bool          bConcurrentSharing = Context.GraphicsFamily != Context.TransferFamily;
-        const std::array    QueueFamilies{Context.GraphicsFamily, Context.TransferFamily};
-        vk::ImageCreateInfo ImageCI{
-            .imageType     = vk::ImageType::e2D,
-            .format        = VkFmt,
-            .extent        = {Desc.Width, Desc.Height, 1},
-            .mipLevels     = 1,
-            .arrayLayers   = 1,
-            .samples       = vk::SampleCountFlagBits::e1,
-            .tiling        = vk::ImageTiling::eOptimal,
-            .usage         = Usage,
-            .sharingMode   = vk::SharingMode::eExclusive,
-            .initialLayout = vk::ImageLayout::eUndefined,
-        };
-
-        VmaAllocationCreateInfo ImageAllocInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-
-        VkImage           RawImage = nullptr;
-        VmaAllocation     RawAlloc = nullptr;
-        VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
-        if (vmaCreateImage(Context.Allocator, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: vmaCreateImage failed"));
-
-        auto       VkImage = static_cast<vk::Image>(RawImage);
-        const auto Aspect  = IsDepth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
-
-        vk::ImageViewCreateInfo ViewCI{
-            .image      = VkImage,
-            .viewType   = vk::ImageViewType::e2D,
-            .format     = VkFmt,
-            .components = {vk::ComponentSwizzle::eIdentity,
-                           vk::ComponentSwizzle::eIdentity,
-                           vk::ComponentSwizzle::eIdentity,
-                           vk::ComponentSwizzle::eIdentity},
-            .subresourceRange =
-                {.aspectMask = Aspect, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
-        };
-        auto ViewRes = Context.Device.createImageView(ViewCI);
-        if (ViewRes.result != vk::Result::eSuccess) {
-            vmaDestroyImage(Context.Allocator, RawImage, RawAlloc);
-            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: vkCreateImageView failed"));
-        }
-
-        auto Tex =
-            std::make_shared<VulkanDeviceTexture>(Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value));
-        return std::make_unique<VulkanRenderTarget>(std::move(Tex), Desc.Width, Desc.Height, Desc.Format, Desc.Usage);
+        const auto VkFmt = ToVkFormat(Desc.Format);
+        auto Texture = VulkanDeviceTexture::Create(Context,
+                                                   Name,
+                                                   VulkanDeviceTextureCreateDesc{
+                                                       .Width             = Desc.Width,
+                                                       .Height            = Desc.Height,
+                                                       .Format            = VkFmt,
+                                                       .Usage             = Usage,
+                                                       .Aspect            =
+                                                           IsDepth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor,
+                                                       .ConcurrentSharing = false,
+                                                   });
+        if (!Texture)
+            return std::unexpected(Texture.error().Append("VulkanRenderTarget::Create: device texture creation failed"));
+        return std::make_unique<VulkanRenderTarget>(
+            String(Name), std::move(*Texture), Desc.Width, Desc.Height, Desc.Format, Desc.Usage);
     }
 
     [[nodiscard]] auto GetWidth() const -> Uint32 override {
