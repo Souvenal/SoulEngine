@@ -103,6 +103,17 @@ class RHIRefPayload final {
         return true;
     }
 
+    auto Publish(RHIRefPayload& Source, RHIRefState State) -> bool {
+        if (this == &Source || (State != RHIRefState::GpuPending && State != RHIRefState::Ready) ||
+            GetState() != RHIRefState::RhiCommitting || m_Object || Source.GetState() != RHIRefState::Ready ||
+            !Source.m_Object)
+            return false;
+
+        m_Object = std::move(Source.m_Object);
+        m_State.store(State, std::memory_order_release);
+        return true;
+    }
+
   private:
     std::atomic<RHIRefState>    m_State  = RHIRefState::RhiCommitting;
     std::optional<ErrorMessage> m_Error  = std::nullopt;
@@ -153,6 +164,20 @@ class RHIRef {
     auto MarkFailed(ErrorMessage Error) const -> void {
         if (m_Payload)
             m_Payload->MarkFailed(std::move(Error));
+    }
+
+    [[nodiscard]] auto Publish(UPtr<T> Object, RHIRefState State) const -> std::expected<void, ErrorMessage> {
+        if (!m_Payload || !m_Payload->Publish(std::move(Object), State))
+            return std::unexpected(ErrorMessage("Cannot publish an invalid RHI resource payload"));
+        return {};
+    }
+
+    [[nodiscard]] auto Publish(RHIRef&& Source, RHIRefState State) const -> std::expected<void, ErrorMessage> {
+        if (!m_Payload || !Source.m_Payload)
+            return std::unexpected(ErrorMessage("Cannot publish from an empty RHI resource reference"));
+        if (!m_Payload->Publish(*Source.m_Payload, State))
+            return std::unexpected(ErrorMessage("Cannot publish an invalid RHI resource payload"));
+        return {};
     }
 
     SPtr<RHIRefPayload<T>> m_Payload = nullptr;

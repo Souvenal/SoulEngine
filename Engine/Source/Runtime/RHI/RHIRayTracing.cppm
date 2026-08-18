@@ -49,36 +49,42 @@ struct RHIRowMajorTransform3x4 {
 };
 
 /// Common GPU resource base for BLAS and TLAS payloads.
-class RHIAccelerationStructure {
+class RHIAccelerationStructure : public RHIObject {
   public:
-    RHIAccelerationStructure()                                                   = default;
     RHIAccelerationStructure(const RHIAccelerationStructure&)                    = delete;
     auto operator=(const RHIAccelerationStructure&) -> RHIAccelerationStructure& = delete;
     RHIAccelerationStructure(RHIAccelerationStructure&&)                         = delete;
     auto operator=(RHIAccelerationStructure&&) -> RHIAccelerationStructure&      = delete;
     virtual ~RHIAccelerationStructure()                                          = default;
+
+  protected:
+    explicit RHIAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
 };
 
 /// GPU payload containing reusable object-space triangle geometry.
 class RHIBottomLevelAccelerationStructure : public RHIAccelerationStructure {
   public:
-    RHIBottomLevelAccelerationStructure()                                                              = default;
     RHIBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructure&)                    = delete;
     auto operator=(const RHIBottomLevelAccelerationStructure&) -> RHIBottomLevelAccelerationStructure& = delete;
     RHIBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructure&&)                         = delete;
     auto operator=(RHIBottomLevelAccelerationStructure&&) -> RHIBottomLevelAccelerationStructure&      = delete;
     virtual ~RHIBottomLevelAccelerationStructure()                                                     = default;
+
+  protected:
+    explicit RHIBottomLevelAccelerationStructure(String Name) : RHIAccelerationStructure(std::move(Name)) {}
 };
 
 /// Persistent GPU payload containing the current render-scene instance hierarchy.
 class RHITopLevelAccelerationStructure : public RHIAccelerationStructure {
   public:
-    RHITopLevelAccelerationStructure()                                                           = default;
     RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
     auto operator=(const RHITopLevelAccelerationStructure&) -> RHITopLevelAccelerationStructure& = delete;
     RHITopLevelAccelerationStructure(RHITopLevelAccelerationStructure&&)                         = delete;
     auto operator=(RHITopLevelAccelerationStructure&&) -> RHITopLevelAccelerationStructure&      = delete;
     virtual ~RHITopLevelAccelerationStructure()                                                  = default;
+
+  protected:
+    explicit RHITopLevelAccelerationStructure(String Name) : RHIAccelerationStructure(std::move(Name)) {}
 };
 
 /// One logical source geometry consumed by the device-owned BDA metadata table.
@@ -191,12 +197,14 @@ struct RHIRayTracingPipelineDesc {
 /// Backend concrete classes own native pipeline-layout and shader-binding-table state.
 class RHIRayTracingPipeline : public RHIPipeline {
   public:
-    RHIRayTracingPipeline()                                                = default;
     RHIRayTracingPipeline(const RHIRayTracingPipeline&)                    = delete;
     auto operator=(const RHIRayTracingPipeline&) -> RHIRayTracingPipeline& = delete;
     RHIRayTracingPipeline(RHIRayTracingPipeline&&)                         = delete;
     auto operator=(RHIRayTracingPipeline&&) -> RHIRayTracingPipeline&      = delete;
     virtual ~RHIRayTracingPipeline()                                       = default;
+
+  protected:
+    explicit RHIRayTracingPipeline(String Name) : RHIPipeline(std::move(Name)) {}
 };
 
 } // namespace SoulEngine

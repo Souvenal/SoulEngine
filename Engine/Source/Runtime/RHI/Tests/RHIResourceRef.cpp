@@ -12,8 +12,11 @@ namespace {
 
 class MockSampler final : public RHISampler {
   public:
-    explicit MockSampler(Uint32& DestructionCount) : RHISampler(RHISamplerDesc{}), m_DestructionCount(DestructionCount) {}
-    ~MockSampler() override { ++m_DestructionCount; }
+    MockSampler(StringView Name, Uint32& DestructionCount)
+        : RHISampler(String(Name), RHISamplerDesc{}), m_DestructionCount(DestructionCount) {}
+    ~MockSampler() override {
+        ++m_DestructionCount;
+    }
 
   private:
     Uint32& m_DestructionCount;
@@ -21,8 +24,11 @@ class MockSampler final : public RHISampler {
 
 class MockVertexBuffer final : public RHIVertexBuffer {
   public:
-    explicit MockVertexBuffer(Uint32& DestructionCount) : m_DestructionCount(DestructionCount) {}
-    ~MockVertexBuffer() override { ++m_DestructionCount; }
+    MockVertexBuffer(StringView Name, Uint32& DestructionCount)
+        : RHIVertexBuffer(String(Name), RHIVertexBufferDesc{}), m_DestructionCount(DestructionCount) {}
+    ~MockVertexBuffer() override {
+        ++m_DestructionCount;
+    }
 
   private:
     Uint32& m_DestructionCount;
@@ -30,13 +36,21 @@ class MockVertexBuffer final : public RHIVertexBuffer {
 
 class MockRenderDevice final : public RHIRenderDevice {
   public:
-    MockRenderDevice() { GDeferredDeletionQueue = &GetDeletionQueue(); }
-    ~MockRenderDevice() override { GDeferredDeletionQueue = nullptr; }
+    MockRenderDevice() {
+        GDeferredDeletionQueue = &GetDeletionQueue();
+    }
+    ~MockRenderDevice() override {
+        GDeferredDeletionQueue = nullptr;
+    }
 
-    [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override { return {}; }
-    [[nodiscard]] auto GetBackendType() const -> RHIBackendType override { return RHIBackendType::Unknown; }
+    [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto GetBackendType() const -> RHIBackendType override {
+        return RHIBackendType::Unknown;
+    }
 
-    [[nodiscard]] auto CreateVertexBuffer(const RHIVertexBufferDesc&)
+    [[nodiscard]] auto CreateVertexBuffer(StringView Name, const RHIVertexBufferDesc&)
         -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> override {
         auto Resource = RHIRef<RHIVertexBuffer>::Create();
         if (m_FailVertexBuffer) {
@@ -44,8 +58,9 @@ class MockRenderDevice final : public RHIRenderDevice {
             return std::unexpected(ErrorMessage("mock vertex-buffer creation failure"));
         }
         auto Payload = Resource.m_Payload;
-        if (auto Publish = PublishPendingPayload(
-                Resource, UPtr<RHIVertexBuffer>{std::make_unique<MockVertexBuffer>(m_VertexDestructions)});
+        if (auto Publish = Resource.Publish(
+                UPtr<RHIVertexBuffer>{std::make_unique<MockVertexBuffer>(Name, m_VertexDestructions)},
+                RHIRefState::GpuPending);
             !Publish) {
             return std::unexpected(Publish.error());
         }
@@ -53,69 +68,67 @@ class MockRenderDevice final : public RHIRenderDevice {
         return Resource;
     }
 
-    [[nodiscard]] auto CreateIndexBuffer(const RHIIndexBufferDesc&)
+    [[nodiscard]] auto CreateIndexBuffer(StringView, const RHIIndexBufferDesc&)
         -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock index-buffer creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateSampledTexture(const RHISampledTextureDesc&)
+    [[nodiscard]] auto CreateSampledTexture(StringView, const RHISampledTextureDesc&)
         -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock sampled-texture creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateSampler(const RHISamplerDesc&) -> std::expected<RHIRef<RHISampler>, ErrorMessage> override {
+    [[nodiscard]] auto CreateSampler(StringView Name, const RHISamplerDesc&)
+        -> std::expected<RHIRef<RHISampler>, ErrorMessage> override {
         auto Resource = RHIRef<RHISampler>::Create();
-        if (auto Publish = PublishReadyPayload(
-                Resource, UPtr<RHISampler>{std::make_unique<MockSampler>(m_SamplerDestructions)});
+        if (auto Publish = Resource.Publish(
+                UPtr<RHISampler>{std::make_unique<MockSampler>(Name, m_SamplerDestructions)}, RHIRefState::Ready);
             !Publish) {
             return std::unexpected(Publish.error());
         }
         return Resource;
     }
 
-    [[nodiscard]] auto CreateRenderTarget(const RHIRenderTargetDesc&)
+    [[nodiscard]] auto CreateRenderTarget(StringView, const RHIRenderTargetDesc&)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock render-target creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc&)
+    [[nodiscard]] auto CreateGraphicsPipeline(StringView, const RHIGraphicsPipelineDesc&)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock graphics-pipeline creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc&, RHIRef<RHIGraphicsPipeline>)
-        -> std::expected<void, ErrorMessage> override {
-        return std::unexpected(ErrorMessage("mock graphics-pipeline creation is not implemented"));
-    }
-
-    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc&)
+    [[nodiscard]] auto CreateRayTracingPipeline(StringView, const RHIRayTracingPipelineDesc&)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock ray-tracing-pipeline creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc&, RHIRef<RHIRayTracingPipeline>)
-        -> std::expected<void, ErrorMessage> override {
-        return std::unexpected(ErrorMessage("mock ray-tracing-pipeline creation is not implemented"));
-    }
-
-    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc&)
+    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(StringView,
+                                                              const RHIBottomLevelAccelerationStructureDesc&)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock BLAS creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc&)
+    [[nodiscard]] auto CreateTopLevelAccelerationStructure(StringView, const RHITopLevelAccelerationStructureDesc&)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock TLAS creation is not implemented"));
     }
 
-    [[nodiscard]] auto Execute(RHICommandList&&) -> std::expected<void, ErrorMessage> override { return {}; }
-    [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override { return 0; }
+    [[nodiscard]] auto Execute(RHICommandList&&) -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override {
+        return 0;
+    }
     auto WaitIdle() -> void override {}
-    auto Shutdown() -> void override { GetDeletionQueue().Drain(); }
+    auto Shutdown() -> void override {
+        GetDeletionQueue().Drain();
+    }
 
-    bool   m_FailVertexBuffer   = false;
-    bool   m_GpuComplete        = false;
-    Uint32 m_VertexDestructions = 0;
+    bool   m_FailVertexBuffer    = false;
+    bool   m_GpuComplete         = false;
+    Uint32 m_VertexDestructions  = 0;
     Uint32 m_SamplerDestructions = 0;
 
   protected:
@@ -145,7 +158,7 @@ TEST(RHIResourceRefTest, CopiesObserveTheSamePublishedState) {
     RHIDeferredDeletionQueue Queue;
     GDeferredDeletionQueue = &Queue;
     {
-        auto Ref = RHIRef<RHISampler>::Create();
+        auto Ref  = RHIRef<RHISampler>::Create();
         auto Copy = Ref;
 
         EXPECT_EQ(Ref.GetState(), RHIRefState::RhiCommitting);
@@ -161,10 +174,28 @@ TEST(RHIResourceRefTest, CopiesObserveTheSamePublishedState) {
     GDeferredDeletionQueue = nullptr;
 }
 
+TEST(RHIResourceRefTest, ReadyPayloadCanBePublishedToPendingCopies) {
+    RHIDeferredDeletionQueue Queue;
+    GDeferredDeletionQueue = &Queue;
+    {
+        auto Pending = RHIRef<RHISampler>::Create();
+        auto Ready   = RHIRef<RHISampler>::Create();
+        Uint32 Destructions = 0;
+        auto   Payload      = std::make_unique<MockSampler>("Test/Sampler", Destructions);
+        ASSERT_TRUE(Ready.m_Payload->Publish(std::move(Payload), RHIRefState::Ready));
+
+        ASSERT_TRUE(Pending.Publish(std::move(Ready), RHIRefState::Ready));
+        EXPECT_EQ(Pending.GetState(), RHIRefState::Ready);
+        EXPECT_NE(Pending.TryGet(), nullptr);
+    }
+    Queue.Drain();
+    GDeferredDeletionQueue = nullptr;
+}
+
 TEST(RHIResourceRefTest, SynchronousCreateReturnsReadySamplerRef) {
     MockRenderDevice Device;
     {
-        auto Sampler = static_cast<RHIRenderDevice&>(Device).CreateSampler(RHISamplerDesc{});
+        auto Sampler = static_cast<RHIRenderDevice&>(Device).CreateSampler("Test/Sampler", RHISamplerDesc{});
 
         ASSERT_TRUE(Sampler.has_value());
         EXPECT_EQ(Sampler->GetState(), RHIRefState::Ready);
@@ -176,7 +207,7 @@ TEST(RHIResourceRefTest, SynchronousCreateReturnsReadySamplerRef) {
 
 TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
     MockRenderDevice Device;
-    auto Result = Device.CreateVertexBuffer(RHIVertexBufferDesc{});
+    auto             Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
 
     ASSERT_TRUE(Result.has_value());
     auto Buffer = std::move(*Result);
@@ -189,6 +220,7 @@ TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
     EXPECT_EQ(Copy.GetState(), RHIRefState::Ready);
     EXPECT_TRUE(Copy);
     EXPECT_NE(Copy.TryGet(), nullptr);
+    EXPECT_EQ(Copy->GetName(), "Test/VertexBuffer");
 
     Buffer = nullptr;
     Copy   = nullptr;
@@ -200,21 +232,20 @@ TEST(RHIResourceRefTest, BackendCreationFailureReturnsError) {
     MockRenderDevice Device;
     Device.m_FailVertexBuffer = true;
 
-    auto Result = Device.CreateVertexBuffer(RHIVertexBufferDesc{});
+    auto Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
     EXPECT_FALSE(Result.has_value());
     EXPECT_NE(Result.error().ToString().find("mock vertex-buffer creation failure"), String::npos);
 }
 
-
 TEST(RHIResourceRefTest, CompletionCallbackKeepsPayloadAliveUntilGpuCompletion) {
     MockRenderDevice Device;
-    auto Result = Device.CreateVertexBuffer(RHIVertexBufferDesc{});
+    auto             Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
     ASSERT_TRUE(Result.has_value());
     auto Buffer = std::move(*Result);
-    auto Copy = Buffer;
+    auto Copy   = Buffer;
 
     Buffer = nullptr;
-    Copy = nullptr;
+    Copy   = nullptr;
     Device.Tick();
     EXPECT_EQ(Device.m_VertexDestructions, 0);
 
@@ -225,7 +256,7 @@ TEST(RHIResourceRefTest, CompletionCallbackKeepsPayloadAliveUntilGpuCompletion) 
 
 TEST(RHIResourceRefTest, CompletionCannotOverwriteFailure) {
     MockRenderDevice Device;
-    auto Result = Device.CreateVertexBuffer(RHIVertexBufferDesc{});
+    auto             Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
     ASSERT_TRUE(Result.has_value());
     auto Buffer = std::move(*Result);
 

@@ -126,6 +126,7 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
         return true;
 
     auto Payload = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(
+        Format("BLAS/{}", Pending->Key),
         RHIBottomLevelAccelerationStructureDesc{.Geometries = std::move(Geometries)});
     if (!Payload) {
         PublishResourceFailed<ResourceBottomLevelAccelerationStructure>(
@@ -198,7 +199,7 @@ WaitForBottomLevelAccelerationStructureDependencies(const SPtr<PendingBottomLeve
             if (!MarkResourceRhiCommitting<ResourceTopLevelAccelerationStructure>(Context, Key, Generation))
                 return;
 
-            auto Payload = RHIRenderDevice::Get().CreateTopLevelAccelerationStructure(Desc);
+            auto Payload = RHIRenderDevice::Get().CreateTopLevelAccelerationStructure(Format("TLAS/{}", Key), Desc);
             if (!Payload) {
                 PublishResourceFailed<ResourceTopLevelAccelerationStructure>(
                     Context, Generation, Key, Payload.error().Append("Failed to create TLAS RHI payload"));

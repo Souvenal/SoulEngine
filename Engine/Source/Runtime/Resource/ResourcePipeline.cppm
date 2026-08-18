@@ -11,43 +11,10 @@ export import std;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto MakePipelineKey(const GraphicsPipelineRequest& Req) -> String {
-    String Key = Format("vp={}:{}:{}|fp={}:{}:{}|topo={}|df={}|rs={}:{}:{}|ds={}:{}",
-                        Req.VertEntry.SourcePath.lexically_normal().string(),
-                        Req.VertEntry.EntryPoint,
-                        static_cast<Uint8>(Req.VertEntry.Backend),
-                        Req.FragEntry.SourcePath.lexically_normal().string(),
-                        Req.FragEntry.EntryPoint,
-                        static_cast<Uint8>(Req.FragEntry.Backend),
-                        static_cast<Uint8>(Req.Topology),
-                        static_cast<Uint8>(Req.DepthFormat),
-                        Req.Rasterizer.FillMode,
-                        Req.Rasterizer.CullMode,
-                        Req.Rasterizer.LineWidth,
-                        Req.DepthStencil.DepthTestEnable,
-                        Req.DepthStencil.DepthWriteEnable);
-
-    for (const auto ColorFormat : Req.ColorFormats)
-        Key += Format("|mrt={}", static_cast<Uint8>(ColorFormat));
-    for (const auto& Binding : Req.VertexInputLayout.Bindings)
-        Key += Format("|vbind={}:{}", Binding.Binding, Binding.Stride);
-    for (const auto& Attribute : Req.VertexInputLayout.Attributes)
-        Key += Format("|attr={}:{}:{}:{}",
-                      Attribute.Location,
-                      Attribute.Binding,
-                      static_cast<Uint8>(Attribute.Format),
-                      Attribute.Offset);
-
-    for (const auto& Attachment : Req.Blend.Attachments)
-        Key += Format("|blend={}", Attachment.BlendEnable);
-
-    return Key;
-}
-
-export [[nodiscard]] auto RequestGraphicsPipeline(const GraphicsPipelineRequest& Req)
+export [[nodiscard]] auto RequestGraphicsPipeline(StringView Name, const GraphicsPipelineRequest& Req)
     -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIGraphicsPipeline>::Create();
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef] {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef, Name = String(Name)]() mutable {
         const auto&       Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
 
@@ -67,23 +34,29 @@ export [[nodiscard]] auto RequestGraphicsPipeline(const GraphicsPipelineRequest&
             return;
         }
 
-        auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(
-            RHIGraphicsPipelineDesc{
-                .Program           = std::move(*Program),
-                .VertexInputLayout = Req.VertexInputLayout,
-                .Topology          = Req.Topology,
-                .Rasterizer        = Req.Rasterizer,
-                .Blend             = Req.Blend,
-                .DepthStencil      = Req.DepthStencil,
-                .ColorFormats      = Req.ColorFormats,
-                .DepthFormat       = Req.DepthFormat,
-            },
-            PipelineRef);
-        if (!Created) {
-            LogError("Failed to queue graphics pipeline creation: {}", Created.error().ToString());
-            PipelineRef.MarkFailed(Created.error());
-            return;
-        }
+        auto       PipelineDesc = RHIGraphicsPipelineDesc{
+            .Program           = std::move(*Program),
+            .VertexInputLayout = Req.VertexInputLayout,
+            .Topology          = Req.Topology,
+            .Rasterizer        = Req.Rasterizer,
+            .Blend             = Req.Blend,
+            .DepthStencil      = Req.DepthStencil,
+            .ColorFormats      = Req.ColorFormats,
+            .DepthFormat       = Req.DepthFormat,
+        };
+        auto EnqueueResult = TaskGraph::Get().Enqueue(
+            ThreadQueue::RHI,
+            [PipelineRef, Name = std::move(Name), PipelineDesc = std::move(PipelineDesc)]() mutable {
+                auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(Name, PipelineDesc);
+                if (!Created) {
+                    PipelineRef.MarkFailed(Created.error());
+                    return;
+                }
+                if (auto Publish = PipelineRef.Publish(std::move(*Created), RHIRefState::Ready); !Publish)
+                    PipelineRef.MarkFailed(Publish.error());
+            });
+        if (!EnqueueResult)
+            PipelineRef.MarkFailed(EnqueueResult.error());
     });
     if (!EnqueueResult) {
         PipelineRef.MarkFailed(EnqueueResult.error());
@@ -92,10 +65,10 @@ export [[nodiscard]] auto RequestGraphicsPipeline(const GraphicsPipelineRequest&
     return PipelineRef;
 }
 
-export [[nodiscard]] auto RequestRayTracingPipeline(const RayTracingPipelineRequest& Req)
+export [[nodiscard]] auto RequestRayTracingPipeline(StringView Name, const RayTracingPipelineRequest& Req)
     -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIRayTracingPipeline>::Create();
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef] {
+    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef, Name = String(Name)]() mutable {
         const auto&       Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
         auto              Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
@@ -109,14 +82,21 @@ export [[nodiscard]] auto RequestRayTracingPipeline(const RayTracingPipelineRequ
             PipelineRef.MarkFailed(Program.error());
             return;
         }
-        auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(
-            RHIRayTracingPipelineDesc{.Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth},
-            PipelineRef);
-        if (!Created) {
-            LogError("Failed to queue ray-tracing pipeline creation: {}", Created.error().ToString());
-            PipelineRef.MarkFailed(Created.error());
-            return;
-        }
+        auto PipelineDesc = RHIRayTracingPipelineDesc{
+            .Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth};
+        auto EnqueueResult = TaskGraph::Get().Enqueue(
+            ThreadQueue::RHI,
+            [PipelineRef, Name = std::move(Name), PipelineDesc = std::move(PipelineDesc)]() mutable {
+                auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(Name, PipelineDesc);
+                if (!Created) {
+                    PipelineRef.MarkFailed(Created.error());
+                    return;
+                }
+                if (auto Publish = PipelineRef.Publish(std::move(*Created), RHIRefState::Ready); !Publish)
+                    PipelineRef.MarkFailed(Publish.error());
+            });
+        if (!EnqueueResult)
+            PipelineRef.MarkFailed(EnqueueResult.error());
     });
     if (!EnqueueResult) {
         PipelineRef.MarkFailed(EnqueueResult.error());

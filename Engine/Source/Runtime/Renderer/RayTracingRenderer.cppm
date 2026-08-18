@@ -85,6 +85,7 @@ class RayTracingRenderer final : public IRenderer {
         const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "RayTracing.slang";
         auto&      Resources  = ResourceManager::Get();
         auto PipelineRequest  = RequestRayTracingPipeline(
+            "RayTracingPass",
             RayTracingPipelineRequest{
                 .RayGeneration = {.SourcePath = ShaderPath, .EntryPoint = "rayGenMain"},
                 .MissEntries =
@@ -103,8 +104,20 @@ class RayTracingRenderer final : public IRenderer {
         );
         m_Tlas          = Resources.RequestTopLevelAccelerationStructureRef("ray_tracing_renderer_main",
                                                                             {.InitialInstanceCapacity = 16});
-        m_SamplerLinear = RequestSampler({.Profile = RHISamplerProfile::LinearRepeat});
-        m_SamplerAniso  = RequestSampler({.Profile = RHISamplerProfile::AnisotropicRepeat});
+        auto SamplerLinear =
+            RHIRenderDevice::Get().CreateSampler("Renderer/RayTracing/Sampler/Linear",
+                                                  {.Profile = RHISamplerProfile::LinearRepeat});
+        if (!SamplerLinear)
+            return std::unexpected(SamplerLinear.error().Append("Ray-tracing linear sampler creation failed"));
+        m_SamplerLinear = std::move(*SamplerLinear);
+
+        auto SamplerAniso =
+            RHIRenderDevice::Get().CreateSampler("Renderer/RayTracing/Sampler/Anisotropic",
+                                                 {.Profile = RHISamplerProfile::AnisotropicRepeat});
+        if (!SamplerAniso)
+            return std::unexpected(SamplerAniso.error().Append("Ray-tracing anisotropic sampler creation failed"));
+        m_SamplerAniso = std::move(*SamplerAniso);
+
         if (!PipelineRequest)
             return std::unexpected(PipelineRequest.error().Append("RayTracingRenderer pipeline request failed"));
         m_Pipeline = std::move(*PipelineRequest);
@@ -354,15 +367,6 @@ class RayTracingRenderer final : public IRenderer {
     }
 
   private:
-    [[nodiscard]] static auto RequestSampler(const RHISamplerDesc& Desc) -> RHIRef<RHISampler> {
-        auto Sampler = RHIRenderDevice::Get().CreateSampler(Desc);
-        if (!Sampler) {
-            LogError("Failed to queue ray-tracing renderer sampler creation: {}", Sampler.error().ToString());
-            return {};
-        }
-        return std::move(*Sampler);
-    }
-
     auto EnsureOutputTargets(Uint32 Width, Uint32 Height) -> bool {
         const auto OutputKey       = Format("ray_tracing_output_{}x{}", Width, Height);
         const auto AccumulationKey = Format("ray_tracing_accumulation_{}x{}", Width, Height);
@@ -374,7 +378,7 @@ class RayTracingRenderer final : public IRenderer {
         }
 
         if (!m_Output) {
-            auto Output = RHIRenderDevice::Get().CreateRenderTarget(RHIRenderTargetDesc{
+            auto Output = RHIRenderDevice::Get().CreateRenderTarget("Renderer/RayTracing/Output", RHIRenderTargetDesc{
                 .Width  = Width,
                 .Height = Height,
                 .Format = RHIFormat::B8G8R8A8_UNORM,
@@ -390,7 +394,8 @@ class RayTracingRenderer final : public IRenderer {
         if (!m_Output.TryGet())
             return true;
         if (!m_Accumulation) {
-            auto Accumulation = RHIRenderDevice::Get().CreateRenderTarget(RHIRenderTargetDesc{
+            auto Accumulation =
+                RHIRenderDevice::Get().CreateRenderTarget("Renderer/RayTracing/Accumulation", RHIRenderTargetDesc{
                 .Width  = Width,
                 .Height = Height,
                 .Format = RHIFormat::R32G32B32A32_SFLOAT,

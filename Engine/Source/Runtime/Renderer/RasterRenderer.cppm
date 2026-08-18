@@ -123,7 +123,7 @@ class RasterRenderer final : public IRenderer {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "RasterGeometry.slang";
 
-        auto PipelineRequest = RequestGraphicsPipeline(GraphicsPipelineRequest{
+        auto PipelineRequest = RequestGraphicsPipeline("GeometryPass", GraphicsPipelineRequest{
             .VertEntry =
                 {
                     .SourcePath = ShaderPath,
@@ -142,7 +142,7 @@ class RasterRenderer final : public IRenderer {
         m_Pipeline = std::move(*PipelineRequest);
 
         const auto DeferredShaderPath      = ConfigManager::Get().EngineShadersDirPath() / "DeferredLighting.slang";
-        auto       DeferredPipelineRequest = RequestGraphicsPipeline(GraphicsPipelineRequest{
+        auto       DeferredPipelineRequest = RequestGraphicsPipeline("DeferredLightingPass", GraphicsPipelineRequest{
             .VertEntry    = {.SourcePath = DeferredShaderPath, .EntryPoint = "vertMain"},
             .FragEntry    = {.SourcePath = DeferredShaderPath, .EntryPoint = "fragMain"},
             .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
@@ -157,8 +157,19 @@ class RasterRenderer final : public IRenderer {
                 EditorSelectionPipelineRequest.error().Append("Editor selection post-process pipeline request failed"));
         m_EditorSelectionPipeline = std::move(*EditorSelectionPipelineRequest);
 
-        m_SamplerLinear = RequestSampler({.Profile = RHISamplerProfile::LinearRepeat});
-        m_SamplerAniso  = RequestSampler({.Profile = RHISamplerProfile::AnisotropicRepeat});
+        auto SamplerLinear =
+            RHIRenderDevice::Get().CreateSampler("Renderer/Raster/Sampler/Linear",
+                                                  {.Profile = RHISamplerProfile::LinearRepeat});
+        if (!SamplerLinear)
+            return std::unexpected(SamplerLinear.error().Append("Raster linear sampler creation failed"));
+        m_SamplerLinear = std::move(*SamplerLinear);
+
+        auto SamplerAniso =
+            RHIRenderDevice::Get().CreateSampler("Renderer/Raster/Sampler/Anisotropic",
+                                                 {.Profile = RHISamplerProfile::AnisotropicRepeat});
+        if (!SamplerAniso)
+            return std::unexpected(SamplerAniso.error().Append("Raster anisotropic sampler creation failed"));
+        m_SamplerAniso = std::move(*SamplerAniso);
 
         return {};
     }
@@ -187,15 +198,6 @@ class RasterRenderer final : public IRenderer {
     }
 
   private:
-    [[nodiscard]] static auto RequestSampler(const RHISamplerDesc& Desc) -> RHIRef<RHISampler> {
-        auto Sampler = RHIRenderDevice::Get().CreateSampler(Desc);
-        if (!Sampler) {
-            LogError("Failed to queue forward renderer sampler creation: {}", Sampler.error().ToString());
-            return {};
-        }
-        return std::move(*Sampler);
-    }
-
     [[nodiscard]] auto RenderView(RHICommandList&               CmdList,
                                   std::span<const InstanceData> DrawInstances,
                                   const RenderViewSnapshot&     View,

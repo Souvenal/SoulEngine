@@ -12,6 +12,26 @@ export import std;
 
 export namespace SoulEngine {
 
+/// Common identity metadata for persistent RHI objects.
+class RHIObject {
+  public:
+    RHIObject(const RHIObject&)                    = delete;
+    auto operator=(const RHIObject&) -> RHIObject& = delete;
+    virtual ~RHIObject()                           = default;
+
+    [[nodiscard]] auto GetName() const -> StringView {
+        return m_Name;
+    }
+
+  protected:
+    explicit RHIObject(String Name) : m_Name(std::move(Name)) {}
+    RHIObject(RHIObject&&)                    = default;
+    auto operator=(RHIObject&&) -> RHIObject& = default;
+
+  private:
+    String m_Name = {};
+};
+
 class RHIRenderTarget;
 class RHITopLevelAccelerationStructure;
 
@@ -43,9 +63,8 @@ struct RHISamplerDesc {
 /// Polymorphic base for vertex buffer resources and their immutable metadata.
 /// Backend concrete classes (e.g. VulkanVertexBuffer) own GPU allocations.
 /// ResourceManager owns RHIVertexBuffer instances; command lists only observe them.
-class RHIVertexBuffer {
+class RHIVertexBuffer : public RHIObject {
   public:
-    RHIVertexBuffer()                                          = default;
     RHIVertexBuffer(const RHIVertexBuffer&)                    = delete;
     auto operator=(const RHIVertexBuffer&) -> RHIVertexBuffer& = delete;
     RHIVertexBuffer(RHIVertexBuffer&&)                         = delete;
@@ -60,8 +79,8 @@ class RHIVertexBuffer {
     }
 
   protected:
-    explicit RHIVertexBuffer(const RHIVertexBufferDesc& Desc)
-        : m_VertexCount(Desc.VertexCount), m_Stride(Desc.Stride) {}
+    explicit RHIVertexBuffer(String Name, const RHIVertexBufferDesc& Desc)
+        : RHIObject(std::move(Name)), m_VertexCount(Desc.VertexCount), m_Stride(Desc.Stride) {}
 
   private:
     Uint64 m_VertexCount = 0;
@@ -70,9 +89,8 @@ class RHIVertexBuffer {
 
 /// Polymorphic base for index buffer resources and their immutable metadata.
 /// Same role as RHIVertexBuffer, for Uint32 index data.
-class RHIIndexBuffer {
+class RHIIndexBuffer : public RHIObject {
   public:
-    RHIIndexBuffer()                                         = default;
     RHIIndexBuffer(const RHIIndexBuffer&)                    = delete;
     auto operator=(const RHIIndexBuffer&) -> RHIIndexBuffer& = delete;
     RHIIndexBuffer(RHIIndexBuffer&&)                         = delete;
@@ -84,7 +102,8 @@ class RHIIndexBuffer {
     }
 
   protected:
-    explicit RHIIndexBuffer(const RHIIndexBufferDesc& Desc) : m_IndexCount(Desc.IndexCount) {}
+    explicit RHIIndexBuffer(String Name, const RHIIndexBufferDesc& Desc)
+        : RHIObject(std::move(Name)), m_IndexCount(Desc.IndexCount) {}
 
   private:
     Uint64 m_IndexCount = 0;
@@ -146,11 +165,8 @@ class RHITransientShaderStorageBuffer final {
 ///
 /// Backends own the native sampler handle. ResourceManager owns RHISampler
 /// instances; command lists only observe them.
-class RHISampler {
+class RHISampler : public RHIObject {
   public:
-    explicit RHISampler(const RHISamplerDesc& Desc) {
-        m_Desc = Desc;
-    }
     RHISampler(const RHISampler&)                    = delete;
     auto operator=(const RHISampler&) -> RHISampler& = delete;
     RHISampler(RHISampler&&)                         = delete;
@@ -160,6 +176,9 @@ class RHISampler {
     [[nodiscard]] auto GetDesc() const -> const RHISamplerDesc& {
         return m_Desc;
     }
+
+  protected:
+    explicit RHISampler(String Name, const RHISamplerDesc& Desc) : RHIObject(std::move(Name)), m_Desc(Desc) {}
 
   private:
     RHISamplerDesc m_Desc = {};
@@ -264,9 +283,8 @@ class RHIShaderParameterLayout {
 };
 
 /// Common polymorphic base for pipelines that consume reflection-derived shader parameters.
-class RHIPipeline {
+class RHIPipeline : public RHIObject {
   public:
-    RHIPipeline()                                      = default;
     RHIPipeline(const RHIPipeline&)                    = delete;
     auto operator=(const RHIPipeline&) -> RHIPipeline& = delete;
     RHIPipeline(RHIPipeline&&)                         = delete;
@@ -278,6 +296,8 @@ class RHIPipeline {
     }
 
   protected:
+    explicit RHIPipeline(String Name) : RHIObject(std::move(Name)) {}
+
     auto SetShaderParameterLayout(RHIShaderParameterLayout Layout) -> void {
         m_ShaderParameterLayout = std::move(Layout);
     }
@@ -291,7 +311,6 @@ class RHIPipeline {
 /// pipeline. ResourceManager owns RHIGraphicsPipeline instances.
 class RHIGraphicsPipeline : public RHIPipeline {
   public:
-    RHIGraphicsPipeline()                                              = default;
     RHIGraphicsPipeline(const RHIGraphicsPipeline&)                    = delete;
     auto operator=(const RHIGraphicsPipeline&) -> RHIGraphicsPipeline& = delete;
     RHIGraphicsPipeline(RHIGraphicsPipeline&&)                         = delete;
@@ -303,6 +322,8 @@ class RHIGraphicsPipeline : public RHIPipeline {
     }
 
   protected:
+    explicit RHIGraphicsPipeline(String Name) : RHIPipeline(std::move(Name)) {}
+
     auto SetShaderParameterLayout(RHIShaderParameterLayout Layout) -> void {
         RHIPipeline::SetShaderParameterLayout(std::move(Layout));
     }
@@ -313,9 +334,8 @@ class RHIGraphicsPipeline : public RHIPipeline {
 /// Polymorphic base for shader-readable sampled texture resources.
 /// Backend concrete class (e.g. VulkanSampledTexture) owns the GPU allocation.
 /// ResourceManager owns RHISampledTexture instances.
-class RHISampledTexture {
+class RHISampledTexture : public RHIObject {
   public:
-    RHISampledTexture()                                            = default;
     RHISampledTexture(const RHISampledTexture&)                    = delete;
     auto operator=(const RHISampledTexture&) -> RHISampledTexture& = delete;
     RHISampledTexture(RHISampledTexture&&)                         = delete;
@@ -324,6 +344,9 @@ class RHISampledTexture {
 
     [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
     [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
+
+  protected:
+    explicit RHISampledTexture(String Name) : RHIObject(std::move(Name)) {}
 };
 
 /// @brief Mutable shader-visible array of resource observers.
@@ -650,9 +673,8 @@ enum class RHITextureUsage : Uint32 {
 /// Polymorphic base for render-target images (color or depth/stencil).
 /// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
 /// Backend concrete class owns GPU allocation. ResourceManager owns render targets.
-class RHIRenderTarget {
+class RHIRenderTarget : public RHIObject {
   public:
-    RHIRenderTarget()                                          = default;
     RHIRenderTarget(const RHIRenderTarget&)                    = delete;
     auto operator=(const RHIRenderTarget&) -> RHIRenderTarget& = delete;
     RHIRenderTarget(RHIRenderTarget&&)                         = delete;
@@ -663,6 +685,9 @@ class RHIRenderTarget {
     [[nodiscard]] virtual auto GetHeight() const -> Uint32         = 0;
     [[nodiscard]] virtual auto GetFormat() const -> RHIFormat      = 0;
     [[nodiscard]] virtual auto GetUsage() const -> RHITextureUsage = 0;
+
+  protected:
+    explicit RHIRenderTarget(String Name) : RHIObject(std::move(Name)) {}
 };
 
 struct RHISampledTextureDesc {

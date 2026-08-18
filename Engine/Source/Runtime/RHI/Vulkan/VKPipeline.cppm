@@ -13,6 +13,7 @@ import :Shader;
 import :Capability;
 import :Descriptor;
 import :Context;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -294,9 +295,7 @@ struct VulkanPipelineParameterSetInstances {
 /// Created via the static `Create` factory. RHICommand lists only observe it.
 class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
   public:
-    // Public for std::make_shared compatibility per ADR 02.
-    // All callers should use Create() instead.
-    VulkanGraphicsPipeline() = default;
+    explicit VulkanGraphicsPipeline(String Name) : RHIGraphicsPipeline(std::move(Name)) {}
 
     ~VulkanGraphicsPipeline() override = default;
 
@@ -307,7 +306,9 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     ///
     /// Uses a pipeline layout generated from pipeline-level shader reflection. Shader
     /// modules are transient — destroyed when this function returns.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHIGraphicsPipelineDesc& Desc)
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     StringView                   Name,
+                                     const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanGraphicsPipeline>, ErrorMessage> {
 
         auto LayoutObjects = CreatePipelineLayout(Context.Device, Desc.Program.Reflection);
@@ -495,7 +496,13 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             return std::unexpected(
                 ErrorMessage(Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
-        auto Ret        = std::make_unique<VulkanGraphicsPipeline>();
+        Context.DebugUtils.SetObjectName(*RHIPipeline, Name);
+        Context.DebugUtils.SetObjectName(*LayoutObjects->second, Format("{}::PipelineLayout", Name));
+        for (Uint32 SetIndex = 0; SetIndex < LayoutObjects->first.size(); ++SetIndex)
+            Context.DebugUtils.SetObjectName(
+                *LayoutObjects->first[SetIndex], Format("{}::SetLayout[{}]", Name, SetIndex));
+
+        auto Ret        = std::make_unique<VulkanGraphicsPipeline>(String(Name));
         Ret->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
         Ret->m_SetLayouts =
             std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));

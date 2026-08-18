@@ -63,6 +63,14 @@ Each runtime module has its own `xmake.lua` for module-specific build configurat
 
   In addition, `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so that Vulkan SDK shared libraries can be resolved at runtime. Skipping this step will result in missing dylib errors when launching the executable.
 
+### Git Hooks
+
+Install the local Git pre-commit hook:
+
+```bash
+uv run pre-commit install
+```
+
 ### Build & Run
 
 ```bash

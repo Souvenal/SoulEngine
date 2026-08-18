@@ -32,6 +32,7 @@ import :AccelerationStructure;
 import :Sampler;
 import :Texture;
 import :Context;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -132,6 +133,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         if (auto Res = CreateLogicalDevice(); !Res.has_value())
             return std::unexpected(Res.error());
+        m_DebugUtils.Initialize(m_Device);
 
         // ── VMA ───────────────────────────────────────────────────────────
         if (auto Res = CreateVMA(Context); !Res.has_value())
@@ -159,14 +161,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_Timeline = std::move(*Semaphore);
 
         // Resource factory contexts borrow RenderDevice-owned Vulkan services.
-        m_ResourceContext.emplace(m_Device, m_Allocator, m_ImmediateContext, m_GraphicsFamily, m_TransferFamily);
+        m_ResourceContext.emplace(
+            m_Device, m_DebugUtils, m_Allocator, m_ImmediateContext, m_GraphicsFamily, m_TransferFamily);
 
         // ── VulkanFrameContext ───────────────────────────────────────────────────
         // Each frame slot gets its own Pool, PrimaryBuffer, and SubPool.
         m_FrameContext.clear();
         m_FrameContext.reserve(m_FramesInFlight);
         for (uint32_t i = 0; i < m_FramesInFlight; ++i) {
-            auto FCRes = VulkanFrameContext::Create(m_Device, m_GraphicsFamily);
+            auto FCRes = VulkanFrameContext::Create(*m_ResourceContext, i);
             if (!FCRes)
                 return std::unexpected(FCRes.error().Append("VulkanFrameContext creation failed"));
             m_FrameContext.push_back(std::move(*FCRes));
@@ -174,15 +177,18 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // ── Transient constant arena ─────────────────────────────────────
         const auto ConstantArenaCapacity = Cfg.RhiVulkan.ConstantArenaBufferSize.value_or(4096);
-        auto       TransientUniformArena =
-            VulkanTransientUniformArena::Create(ConstantArenaCapacity, m_Device, m_Allocator, m_FramesInFlight);
+        auto       TransientUniformArena = VulkanTransientUniformArena::Create(
+            "Renderer/Transient/UniformArena", ConstantArenaCapacity, *m_ResourceContext, m_FramesInFlight);
         if (!TransientUniformArena)
             return std::unexpected(TransientUniformArena.error().Append("VulkanTransientUniformArena creation failed"));
         m_TransientUniformArena = std::move(*TransientUniformArena);
 
         constexpr Uint64 TransientShaderStorageArenaCapacity = 4ULL * 1024ULL * 1024ULL;
         auto             TransientShaderStorageArena         = VulkanTransientShaderStorageArena::Create(
-            TransientShaderStorageArenaCapacity, m_Device, m_Allocator, m_FramesInFlight);
+            "Renderer/Transient/ShaderStorageArena",
+            TransientShaderStorageArenaCapacity,
+            *m_ResourceContext,
+            m_FramesInFlight);
         if (!TransientShaderStorageArena) {
             return std::unexpected(
                 TransientShaderStorageArena.error().Append("VulkanTransientShaderStorageArena creation failed"));
@@ -334,15 +340,16 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_CurrentFrame;
     }
 
-    [[nodiscard]] auto CreateVertexBuffer(const RHIVertexBufferDesc& Desc)
+    [[nodiscard]] auto CreateVertexBuffer(StringView Name, const RHIVertexBufferDesc& Desc)
         -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> override {
         std::vector<std::byte> Data(Desc.Data.begin(), Desc.Data.end());
 
         return EnqueueResourceCreation<RHIVertexBuffer>(
-            [this, Data = std::move(Data), VertexCount = Desc.VertexCount, Stride = Desc.Stride](
+            [this, Name = String(Name), Data = std::move(Data), VertexCount = Desc.VertexCount, Stride = Desc.Stride](
                 RHIRef<RHIVertexBuffer>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Payload = Resource.m_Payload;
                 auto Result  = VulkanVertexBuffer::Create(*m_ResourceContext,
+                                                          Name,
                                                           RHIVertexBufferDesc{.Data = std::span<const std::byte>{Data},
                                                                               .VertexCount = VertexCount,
                                                                               .Stride      = Stride},
@@ -352,20 +359,21 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     return std::unexpected(Result.error());
                 }
                 UPtr<RHIVertexBuffer> PayloadResource = std::move(*Result);
-                return PublishPendingPayload(Resource, std::move(PayloadResource));
+                return Resource.Publish(std::move(PayloadResource), RHIRefState::GpuPending);
             });
     }
 
-    [[nodiscard]] auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
+    [[nodiscard]] auto CreateIndexBuffer(StringView Name, const RHIIndexBufferDesc& Desc)
         -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> override {
         std::vector<std::byte> Data(Desc.Data.begin(), Desc.Data.end());
 
         return EnqueueResourceCreation<RHIIndexBuffer>(
-            [this, Data = std::move(Data), IndexCount = Desc.IndexCount](
+            [this, Name = String(Name), Data = std::move(Data), IndexCount = Desc.IndexCount](
                 RHIRef<RHIIndexBuffer>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Payload = Resource.m_Payload;
                 auto Result  = VulkanIndexBuffer::Create(
                     *m_ResourceContext,
+                    Name,
                     RHIIndexBufferDesc{.Data = std::span<const std::byte>{Data}, .IndexCount = IndexCount},
                     [Payload] { (void)Payload->TryMarkReady(); });
                 if (!Result) {
@@ -373,31 +381,32 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     return std::unexpected(Result.error());
                 }
                 UPtr<RHIIndexBuffer> PayloadResource = std::move(*Result);
-                return PublishPendingPayload(Resource, std::move(PayloadResource));
+                return Resource.Publish(std::move(PayloadResource), RHIRefState::GpuPending);
             });
     }
 
-    [[nodiscard]] auto CreateSampler(const RHISamplerDesc& Desc)
+    [[nodiscard]] auto CreateSampler(StringView Name, const RHISamplerDesc& Desc)
         -> std::expected<RHIRef<RHISampler>, ErrorMessage> override {
         return EnqueueResourceCreation<RHISampler>(
-            [this, Desc](RHIRef<RHISampler>& Resource) -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanSampler::Create(*m_ResourceContext, Desc);
+            [this, Name = String(Name), Desc](RHIRef<RHISampler>& Resource) -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanSampler::Create(*m_ResourceContext, Name, Desc);
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
                     return std::unexpected(Result.error());
                 }
                 UPtr<RHISampler> PayloadResource = std::move(*Result);
-                return PublishReadyPayload(Resource, std::move(PayloadResource));
+                return Resource.Publish(std::move(PayloadResource), RHIRefState::Ready);
             });
     }
 
-    [[nodiscard]] auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
+    [[nodiscard]] auto CreateSampledTexture(StringView Name, const RHISampledTextureDesc& Desc)
         -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> override {
         // Sampled images upload on the dedicated transfer lane, then complete through a graphics-lane bridge.
         std::vector<std::byte> Data(Desc.Data.begin(), Desc.Data.end());
 
         return EnqueueResourceCreation<RHISampledTexture>(
             [this,
+             Name     = String(Name),
              Data     = std::move(Data),
              Width    = Desc.Width,
              Height   = Desc.Height,
@@ -407,6 +416,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 auto Payload = Resource.m_Payload;
                 auto Result =
                     VulkanSampledTexture::Create(*m_ResourceContext,
+                                                 Name,
                                                  RHISampledTextureDesc{.Data     = std::span<const std::byte>{Data},
                                                                        .Width    = Width,
                                                                        .Height   = Height,
@@ -419,96 +429,77 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     return std::unexpected(Result.error());
                 }
                 UPtr<RHISampledTexture> PayloadResource = std::move(*Result);
-                return PublishPendingPayload(Resource, std::move(PayloadResource));
+                return Resource.Publish(std::move(PayloadResource), RHIRefState::GpuPending);
             });
     }
 
-    [[nodiscard]] auto CreateRenderTarget(const RHIRenderTargetDesc& Desc)
+    [[nodiscard]] auto CreateRenderTarget(StringView Name, const RHIRenderTargetDesc& Desc)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> override {
         return EnqueueResourceCreation<RHIRenderTarget>(
-            [this, Desc](RHIRef<RHIRenderTarget>& Resource) -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanRenderTarget::Create(*m_ResourceContext, Desc);
+            [this, Name = String(Name), Desc](RHIRef<RHIRenderTarget>& Resource) -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanRenderTarget::Create(*m_ResourceContext, Name, Desc);
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
                     return std::unexpected(Result.error());
                 }
                 UPtr<RHIRenderTarget> PayloadResource = std::move(*Result);
-                return PublishReadyPayload(Resource, std::move(PayloadResource));
+                return Resource.Publish(std::move(PayloadResource), RHIRefState::Ready);
             });
     }
 
-    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
+    [[nodiscard]] auto CreateGraphicsPipeline(StringView Name, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> override {
+        auto Result = VulkanGraphicsPipeline::Create(*m_ResourceContext, Name, Desc);
+        if (!Result)
+            return std::unexpected(Result.error());
+
         auto Resource = RHIRef<RHIGraphicsPipeline>::Create();
-        if (auto Result = CreateGraphicsPipeline(Desc, Resource); !Result)
-            return std::unexpected(Result.error());
+        UPtr<RHIGraphicsPipeline> Payload = std::move(*Result);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
         return Resource;
     }
 
-    [[nodiscard]] auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc, RHIRef<RHIGraphicsPipeline> Target)
-        -> std::expected<void, ErrorMessage> override {
-        return EnqueueResourceCreation(
-            std::move(Target),
-            [this, Desc](RHIRef<RHIGraphicsPipeline>& Resource) mutable -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanGraphicsPipeline::Create(*m_ResourceContext, Desc);
-                if (!Result) {
-                    Resource.MarkFailed(Result.error());
-                    return std::unexpected(Result.error());
-                }
-                UPtr<RHIGraphicsPipeline> Payload = std::move(*Result);
-                return PublishReadyPayload(Resource, std::move(Payload));
-            });
-    }
-
-    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
+    [[nodiscard]] auto CreateRayTracingPipeline(StringView Name, const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> override {
-        auto Resource = RHIRef<RHIRayTracingPipeline>::Create();
-        if (auto Result = CreateRayTracingPipeline(Desc, Resource); !Result)
+        auto Result = VulkanRayTracingPipeline::Create(*m_ResourceContext, Name, Desc);
+        if (!Result)
             return std::unexpected(Result.error());
+
+        auto Resource = RHIRef<RHIRayTracingPipeline>::Create();
+        UPtr<RHIRayTracingPipeline> Payload = std::move(*Result);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
         return Resource;
     }
 
-    [[nodiscard]] auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc,
-                                                RHIRef<RHIRayTracingPipeline>    Target)
-        -> std::expected<void, ErrorMessage> override {
-        return EnqueueResourceCreation(
-            std::move(Target),
-            [this, Desc](RHIRef<RHIRayTracingPipeline>& Resource) mutable -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanRayTracingPipeline::Create(*m_ResourceContext, Desc);
-                if (!Result) {
-                    Resource.MarkFailed(Result.error());
-                    return std::unexpected(Result.error());
-                }
-                UPtr<RHIRayTracingPipeline> Payload = std::move(*Result);
-                return PublishReadyPayload(Resource, std::move(Payload));
-            });
-    }
-
-    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(
+        StringView Name, const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
         return EnqueueResourceCreation<RHIBottomLevelAccelerationStructure>(
-            [this,
+            [this, Name = String(Name),
              Desc](RHIRef<RHIBottomLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Desc);
+                auto Result = VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
                     return std::unexpected(Result.error());
                 }
-                return PublishReadyPayload(Resource, std::move(*Result));
+                return Resource.Publish(std::move(*Result), RHIRefState::Ready);
             });
     }
 
-    [[nodiscard]] auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] auto CreateTopLevelAccelerationStructure(
+        StringView Name, const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> override {
         return EnqueueResourceCreation<RHITopLevelAccelerationStructure>(
-            [this,
+            [this, Name = String(Name),
              Desc](RHIRef<RHITopLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Desc);
+                auto Result = VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
                     return std::unexpected(Result.error());
                 }
-                return PublishReadyPayload(Resource, std::move(*Result));
+                return Resource.Publish(std::move(*Result), RHIRefState::Ready);
             });
     }
 
@@ -1377,6 +1368,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     vk::raii::SurfaceKHR             m_Surface         = nullptr;
     vk::raii::PhysicalDevice         m_PhysicalDevice  = nullptr;
     vk::raii::Device                 m_Device          = nullptr;
+    VulkanDebugUtils                 m_DebugUtils;
 
     uint32_t m_GraphicsFamily = vk::QueueFamilyIgnored;
     uint32_t m_ComputeFamily  = vk::QueueFamilyIgnored;

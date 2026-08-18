@@ -32,39 +32,33 @@ class RHIRenderDevice {
 
     // ── Resource creation ────────────────────────────────────────────────────
 
-    [[nodiscard]] virtual auto CreateVertexBuffer(const RHIVertexBufferDesc& Desc)
+    [[nodiscard]] virtual auto CreateVertexBuffer(StringView Name, const RHIVertexBufferDesc& Desc)
         -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateIndexBuffer(const RHIIndexBufferDesc& Desc)
+    [[nodiscard]] virtual auto CreateIndexBuffer(StringView Name, const RHIIndexBufferDesc& Desc)
         -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateSampledTexture(const RHISampledTextureDesc& Desc)
+    [[nodiscard]] virtual auto CreateSampledTexture(StringView Name, const RHISampledTextureDesc& Desc)
         -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateSampler(const RHISamplerDesc& Desc)
+    [[nodiscard]] virtual auto CreateSampler(StringView Name, const RHISamplerDesc& Desc)
         -> std::expected<RHIRef<RHISampler>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateRenderTarget(const RHIRenderTargetDesc& Desc)
+    [[nodiscard]] virtual auto CreateRenderTarget(StringView Name, const RHIRenderTargetDesc& Desc)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc)
+    [[nodiscard]] virtual auto CreateGraphicsPipeline(StringView Name, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& Desc,
-                                                      RHIRef<RHIGraphicsPipeline> Target)
-        -> std::expected<void, ErrorMessage> = 0;
-
-    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc)
+    [[nodiscard]] virtual auto CreateRayTracingPipeline(StringView Name, const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateRayTracingPipeline(const RHIRayTracingPipelineDesc& Desc,
-                                                        RHIRef<RHIRayTracingPipeline> Target)
-        -> std::expected<void, ErrorMessage> = 0;
-
-    [[nodiscard]] virtual auto CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] virtual auto
+    CreateBottomLevelAccelerationStructure(StringView Name, const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> = 0;
 
-    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(StringView                                  Name,
+                                                                   const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
 
     /// @brief Poll backend completions and retire deferred RHI resources.
@@ -80,29 +74,9 @@ class RHIRenderDevice {
 
   protected:
     /// @brief Retire backend-native completion callbacks. Called by Tick() on the RHI thread.
-    virtual auto TickBackendCompletions() -> void = 0;
+    virtual auto       TickBackendCompletions() -> void = 0;
     [[nodiscard]] auto GetDeletionQueue() -> RHIDeferredDeletionQueue& {
         return m_DeletionQueue;
-    }
-
-    template <typename T>
-    [[nodiscard]] auto PublishReadyPayload(RHIRef<T>& Resource, UPtr<T> Payload) -> std::expected<void, ErrorMessage> {
-        if (Resource.m_Payload && Resource.m_Payload->Publish(std::move(Payload), RHIRefState::Ready))
-            return {};
-
-        auto Error = ErrorMessage("RHI resource ref cannot publish a ready payload");
-        Resource.MarkFailed(Error);
-        return std::unexpected(std::move(Error));
-    }
-
-    template <typename T>
-    [[nodiscard]] auto PublishPendingPayload(RHIRef<T>& Resource, UPtr<T> Payload) -> std::expected<void, ErrorMessage> {
-        if (Resource.m_Payload && Resource.m_Payload->Publish(std::move(Payload), RHIRefState::GpuPending))
-            return {};
-
-        auto Error = ErrorMessage("RHI resource ref cannot publish a pending payload");
-        Resource.MarkFailed(Error);
-        return std::unexpected(std::move(Error));
     }
 
   public:
@@ -176,8 +150,8 @@ class RHIRenderDevice {
         return NextId.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RHIDeferredDeletionQueue           m_DeletionQueue       = {};
-    static UPtr<RHIRenderDevice>       s_Instance;
+    RHIDeferredDeletionQueue     m_DeletionQueue = {};
+    static UPtr<RHIRenderDevice> s_Instance;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════

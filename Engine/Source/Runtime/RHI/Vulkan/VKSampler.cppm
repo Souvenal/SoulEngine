@@ -9,6 +9,7 @@ import std;
 
 import :Capability;
 import :Context;
+import :Debug;
 
 namespace SoulEngine {
 namespace {
@@ -34,8 +35,9 @@ struct VulkanSamplerProfileInfo {
 
 class VulkanSampler final : public RHISampler {
   public:
-    VulkanSampler(const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
-        : RHISampler(Desc), m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))) {}
+    VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
+        : RHISampler(std::move(Name), Desc),
+          m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))) {}
 
     ~VulkanSampler() override = default;
 
@@ -44,7 +46,7 @@ class VulkanSampler final : public RHISampler {
     VulkanSampler(VulkanSampler&&)                         = delete;
     auto operator=(VulkanSampler&&) -> VulkanSampler&      = delete;
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, const RHISamplerDesc& Desc)
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, StringView Name, const RHISamplerDesc& Desc)
         -> std::expected<UPtr<RHISampler>, ErrorMessage> {
         auto ProfileInfo = GetSamplerProfileInfo(Desc.Profile);
         if (!ProfileInfo)
@@ -76,7 +78,8 @@ class VulkanSampler final : public RHISampler {
         if (Result.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanSampler::Create: failed to create VkSampler"));
 
-        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value));
+        Context.DebugUtils.SetObjectName(*Result.value, Name);
+        return std::make_unique<VulkanSampler>(String(Name), Desc, std::move(Result.value));
     }
 
     [[nodiscard]] auto GetVkSampler() const -> vk::Sampler {
