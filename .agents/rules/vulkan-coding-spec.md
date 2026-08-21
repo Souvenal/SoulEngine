@@ -58,20 +58,41 @@ Use `VulkanDebugUtils::SetObjectName` for all object naming. Do not call
 already handles disabled or unavailable debug utils, empty names, null handles,
 and reports naming failures.
 
-Use the owning RHI object's logical name as the base name. Derived names must
-follow this grammar:
+Use the following grammar for deterministic object names:
 
 ```text
-Base                 primary native object
-Base#Role            backing or auxiliary object
-Base::Role           related Vulkan state
-Frame[index]::Role   frame-scoped object
+Internal/<Type>/<Role>/<Instance>
+<Usage>/<Type>/<LogicalPath>
+<Base>#<NativeRole>
+<Base>::<RelatedRole>
 ```
 
-Names must be stable, non-empty, and role-specific. Do not introduce ad hoc
-delimiters or name only the top-level object when the creation site also owns
-backing or related Vulkan objects. Handles borrowed from an external owner are
-not renamed by this rule.
+RHI-internal objects use the `Internal/` namespace. The Vulkan object type is
+the first path component after `Internal/`; roles and instance identifiers
+follow it. Use compact stable instance identifiers such as `Frame0` and
+`Swapchain0`, not bracketed or nested index syntax.
+
+Examples:
+
+```text
+Internal/Instance
+Internal/Surface
+Internal/PhysicalDevice
+Internal/Device
+Internal/Queue/Graphics
+Internal/CommandBuffer/Primary/Frame0
+Internal/CommandPool/Secondary/Frame0
+Internal/ImageView/Swapchain0
+```
+
+RHI resources visible outside the Vulkan backend use an ownership-oriented
+usage path, for example `Camera/RenderTarget/EditorViewport/SceneColor` or
+`Renderer/GraphicsPipeline/GeometryPass`.
+
+Native backing objects append `#<NativeRole>` to the owning RHI resource
+name. Related Vulkan state objects append `::<RelatedRole>`. Names must be
+stable, non-empty, and role-specific. Handles borrowed from an external owner
+are not renamed by this rule.
 
 ## No C-style Vulkan (except VMA)
 

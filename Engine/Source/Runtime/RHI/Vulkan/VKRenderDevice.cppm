@@ -49,21 +49,33 @@ VKAPI_ATTR auto VKAPI_CALL VulkanDebugCallback(vk::DebugUtilsMessageSeverityFlag
     const StringView MessageId = CallbackData->pMessageIdName ? CallbackData->pMessageIdName : "UnknownMessage";
     const StringView Message   = CallbackData->pMessage ? CallbackData->pMessage : "No Vulkan debug message";
     const auto       Types     = vk::to_string(MessageTypes);
+    String           DetailedMessage{Message};
+
+    if (CallbackData->objectCount > 0) {
+        DetailedMessage += Format("\nObjects: {}", CallbackData->objectCount);
+        for (Uint32 Index = 0; Index < CallbackData->objectCount; ++Index) {
+            const auto& Object = CallbackData->pObjects[Index];
+            DetailedMessage +=
+                Format("\n    [{}] Vk{} 0x{:x}", Index, vk::to_string(Object.objectType), Object.objectHandle);
+            if (Object.pObjectName)
+                DetailedMessage += Format("[{}]", Object.pObjectName);
+        }
+    }
 
     switch (MessageSeverity) {
     case vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose:
-        LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, Message);
+        LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
         break;
     case vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo:
         // There are too much `eInfo` messages,
         // so we use `LogDebug`.
-        LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, Message);
+        LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
         break;
     case vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning:
-        LogWarning("[Vulkan][{}][{}] {}", Types, MessageId, Message);
+        LogWarning("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
         break;
     case vk::DebugUtilsMessageSeverityFlagBitsEXT::eError:
-        LogError("[Vulkan][{}][{}] {}", Types, MessageId, Message);
+        LogError("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
         break;
     }
     return vk::False;
@@ -133,7 +145,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         if (auto Res = CreateLogicalDevice(); !Res.has_value())
             return std::unexpected(Res.error());
-        m_DebugUtils.Initialize(m_Device);
 
         // ── VMA ───────────────────────────────────────────────────────────
         if (auto Res = CreateVMA(Context); !Res.has_value())
@@ -143,19 +154,21 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // Must be created before VulkanImmediateContext — VulkanImmediateContext borrows it
         // ── Immediate Context ──────────────────────────────────────────────
         auto Immediate = VulkanImmediateContext::Create(
-            m_Device, m_TransferQueue, m_TransferFamily, m_GraphicsQueue, m_GraphicsFamily);
+            m_Device, m_DebugUtils, m_TransferQueue, m_TransferFamily, m_GraphicsQueue, m_GraphicsFamily);
         if (!Immediate)
             return std::unexpected(Immediate.error().Append("VulkanImmediateContext creation failed"));
         m_ImmediateContext = std::move(*Immediate);
 
         // ── VulkanSwapchain ─────────────────────────────────────────────────────
-        auto Swapchain = VulkanSwapchain::Create(m_Device, m_PhysicalDevice, m_Surface, *m_SurfaceProvider);
+        auto Swapchain =
+            VulkanSwapchain::Create(m_Device, m_PhysicalDevice, m_Surface, m_DebugUtils, *m_SurfaceProvider);
         if (!Swapchain)
             return std::unexpected(Swapchain.error());
         m_Swapchain = std::move(*Swapchain);
 
         // ── Timeline Semaphore ───────────────────────────────────────────
-        auto Semaphore = VulkanTimelineSemaphore::Create(m_Device);
+        auto Semaphore =
+            VulkanTimelineSemaphore::Create(m_Device, &m_DebugUtils, "Internal/Semaphore/GraphicsTimeline");
         if (!Semaphore)
             return std::unexpected(Semaphore.error());
         m_Timeline = std::move(*Semaphore);
@@ -200,7 +213,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // ── Global descriptor manager ─────────────────────────────────────
         {
-            auto Heap = VulkanDescriptorManager::Create(m_Device, m_FramesInFlight);
+            auto Heap = VulkanDescriptorManager::Create(m_Device, m_DebugUtils, m_FramesInFlight);
             if (!Heap)
                 return std::unexpected(Heap.error().Append("VulkanDescriptorManager creation failed"));
             m_DescriptorManager = std::make_unique<VulkanDescriptorManager>(std::move(*Heap));
@@ -776,6 +789,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 ErrorMessage(Format("Failed to create logical device: {}", vk::to_string(DevResult.result))));
         }
         m_Device = std::move(DevResult.value);
+        m_DebugUtils.Initialize(m_Device);
+        m_DebugUtils.SetObjectName(*m_Instance, "Internal/Instance");
+        m_DebugUtils.SetObjectName(*m_Surface, "Internal/Surface");
+        m_DebugUtils.SetObjectName(*m_PhysicalDevice, "Internal/PhysicalDevice");
+        m_DebugUtils.SetObjectName(*m_Device, "Internal/Device");
 
         // ── Verify required features ────────────────────────────────────
         const auto& V13 = VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan13Features>();
@@ -1199,7 +1217,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                                            TransientShaderStorageBuffers;
         std::vector<std::function<void()>> RetiredPayloads;
 
-        for (const auto& Scope : CmdList.Scopes) {
+        for (std::size_t ScopeIndex = 0; ScopeIndex < CmdList.Scopes.size(); ++ScopeIndex) {
+            const auto& Scope = CmdList.Scopes[ScopeIndex];
             // Allocate one secondary for this ordered rendering or non-rendering scope.
             vk::CommandBufferAllocateInfo Alloc{
                 .commandPool        = *m_FrameContext[m_CurrentFrame].SubPool,
@@ -1209,6 +1228,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             auto AllocResult = m_Device.allocateCommandBuffers(Alloc);
             if (AllocResult.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Execute: failed to allocate secondary CB"));
+            m_DebugUtils.SetObjectName(
+                *AllocResult.value[0],
+                Format("Internal/CommandBuffer/Secondary/Frame{}/Scope{}", m_CurrentFrame, ScopeIndex));
             auto& SecBuf =
                 m_FrameContext[m_CurrentFrame].ScratchSecondaries.emplace_back(std::move(AllocResult.value[0]));
 
