@@ -20,6 +20,7 @@ import Core;
 import Shader;
 import RHI;
 import std;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -241,7 +242,9 @@ class VulkanGraphicsShaderStates {
 
     /// Create shader modules, stage infos, and vertex input state from a
     /// graphics pipeline descriptor.
-    [[nodiscard]] static auto Create(const vk::raii::Device& Device, const RHIGraphicsPipelineDesc& Desc)
+    [[nodiscard]] static auto Create(const vk::raii::Device& Device,
+                                     VulkanDebugUtils&       DebugUtils,
+                                     const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<VulkanGraphicsShaderStates, ErrorMessage> {
         VulkanGraphicsShaderStates Result;
 
@@ -262,6 +265,9 @@ class VulkanGraphicsShaderStates {
                 vk::to_string(Res))));
         }
 
+        DebugUtils.SetObjectName(
+            *Module,
+            Format("Internal/ShaderModule/Graphics/{}", Desc.Program.VertexEntryPointName));
         Result.m_Modules.push_back(std::move(Module));
         Result.StageInfos.push_back(vk::PipelineShaderStageCreateInfo{
             .stage  = vk::ShaderStageFlagBits::eVertex,

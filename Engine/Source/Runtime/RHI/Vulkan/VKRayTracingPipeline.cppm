@@ -139,7 +139,9 @@ struct VulkanRayTracingShaderStates {
     VulkanRayTracingShaderGroupIndices                             GroupIndices = {};
 };
 
-[[nodiscard]] auto CreateRayTracingShaderStates(vk::raii::Device& Device, const RHIRayTracingPipelineDesc& Desc)
+[[nodiscard]] auto CreateRayTracingShaderStates(vk::raii::Device&  Device,
+                                                VulkanDebugUtils&  DebugUtils,
+                                                const RHIRayTracingPipelineDesc& Desc)
     -> std::expected<VulkanRayTracingShaderStates, ErrorMessage> {
     const auto& Program = Desc.Program;
     if (Program.Code.empty())
@@ -158,6 +160,8 @@ struct VulkanRayTracingShaderStates {
                          Program.RayGenerationEntryPointName,
                          vk::to_string(ModuleResult))));
     }
+    DebugUtils.SetObjectName(
+        *Module, Format("Internal/ShaderModule/RayTracing/{}", Program.RayGenerationEntryPointName));
 
     VulkanRayTracingShaderStates Result{.Module = std::move(Module)};
     const auto AppendStage = [&](vk::ShaderStageFlagBits Stage, const String& EntryPoint) -> Uint32 {
@@ -381,7 +385,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         if (!LayoutObjects)
             return std::unexpected(LayoutObjects.error().Append("Failed to create ray-tracing pipeline layout"));
 
-        auto ShaderStates = CreateRayTracingShaderStates(Context.Device, Desc);
+        auto ShaderStates = CreateRayTracingShaderStates(Context.Device, Context.DebugUtils, Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error().Append("Failed to lower ray-tracing shader stages and groups"));
 
@@ -399,10 +403,10 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
                 "Failed to create ray-tracing pipeline: {}", vk::to_string(PipelineResult))));
         }
         Context.DebugUtils.SetObjectName(*RHIPipeline, Name);
-        Context.DebugUtils.SetObjectName(*LayoutObjects->second, Format("{}::PipelineLayout", Name));
+        Context.DebugUtils.SetObjectName(*LayoutObjects->second, Format("Internal/PipelineLayout/{}", Name));
         for (Uint32 SetIndex = 0; SetIndex < LayoutObjects->first.size(); ++SetIndex)
             Context.DebugUtils.SetObjectName(
-                *LayoutObjects->first[SetIndex], Format("{}::SetLayout[{}]", Name, SetIndex));
+                *LayoutObjects->first[SetIndex], Format("Internal/DescriptorSetLayout/{}/Set{}", Name, SetIndex));
 
         const Uint32 GroupCount = static_cast<Uint32>(ShaderStates->Groups.size());
         const Uint64 HandleDataSize = static_cast<Uint64>(GroupCount) * Properties.shaderGroupHandleSize;

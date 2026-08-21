@@ -9,6 +9,7 @@ import RHI;
 import std;
 import vulkan;
 
+import :Debug;
 import :SurfaceProvider;
 
 namespace SoulEngine {
@@ -104,12 +105,14 @@ class VulkanSwapchain {
     [[nodiscard]] static auto Create(vk::raii::Device&         Device,
                                      vk::raii::PhysicalDevice& PhysDevice,
                                      vk::raii::SurfaceKHR&     Surface,
+                                     VulkanDebugUtils&          DebugUtils,
                                      IVulkanSurfaceProvider&   SurfaceProvider)
         -> std::expected<VulkanSwapchain, ErrorMessage> {
         VulkanSwapchain Result;
         Result.m_Device          = &Device;
         Result.m_PhysDevice      = &PhysDevice;
         Result.m_Surface         = &Surface;
+        Result.m_DebugUtils      = &DebugUtils;
         Result.m_SurfaceProvider = &SurfaceProvider;
 
         // ── Query surface capabilities ──────────────────────────────────
@@ -196,6 +199,7 @@ class VulkanSwapchain {
         if (Res != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Format("Failed to create swapchain: {}", vk::to_string(Res))));
         Result.m_Swapchain = std::move(SC);
+        DebugUtils.SetObjectName(*Result.m_Swapchain, "Internal/Swapchain");
 
         // ── Retrieve swapchain images ───────────────────────────────────
         auto ImagesResult = Result.m_Swapchain.getImages();
@@ -203,6 +207,8 @@ class VulkanSwapchain {
             return std::unexpected(
                 ErrorMessage(Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
         Result.m_Images = std::move(ImagesResult.value);
+        for (Uint32 Index = 0; Index < Result.m_Images.size(); ++Index)
+            DebugUtils.SetObjectName(Result.m_Images[Index], Format("Internal/Image/Swapchain{}", Index));
 
         Result.m_ImageViews.reserve(Result.m_Images.size());
         for (const auto Image : Result.m_Images) {
@@ -223,6 +229,8 @@ class VulkanSwapchain {
             if (ViewResult.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage(
                     Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
+            DebugUtils.SetObjectName(
+                *ViewResult.value, Format("Internal/ImageView/Swapchain{}", Result.m_ImageViews.size()));
             Result.m_ImageViews.emplace_back(std::move(ViewResult.value));
         }
 
@@ -232,6 +240,7 @@ class VulkanSwapchain {
             auto SemRes = Result.m_Device->createSemaphore({});
             if (SemRes.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Failed to create render-complete semaphore"));
+            DebugUtils.SetObjectName(*SemRes.value, Format("Internal/Semaphore/RenderComplete/Swapchain{}", i));
             Result.m_RenderComplete.emplace_back(std::move(SemRes.value));
         }
 
@@ -256,7 +265,7 @@ class VulkanSwapchain {
     [[nodiscard]] auto Recreate() -> std::expected<void, ErrorMessage> {
         m_Device->waitIdle();
         Cleanup();
-        auto NewSc = Create(*m_Device, *m_PhysDevice, *m_Surface, *m_SurfaceProvider);
+        auto NewSc = Create(*m_Device, *m_PhysDevice, *m_Surface, *m_DebugUtils, *m_SurfaceProvider);
         if (!NewSc)
             return std::unexpected(NewSc.error());
         *this = std::move(*NewSc);
@@ -330,6 +339,7 @@ class VulkanSwapchain {
     vk::raii::Device*         m_Device          = nullptr;
     vk::raii::PhysicalDevice* m_PhysDevice      = nullptr;
     vk::raii::SurfaceKHR*     m_Surface         = nullptr;
+    VulkanDebugUtils*         m_DebugUtils      = nullptr;
     IVulkanSurfaceProvider*   m_SurfaceProvider = nullptr;
 
     // ── Owned resources ──────────────────────────────────────────────────

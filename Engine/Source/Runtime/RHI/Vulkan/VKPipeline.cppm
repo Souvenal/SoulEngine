@@ -316,7 +316,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             return std::unexpected(LayoutObjects.error().Append("Failed to create graphics pipeline layout"));
 
         // ── Shader stages ──────────────────────────────────────────────
-        auto ShaderStates = VulkanGraphicsShaderStates::Create(Context.Device, Desc);
+        auto ShaderStates = VulkanGraphicsShaderStates::Create(Context.Device, Context.DebugUtils, Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error());
         Uint32 StageCount    = static_cast<Uint32>(ShaderStates->StageInfos.size());
@@ -497,10 +497,10 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
                 ErrorMessage(Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
         Context.DebugUtils.SetObjectName(*RHIPipeline, Name);
-        Context.DebugUtils.SetObjectName(*LayoutObjects->second, Format("{}::PipelineLayout", Name));
+        Context.DebugUtils.SetObjectName(*LayoutObjects->second, Format("Internal/PipelineLayout/{}", Name));
         for (Uint32 SetIndex = 0; SetIndex < LayoutObjects->first.size(); ++SetIndex)
             Context.DebugUtils.SetObjectName(
-                *LayoutObjects->first[SetIndex], Format("{}::SetLayout[{}]", Name, SetIndex));
+                *LayoutObjects->first[SetIndex], Format("Internal/DescriptorSetLayout/{}/Set{}", Name, SetIndex));
 
         auto Ret        = std::make_unique<VulkanGraphicsPipeline>(String(Name));
         Ret->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));

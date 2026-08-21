@@ -44,7 +44,21 @@ native objects use the following grammar:
   staging buffer, scratch buffer, or shader binding table.
 - `Base::Role` identifies related Vulkan state, such as a pipeline layout or
   descriptor-set layout.
-- `Frame[index]::Role` identifies frame-scoped backend objects.
+- `Internal/<Type>/<Role>/<Instance>` identifies RHI-internal objects, with
+  the Vulkan object type immediately after `Internal/`.
+- `<Usage>/<Type>/<LogicalPath>` identifies RHI resources visible outside the
+  Vulkan backend.
+
+Examples:
+
+```text
+Internal/Instance
+Internal/Device
+Internal/CommandBuffer/Primary/Frame0
+Internal/CommandPool/Secondary/Frame0
+Camera/RenderTarget/EditorViewport/SceneColor
+Renderer/GraphicsPipeline/GeometryPass
+```
 
 Names must be deterministic, non-empty, and describe the object's role. New
 creation sites must follow this grammar instead of introducing ad hoc

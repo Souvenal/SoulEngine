@@ -8,6 +8,7 @@ import std;
 
 import :Capability;
 import :Buffer;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -51,7 +52,7 @@ class VulkanDescriptorManager {
 
     /// @param Device           Vulkan device handle.
     /// @param FramesInFlight   Number of frame slots.
-    [[nodiscard]] static auto Create(vk::raii::Device& Device, Uint32 FramesInFlight)
+    [[nodiscard]] static auto Create(vk::raii::Device& Device, VulkanDebugUtils& DebugUtils, Uint32 FramesInFlight)
         -> std::expected<VulkanDescriptorManager, ErrorMessage> {
         // ── Verify descriptor indexing features are supported ───────────
         const auto& V12 = VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
@@ -63,6 +64,7 @@ class VulkanDescriptorManager {
 
         VulkanDescriptorManager Mgr;
         Mgr.m_Device         = &Device;
+        Mgr.m_DebugUtils     = &DebugUtils;
         Mgr.m_FramesInFlight = FramesInFlight;
 
         // ── Descriptor pool ─────────────────────────────────────────────
@@ -100,6 +102,7 @@ class VulkanDescriptorManager {
         auto PoolRes = Device.createDescriptorPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to create descriptor pool"));
+        DebugUtils.SetObjectName(*PoolRes.value, "Internal/DescriptorPool/Global");
         Mgr.m_Pool = std::move(PoolRes.value);
 
         Mgr.m_ScratchSets.resize(FramesInFlight);
@@ -157,8 +160,12 @@ class VulkanDescriptorManager {
         RawSets.reserve(Res.value.size());
         auto& Scratch = m_ScratchSets[FrameIndex];
         Scratch.reserve(Scratch.size() + Res.value.size());
-        for (auto& Set : Res.value) {
+        for (Uint32 SetIndex = 0; SetIndex < Res.value.size(); ++SetIndex) {
+            auto& Set = Res.value[SetIndex];
             RawSets.push_back(*Set);
+            if (m_DebugUtils)
+                m_DebugUtils->SetObjectName(
+                    *Set, Format("Internal/DescriptorSet/Scratch/Frame{}/Set{}", FrameIndex, Scratch.size()));
             Scratch.push_back(std::move(Set));
         }
         return RawSets;
@@ -260,8 +267,10 @@ class VulkanDescriptorManager {
 
     // ── Members ─────────────────────────────────────────────────────────
 
-    vk::raii::Device* m_Device         = nullptr;
-    Uint32            m_FramesInFlight = 2;
+    vk::raii::Device* m_Device              = nullptr;
+    VulkanDebugUtils* m_DebugUtils          = nullptr;
+    Uint32            m_FramesInFlight      = 2;
+    Uint32            m_NextPersistentSet   = 0;
 
     vk::raii::DescriptorPool                          m_Pool = nullptr;
     std::vector<std::vector<vk::raii::DescriptorSet>> m_ScratchSets;
@@ -302,6 +311,9 @@ auto VulkanDescriptorManager::AllocatePersistentDescriptorSet(vk::DescriptorSetL
     auto Res = m_Device->allocateDescriptorSets(AllocChain.get<vk::DescriptorSetAllocateInfo>());
     if (Res.result != vk::Result::eSuccess || Res.value.empty())
         return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate persistent descriptor set"));
+    if (m_DebugUtils)
+        m_DebugUtils->SetObjectName(
+            *Res.value.front(), Format("Internal/DescriptorSet/Persistent/Set{}", m_NextPersistentSet++));
     return std::move(Res.value.front());
 }
 

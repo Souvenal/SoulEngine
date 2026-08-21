@@ -31,7 +31,7 @@ struct VulkanFrameContext {
         auto SemaRes = Context.Device.createSemaphore({});
         if (SemaRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create present-complete semaphore"));
-        Context.DebugUtils.SetObjectName(*SemaRes.value, Format("Frame[{}]::PresentComplete", FrameIndex));
+        Context.DebugUtils.SetObjectName(*SemaRes.value, Format("Internal/Semaphore/PresentComplete/Frame{}", FrameIndex));
 
         // ── Main pool (for primary buffer) ───────────────────────────────
         vk::CommandPoolCreateInfo PoolCI{
@@ -41,7 +41,7 @@ struct VulkanFrameContext {
         auto PoolRes = Context.Device.createCommandPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanFrameContext: failed to create main command pool"));
-        Context.DebugUtils.SetObjectName(*PoolRes.value, Format("Frame[{}]::Pool", FrameIndex));
+        Context.DebugUtils.SetObjectName(*PoolRes.value, Format("Internal/CommandPool/Primary/Frame{}", FrameIndex));
 
         // Allocate one primary command buffer from pool.
         vk::CommandBufferAllocateInfo PrimaryAlloc{
@@ -52,7 +52,8 @@ struct VulkanFrameContext {
         auto PrimaryRes = Context.Device.allocateCommandBuffers(PrimaryAlloc);
         if (PrimaryRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanFrameContext: failed to allocate primary command buffer"));
-        Context.DebugUtils.SetObjectName(*PrimaryRes.value[0], Format("Frame[{}]::PrimaryBuffer", FrameIndex));
+        Context.DebugUtils.SetObjectName(
+            *PrimaryRes.value[0], Format("Internal/CommandBuffer/Primary/Frame{}", FrameIndex));
 
         // ── Sub pool (per RHICommandList secondary buffers) ─────────────────
         vk::CommandPoolCreateInfo SubPoolCI{
@@ -62,7 +63,7 @@ struct VulkanFrameContext {
         auto SubPoolRes = Context.Device.createCommandPool(SubPoolCI);
         if (SubPoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanFrameContext: failed to create sub command pool"));
-        Context.DebugUtils.SetObjectName(*SubPoolRes.value, Format("Frame[{}]::SubPool", FrameIndex));
+        Context.DebugUtils.SetObjectName(*SubPoolRes.value, Format("Internal/CommandPool/Secondary/Frame{}", FrameIndex));
 
         return VulkanFrameContext{
             .PresentComplete                 = std::move(SemaRes.value),

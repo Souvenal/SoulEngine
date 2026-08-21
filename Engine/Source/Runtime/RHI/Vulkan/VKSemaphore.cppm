@@ -4,6 +4,7 @@ export module Vulkan:Semaphore;
 
 import Core;
 import :Capability;
+import :Debug;
 
 import vulkan;
 import std;
@@ -38,7 +39,10 @@ class VulkanTimelineSemaphore {
     VulkanTimelineSemaphore(const VulkanTimelineSemaphore&)                    = delete;
     auto operator=(const VulkanTimelineSemaphore&) -> VulkanTimelineSemaphore& = delete;
 
-    [[nodiscard]] static auto Create(vk::raii::Device& Device) -> std::expected<VulkanTimelineSemaphore, ErrorMessage> {
+    [[nodiscard]] static auto Create(vk::raii::Device& Device,
+                                     VulkanDebugUtils* DebugUtils,
+                                     StringView         Name)
+        -> std::expected<VulkanTimelineSemaphore, ErrorMessage> {
         VulkanTimelineSemaphore Result;
         Result.m_Device = &Device;
 
@@ -51,6 +55,8 @@ class VulkanTimelineSemaphore {
         auto Res = Device.createSemaphore(Chain.get<vk::SemaphoreCreateInfo>());
         if (Res.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create timeline semaphore"));
+        if (DebugUtils)
+            DebugUtils->SetObjectName(*Res.value, Name);
         Result.m_Semaphore = std::move(Res.value);
         return Result;
     }
