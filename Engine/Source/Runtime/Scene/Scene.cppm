@@ -16,14 +16,6 @@ import TaskGraph;
 
 export namespace SoulEngine {
 
-struct SceneNode {
-    String                    Name           = {};
-    entt::entity              Parent         = entt::null;
-    std::vector<entt::entity> Children       = {};
-    Transform                 LocalTransform = {};
-    hlslpp::float4x4          WorldTransform = hlslpp::float4x4::identity();
-};
-
 /// @brief Physical framebuffer coordinate selected by the editor.
 struct RenderPixelCoordinate {
     Uint32 X = 0;
@@ -33,7 +25,7 @@ struct RenderPixelCoordinate {
 struct SceneSnapshot {
     std::vector<RenderViewSnapshot>      Views          = {};
     std::vector<MeshInfo>                Meshes         = {};
-    std::vector<LightSnapshot>           Lights         = {};
+    std::vector<LightInfo>               Lights         = {};
     std::optional<entt::entity>          SelectedEntity = std::nullopt;
     std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt;
     float                                Time           = 0.0f;
@@ -58,9 +50,10 @@ class Scene {
     // TODO(SoulEngine): Hide EnTT behind a Scene implementation boundary. This should remove
     // both the downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
-    UPtr<entt::registry>                                        m_Registry          = nullptr;
+    entt::registry                                              m_Registry          = {};
+    SystemScheduler                                             m_SystemScheduler;
     Path                                                        m_AssetRoot         = {};
-    std::vector<entt::entity>                                   m_Roots             = {};
+    entt::entity                                                m_RootEntity        = entt::null;
     std::map<String, PbrMaterial, std::less<>> m_MaterialInstances = {};
     std::vector<String>                                         m_TexturePaths      = {};
     float                                                       m_Time              = 0.0f;
@@ -72,14 +65,45 @@ class Scene {
         return (m_AssetRoot / Asset).lexically_normal().string();
     }
 
+    [[nodiscard]] auto CreateEntityInternal(String Name, entt::entity Parent) -> entt::entity {
+        const auto Entity         = m_Registry.create();
+        const auto ResolvedParent = Parent != entt::null && m_Registry.valid(Parent) ? Parent : m_RootEntity;
+
+        m_Registry.emplace<ParentComponent>(Entity, ResolvedParent);
+        if (ResolvedParent != m_RootEntity) {
+            if (m_Registry.all_of<ChildrenComponent>(ResolvedParent)) {
+                m_Registry.get<ChildrenComponent>(ResolvedParent).Children.emplace_back(Entity);
+            } else {
+                m_Registry.emplace<ChildrenComponent>(
+                    ResolvedParent, ChildrenComponent{.Children = {Entity}});
+            }
+        }
+        if (!Name.empty())
+            m_Registry.emplace<NameComponent>(Entity, NameComponent{.Name = std::move(Name)});
+
+        m_Registry.emplace<TransformComponent>(Entity);
+        return Entity;
+    }
+
   public:
-    Scene() : m_Registry(std::make_unique<entt::registry>()) {}
-    ~Scene() = default;
+    Scene() : m_SystemScheduler(m_Registry) {
+        m_RootEntity = m_Registry.create();
+        m_Registry.emplace<TransformComponent>(m_RootEntity);
+        m_Registry.ctx().emplace<entt::dispatcher>();
+        m_SystemScheduler.Register<TransformSystem>();
+        m_SystemScheduler.Register<MeshSystem>();
+        m_SystemScheduler.Register<LightSystem>();
+        m_SystemScheduler.Register<CameraSystem>();
+        m_SystemScheduler.SetupObservers();
+    }
+    ~Scene() {
+        m_SystemScheduler.TeardownObservers();
+    }
 
     Scene(const Scene&)                    = delete;
     auto operator=(const Scene&) -> Scene& = delete;
-    Scene(Scene&&)                         = default;
-    auto operator=(Scene&&) -> Scene&      = default;
+    Scene(Scene&&)                         = delete;
+    auto operator=(Scene&&) -> Scene& = delete;
 
     [[nodiscard]] auto GetElapsedTime() const -> float {
         return std::chrono::duration<float>(std::chrono::steady_clock::now() - m_StartTime).count();
@@ -112,108 +136,95 @@ class Scene {
     }
 
     [[nodiscard]] auto GetRegistry() -> entt::registry& {
-        return *m_Registry;
+        return m_Registry;
     }
 
     [[nodiscard]] auto GetRegistry() const -> const entt::registry& {
-        return *m_Registry;
+        return m_Registry;
     }
 
-    [[nodiscard]] auto GetRoots() const -> const std::vector<entt::entity>& {
-        return m_Roots;
+    /// @brief Access the systems registered for this scene.
+    [[nodiscard]] auto GetSystems() const -> const SystemScheduler& {
+        return m_SystemScheduler;
     }
 
-    [[nodiscard]] auto CreateEntity(String Name = {}, entt::entity Parent = entt::null) -> entt::entity {
-        const auto Entity = m_Registry->create();
-        m_Registry->emplace<SceneNode>(Entity, SceneNode{.Name = std::move(Name), .Parent = Parent});
-        if (Parent != entt::null && m_Registry->valid(Parent) && m_Registry->all_of<SceneNode>(Parent))
-            m_Registry->get<SceneNode>(Parent).Children.emplace_back(Entity);
-        else
-            m_Roots.emplace_back(Entity);
-        return Entity;
+    /// @brief Advance scene systems by one frame.
+    /// @param DeltaTime Time elapsed since the previous frame in seconds.
+    auto Tick(Float32 DeltaTime) -> void {
+        m_SystemScheduler.OnUpdate(DeltaTime);
+        m_SystemScheduler.ClearObservers();
     }
 
-    [[nodiscard]] auto TryGetSceneNode(entt::entity Entity) -> SceneNode* {
-        return m_Registry->try_get<SceneNode>(Entity);
+    /// @brief Create an unnamed entity under the hidden root or a supplied parent.
+    /// @param Parent Parent entity, or entt::null to use the hidden root.
+    /// @return The created entity.
+    [[nodiscard]] auto CreateEntity(entt::entity Parent = entt::null) -> entt::entity {
+        return CreateEntityInternal({}, Parent);
     }
 
-    [[nodiscard]] auto TryGetSceneNode(entt::entity Entity) const -> const SceneNode* {
-        return m_Registry->try_get<SceneNode>(Entity);
+    /// @brief Create a named entity under the hidden root or a supplied parent.
+    /// @param Name Name assigned to the entity.
+    /// @param Parent Parent entity, or entt::null to use the hidden root.
+    /// @return The created entity.
+    [[nodiscard]] auto CreateEntityWithName(String Name, entt::entity Parent = entt::null) -> entt::entity {
+        return CreateEntityInternal(std::move(Name), Parent);
     }
 
-    /// @brief Move relative to the camera's horizontal facing direction and world up.
-    /// @brief Rotate from relative cursor movement using yaw and pitch angles.
-    ///
-    /// Editor navigation is owned by Editor and never mutates a Scene Camera.
-    /// These historical prototype API descriptions are retained while the
-    /// implementation moves camera navigation out of Scene.
-
-    auto UpdateWorldTransforms() -> void {
-        const auto UpdateRecursive =
-            [this](auto&& Self, entt::entity Entity, const hlslpp::float4x4& ParentTransform) -> void {
-            auto& Node          = m_Registry->get<SceneNode>(Entity);
-            Node.WorldTransform = hlslpp::mul(Node.LocalTransform.GetLocalMatrix(), ParentTransform);
-            for (const auto Child : Node.Children)
-                Self(Self, Child, Node.WorldTransform);
-        };
-
-        for (const auto Root : m_Roots) {
-            if (m_Registry->valid(Root) && m_Registry->all_of<SceneNode>(Root))
-                UpdateRecursive(UpdateRecursive, Root, hlslpp::float4x4::identity());
-        }
-    }
-
-    [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot>  Views          = {},
-                                     std::optional<entt::entity>          SelectedEntity = std::nullopt,
+    /// @brief Build a complete scene snapshot using system collect methods.
+    /// @param SelectedEntity Optional selected entity for editor.
+    /// @param SelectedPixel Optional selected pixel coordinate for editor.
+    /// @return Complete scene snapshot.
+    [[nodiscard]] auto BuildSnapshot(std::optional<entt::entity>          SelectedEntity = std::nullopt,
                                      std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt)
         -> SceneSnapshot {
-        UpdateWorldTransforms();
-        SceneSnapshot Snapshot{
-            .Views          = std::vector<RenderViewSnapshot>(Views.begin(), Views.end()),
-            .SelectedEntity = SelectedEntity && m_Registry->valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
+        const auto* CameraSys = m_SystemScheduler.Get<CameraSystem>();
+        const auto* MeshSys   = m_SystemScheduler.Get<MeshSystem>();
+        const auto* LightSys  = m_SystemScheduler.Get<LightSystem>();
+        if (!CameraSys || !MeshSys || !LightSys)
+            return SceneSnapshot{.SelectedEntity = std::nullopt, .SelectedPixel = SelectedPixel, .Time = m_Time};
+
+        return SceneSnapshot{
+            .Views          = CameraSys->CollectViews(),
+            .Meshes         = MeshSys->CollectMeshes(),
+            .Lights         = LightSys->CollectLights(),
+            .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
             .SelectedPixel  = SelectedPixel,
             .Time           = m_Time,
         };
-
-        const auto Meshes = m_Registry->view<MeshComponent, SceneNode>();
-        for (const auto Entity : Meshes) {
-            const auto& Mesh = Meshes.get<MeshComponent>(Entity);
-            if (Mesh.Asset.empty())
-                continue;
-
-            const auto& Node = Meshes.get<SceneNode>(Entity);
-            Snapshot.Meshes.emplace_back(MeshInfo{
-                .EntityId       = entt::to_integral(Entity),
-                .MeshAsset      = ResolveAssetPath(Mesh.Asset),
-                .MaterialId     = Mesh.Material,
-                .WorldTransform = Node.WorldTransform,
-            });
-        }
-
-        const auto Lights = m_Registry->view<LightComponent, SceneNode>();
-        for (const auto Entity : Lights) {
-            const auto& Light        = Lights.get<LightComponent>(Entity);
-            const auto& Node         = Lights.get<SceneNode>(Entity);
-            const auto  WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), Node.WorldTransform);
-            const auto  Direction  = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-            const auto  AngleScale = std::numbers::pi_v<Float32> / 180.0f;
-            Snapshot.Lights.emplace_back(LightSnapshot{
-                .Type      = Light.Type,
-                .Color     = hlslpp::float3(Light.ColorR, Light.ColorG, Light.ColorB),
-                .Intensity = Light.Intensity,
-                .Position =
-                    hlslpp::float3(Node.WorldTransform[3].x, Node.WorldTransform[3].y, Node.WorldTransform[3].z),
-                .RangeMeters     = Light.RangeMeters,
-                .Direction       = Direction,
-                .InnerConeCosine = std::cos(Light.InnerConeAngleDegrees * AngleScale),
-                .OuterConeCosine = std::cos(Light.OuterConeAngleDegrees * AngleScale),
-                .CastsShadows    = Light.CastsShadows,
-            });
-        }
-        return Snapshot;
     }
 
-    [[nodiscard]] auto LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage>;
+    /// @brief Build a snapshot using explicitly supplied render views.
+    /// @param Views Render views to place in the snapshot.
+    /// @param SelectedEntity Optional selected entity for editor.
+    /// @param SelectedPixel Optional selected pixel coordinate for editor.
+    /// @return Complete scene snapshot with system-collected mesh and light data.
+    [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views,
+                                     std::optional<entt::entity>          SelectedEntity = std::nullopt,
+                                     std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt)
+        -> SceneSnapshot {
+        const auto* MeshSys  = m_SystemScheduler.Get<MeshSystem>();
+        const auto* LightSys = m_SystemScheduler.Get<LightSystem>();
+        if (!MeshSys || !LightSys)
+            return SceneSnapshot{.Views = {Views.begin(), Views.end()},
+                                 .SelectedEntity = std::nullopt,
+                                 .SelectedPixel = SelectedPixel,
+                                 .Time = m_Time};
+
+        return SceneSnapshot{
+            .Views          = {Views.begin(), Views.end()},
+            .Meshes         = MeshSys->CollectMeshes(),
+            .Lights         = LightSys->CollectLights(),
+            .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
+            .SelectedPixel  = SelectedPixel,
+            .Time           = m_Time,
+        };
+    }
+
+    /// @brief Load a complete Scene from a document file.
+    /// @param FilePath Path to the Scene document.
+    /// @return An owning Scene and load report, or an error.
+    [[nodiscard]] static auto LoadFromFile(const Path& FilePath)
+        -> std::expected<std::pair<UPtr<Scene>, SceneLoadReport>, ErrorMessage>;
 };
 
 } // namespace SoulEngine

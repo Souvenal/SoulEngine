@@ -540,7 +540,7 @@ class RasterRenderer final : public IRenderer {
         return RasterFrameConstants{.Time = Time, .ExposureEV100 = ExposureEV100, .LightCount = LightCount};
     }
 
-    [[nodiscard]] static auto BuildLightData(std::span<const LightSnapshot> Lights) -> std::vector<LightGpuData> {
+    [[nodiscard]] static auto BuildLightData(std::span<const LightInfo> Lights) -> std::vector<LightGpuData> {
         std::vector<LightGpuData> Result = {};
         Result.reserve(std::max<std::size_t>(Lights.size(), 1));
         for (const auto& Light : Lights) {

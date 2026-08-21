@@ -16,7 +16,7 @@ into each FrameSlot.
 | **Renderer cache** | Engine-global cache of attached renderers. Renderer-local request/resource wrappers may survive renderer switching until engine shutdown. |
 | **Recorded resource ref** | An RHIRef<T> whose `operator bool()` confirms a Ready payload before recording. The command copies the ref as the GPU-use lifetime carrier. |
 | **GBuffer** | Camera-owned collection of four color render targets plus one shared depth render target: albedo, normal, material ID, entity ID, and depth. |
-| **ViewRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
+| **CameraRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
 | **Geometry pass** | Raster RHIPass that writes the four G-buffer color attachments and the shared depth attachment. |
 | **Lighting pass** | Separate raster RHIPass that samples the G-buffer, including shared depth, and writes SceneColorRT. |
 | **Post-process pass** | A raster RHIPass appended after scene lighting. Post-process builders live under `Renderer/PostProcess/` and operate on the current view's ref-backed targets. |

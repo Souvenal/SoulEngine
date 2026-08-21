@@ -33,6 +33,44 @@ struct MeshInfo {
     hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
 };
 
+/// @brief System for collecting mesh data from entities.
+///
+/// Collects MeshComponent + SceneNode pairs into MeshInfo records for rendering.
+class MeshSystem : public ISystem {
+  public:
+    explicit MeshSystem(entt::registry& Registry) : ISystem(Registry) {}
+    ~MeshSystem() override = default;
+
+    /// @brief Update all mesh components (currently no per-frame logic needed).
+    /// @param DeltaTime Time elapsed since last frame in seconds.
+    auto OnUpdate(Float32 DeltaTime) -> void override {
+        // MeshSystem doesn't need per-frame updates currently
+    }
+
+    /// @brief Collect all valid mesh info from the registry.
+    /// @return Vector of MeshInfo for all valid mesh entities.
+    [[nodiscard]] auto CollectMeshes() const -> std::vector<MeshInfo> {
+        std::vector<MeshInfo> Meshes;
+
+        const auto MeshView = m_Registry.view<MeshComponent, TransformComponent>();
+        for (const auto Entity : MeshView) {
+            const auto& Mesh = MeshView.get<MeshComponent>(Entity);
+            if (Mesh.Asset.empty())
+                continue;
+
+            const auto& Transform = MeshView.get<TransformComponent>(Entity);
+            Meshes.emplace_back(MeshInfo{
+                .EntityId       = entt::to_integral(Entity),
+                .MeshAsset      = Mesh.Asset,
+                .MaterialId     = Mesh.Material,
+                .WorldTransform = Transform.WorldTransform,
+            });
+        }
+
+        return Meshes;
+    }
+};
+
 } // namespace SoulEngine
 
 namespace SoulEngine {

@@ -32,8 +32,8 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views, value-semantic `MeshInfo` records, and optional editor selection input. Material values are not part of the snapshot: the renderer resolves instance IDs through the engine-wide `MaterialManager`. Renderer consumes this snapshot, not the mutable `Scene`. |
 | **RenderPixelCoordinate** | A physical framebuffer pixel coordinate carried as optional editor selection input. The renderer post-process reads the EntityId G-buffer at this coordinate to determine the selected ID. |
 | **GBuffer** | Camera-owned ref-backed render-target set containing albedo, normal, material ID, entity ID, and one shared depth target. The depth target is both the geometry-pass depth attachment and the deferred lighting sampled depth resource. |
-| **ViewRenderTargets** | Camera-owned output bundle containing the GBuffer and the final SceneColorRT render target. Post-process passes load SceneColorRT so they can overlay results without replacing the lighting image. |
-| **RenderViewSnapshot** | One immutable camera/view record defined with the Camera component family: view-projection data plus ref-backed ViewRenderTargets. Renderers allocate their own transient constant buffers while recording the frame. |
+| **CameraRenderTargets** | Camera-owned output bundle containing the GBuffer and the final SceneColorRT render target. Post-process passes load SceneColorRT so they can overlay results without replacing the lighting image. |
+| **RenderViewSnapshot** | One immutable camera/view record defined with the Camera component family: view-projection data plus ref-backed CameraRenderTargets. Renderers allocate their own transient constant buffers while recording the frame. |
 | **MeshInfo** | Value-semantic SceneSnapshot record for one mesh entity. It carries the integer entity ID, normalized absolute mesh asset identity, scene-local material ID, and derived world transform, but no material payload or renderer-specific GPU resource. The material ID resolves through `MaterialManager` on the render thread. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
@@ -83,7 +83,7 @@ RHIRef render-target bundle needed by the renderer; it carries no native raw poi
 ## RHI ownership boundary
 
 Scene authoring components remain renderer-neutral and must not store backend raw
-pointers. Camera-owned ViewRenderTargets are the explicit runtime exception: they
+pointers. Camera-owned CameraRenderTargets are the explicit runtime exception: they
 carry copyable RHIRef<RHIRenderTarget> handles for the view's render outputs, never
 native pointers. Renderers record only Ready refs, and command-list copies followed
 by Vulkan submission retention own the GPU-use lifetime.

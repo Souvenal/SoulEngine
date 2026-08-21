@@ -30,9 +30,16 @@ struct GBuffer {
 };
 
 /// @brief Render targets shared by all passes for one camera/view.
-struct ViewRenderTargets {
+struct CameraRenderTargets {
     GBuffer                 GBuffer      = {};
     RHIRef<RHIRenderTarget> SceneColorRT = nullptr;
+};
+
+/// @brief Request to resize one camera's render targets.
+struct CameraResizeEvent {
+    entt::entity CameraEntity = entt::null;
+    Uint32       Width        = 0;
+    Uint32       Height       = 0;
 };
 
 /// @brief Immutable render data and resources for one camera/view.
@@ -40,43 +47,28 @@ struct RenderViewSnapshot {
     hlslpp::float4x4  ViewProjection = hlslpp::float4x4::identity();
     hlslpp::float3    CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
     Float32           ExposureEV100  = 15.0f;
-    ViewRenderTargets Targets        = {};
+    CameraRenderTargets Targets        = {};
 };
 
-/// @brief Simple camera holding world-space position and orientation.
+/// @brief Resource loader for named CameraRenderTargets.
 ///
-/// Minimal prototype — projection parameters are included so renderers can
-/// derive view and projection matrices without depending on math headers.
-// TODO: Split Camera into specialized camera types when their ownership and
-// projection policies become concrete. Expected variants include gameplay
-// cameras, editor viewport cameras, and shadow cameras. Keep this base type
-// minimal for now: view parameters plus view-scoped resource refs only.
-/// @brief Reusable lens and view-matrix policy for scene and editor cameras.
-struct Camera {
-    float             FOV            = 60.0f;
-    float             NearPlane      = 0.1f;
-    float             FarPlane       = 100.0f;
-    Float32           ExposureEV100  = 15.0f;
-    ViewRenderTargets Targets        = {};
-    Uint32            ViewportWidth  = 0;
-    Uint32            ViewportHeight = 0;
+/// Creates render targets based on a camera debug name and viewport dimensions.
+struct CameraRenderTargetsLoader {
+    using result_type = std::shared_ptr<CameraRenderTargets>;
 
-    /// @brief Resize the camera-owned output resources.
-    auto ResizeViewport(StringView ResourceKey, Uint32 Width, Uint32 Height) -> void {
+    auto operator()(StringView ResourceName, Uint32 Width, Uint32 Height) const -> result_type {
         if (Width == 0 || Height == 0) {
-            Targets        = {};
-            ViewportWidth  = 0;
-            ViewportHeight = 0;
-            return;
+            return nullptr;
         }
 
-        if (ViewportWidth == Width && ViewportHeight == Height && Targets.GBuffer.AlbedoRT &&
-            Targets.GBuffer.NormalRT && Targets.GBuffer.EntityIdRT && Targets.GBuffer.MaterialIdRT &&
-            Targets.GBuffer.DepthRT && Targets.SceneColorRT)
-            return;
+        auto Targets = std::make_shared<CameraRenderTargets>();
+        const auto AlbedoName     = Format("{}/GBuffer/Albedo", ResourceName);
+        const auto NormalName     = Format("{}/GBuffer/Normal", ResourceName);
+        const auto EntityIdName   = Format("{}/GBuffer/EntityId", ResourceName);
+        const auto MaterialIdName = Format("{}/GBuffer/MaterialId", ResourceName);
+        const auto DepthName      = Format("{}/GBuffer/Depth", ResourceName);
+        const auto SceneColorName = Format("{}/SceneColor", ResourceName);
 
-        ViewportWidth  = Width;
-        ViewportHeight = Height;
         const RHIRenderTargetDesc ColorDesc{
             .Width  = Width,
             .Height = Height,
@@ -113,131 +105,206 @@ struct Camera {
             .Format = RHIFormat::B8G8R8A8_UNORM,
             .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::FrameOutput,
         };
-        auto Color = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/Albedo", ResourceKey), ColorDesc);
-        if (!Color) {
-            LogError("Failed to queue camera color render target creation: {}", Color.error().ToString());
-            Targets.GBuffer.AlbedoRT = nullptr;
+
+        auto Albedo = RHIRenderDevice::Get().CreateRenderTarget(AlbedoName, ColorDesc);
+        if (!Albedo) {
+            LogError("Failed to queue camera albedo render target creation: {}", Albedo.error().ToString());
+            Targets->GBuffer.AlbedoRT = nullptr;
         } else {
-            Targets.GBuffer.AlbedoRT = std::move(*Color);
+            Targets->GBuffer.AlbedoRT = std::move(*Albedo);
         }
 
-        auto Normal = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/Normal", ResourceKey), NormalDesc);
+        auto Normal = RHIRenderDevice::Get().CreateRenderTarget(NormalName, NormalDesc);
         if (!Normal) {
             LogError("Failed to queue camera normal render target creation: {}", Normal.error().ToString());
-            Targets.GBuffer.NormalRT = nullptr;
+            Targets->GBuffer.NormalRT = nullptr;
         } else {
-            Targets.GBuffer.NormalRT = std::move(*Normal);
+            Targets->GBuffer.NormalRT = std::move(*Normal);
         }
 
-        auto EntityId = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/EntityId", ResourceKey), EntityIdDesc);
+        auto EntityId = RHIRenderDevice::Get().CreateRenderTarget(EntityIdName, EntityIdDesc);
         if (!EntityId) {
             LogError("Failed to queue camera entity ID render target creation: {}", EntityId.error().ToString());
-            Targets.GBuffer.EntityIdRT = nullptr;
+            Targets->GBuffer.EntityIdRT = nullptr;
         } else {
-            Targets.GBuffer.EntityIdRT = std::move(*EntityId);
+            Targets->GBuffer.EntityIdRT = std::move(*EntityId);
         }
 
-        auto MaterialId =
-            RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/MaterialId", ResourceKey), MaterialIdDesc);
+        auto MaterialId = RHIRenderDevice::Get().CreateRenderTarget(MaterialIdName, MaterialIdDesc);
         if (!MaterialId) {
             LogError("Failed to queue camera material ID render target creation: {}", MaterialId.error().ToString());
-            Targets.GBuffer.MaterialIdRT = nullptr;
+            Targets->GBuffer.MaterialIdRT = nullptr;
         } else {
-            Targets.GBuffer.MaterialIdRT = std::move(*MaterialId);
+            Targets->GBuffer.MaterialIdRT = std::move(*MaterialId);
         }
 
-        auto Depth = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/GBuffer/Depth", ResourceKey), DepthDesc);
+        auto Depth = RHIRenderDevice::Get().CreateRenderTarget(DepthName, DepthDesc);
         if (!Depth) {
             LogError("Failed to queue camera depth render target creation: {}", Depth.error().ToString());
-            Targets.GBuffer.DepthRT = nullptr;
+            Targets->GBuffer.DepthRT = nullptr;
         } else {
-            Targets.GBuffer.DepthRT = std::move(*Depth);
+            Targets->GBuffer.DepthRT = std::move(*Depth);
         }
 
-        auto Lighting = RHIRenderDevice::Get().CreateRenderTarget(Format("{}/SceneColor", ResourceKey), SceneColorDesc);
-        if (!Lighting) {
-            LogError("Failed to queue camera lighting render target creation: {}", Lighting.error().ToString());
-            Targets.SceneColorRT = nullptr;
+        auto SceneColor = RHIRenderDevice::Get().CreateRenderTarget(SceneColorName, SceneColorDesc);
+        if (!SceneColor) {
+            LogError("Failed to queue camera scene color render target creation: {}",
+                     SceneColor.error().ToString());
+            Targets->SceneColorRT = nullptr;
         } else {
-            Targets.SceneColorRT = std::move(*Lighting);
+            Targets->SceneColorRT = std::move(*SceneColor);
         }
-    }
 
-    /// Vulkan projection: right-handed, zclip [0,1], forward depth, finite far plane.
-    [[nodiscard]] auto GetProjectionMatrix(float AspectRatio) const -> hlslpp::float4x4 {
-        const float FovRad = FOV * (std::numbers::pi_v<float> / 180.0f);
-        return hlslpp::float4x4::perspective(
-            hlslpp::projection(hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, NearPlane, FarPlane),
-                               hlslpp::zclip::zero,
-                               hlslpp::zdirection::forward,
-                               hlslpp::zplane::finite));
-    }
-
-    [[nodiscard]] auto GetForward(const hlslpp::float4x4& WorldTransform) const -> hlslpp::float3 {
-        const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
-        const auto WorldForward = hlslpp::mul(LocalForward, WorldTransform);
-        return hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-    }
-
-    [[nodiscard]] auto GetViewMatrix(const hlslpp::float4x4& WorldTransform) const -> hlslpp::float4x4 {
-        const auto Position = hlslpp::float3(WorldTransform[3].x, WorldTransform[3].y, WorldTransform[3].z);
-        return hlslpp::float4x4::look_at(
-            Position, Position + GetForward(WorldTransform), hlslpp::float3(0.0f, 1.0f, 0.0f));
-    }
-
-    [[nodiscard]] auto BuildRenderView(const hlslpp::float4x4& WorldTransform) const
-        -> std::optional<RenderViewSnapshot> {
-        if (!Targets.GBuffer.AlbedoRT || !Targets.GBuffer.NormalRT || !Targets.GBuffer.EntityIdRT ||
-            !Targets.GBuffer.MaterialIdRT || !Targets.GBuffer.DepthRT || !Targets.SceneColorRT || ViewportWidth == 0 ||
-            ViewportHeight == 0)
-            return std::nullopt;
-
-        const float AspectRatio = static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
-        return RenderViewSnapshot{
-            .ViewProjection = hlslpp::mul(GetViewMatrix(WorldTransform), GetProjectionMatrix(AspectRatio)),
-            .CameraPosition = hlslpp::float3(WorldTransform[3].x, WorldTransform[3].y, WorldTransform[3].z),
-            .ExposureEV100  = ExposureEV100,
-            .Targets        = Targets,
-        };
+        return Targets;
     }
 };
 
-// CameraComponent persists only the camera lens parameters. Camera output
-// resources are non-persisted runtime state.
+/// @brief Cache type for CameraRenderTargets resources.
+using CameraRenderTargetsCache = entt::resource_cache<CameraRenderTargets, CameraRenderTargetsLoader>;
+
+/// @brief Resource handle for CameraRenderTargets.
+using CameraRenderTargetsHandle = entt::resource<CameraRenderTargets>;
+
+/// @brief CameraComponent persists only the camera lens parameters.
+///
+/// Camera entities that allocate render targets must also have a non-empty
+/// NameComponent. Camera output resources are managed as entt::resource handles.
 struct CameraComponent {
-    Camera Settings = {};
+    float                 FOV            = 60.0f;
+    float                 NearPlane      = 0.1f;
+    float                 FarPlane       = 100.0f;
+    Float32               ExposureEV100  = 15.0f;
+    Uint32                ViewportWidth  = 0;
+    Uint32                ViewportHeight = 0;
+    CameraRenderTargetsHandle Targets = {};
+};
 
-    [[nodiscard]] auto GetFOV() const -> float {
-        return Settings.FOV;
+/// @brief CameraSystem manages camera viewport resizing and render target creation.
+///
+/// Iterates over all CameraComponents and handles viewport changes.
+class CameraSystem : public ISystem {
+  public:
+    explicit CameraSystem(entt::registry& Registry) : ISystem(Registry) {}
+
+    /// @brief Update camera state and process queued resize events.
+    /// @param DeltaTime Time elapsed since last frame in seconds.
+    auto OnUpdate(Float32 DeltaTime) -> void override {
+        m_Registry.ctx().get<entt::dispatcher>().update<CameraResizeEvent>();
     }
 
-    auto SetFOV(float Value) -> void {
-        Settings.FOV = Value;
+    /// @brief Subscribe to camera resize events.
+    auto SetupObservers() -> void override {
+        m_Registry.ctx().get<entt::dispatcher>()
+            .sink<CameraResizeEvent>()
+            .connect<&CameraSystem::OnCameraResize>(*this);
     }
 
-    [[nodiscard]] auto GetNearPlane() const -> float {
-        return Settings.NearPlane;
+    /// @brief Unsubscribe from camera resize events.
+    auto TeardownObservers() -> void override {
+        m_Registry.ctx().get<entt::dispatcher>()
+            .sink<CameraResizeEvent>()
+            .disconnect<&CameraSystem::OnCameraResize>(*this);
     }
 
-    auto SetNearPlane(float Value) -> void {
-        Settings.NearPlane = Value;
+    /// @brief Build render view snapshot for a camera.
+    /// @param Component The camera component.
+    /// @param WorldTransform The world transform of the camera entity.
+    /// @return Optional RenderViewSnapshot if camera is valid.
+    [[nodiscard]] auto BuildRenderView(const CameraComponent& Component, const hlslpp::float4x4& WorldTransform) const
+        -> std::optional<RenderViewSnapshot> {
+        if (!Component.Targets || !Component.Targets->GBuffer.AlbedoRT ||
+            !Component.Targets->GBuffer.NormalRT || !Component.Targets->GBuffer.EntityIdRT ||
+            !Component.Targets->GBuffer.MaterialIdRT || !Component.Targets->GBuffer.DepthRT ||
+            !Component.Targets->SceneColorRT || Component.ViewportWidth == 0 ||
+            Component.ViewportHeight == 0) {
+            return std::nullopt;
+        }
+
+        const float AspectRatio = static_cast<float>(Component.ViewportWidth) /
+                                  static_cast<float>(Component.ViewportHeight);
+        const float FovRad = Component.FOV * (std::numbers::pi_v<float> / 180.0f);
+
+        const auto Projection = hlslpp::float4x4::perspective(
+            hlslpp::projection(hlslpp::frustum::field_of_view_y(
+                                   FovRad, AspectRatio, Component.NearPlane, Component.FarPlane),
+                               hlslpp::zclip::zero,
+                               hlslpp::zdirection::forward,
+                               hlslpp::zplane::finite));
+
+        const auto Position = hlslpp::float3(WorldTransform[3].x, WorldTransform[3].y, WorldTransform[3].z);
+        const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
+        const auto WorldForward = hlslpp::mul(LocalForward, WorldTransform);
+        const auto Forward = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+
+        const auto View = hlslpp::float4x4::look_at(
+            Position, Position + Forward, hlslpp::float3(0.0f, 1.0f, 0.0f));
+
+        return RenderViewSnapshot{
+            .ViewProjection = hlslpp::mul(View, Projection),
+            .CameraPosition = Position,
+            .ExposureEV100  = Component.ExposureEV100,
+            .Targets        = *Component.Targets,
+        };
     }
 
-    [[nodiscard]] auto GetFarPlane() const -> float {
-        return Settings.FarPlane;
+    /// @brief Collect all valid camera view snapshots from the registry.
+    /// @return Vector of RenderViewSnapshot for all valid cameras.
+    [[nodiscard]] auto CollectViews() const -> std::vector<RenderViewSnapshot> {
+        std::vector<RenderViewSnapshot> Views;
+
+        const auto CameraView = m_Registry.view<CameraComponent, TransformComponent>();
+        for (const auto Entity : CameraView) {
+            const auto& Camera = CameraView.get<CameraComponent>(Entity);
+            const auto& Transform = CameraView.get<TransformComponent>(Entity);
+
+            auto View = BuildRenderView(Camera, Transform.WorldTransform);
+            if (View) {
+                Views.emplace_back(std::move(*View));
+            }
+        }
+
+        return Views;
     }
 
-    auto SetFarPlane(float Value) -> void {
-        Settings.FarPlane = Value;
+  private:
+    auto OnCameraResize(CameraResizeEvent& Event) -> void {
+        if (!m_Registry.valid(Event.CameraEntity) ||
+            !m_Registry.all_of<CameraComponent>(Event.CameraEntity))
+            return;
+        if (!m_Registry.all_of<NameComponent>(Event.CameraEntity)) {
+            LogError("Camera entity {} has no NameComponent", entt::to_integral(Event.CameraEntity));
+            return;
+        }
+
+        auto& Component = m_Registry.get<CameraComponent>(Event.CameraEntity);
+        if (Event.Width == 0 || Event.Height == 0) {
+            Component.Targets = {};
+            Component.ViewportWidth  = 0;
+            Component.ViewportHeight = 0;
+            return;
+        }
+
+        if (Component.ViewportWidth == Event.Width && Component.ViewportHeight == Event.Height &&
+            Component.Targets && Component.Targets->GBuffer.AlbedoRT)
+            return;
+
+        Component.ViewportWidth  = Event.Width;
+        Component.ViewportHeight = Event.Height;
+
+        const auto& Name = m_Registry.get<NameComponent>(Event.CameraEntity).Name;
+
+        const auto  ResourceKey = Format("Camera/{}/{}", Name, entt::to_integral(Event.CameraEntity));
+        const auto  ResourceId  = entt::hashed_string{ResourceKey.data(), ResourceKey.size()};
+        auto [It, Loaded] = m_Cache.force_load(ResourceId, ResourceKey, Event.Width, Event.Height);
+        if (It->second) {
+            Component.Targets = It->second;
+        } else {
+            LogError("Failed to load CameraRenderTargets for '{}'", ResourceKey);
+            Component.Targets = {};
+        }
     }
 
-    [[nodiscard]] auto GetExposureEV100() const -> Float32 {
-        return Settings.ExposureEV100;
-    }
-
-    auto SetExposureEV100(Float32 Value) -> void {
-        Settings.ExposureEV100 = Value;
-    }
+    CameraRenderTargetsCache m_Cache = {};
 };
 
 } // namespace SoulEngine
@@ -250,10 +317,10 @@ struct CameraComponentMetaRegistration {
     CameraComponentMetaRegistration() {
         entt::meta_factory<CameraComponent>{}
             .type("camera")
-            .data<&CameraComponent::SetFOV, &CameraComponent::GetFOV>("fov_degrees")
-            .data<&CameraComponent::SetNearPlane, &CameraComponent::GetNearPlane>("near_plane")
-            .data<&CameraComponent::SetFarPlane, &CameraComponent::GetFarPlane>("far_plane")
-            .data<&CameraComponent::SetExposureEV100, &CameraComponent::GetExposureEV100>("exposure_ev100");
+            .data<&CameraComponent::FOV>("fov_degrees")
+            .data<&CameraComponent::NearPlane>("near_plane")
+            .data<&CameraComponent::FarPlane>("far_plane")
+            .data<&CameraComponent::ExposureEV100>("exposure_ev100");
     }
 };
 
