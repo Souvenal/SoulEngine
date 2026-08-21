@@ -713,8 +713,15 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
         }
     }
 
-    const auto Entity                                         = Scene.CreateEntity(std::move(Name), Parent);
-    Scene.GetRegistry().get<SceneNode>(Entity).LocalTransform = LocalTransform;
+    const auto Entity = Name.empty() ? Scene.CreateEntity(Parent)
+                                     : Scene.CreateEntityWithName(std::move(Name), Parent);
+    Scene.GetRegistry().replace<TransformComponent>(
+        Entity,
+        TransformComponent{
+            .Translation = LocalTransform.Translation,
+            .Rotation    = LocalTransform.Rotation,
+            .Scale       = LocalTransform.Scale,
+        });
     LoadComponents(Scene, Entity, Components, MakeYamlPath(Path, "components"), Report);
 
     if (!Children.IsDefined() || Children.IsNull())
@@ -731,7 +738,8 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
 
 } // namespace
 
-[[nodiscard]] auto Scene::LoadFromFile(const Path& FilePath) -> std::expected<SceneLoadReport, ErrorMessage> {
+[[nodiscard]] auto Scene::LoadFromFile(const Path& FilePath)
+    -> std::expected<std::pair<UPtr<Scene>, SceneLoadReport>, ErrorMessage> {
     const auto Source = ReadFile(FilePath);
     if (!Source)
         return std::unexpected(Source.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
@@ -766,20 +774,18 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
     if (!Entities || !Entities.IsSequence())
         return MakeStructuralError(MakeYamlPath(FilePath.string(), "entities"), "must be a sequence");
 
-    Scene Temporary       = {};
-    Temporary.m_AssetRoot = (FilePath.parent_path() / "Assets").lexically_normal();
-    if (auto Result = LoadMaterialInstances(Temporary, MaterialInstances, "material_instances"); !Result)
+    auto Temporary       = std::make_unique<Scene>();
+    Temporary->m_AssetRoot = (FilePath.parent_path() / "Assets").lexically_normal();
+    if (auto Result = LoadMaterialInstances(*Temporary, MaterialInstances, "material_instances"); !Result)
         return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
 
     SceneLoadReport Report = {};
     for (std::size_t Index = 0; Index < Entities.size(); ++Index) {
-        if (auto Result = LoadEntity(Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report);
+        if (auto Result = LoadEntity(*Temporary, Entities[Index], entt::null, Format("entities[{}]", Index), Report);
             !Result)
             return std::unexpected(
                 Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
     }
-    Temporary.UpdateWorldTransforms();
-
     // Publish the scene's material instances to the engine-wide manager. Texture paths
     // are resolved against the scene Assets root here, so the render thread always reads
     // canonical absolute paths. Scene replacement clears the whole table first, so a
@@ -787,11 +793,11 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
     // document validated successfully, so a failed load leaves the previous manager
     // state (and the previous Scene) untouched.
     MaterialManager::Get().Clear();
-    for (const auto& [Id, Material] : Temporary.m_MaterialInstances) {
+    for (const auto& [Id, Material] : Temporary->m_MaterialInstances) {
         auto       Copy               = Material;
         const auto ResolveTexturePath = [&](String& Texture) -> void {
             if (!Texture.empty())
-                Texture = Temporary.ResolveAssetPath(Texture);
+                Texture = Temporary->ResolveAssetPath(Texture);
         };
         ResolveTexturePath(Copy.BaseColorTexture);
         ResolveTexturePath(Copy.NormalTexture);
@@ -806,17 +812,17 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
     // Register all mesh assets with GeometryManager
     auto& GeometryMgr = GeometryManager::Get();
     GeometryMgr.Clear();
-    
+
     // Collect unique mesh asset paths
     std::unordered_set<String> MeshAssets;
-    const auto Meshes = Temporary.m_Registry->view<MeshComponent>();
+    const auto Meshes = Temporary->m_Registry.view<MeshComponent>();
     for (const auto Entity : Meshes) {
         const auto& Mesh = Meshes.get<MeshComponent>(Entity);
         if (!Mesh.Asset.empty()) {
-            MeshAssets.insert(Temporary.ResolveAssetPath(Mesh.Asset));
+            MeshAssets.insert(Temporary->ResolveAssetPath(Mesh.Asset));
         }
     }
-    
+
     // Load and register each unique mesh
     for (const auto& MeshPath : MeshAssets) {
         Assimp::Importer Importer;
@@ -831,16 +837,15 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
         }
 
         const Path MeshDirectory = Path(MeshPath).parent_path();
-        
+
         // Register materials from the mesh
         MaterialManager::Get().RegisterMaterialsFromScene(Scene, MeshDirectory);
-        
+
         // Register geometry
         GeometryMgr.RegisterScene(Scene, MeshDirectory, MeshPath);
     }
 
-    *this = std::move(Temporary);
-    return Report;
+    return std::pair{std::move(Temporary), std::move(Report)};
 }
 
 } // namespace SoulEngine

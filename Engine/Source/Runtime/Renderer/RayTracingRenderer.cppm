@@ -470,7 +470,7 @@ class RayTracingRenderer final : public IRenderer {
         return Signature;
     }
 
-    [[nodiscard]] static auto BuildLightData(std::span<const LightSnapshot> Lights) -> std::vector<RayTracingLightGpuData> {
+    [[nodiscard]] static auto BuildLightData(std::span<const LightInfo> Lights) -> std::vector<RayTracingLightGpuData> {
         std::vector<RayTracingLightGpuData> Result = {};
         Result.reserve(std::max<std::size_t>(Lights.size(), 1));
         for (const auto& Light : Lights) {

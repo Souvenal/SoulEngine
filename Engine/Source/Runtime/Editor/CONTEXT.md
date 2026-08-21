@@ -9,7 +9,8 @@ UI abstraction layer.
 
 | Term | Definition |
 |------|------------|
-| **Editor** | Directly owned by `EngineLoop`; owns the ImGui context, WIS platform backend, the UI panel registry, and GPU resources for rendering ImGui draw data through the RHI command list. `Create()` establishes the ImGui context; `BindWindowSystem()` installs the platform backend and requests GPU resources. |
+| **Editor** | Directly owned by `EngineLoop`; owns the ImGui context, `EditorWorld`, WIS platform backend, the UI panel registry, and GPU resources for rendering ImGui draw data through the RHI command list. `Initialize()` establishes the ImGui context and UI panels; `EditorWorld` owns editor-only ECS state; `BindPresentation()` installs the platform backend and requests GPU resources. |
+| **EditorWorld** | Editor-owned ECS world containing editor-only entities, systems, dispatcher state, and the viewport camera. It is isolated from the runtime Scene registry. It subscribes to window framebuffer events and translates them to its local camera resize events. |
 | **UIDrawFrame** | Self-owning deep copy of one frame of ImGui draw data. Move-only: `Data.CmdLists` points into its own `Lists` storage. |
 | **SnapshotDrawData** | Deep-copies a live `ImDrawData` into a `UIDrawFrame`. Must run on the ImGui thread before the next `NewFrame()`. |
 | **UIPanel / UIPanelCallback** | One registered debug/editor panel: a name plus an ImGui immediate-mode callback invoked in registration order during `BuildFrame()`. |
@@ -18,7 +19,7 @@ UI abstraction layer.
 ## Threading
 
 The ImGui context lives on the engine **main thread**: GLFW callbacks feed
-`ImGuiIO` during `PollEvents()`, and `Editor::BuildFrame(dt)` runs
+`ImGuiIO` during `Tick()`, and `Editor::BuildFrame(dt)` runs
 `NewFrame` -> panel callbacks -> `Render` each game tick, publishing a
 `UIDrawFrame` snapshot through a latest-wins mailbox. Editor selection state, including the selected render pixel, is copied into the SceneSnapshot on the game thread. The **render thread**
 is a pure consumer: `OnRender()` takes the newest snapshot and translates it

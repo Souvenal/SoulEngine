@@ -12,6 +12,7 @@ export module Editor;
 import :MainMenu;
 import :UIManager;
 import :UIPanels;
+import :EditorWorld;
 
 import Core;
 import RHI;
@@ -56,26 +57,20 @@ class Editor {
     Editor(Editor&&)                         = delete;
     auto operator=(Editor&&) -> Editor&      = delete;
 
-    /// @brief Create the owned Dear ImGui context.
-    [[nodiscard]] auto Create() -> std::expected<void, ErrorMessage> {
-        if (m_ImGuiContext)
-            return std::unexpected(ErrorMessage("Editor ImGui context is already created"));
+    /// @brief Initialize the Editor subsystems.
+    auto Initialize() -> void {
+        if (m_ImGuiContext) {
+            LogWarning("Editor ImGui context is already created");
+            return;
+        }
 
-        IMGUI_CHECKVERSION();
-        m_ImGuiContext = ImGui::CreateContext();
-        if (!m_ImGuiContext)
-            return std::unexpected(ErrorMessage("Editor ImGui::CreateContext failed"));
-
-        ImGui::SetCurrentContext(m_ImGuiContext);
-        ImGui::StyleColorsDark();
-        
-        // 注册所有 UI 面板
-        RegisterAllUI();
-        return {};
+        InitializeImGui();
+        InitializeUI();
     }
 
     /// @brief Bind the ImGui platform backend to the main window system.
-    /// Must be called after Create() and ResourceManager::Init().
+    /// Must be called after Initialize(), window-system creation, and
+    /// RHI device creation.
     /// Also selects the complete window-system and RHI backend combination.
     [[nodiscard]] auto BindPresentation(IWindowSystem* WindowSys, RHIRenderDevice* RenderDevice)
         -> std::expected<void, ErrorMessage> {
@@ -106,6 +101,7 @@ class Editor {
 
         m_BoundWindowSystem = WindowSys;
         m_BoundRenderDevice = RenderDevice;
+        m_EditorWorld.Initialize(*WindowSys);
         return {};
     }
 
@@ -118,7 +114,7 @@ class Editor {
             m_TextureQueue.Shutdown();
             m_TextureQueue.UpdateTexFunc = nullptr;
         }
-        m_SceneViewCamera = {};
+        m_EditorWorld.ReleaseRHIResources();
         m_BoundRenderDevice = nullptr;
     }
 
@@ -141,60 +137,33 @@ class Editor {
         m_Panels.push_back({.Name = std::move(Name), .Callback = std::move(Callback)});
     }
 
-    /// @brief Resize the editor-owned Scene View output resources.
-    auto ResizeSceneViewport(Uint32 Width, Uint32 Height) -> void {
-        m_SceneViewCamera.ResizeViewport("editor_scene_view", Width, Height);
-    }
-
-    /// @brief Apply focused right-mouse navigation to the editor-local camera.
-    auto UpdateSceneCamera(float DeltaTime, IWindowSystem& Window) -> void {
-        if (!m_ImGuiContext)
-            return;
-
-        ImGui::SetCurrentContext(m_ImGuiContext);
-        const bool CameraInputActive =
-            !ImGui::GetIO().WantCaptureMouse && Window.IsMouseButtonPressed(WindowMouseButton::Right);
-        Window.SetCursorCaptured(CameraInputActive);
-        if (!CameraInputActive) {
-            static_cast<void>(Window.ConsumeScrollDelta());
-            static_cast<void>(Window.ConsumeCursorDelta());
-            return;
-        }
-
-        const float ForwardInput = (Window.IsKeyPressed(WindowKey::W) ? 1.0f : 0.0f) -
-                                   (Window.IsKeyPressed(WindowKey::S) ? 1.0f : 0.0f);
-        const float RightInput = (Window.IsKeyPressed(WindowKey::D) ? 1.0f : 0.0f) -
-                                 (Window.IsKeyPressed(WindowKey::A) ? 1.0f : 0.0f);
-        const float VerticalInput = (Window.IsKeyPressed(WindowKey::E) ? 1.0f : 0.0f) -
-                                    (Window.IsKeyPressed(WindowKey::Q) ? 1.0f : 0.0f);
-        const auto EditorWorldTransform = GetSceneViewWorldMatrix();
-        const auto Forward = m_SceneViewCamera.GetForward(EditorWorldTransform);
-        const auto HorizontalForward = hlslpp::normalize(hlslpp::float3(Forward.x, 0.0f, Forward.z));
-        const auto Up = hlslpp::float3(0.0f, 1.0f, 0.0f);
-        const auto Right = hlslpp::normalize(hlslpp::cross(HorizontalForward, Up));
-        const auto MoveDirection = HorizontalForward * ForwardInput + Right * RightInput + Up * VerticalInput;
-        if (MoveDirection.x != 0.0f || MoveDirection.y != 0.0f || MoveDirection.z != 0.0f)
-            m_SceneViewTransform.Translation += hlslpp::normalize(MoveDirection) * (2.0f * DeltaTime);
-        m_SceneViewTransform.Translation += Forward * (Window.ConsumeScrollDelta() * 0.75f);
-
-        constexpr float Sensitivity = 0.0025f;
-        constexpr float MaxPitch    = 1.55334306f;
-        const auto CursorDelta = Window.ConsumeCursorDelta();
-        m_SceneViewTransform.Rotation.y += CursorDelta.X * Sensitivity * (180.0f / std::numbers::pi_v<float>);
-        m_SceneViewTransform.Rotation.x = std::clamp(
-            static_cast<float>(m_SceneViewTransform.Rotation.x) +
-                CursorDelta.Y * Sensitivity * (180.0f / std::numbers::pi_v<float>),
-            -MaxPitch * (180.0f / std::numbers::pi_v<float>),
-            MaxPitch * (180.0f / std::numbers::pi_v<float>));
+    /// @brief Update editor ECS systems for one frame.
+    auto Tick(Float32 DeltaTime) -> void {
+        m_EditorWorld.Tick(DeltaTime);
     }
 
     /// @brief Build the editor-owned Scene View render request for this frame.
     [[nodiscard]] auto BuildSceneView() const -> std::optional<RenderViewSnapshot> {
-        return m_SceneViewCamera.BuildRenderView(GetSceneViewWorldMatrix());
+        return m_EditorWorld.BuildSceneView();
     }
 
-    auto UpdateSceneSelection(const SceneSnapshot& Snapshot) -> void {
-        if (!m_ImGuiContext || Snapshot.Views.empty())
+  private:
+    auto InitializeImGui() -> void {
+        IMGUI_CHECKVERSION();
+        m_ImGuiContext = ImGui::CreateContext();
+        ImGui::SetCurrentContext(m_ImGuiContext);
+        ImGui::StyleColorsDark();
+    }
+
+    auto InitializeUI() -> void {
+        RegisterAllUI();
+    }
+
+  public:
+    auto UpdateSceneSelection(const Scene& Scene,
+                              const RenderViewSnapshot& View,
+                              const SceneSnapshot& Snapshot) -> void {
+        if (!m_ImGuiContext)
             return;
         ImGui::SetCurrentContext(m_ImGuiContext);
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
@@ -204,7 +173,10 @@ class Editor {
         const auto& IO = ImGui::GetIO();
         if (!IO.MouseClicked[ImGuiMouseButton_Left] || IO.WantCaptureMouse)
             return;
-        if (m_SceneViewCamera.ViewportWidth == 0 || m_SceneViewCamera.ViewportHeight == 0 ||
+        const auto* Camera = m_EditorWorld.GetViewportCamera();
+        if (!Camera)
+            return;
+        if (Camera->ViewportWidth == 0 || Camera->ViewportHeight == 0 ||
             IO.DisplaySize.x <= 0.0f || IO.DisplaySize.y <= 0.0f)
             return;
 
@@ -217,19 +189,19 @@ class Editor {
             return;
         }
 
-        const auto PixelWidth  = static_cast<float>(m_SceneViewCamera.ViewportWidth);
-        const auto PixelHeight = static_cast<float>(m_SceneViewCamera.ViewportHeight);
+        const auto PixelWidth  = static_cast<float>(Camera->ViewportWidth);
+        const auto PixelHeight = static_cast<float>(Camera->ViewportHeight);
         m_SelectedPixel = RenderPixelCoordinate{
-            .X = (std::min)(static_cast<Uint32>((PixelX / Width) * PixelWidth), m_SceneViewCamera.ViewportWidth - 1),
-            .Y = (std::min)(static_cast<Uint32>((PixelY / Height) * PixelHeight), m_SceneViewCamera.ViewportHeight - 1),
+            .X = (std::min)(static_cast<Uint32>((PixelX / Width) * PixelWidth), Camera->ViewportWidth - 1),
+            .Y = (std::min)(static_cast<Uint32>((PixelY / Height) * PixelHeight), Camera->ViewportHeight - 1),
         };
 
-        const auto InverseViewProjection = hlslpp::inverse(Snapshot.Views.front().ViewProjection);
+        const auto InverseViewProjection = hlslpp::inverse(View.ViewProjection);
         const float NdcX = 2.0f * PixelX / Width - 1.0f;
         const float NdcY = 1.0f - 2.0f * PixelY / Height;
         const auto NearPoint = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 0.0f, 1.0f}, InverseViewProjection);
         const auto FarPoint = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 1.0f, 1.0f}, InverseViewProjection);
-        const auto Origin = Snapshot.Views.front().CameraPosition;
+        const auto Origin = View.CameraPosition;
         const auto NearWorld = hlslpp::float3(NearPoint.x / NearPoint.w, NearPoint.y / NearPoint.w, NearPoint.z / NearPoint.w);
         const auto FarWorld = hlslpp::float3(FarPoint.x / FarPoint.w, FarPoint.y / FarPoint.w, FarPoint.z / FarPoint.w);
         const auto Direction = hlslpp::normalize(FarWorld - NearWorld);
@@ -340,7 +312,7 @@ class Editor {
         }
         ImGui::NewFrame();
         DrawMainMenu();
-        
+
         // 绘制所有显示的 UI
         for (auto& [name, entry] : UIManager::Get().GetAll()) {
             if (entry.Show) {
@@ -380,23 +352,15 @@ class Editor {
     }
 
   private:
-    [[nodiscard]] auto GetSceneViewWorldMatrix() const -> hlslpp::float4x4 {
-        return m_SceneViewTransform.GetLocalMatrix();
-    }
-
     ImGuiContext*          m_ImGuiContext = nullptr;
     std::vector<UIPanel>   m_Panels;
 
     ImTextureQueue m_TextureQueue;
     std::mutex      m_TextureQueueMutex;
 
-    Camera m_SceneViewCamera = {};
+    EditorWorld                         m_EditorWorld = {};
     std::optional<entt::entity>          m_SelectedEntity = std::nullopt;
     std::optional<RenderPixelCoordinate> m_SelectedPixel  = std::nullopt;
-    Transform m_SceneViewTransform{
-        .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
-        .Rotation = hlslpp::float3(28.0f, -32.0f, 0.0f),
-    };
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
     IWindowSystem* m_BoundWindowSystem = nullptr;
     RHIRenderDevice* m_BoundRenderDevice = nullptr;

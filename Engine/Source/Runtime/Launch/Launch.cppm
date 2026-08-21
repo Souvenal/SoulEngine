@@ -100,10 +100,7 @@ class EngineLoop {
     [[nodiscard]] auto Init() -> std::expected<void, ErrorMessage> {
         LogInfo("Soul Engine Initializing...");
 
-        if (auto R = m_Editor.Create(); !R) {
-            Shutdown();
-            return std::unexpected(R.error().Append("Editor creation failed"));
-        }
+        m_Editor.Initialize();
 
         auto WinResult = CreateWindowSystem();
         if (!WinResult)
@@ -116,6 +113,11 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Failed to create RHI context"));
         }
         LogInfo("RHI context created successfully");
+
+        if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
+            Shutdown();
+            return std::unexpected(R.error().Append("Editor presentation binding failed"));
+        }
 
         // 3 reserved threads for Game/Render/RHI
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
@@ -130,19 +132,15 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Default renderer selection failed"));
         }
         LogInfo("Renderer '{}' initialized successfully", InitialRenderer);
-
-        if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
-            Shutdown();
-            return std::unexpected(R.error().Append("Editor presentation binding failed"));
-        }
-        const auto InitialExtent = m_WindowSystem->GetFramebufferExtent();
-        m_Editor.ResizeSceneViewport(static_cast<Uint32>(std::max(0, InitialExtent.Width)),
-                                     static_cast<Uint32>(std::max(0, InitialExtent.Height)));
-
         // ── Create application from config ───────────────────────────────
         if (auto R = OpenApplication(Cfg.Application.Name.value_or("Test")); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Application opening failed"));
+        }
+        auto* CurrentApplication = GetCurrentApplication();
+        if (!CurrentApplication) {
+            Shutdown();
+            return std::unexpected(ErrorMessage("Application was not available after opening"));
         }
         LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
 
@@ -201,7 +199,7 @@ class EngineLoop {
 
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
-        
+
         // Release GPU geometry buffers before VMA allocator dies.
         GeometryManager::Get().Clear();
 
@@ -228,10 +226,8 @@ class EngineLoop {
         tracy::SetThreadName("GameLoop");
         SetLogThreadRole(LogThreadRole::Game);
         while (!m_FatalError.load(std::memory_order_acquire)) {
-            if (m_WindowSystem->PollEvents())
+            if (m_WindowSystem->Tick())
                 break;
-
-            auto Resize = m_WindowSystem->ConsumeFramebufferResize();
 
             auto  Now      = std::chrono::steady_clock::now();
             float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
@@ -249,16 +245,9 @@ class EngineLoop {
             if (m_FatalError.load(std::memory_order_acquire))
                 break;
 
-            if (Resize) {
-                const auto Width  = static_cast<Uint32>(std::max(0, Resize->Width));
-                const auto Height = static_cast<Uint32>(std::max(0, Resize->Height));
-                m_Editor.ResizeSceneViewport(Width, Height);
-            }
-
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
             m_Editor.BeginFrame(Slot.ImGuiSnapshot);
-            m_Editor.UpdateSceneCamera(Delta, *m_WindowSystem);
 
             auto* CurrentApplication = GetCurrentApplication();
             if (!CurrentApplication) {
@@ -273,16 +262,18 @@ class EngineLoop {
                 break;
             }
             auto& AppScene = CurrentApplication->GetScene();
+            m_Editor.Tick(Delta);
             AppScene.UpdateTime();
+            AppScene.Tick(Delta);
             if (auto SceneView = m_Editor.BuildSceneView()) {
-                const std::array Views{std::move(*SceneView)};
-                const auto PickSnapshot = AppScene.BuildSnapshot(Views);
-                m_Editor.UpdateSceneSelection(PickSnapshot);
-                Slot.SceneData =
-                    AppScene.BuildSnapshot(Views, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
+                const std::array SceneViews{std::move(*SceneView)};
+                const auto PickSnapshot = AppScene.BuildSnapshot();
+                m_Editor.UpdateSceneSelection(AppScene, SceneViews.front(), PickSnapshot);
+                Slot.SceneData = AppScene.BuildSnapshot(SceneViews,
+                                                        m_Editor.GetSelectedEntity(),
+                                                        m_Editor.GetSelectedPixel());
             } else {
-                Slot.SceneData =
-                    AppScene.BuildSnapshot({}, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
+                Slot.SceneData = AppScene.BuildSnapshot(m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             }
 
             {
