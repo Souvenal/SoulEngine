@@ -6,6 +6,7 @@ import vulkan;
 import std;
 
 import :Types;
+import :Capability;
 import :Swapchain;
 import :Buffer;
 import :Pipeline;
@@ -16,12 +17,6 @@ import :Descriptor;
 import :AccelerationStructure;
 
 namespace SoulEngine {
-
-/// Backend-private physical range resolved from a logical transient buffer handle.
-struct VulkanTransientBufferSlice {
-    Uint64 Offset = 0;
-    Uint64 Size   = 0;
-};
 
 [[nodiscard]] static auto ToVkClearColor(const RHIClearColorValue& Value) -> vk::ClearColorValue {
     return std::visit(
@@ -39,15 +34,12 @@ struct VulkanTransientBufferSlice {
 }
 
 /// Callable for std::visit over RHICommand variants.
-struct VulkanCommandVisitor {
+struct VulkanCommandVisitor final {
     vk::raii::CommandBuffer&                         Buf;
     std::unordered_map<vk::Image, VulkanImageState>& LocalStates;
     VulkanDescriptorManager*                         Descriptors                                             = nullptr;
     VulkanTransientUniformArena*                     TransientUniformArena                                   = nullptr;
     VulkanTransientShaderStorageArena*               TransientShaderStorageArena                             = nullptr;
-    std::vector<std::pair<RHITransientConstantBuffer, VulkanTransientBufferSlice>>* TransientConstantBuffers = nullptr;
-    std::vector<std::pair<RHITransientShaderStorageBuffer, VulkanTransientBufferSlice>>* TransientShaderStorageBuffers =
-        nullptr;
     std::vector<std::function<void()>>* RetiredPayloads     = nullptr;
     Uint32                              FrameIndex          = 0;
     vk::Extent2D                        CurrentRenderExtent = {1, 1};
@@ -59,9 +51,24 @@ struct VulkanCommandVisitor {
         RayTracing,
     };
 
-    std::optional<ErrorMessage> Error               = std::nullopt;
-    RHIPipeline*                m_BoundPipeline     = nullptr;
-    BoundPipelineType           m_BoundPipelineType = BoundPipelineType::Unknown;
+    std::optional<ErrorMessage> Error                     = std::nullopt;
+    RHIPipeline*                m_BoundPipeline           = nullptr;
+    BoundPipelineType           m_BoundPipelineType       = BoundPipelineType::Unknown;
+    VulkanCommandVisitor(
+        vk::raii::CommandBuffer&                                                        InBuffer,
+        std::unordered_map<vk::Image, VulkanImageState>&                                InLocalStates,
+        VulkanDescriptorManager*                                                        InDescriptors,
+        VulkanTransientUniformArena*                                                    InTransientUniformArena,
+        VulkanTransientShaderStorageArena*                                              InTransientShaderStorageArena,
+        std::vector<std::function<void()>>* InRetiredPayloads,
+        Uint32                              InFrameIndex)
+        : Buf(InBuffer),
+          LocalStates(InLocalStates),
+          Descriptors(InDescriptors),
+          TransientUniformArena(InTransientUniformArena),
+          TransientShaderStorageArena(InTransientShaderStorageArena),
+          RetiredPayloads(InRetiredPayloads),
+          FrameIndex(InFrameIndex) {}
 
     /// Begin rendering scope from RHIPass desc.
     auto BeginPass(const RHIRenderingDesc& Desc) -> void {
@@ -85,7 +92,11 @@ struct VulkanCommandVisitor {
                                   LocalStates,
                                   ColorRT.GetVkImage(),
                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                  vk::AccessFlagBits2::eColorAttachmentWrite,
+                                  // Clear uses eClear, which does not load old contents; eLoad must
+                                  // read the existing color while also writing the attachment.
+                                  AttachmentDesc.Clear ? vk::AccessFlagBits2::eColorAttachmentWrite
+                                                       : vk::AccessFlagBits2::eColorAttachmentRead |
+                                                             vk::AccessFlagBits2::eColorAttachmentWrite,
                                   vk::ImageLayout::eColorAttachmentOptimal,
                                   true,
                                   ToVkImageAspect(ColorRT.GetFormat()));
@@ -127,7 +138,11 @@ struct VulkanCommandVisitor {
                                   // coverage, not a request to force Early-Z or Late-Z execution.
                                   vk::PipelineStageFlagBits2::eEarlyFragmentTests |
                                       vk::PipelineStageFlagBits2::eLateFragmentTests,
-                                  vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                                  // Depth follows the same clear/load distinction; depth eLoad reads
+                                  // the existing depth, so the load path needs read and write access.
+                                  Desc.DepthAttachment->Clear ? vk::AccessFlagBits2::eDepthStencilAttachmentWrite
+                                                              : vk::AccessFlagBits2::eDepthStencilAttachmentRead |
+                                                                    vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
                                   vk::ImageLayout::eDepthAttachmentOptimal,
                                   true,
                                   DepthAspect);
@@ -221,30 +236,25 @@ struct VulkanCommandVisitor {
                 const auto& Binding = Bindings[Index];
                 const auto& Value   = Values[Index];
 
-                if (const auto* TransientConstant = std::get_if<RHITransientConstantBuffer>(&Value)) {
-                    if (!TransientConstantBuffers) {
+                if (const auto* TransientConstantRef =
+                        std::get_if<RHIRef<RHITransientConstantBuffer>>(&Value)) {
+                    const auto* TransientConstant = TransientConstantRef->TryGet();
+                    if (!TransientConstant) {
                         Error = ErrorMessage(
-                            "Transient constant buffer table is unavailable during shader parameter binding");
-                        return;
-                    }
-                    const auto It = std::ranges::find_if(
-                        *TransientConstantBuffers,
-                        [&TransientConstant](const auto& Entry) -> bool { return Entry.first == *TransientConstant; });
-                    if (It == TransientConstantBuffers->end()) {
-                        Error = ErrorMessage(
-                            Format("Shader parameter '{}' references an unresolved transient constant buffer",
+                            Format("Shader parameter '{}' references an invalid transient constant buffer",
                                    Binding.ParameterPath));
                         return;
                     }
-                    if (It->second.Offset > std::numeric_limits<Uint32>::max()) {
-                        Error = ErrorMessage("Transient constant buffer offset exceeds dynamic offset range");
-                        return;
-                    }
+                    const auto& VulkanBuffer =
+                        static_cast<const VulkanTransientConstantBuffer&>(*TransientConstant);
                     if (bUpdateDescriptors) {
                         Descriptors->WriteConstantDescriptor(
-                            *(*Instance)->Set, Binding.Binding, TransientUniformArena->GetVkBuffer(), It->second.Size);
+                            *(*Instance)->Set,
+                            Binding.Binding,
+                            TransientUniformArena->GetVkBuffer(),
+                            VulkanBuffer.GetSize());
                     }
-                    DynamicOffsetWrites.push_back({Binding.Binding, static_cast<Uint32>(It->second.Offset)});
+                    DynamicOffsetWrites.push_back({Binding.Binding, VulkanBuffer.GetOffset()});
                     continue;
                 }
 
@@ -287,26 +297,22 @@ struct VulkanCommandVisitor {
                 if (!bUpdateDescriptors)
                     continue;
 
-                if (const auto* TransientStorage = std::get_if<RHITransientShaderStorageBuffer>(&Value)) {
-                    if (!TransientShaderStorageArena || !TransientShaderStorageBuffers) {
+                if (const auto* TransientStorageRef =
+                        std::get_if<RHIRef<RHITransientShaderStorageBuffer>>(&Value)) {
+                    const auto* TransientStorage = TransientStorageRef->TryGet();
+                    if (!TransientStorage) {
                         Error = ErrorMessage(
-                            "Transient shader storage arena is unavailable during shader parameter binding");
-                        return;
-                    }
-                    const auto It = std::ranges::find_if(
-                        *TransientShaderStorageBuffers,
-                        [&TransientStorage](const auto& Entry) -> bool { return Entry.first == *TransientStorage; });
-                    if (It == TransientShaderStorageBuffers->end()) {
-                        Error = ErrorMessage(
-                            Format("Shader parameter '{}' references an unresolved transient storage buffer",
+                            Format("Shader parameter '{}' references an invalid transient shader storage buffer",
                                    Binding.ParameterPath));
                         return;
                     }
+                    const auto& VulkanBuffer =
+                        static_cast<const VulkanTransientShaderStorageBuffer&>(*TransientStorage);
                     Descriptors->WriteStorageBufferDescriptor(*(*Instance)->Set,
                                                               Binding.Binding,
                                                               TransientShaderStorageArena->GetVkBuffer(),
-                                                              It->second.Size,
-                                                              It->second.Offset);
+                                                              VulkanBuffer.GetSize(),
+                                                              VulkanBuffer.GetOffset());
                     continue;
                 }
 
@@ -478,210 +484,6 @@ struct VulkanCommandVisitor {
         m_BoundPipelineType = BoundPipelineType::RayTracing;
     }
 
-    [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
-                                                         std::span<const std::byte>      Data)
-        -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer write has an invalid buffer"));
-        if (Data.empty())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer write has no data"));
-        if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(
-                ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
-        if (!TransientShaderStorageArena || !TransientShaderStorageBuffers)
-            return std::unexpected(
-                ErrorMessage("Transient shader storage arena is unavailable during command execution"));
-        auto Offset = TransientShaderStorageArena->Allocate(FrameIndex, Data.size_bytes());
-        if (!Offset)
-            return std::unexpected(Offset.error().Append("Transient shader storage buffer allocation failed"));
-        if (auto R = TransientShaderStorageArena->Write(Data.data(), Data.size_bytes(), *Offset); !R)
-            return std::unexpected(R.error().Append("Transient shader storage buffer upload failed"));
-        if (std::ranges::find_if(*TransientShaderStorageBuffers, [Buffer](const auto& Entry) -> bool {
-                return Entry.first == Buffer;
-            }) != TransientShaderStorageBuffers->end()) {
-            return std::unexpected(ErrorMessage("Transient shader storage buffer was written more than once"));
-        }
-        TransientShaderStorageBuffers->emplace_back(Buffer,
-                                                    VulkanTransientBufferSlice{
-                                                        .Offset = *Offset,
-                                                        .Size   = Data.size_bytes(),
-                                                    });
-        const vk::MemoryBarrier2 Barrier{
-            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
-            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
-            .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-        };
-        const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
-        Buf.pipelineBarrier2(Dependency);
-        return {};
-    }
-
-    auto operator()(const RHIWriteRasterGeometryDataCmd& Cmd) -> void {
-        if (Cmd.Sources.empty()) {
-            Error = ErrorMessage("Raster geometry data upload has no sources");
-            return;
-        }
-        std::vector<RHIRasterGeometryData> GeometryData;
-        GeometryData.reserve(Cmd.Sources.size());
-        for (const auto& Source : Cmd.Sources) {
-            auto* PositionPtr = Source.PositionBufferRef.TryGet();
-            auto* NormalPtr   = Source.NormalBufferRef.TryGet();
-            auto* TangentPtr  = Source.TangentBufferRef.TryGet();
-            auto* TexCoordPtr = Source.TexCoordBufferRef.TryGet();
-            auto* IndexPtr    = Source.IndexBufferRef.TryGet();
-            if (!PositionPtr || !NormalPtr || !IndexPtr || Source.IndexCount == 0) {
-                Error = ErrorMessage("Raster geometry data has an unset source buffer or empty index range");
-                return;
-            }
-            const auto PositionAddress = static_cast<const VulkanVertexBuffer&>(*PositionPtr).GetDeviceAddress();
-            const auto NormalAddress   = static_cast<const VulkanVertexBuffer&>(*NormalPtr).GetDeviceAddress();
-            const auto TangentAddress =
-                TangentPtr ? static_cast<const VulkanVertexBuffer&>(*TangentPtr).GetDeviceAddress() : 0;
-            const auto TexCoordAddress =
-                TexCoordPtr ? static_cast<const VulkanVertexBuffer&>(*TexCoordPtr).GetDeviceAddress() : 0;
-            const auto IndexAddress = static_cast<const VulkanIndexBuffer&>(*IndexPtr).GetDeviceAddress();
-            if (PositionAddress == 0 || NormalAddress == 0 || IndexAddress == 0) {
-                Error = ErrorMessage("Raster geometry data has a source buffer without a device address");
-                return;
-            }
-            GeometryData.emplace_back(RHIRasterGeometryData{
-                .PositionAddress = PositionAddress,
-                .NormalAddress   = NormalAddress,
-                .TangentAddress  = TangentAddress,
-                .TexCoordAddress = TexCoordAddress,
-                .IndexAddress    = IndexAddress,
-                .IndexCount      = Source.IndexCount,
-                .MaterialID      = Source.MaterialID,
-            });
-        }
-        if (auto R = WriteTransientShaderStorageBuffer(Cmd.GeometryBuffer, std::as_bytes(std::span{GeometryData})); !R)
-            Error = R.error().Append("Raster geometry table upload failed");
-    }
-
-    auto operator()(const RHIWriteRayTracingGeometryDataCmd& Cmd) -> void {
-        if (Cmd.Instances.empty() || Cmd.Geometries.empty()) {
-            Error = ErrorMessage("Ray-tracing geometry data upload has no instances or geometries");
-            return;
-        }
-        for (const auto& Instance : Cmd.Instances) {
-            if (Instance.GeometryCount == 0 || Instance.FirstGeometry > Cmd.Geometries.size() ||
-                Instance.GeometryCount > Cmd.Geometries.size() - Instance.FirstGeometry) {
-                Error = ErrorMessage("Ray-tracing geometry instance has an invalid geometry range");
-                return;
-            }
-        }
-
-        std::vector<RHIRayTracingGeometryData> GeometryData = {};
-        GeometryData.reserve(Cmd.Geometries.size());
-        for (const auto& Source : Cmd.Geometries) {
-            if (!Source.PositionBufferRef.TryGet() || !Source.NormalBufferRef.TryGet() ||
-                !Source.TangentBufferRef.TryGet() || !Source.TexCoordBufferRef.TryGet() ||
-                !Source.IndexBufferRef.TryGet()) {
-                Error = ErrorMessage("Ray-tracing geometry data has a null source buffer");
-                return;
-            }
-            if (Source.PositionStride == 0 || Source.NormalStride == 0 || Source.TangentStride == 0 ||
-                Source.TexCoordStride == 0 || Source.IndexStride != sizeof(Uint32) || Source.VertexCount == 0 ||
-                Source.IndexCount == 0) {
-                Error = ErrorMessage("Ray-tracing geometry data has an unsupported layout");
-                return;
-            }
-            const auto& Position        = static_cast<const VulkanVertexBuffer&>(*Source.PositionBufferRef.TryGet());
-            const auto& Normal          = static_cast<const VulkanVertexBuffer&>(*Source.NormalBufferRef.TryGet());
-            const auto& Tangent         = static_cast<const VulkanVertexBuffer&>(*Source.TangentBufferRef.TryGet());
-            const auto& TexCoord        = static_cast<const VulkanVertexBuffer&>(*Source.TexCoordBufferRef.TryGet());
-            const auto& Indices         = static_cast<const VulkanIndexBuffer&>(*Source.IndexBufferRef.TryGet());
-            const auto  PositionAddress = Position.GetDeviceAddress();
-            const auto  NormalAddress   = Normal.GetDeviceAddress();
-            const auto  TangentAddress  = Tangent.GetDeviceAddress();
-            const auto  TexCoordAddress = TexCoord.GetDeviceAddress();
-            const auto  IndexAddress    = Indices.GetDeviceAddress();
-            if (PositionAddress == 0 || NormalAddress == 0 || TangentAddress == 0 || TexCoordAddress == 0 ||
-                IndexAddress == 0) {
-                Error = ErrorMessage("Ray-tracing geometry data has a source buffer without a device address");
-                return;
-            }
-            GeometryData.push_back(RHIRayTracingGeometryData{
-                .PositionAddress    = PositionAddress,
-                .NormalAddress      = NormalAddress,
-                .TangentAddress     = TangentAddress,
-                .TexCoordAddress    = TexCoordAddress,
-                .IndexAddress       = IndexAddress,
-                .PositionByteOffset = Source.PositionByteOffset,
-                .NormalByteOffset   = Source.NormalByteOffset,
-                .TangentByteOffset  = Source.TangentByteOffset,
-                .TexCoordByteOffset = Source.TexCoordByteOffset,
-                .IndexByteOffset    = Source.IndexByteOffset,
-                .PositionStride     = Source.PositionStride,
-                .NormalStride       = Source.NormalStride,
-                .TangentStride      = Source.TangentStride,
-                .TexCoordStride     = Source.TexCoordStride,
-                .IndexStride        = Source.IndexStride,
-                .MaterialIndex      = Source.MaterialIndex,
-            });
-        }
-
-        if (auto R = WriteTransientShaderStorageBuffer(Cmd.InstanceBuffer, std::as_bytes(std::span{Cmd.Instances}));
-            !R) {
-            Error = R.error().Append("Ray-tracing instance-data transient storage write failed");
-            return;
-        }
-        if (auto R = WriteTransientShaderStorageBuffer(Cmd.GeometryBuffer, std::as_bytes(std::span{GeometryData}));
-            !R) {
-            Error = R.error().Append("Ray-tracing geometry-data transient storage write failed");
-            return;
-        }
-    }
-
-    auto operator()(const RHIWriteTransientConstantBufferCmd& Cmd) -> void {
-        if (!Cmd.Buffer.IsValid()) {
-            Error = ErrorMessage("Transient constant buffer write has an invalid buffer");
-            return;
-        }
-        if (Cmd.Data.empty()) {
-            Error = ErrorMessage("Transient constant buffer write has no data");
-            return;
-        }
-        if (!TransientUniformArena || !TransientConstantBuffers) {
-            Error = ErrorMessage("Transient constant arena is unavailable during command execution");
-            return;
-        }
-        auto Offset = TransientUniformArena->Allocate(FrameIndex, Cmd.Data.size());
-        if (!Offset) {
-            Error = Offset.error().Append("Transient constant buffer allocation failed");
-            return;
-        }
-        if (auto R = TransientUniformArena->Write(Cmd.Data.data(), Cmd.Data.size(), *Offset); !R) {
-            Error = R.error().Append("Transient constant buffer upload failed");
-            return;
-        }
-        if (std::ranges::find_if(*TransientConstantBuffers, [&Cmd](const auto& Entry) -> bool {
-                return Entry.first == Cmd.Buffer;
-            }) != TransientConstantBuffers->end()) {
-            Error = ErrorMessage("Transient constant buffer was written more than once");
-            return;
-        }
-        TransientConstantBuffers->emplace_back(Cmd.Buffer,
-                                               VulkanTransientBufferSlice{
-                                                   .Offset = *Offset,
-                                                   .Size   = Cmd.Data.size(),
-                                               });
-        const vk::MemoryBarrier2 Barrier{
-            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
-            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
-            .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-            .dstAccessMask = vk::AccessFlagBits2::eUniformRead,
-        };
-        const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
-        Buf.pipelineBarrier2(Dependency);
-    }
-
-    auto operator()(const RHIWriteTransientShaderStorageBufferCmd& Cmd) -> void {
-        if (auto R = WriteTransientShaderStorageBuffer(Cmd.Buffer, Cmd.Data); !R)
-            Error = R.error();
-    }
-
     auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
         auto* TargetPtr = Cmd.TargetRef.TryGet();
         if (!TargetPtr)
@@ -783,8 +585,7 @@ struct VulkanCommandVisitor {
             PipelinePtr = Cmd.PipelineRef.RayTracing.TryGet();
         if (!PipelinePtr)
             return;
-        if (!Descriptors || !TransientUniformArena || !TransientShaderStorageArena || !TransientConstantBuffers ||
-            !TransientShaderStorageBuffers) {
+        if (!Descriptors || !TransientUniformArena || !TransientShaderStorageArena) {
             Error = ErrorMessage("VulkanCommandVisitor: descriptor manager or transient arena is missing");
             return;
         }
@@ -882,22 +683,28 @@ struct VulkanCommandVisitor {
         Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
     }
     auto operator()(const RHIDrawIndirectCmd& Cmd) -> void {
-        if (!Cmd.PipelineRef.TryGet() || !TransientShaderStorageArena || !TransientShaderStorageBuffers)
+        if (!Cmd.PipelineRef.TryGet() || !TransientShaderStorageArena)
             return;
-        const auto It = std::ranges::find_if(*TransientShaderStorageBuffers, [&Cmd](const auto& Entry) -> bool {
-            return Entry.first == Cmd.IndirectBuffer;
-        });
-        if (It == TransientShaderStorageBuffers->end()) {
-            Error = ErrorMessage("Indirect draw references an unresolved transient storage buffer");
+        const auto* StorageBuffer = Cmd.IndirectBuffer.TryGet();
+        if (!StorageBuffer) {
+            Error = ErrorMessage("Indirect draw references an invalid transient storage buffer");
             return;
         }
-        if (Cmd.Offset > It->second.Size || Cmd.Stride < sizeof(Uint32) * 4 ||
-            Cmd.DrawCount > (It->second.Size - Cmd.Offset) / Cmd.Stride) {
+        const auto& VulkanBuffer = static_cast<const VulkanTransientShaderStorageBuffer&>(*StorageBuffer);
+        if (Cmd.Offset > VulkanBuffer.GetSize() || Cmd.Stride < sizeof(Uint32) * 4 ||
+            Cmd.DrawCount > (VulkanBuffer.GetSize() - Cmd.Offset) / Cmd.Stride) {
             Error = ErrorMessage("Indirect draw range exceeds its transient buffer");
             return;
         }
+        if (Cmd.DrawCount > VulkanCapability::Get().GetProperties().limits.maxDrawIndirectCount) {
+            Error = ErrorMessage("Indirect draw count exceeds Vulkan maxDrawIndirectCount");
+            return;
+        }
         Buf.drawIndirect(
-            TransientShaderStorageArena->GetVkBuffer(), It->second.Offset + Cmd.Offset, Cmd.DrawCount, Cmd.Stride);
+            TransientShaderStorageArena->GetVkBuffer(),
+            VulkanBuffer.GetOffset() + Cmd.Offset,
+            Cmd.DrawCount,
+            Cmd.Stride);
     }
 };
 

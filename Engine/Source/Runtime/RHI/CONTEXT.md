@@ -14,25 +14,28 @@ handles and record declarative commands.
 | **RHIRef<T>** | Copyable handle to a shared RHIRefPayload<T>. It represents a particular backend-native resource without exposing ownership of the native T. States are RhiCommitting, GpuPending, Ready, and Failed. Its explicit `operator bool()` is true only when the payload exists and is Ready; `operator->`/`operator*` provide access after that guard. `TryGet()` remains the explicit nullable access path for backend lowering. |
 | **RHIRef payload** | Shared state containing the atomic availability state, optional error, and the native UPtr<T>. Its final destruction moves the native object into the deferred-deletion queue rather than destroying it on the releasing thread. |
 | **Deferred deletion queue** | Thread-safe queue of move-only destruction callbacks owned by RHIRenderDevice. Last-ref release may enqueue from any thread; RHIRenderDevice::Tick() drains it on the RHI thread. It is valid only between RHIRenderDevice::Create() and Destroy(). |
-| **CommandList** | Move-only frame packet containing ordered rendering/non-rendering scopes, a final PresentSourceRef, and optionally an ImGui presentation overlay. Every normal command field that names a persistent RHI resource uses RHIRef<T> rather than an owning or observer pointer. |
-| **Pass / scope** | A rendering RHIPass or a RHINonRenderingPass. One RHIPass owns an ordered color-attachment list plus an optional depth attachment and may bind multiple compatible graphics pipelines. Attachments, pipelines, draw buffers, shader-parameter resources, TLAS/BLAS instances, and presentation source are ref-backed. Color and depth attachments can explicitly load instead of clear when a post-process overlays an existing target. |
+| **CommandList** | Move-only frame packet containing ordered rendering/non-rendering scopes, a final PresentSourceRef, and optionally an ImGui presentation overlay. Every resource-bearing command field uses RHIRef<T> rather than an owning or observer pointer. |
+| **Pass / scope** | A rendering RHIPass or a RHINonRenderingPass containing declarative RHICommand work. One RHIPass owns an ordered color-attachment list plus an optional depth attachment and may bind multiple compatible graphics pipelines. Attachments, pipelines, draw buffers, shader-parameter resources, TLAS/BLAS instances, and presentation source are ref-backed. Color and depth attachments can explicitly load instead of clear when a post-process overlays an existing target. |
 | **In-flight submission** | Backend-owned retention record for a submitted command list and auxiliary retirement callbacks. Vulkan retains this record until its graphics timeline reaches the submission value. |
 | **Shader parameters** | Copyable CPU-side values partitioned by reflected descriptor-set layout. RHIShaderParameterResources carries ref-backed sampled textures, samplers, and render targets used by that snapshot. |
-| **Transient buffers and arenas** | RenderDevice allocates typed logical transient uniform/storage-buffer handles. Renderers write byte snapshots into commands; the RHI thread maps each handle to the current backend frame arena during execution. |
+| **Transient buffers and arenas** | RenderDevice creates typed, immediately-ready `RHIRef` transient uniform/storage-buffer resources from data descriptors. The RHI frame task copies data into the current backend frame arena after resetting that frame's region and resolves the backend slice used by shader binding. A transient ref is valid only for the logical frame in which it was created. |
 | **RenderDevice** | Process-wide RHI singleton. Its create APIs return RHIRef<T> immediately and queue backend-native construction to ThreadQueue::RHI; Execute() consumes a command list; Tick() retires backend completions then deferred destruction. |
 | **Ready resource** | A ref for which `operator bool()` is true and whose payload can be read through `operator->`, `operator*`, or `TryGet()`. GPU-uploaded buffers/textures become ready only when their immediate-context completion callback retires. |
 | **Render target / present source** | Engine-owned ref-backed attachment image. PresentSourceRef is the final color output; the backend copies/blits/renders it into a backend-private swapchain image. |
 | **Swapchain image** | Backend-private presentation image; never a Resource-managed sampled texture or an RHIRef exposed to Renderer. |
 | **Graphics / ray-tracing pipeline** | Backend-polymorphic pipeline payload retained by bind, draw, push-constant, parameter-binding, or trace commands. |
-| **GPU-driven raster geometry** | A transient shader-storage geometry table containing backend-resolved SubMesh buffer addresses, retained source `RHIRef` values, and a matching transient indirect-command buffer. Renderer records the typed command; Vulkan resolves the table to BDA records. |
+| **Frame-affined task** | A TaskGraph callback tagged with the producer thread's frame ordinal. The RHI queue executes only callbacks matching the current RHI thread ordinal. |
+| **Transient data upload** | A transient RHI resource creation task owns a byte snapshot, allocates the current Vulkan arena after frame reset, writes the data, and publishes a Ready `RHIRef` before command recording. |
+| **Buffer device address** | `RHIVertexBuffer::GetDeviceAddress()` and `RHIIndexBuffer::GetDeviceAddress()` expose the address value used by current shader ABI records. Vulkan implements these values with BDA. |
 
 ## Submission and destruction contract
 
 1. A caller asks RHIRenderDevice to create a resource and receives an RHIRef.
    The Vulkan backend queues the native creation closure on ThreadQueue::RHI.
-2. Render code records only refs whose `operator bool()` is true. The command
-   list takes copies/moves of those refs, so normal command recording no longer
-   depends on a live ResourceRef<T> or raw RHI observer after recording.
+2. Render code records ready refs. Transient refs are immediately ready logical
+   frame resources; their RHI frame task resolves the arena slice before Vulkan
+   command recording. The command list takes copies/moves of the refs, so
+   command recording does not depend on raw RHI observers.
 3. Vulkan records and submits the list, then moves the complete list into
    m_InFlightSubmissions with the graphics timeline value signalled by that
    submission. RetireInFlightSubmissions() releases it only after the timeline
@@ -76,6 +79,23 @@ to ordinary RHI resources.
 - Resource readiness is separate from submission lifetime: GpuPending means
   a newly created payload is not recordable; an in-flight submitted Ready
   payload remains alive through command-list retention.
+- Frame-affined transient creation tasks retain byte snapshots until the RHI
+  thread resets the current arena and allocates/writes the payload. The transient
+  ref is created Ready, but it cannot be retained or rebound after its creation
+  frame. The command list retains the ref while the backend records and submits
+  that frame.
+
+## Transient data upload
+
+Uploadable records define a nested `GpuData` ABI and a `BuildGpuData()` member
+that constructs it directly from their RHI buffer members and scalar fields.
+Renderer code creates a transient buffer from the resulting byte snapshot and
+stores the immediately-ready `RHIRef` in shader parameters or commands. The RHI
+frame task allocates and writes the current backend arena after its frame region
+has been reset, then fills the backend transient object's arena offset. Vulkan
+binds that offset directly and emits one
+aggregated host-write visibility barrier for UniformRead, ShaderRead, and
+IndirectCommandRead consumers.
 
 ## Current gaps / guardrails
 
@@ -89,6 +109,10 @@ to ordinary RHI resources.
   completion.
 - The generic RHI interface does not yet expose a backend-independent submission
   retirement contract; a new backend must provide one before using RHIRef.
+- Current-frame CPU-to-GPU uploads belong in frame-affined transient creation
+  tasks, not individual RHICommand upload variants or scopes. New uploadable
+  data must provide a GPU ABI record and materialize its bytes before calling
+  CreateTransientXXXBuffer().
 
 ## Dependencies
 

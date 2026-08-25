@@ -55,7 +55,7 @@ struct LightComponent {
 };
 
 /// @brief Immutable world-space light record consumed by renderers.
-struct LightInfo {
+struct LightRecord {
     LightType      Type            = LightType::Unknown;
     hlslpp::float3 Color           = hlslpp::float3(1.0f, 1.0f, 1.0f);
     Float32        Intensity       = 0.0f;
@@ -69,7 +69,7 @@ struct LightInfo {
 
 /// @brief System for collecting light data from entities.
 ///
-/// Collects LightComponent + SceneNode pairs into LightInfo records for rendering.
+/// Collects LightComponent + SceneNode pairs into LightRecord records for rendering.
 class LightSystem : public ISystem {
   public:
     explicit LightSystem(entt::registry& Registry) : ISystem(Registry) {}
@@ -82,24 +82,25 @@ class LightSystem : public ISystem {
     }
 
     /// @brief Collect all valid light snapshots from the registry.
-    /// @return Vector of LightInfo for all valid light entities.
-    [[nodiscard]] auto CollectLights() const -> std::vector<LightInfo> {
-        std::vector<LightInfo> Lights;
+    /// @return Vector of LightRecord for all valid light entities.
+    [[nodiscard]] auto CollectLights() const -> std::vector<LightRecord> {
+        std::vector<LightRecord> Lights;
 
         const auto LightView = m_Registry.view<LightComponent, TransformComponent>();
         for (const auto Entity : LightView) {
-            const auto& Light = LightView.get<LightComponent>(Entity);
+            const auto& Light     = LightView.get<LightComponent>(Entity);
             const auto& Transform = LightView.get<TransformComponent>(Entity);
 
             const auto WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), Transform.WorldTransform);
-            const auto Direction = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-            const auto AngleScale = std::numbers::pi_v<Float32> / 180.0f;
+            const auto Direction    = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+            const auto AngleScale   = std::numbers::pi_v<Float32> / 180.0f;
 
-            Lights.emplace_back(LightInfo{
+            Lights.emplace_back(LightRecord{
                 .Type      = Light.Type,
                 .Color     = hlslpp::float3(Light.ColorR, Light.ColorG, Light.ColorB),
                 .Intensity = Light.Intensity,
-                .Position  = hlslpp::float3(Transform.WorldTransform[3].x, Transform.WorldTransform[3].y, Transform.WorldTransform[3].z),
+                .Position  = hlslpp::float3(
+                    Transform.WorldTransform[3].x, Transform.WorldTransform[3].y, Transform.WorldTransform[3].z),
                 .RangeMeters     = Light.RangeMeters,
                 .Direction       = Direction,
                 .InnerConeCosine = std::cos(Light.InnerConeAngleDegrees * AngleScale),

@@ -19,7 +19,6 @@
 
 module;
 
-#include <magic_enum/magic_enum.hpp>
 #include <slang.h>
 // Slang follows the COM ABI convention (vtable layout, addRef/release lifecycle).
 // Its COM-style interfaces require a dedicated smart pointer instead of
@@ -28,6 +27,7 @@ module;
 
 export module Slang;
 
+import magic_enum;
 import :Types;
 import :Utils;
 import :Reflection;

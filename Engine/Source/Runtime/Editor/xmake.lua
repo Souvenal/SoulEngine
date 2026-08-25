@@ -2,6 +2,7 @@ target("Editor")
     set_kind("moduleonly")
 
     add_deps("Application", "Core", "Renderer", "RHI", "Resource", "Scene", "TaskGraph", "WindowSystem")
+    add_packages("magic_enum", {public = true})
     add_packages("entt")
     add_packages("hlslpp", {public = true})
     -- public: consumers (Launch -> SoulEngine.exe) must link the imgui archive.

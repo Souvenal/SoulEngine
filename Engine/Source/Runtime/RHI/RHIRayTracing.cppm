@@ -110,6 +110,47 @@ struct RHIRayTracingGeometryDesc {
     Uint32                  VertexCount        = 0;
     Uint32                  IndexCount         = 0;
     Uint32                  MaterialIndex      = 0;
+
+    /// @brief Shader-visible BDA and layout data for one BLAS geometry.
+    struct alignas(8) GpuData {
+        Uint64 PositionAddress    = 0;
+        Uint64 NormalAddress      = 0;
+        Uint64 TangentAddress     = 0;
+        Uint64 TexCoordAddress    = 0;
+        Uint64 IndexAddress       = 0;
+        Uint32 PositionByteOffset = 0;
+        Uint32 NormalByteOffset   = 0;
+        Uint32 TangentByteOffset  = 0;
+        Uint32 TexCoordByteOffset = 0;
+        Uint32 IndexByteOffset    = 0;
+        Uint32 PositionStride     = 0;
+        Uint32 NormalStride       = 0;
+        Uint32 TangentStride      = 0;
+        Uint32 TexCoordStride     = 0;
+        Uint32 IndexStride        = 0;
+        Uint32 MaterialIndex      = 0;
+    };
+
+    [[nodiscard]] auto BuildGpuData() const -> GpuData {
+        return GpuData{
+            .PositionAddress    = PositionBufferRef ? PositionBufferRef->GetDeviceAddress() : 0,
+            .NormalAddress      = NormalBufferRef ? NormalBufferRef->GetDeviceAddress() : 0,
+            .TangentAddress     = TangentBufferRef ? TangentBufferRef->GetDeviceAddress() : 0,
+            .TexCoordAddress    = TexCoordBufferRef ? TexCoordBufferRef->GetDeviceAddress() : 0,
+            .IndexAddress       = IndexBufferRef ? IndexBufferRef->GetDeviceAddress() : 0,
+            .PositionByteOffset = PositionByteOffset,
+            .NormalByteOffset   = NormalByteOffset,
+            .TangentByteOffset  = TangentByteOffset,
+            .TexCoordByteOffset = TexCoordByteOffset,
+            .IndexByteOffset    = IndexByteOffset,
+            .PositionStride     = PositionStride,
+            .NormalStride       = NormalStride,
+            .TangentStride      = TangentStride,
+            .TexCoordStride     = TexCoordStride,
+            .IndexStride        = IndexStride,
+            .MaterialIndex      = MaterialIndex,
+        };
+    }
 };
 
 /// Shader-visible per-instance range into ray-tracing geometry data.
@@ -119,28 +160,7 @@ struct RHIRayTracingInstanceData {
     Uint32 EntityId      = 0;
 };
 
-/// Shader-visible BDA and layout data for one BLAS geometry.
-///
-/// Renderer allocates storage for this ABI but never writes device addresses;
-/// the backend resolves source buffers while executing the upload command.
-struct alignas(8) RHIRayTracingGeometryData {
-    Uint64 PositionAddress    = 0;
-    Uint64 NormalAddress      = 0;
-    Uint64 TangentAddress     = 0;
-    Uint64 TexCoordAddress    = 0;
-    Uint64 IndexAddress       = 0;
-    Uint32 PositionByteOffset = 0;
-    Uint32 NormalByteOffset   = 0;
-    Uint32 TangentByteOffset  = 0;
-    Uint32 TexCoordByteOffset = 0;
-    Uint32 IndexByteOffset    = 0;
-    Uint32 PositionStride     = 0;
-    Uint32 NormalStride       = 0;
-    Uint32 TangentStride      = 0;
-    Uint32 TexCoordStride     = 0;
-    Uint32 IndexStride        = 0;
-    Uint32 MaterialIndex      = 0;
-};
+using RHIRayTracingGeometryData = RHIRayTracingGeometryDesc::GpuData;
 static_assert(sizeof(RHIRayTracingInstanceData) == 12);
 static_assert(sizeof(RHIRayTracingGeometryData) == 88);
 static_assert(alignof(RHIRayTracingGeometryData) == 8);

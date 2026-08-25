@@ -110,7 +110,7 @@ class EditorWorld {
 
     /// @brief Initialize editor ECS entities and systems after RHI setup.
     auto Initialize(IWindowSystem& Window) -> void {
-        if (m_ViewportCameraEntity != entt::null)
+        if (m_EditorRootEntity != entt::null)
             return;
 
         m_EditorRootEntity = m_Registry.create();
@@ -121,22 +121,21 @@ class EditorWorld {
         m_SystemScheduler.Register<EditorCameraSystem>(Window);
         m_SystemScheduler.SetupObservers();
 
-        m_ViewportCameraEntity = m_Registry.create();
-        m_Registry.emplace<ParentComponent>(m_ViewportCameraEntity, m_EditorRootEntity);
-        m_Registry.emplace<TransformComponent>(m_ViewportCameraEntity,
+        const auto CameraEntity = m_Registry.create();
+        m_Registry.emplace<ParentComponent>(CameraEntity, m_EditorRootEntity);
+        m_Registry.emplace<TransformComponent>(CameraEntity,
                                                TransformComponent{
                                                    .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
                                                    .Rotation    = hlslpp::float3(28.0f, -32.0f, 0.0f),
                                                });
-        m_Registry.emplace<NameComponent>(m_ViewportCameraEntity, NameComponent{.Name = "EditorViewportCamera"});
-        m_Registry.emplace<CameraComponent>(m_ViewportCameraEntity);
+        m_Registry.emplace<NameComponent>(CameraEntity, NameComponent{.Name = "EditorViewportCamera"});
+        m_Registry.emplace<CameraComponent>(CameraEntity);
 
         BindWindowEvents(Window);
     }
 
     ~EditorWorld() {
-        UnbindWindowEvents();
-        m_SystemScheduler.TeardownObservers();
+        Shutdown();
     }
 
     EditorWorld(const EditorWorld&)                    = delete;
@@ -176,56 +175,56 @@ class EditorWorld {
     }
 
     /// @brief Build the editor-owned Scene View render request for this frame.
-    [[nodiscard]] auto BuildSceneView() const -> std::optional<RenderViewSnapshot> {
-        if (m_ViewportCameraEntity == entt::null || !m_Registry.valid(m_ViewportCameraEntity) ||
-            !m_Registry.all_of<TransformComponent, CameraComponent>(m_ViewportCameraEntity))
-            return std::nullopt;
-
-        const auto& Transform = m_Registry.get<TransformComponent>(m_ViewportCameraEntity);
-        const auto& Camera    = m_Registry.get<CameraComponent>(m_ViewportCameraEntity);
+    [[nodiscard]] auto BuildSceneView() const -> std::optional<CameraViewRecord> {
         const auto* CameraSys = m_SystemScheduler.Get<CameraSystem>();
         if (!CameraSys)
             return std::nullopt;
-        return CameraSys->BuildRenderView(Camera, Transform.WorldTransform);
+
+        const auto CameraViews = CameraSys->CollectViews();
+        if (CameraViews.empty())
+            return std::nullopt;
+        return CameraViews.front();
     }
 
     /// @brief Return the editor viewport camera component.
     [[nodiscard]] auto GetViewportCamera() const -> const CameraComponent* {
-        if (m_ViewportCameraEntity == entt::null || !m_Registry.valid(m_ViewportCameraEntity) ||
-            !m_Registry.all_of<CameraComponent>(m_ViewportCameraEntity))
+        const auto CameraView = m_Registry.view<CameraComponent>();
+        if (CameraView.empty())
             return nullptr;
-        return &m_Registry.get<CameraComponent>(m_ViewportCameraEntity);
+        return &CameraView.get<CameraComponent>(*CameraView.begin());
     }
 
-    /// @brief Release camera GPU resource references before RHI shutdown.
-    auto ReleaseRHIResources() -> void {
+    /// @brief Shut down editor ECS systems and release their owned resources.
+    auto Shutdown() -> void {
         UnbindWindowEvents();
-        if (m_ViewportCameraEntity != entt::null && m_Registry.valid(m_ViewportCameraEntity)) {
-            if (auto* Camera = m_Registry.try_get<CameraComponent>(m_ViewportCameraEntity)) {
-                Camera->Targets        = {};
-                Camera->ViewportWidth  = 0;
-                Camera->ViewportHeight = 0;
-            }
-        }
-        static_cast<void>(m_SystemScheduler.Remove<CameraSystem>());
+
         static_cast<void>(m_SystemScheduler.Remove<EditorCameraSystem>());
-        m_ViewportCameraEntity = entt::null;
+        static_cast<void>(m_SystemScheduler.Remove<CameraSystem>());
+        static_cast<void>(m_SystemScheduler.Remove<TransformSystem>());
+
+        // Clearing the registry releases component-held RHI references and
+        // allows CameraSystem's cache to be released with the system itself.
+        m_Registry.clear();
+
+        m_EditorRootEntity = entt::null;
     }
 
   private:
     auto OnFramebufferResize(FramebufferResizeEvent& Event) -> void {
-        m_Registry.ctx().get<entt::dispatcher>().enqueue<CameraResizeEvent>(CameraResizeEvent{
-            .CameraEntity = m_ViewportCameraEntity,
-            .Width        = static_cast<Uint32>(Event.CurrentExtent.Width),
-            .Height       = static_cast<Uint32>(Event.CurrentExtent.Height),
-        });
+        auto& Dispatcher = m_Registry.ctx().get<entt::dispatcher>();
+        for (const auto CameraEntity : m_Registry.view<CameraComponent>()) {
+            Dispatcher.enqueue<CameraResizeEvent>(CameraResizeEvent{
+                .CameraEntity = CameraEntity,
+                .Width        = static_cast<Uint32>(Event.CurrentExtent.Width),
+                .Height       = static_cast<Uint32>(Event.CurrentExtent.Height),
+            });
+        }
     }
 
     entt::registry    m_Registry = {};
     SystemScheduler   m_SystemScheduler;
     entt::dispatcher* m_WindowEventDispatcher = nullptr;
     entt::entity      m_EditorRootEntity      = entt::null;
-    entt::entity      m_ViewportCameraEntity  = entt::null;
 };
 
 } // namespace SoulEngine

@@ -23,9 +23,9 @@ struct RenderPixelCoordinate {
 };
 
 struct SceneSnapshot {
-    std::vector<RenderViewSnapshot>      Views          = {};
-    std::vector<MeshInfo>                Meshes         = {};
-    std::vector<LightInfo>               Lights         = {};
+    std::vector<CameraViewRecord>        Views          = {};
+    std::vector<InstanceRecord>          Instances      = {};
+    std::vector<LightRecord>             Lights         = {};
     std::optional<entt::entity>          SelectedEntity = std::nullopt;
     std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt;
     float                                Time           = 0.0f;
@@ -46,23 +46,31 @@ struct SceneLoadReport {
 /// collections.
 class Scene {
   private:
-    std::chrono::steady_clock::time_point                       m_StartTime         = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point      m_StartTime = std::chrono::steady_clock::now();
     // TODO(SoulEngine): Hide EnTT behind a Scene implementation boundary. This should remove
     // both the downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and
     // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
-    entt::registry                                              m_Registry          = {};
-    SystemScheduler                                             m_SystemScheduler;
-    Path                                                        m_AssetRoot         = {};
-    entt::entity                                                m_RootEntity        = entt::null;
+    entt::registry                             m_Registry  = {};
+    SystemScheduler                            m_SystemScheduler;
+    Path                                       m_AssetRoot         = {};
+    entt::entity                               m_RootEntity        = entt::null;
     std::map<String, PbrMaterial, std::less<>> m_MaterialInstances = {};
-    std::vector<String>                                         m_TexturePaths      = {};
-    float                                                       m_Time              = 0.0f;
+    std::vector<String>                        m_TexturePaths      = {};
+    float                                      m_Time              = 0.0f;
 
     [[nodiscard]] auto ResolveAssetPath(StringView AssetPath) const -> String {
         const Path Asset{String(AssetPath)};
         if (Asset.is_absolute() || m_AssetRoot.empty())
             return Asset.lexically_normal().string();
         return (m_AssetRoot / Asset).lexically_normal().string();
+    }
+
+    [[nodiscard]] auto CollectSnapshotInstances() const -> std::vector<InstanceRecord> {
+        const auto* MeshSys = m_SystemScheduler.Get<MeshSystem>();
+        if (!MeshSys)
+            return {};
+
+        return MeshSys->CollectInstances();
     }
 
     [[nodiscard]] auto CreateEntityInternal(String Name, entt::entity Parent) -> entt::entity {
@@ -74,8 +82,7 @@ class Scene {
             if (m_Registry.all_of<ChildrenComponent>(ResolvedParent)) {
                 m_Registry.get<ChildrenComponent>(ResolvedParent).Children.emplace_back(Entity);
             } else {
-                m_Registry.emplace<ChildrenComponent>(
-                    ResolvedParent, ChildrenComponent{.Children = {Entity}});
+                m_Registry.emplace<ChildrenComponent>(ResolvedParent, ChildrenComponent{.Children = {Entity}});
             }
         }
         if (!Name.empty())
@@ -103,7 +110,7 @@ class Scene {
     Scene(const Scene&)                    = delete;
     auto operator=(const Scene&) -> Scene& = delete;
     Scene(Scene&&)                         = delete;
-    auto operator=(Scene&&) -> Scene& = delete;
+    auto operator=(Scene&&) -> Scene&      = delete;
 
     [[nodiscard]] auto GetElapsedTime() const -> float {
         return std::chrono::duration<float>(std::chrono::steady_clock::now() - m_StartTime).count();
@@ -111,6 +118,12 @@ class Scene {
 
     auto UpdateTime() -> void {
         m_Time = GetElapsedTime();
+    }
+
+    auto SetAssetRoot(Path AssetRoot) -> void {
+        m_AssetRoot = std::move(AssetRoot);
+        if (auto* MeshSys = m_SystemScheduler.Get<MeshSystem>())
+            MeshSys->SetAssetRoot(m_AssetRoot);
     }
 
     /// @brief Register a texture asset path. Application calls this during setup.
@@ -185,7 +198,7 @@ class Scene {
 
         return SceneSnapshot{
             .Views          = CameraSys->CollectViews(),
-            .Meshes         = MeshSys->CollectMeshes(),
+            .Instances      = CollectSnapshotInstances(),
             .Lights         = LightSys->CollectLights(),
             .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
             .SelectedPixel  = SelectedPixel,
@@ -193,26 +206,28 @@ class Scene {
         };
     }
 
+    /// TODO: Remove this after unifying scene world and editor world
+    /// 
     /// @brief Build a snapshot using explicitly supplied render views.
     /// @param Views Render views to place in the snapshot.
     /// @param SelectedEntity Optional selected entity for editor.
     /// @param SelectedPixel Optional selected pixel coordinate for editor.
     /// @return Complete scene snapshot with system-collected mesh and light data.
-    [[nodiscard]] auto BuildSnapshot(std::span<const RenderViewSnapshot> Views,
+    [[nodiscard]] auto BuildSnapshot(std::span<const CameraViewRecord>    Views,
                                      std::optional<entt::entity>          SelectedEntity = std::nullopt,
                                      std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt)
         -> SceneSnapshot {
         const auto* MeshSys  = m_SystemScheduler.Get<MeshSystem>();
         const auto* LightSys = m_SystemScheduler.Get<LightSystem>();
         if (!MeshSys || !LightSys)
-            return SceneSnapshot{.Views = {Views.begin(), Views.end()},
+            return SceneSnapshot{.Views          = {Views.begin(), Views.end()},
                                  .SelectedEntity = std::nullopt,
-                                 .SelectedPixel = SelectedPixel,
-                                 .Time = m_Time};
+                                 .SelectedPixel  = SelectedPixel,
+                                 .Time           = m_Time};
 
         return SceneSnapshot{
             .Views          = {Views.begin(), Views.end()},
-            .Meshes         = MeshSys->CollectMeshes(),
+            .Instances      = CollectSnapshotInstances(),
             .Lights         = LightSys->CollectLights(),
             .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
             .SelectedPixel  = SelectedPixel,

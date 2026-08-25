@@ -140,6 +140,10 @@ class RHIRef {
         return m_Payload != nullptr && TryGet() != nullptr;
     }
 
+    [[nodiscard]] auto operator==(const RHIRef& Other) const noexcept -> bool {
+        return m_Payload == Other.m_Payload;
+    }
+
     [[nodiscard]] auto operator->() const noexcept -> T* {
         return TryGet();
     }

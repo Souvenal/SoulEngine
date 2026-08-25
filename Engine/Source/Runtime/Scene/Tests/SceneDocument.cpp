@@ -46,7 +46,6 @@ TEST(SceneMeta, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
 
     const auto Mesh = entt::resolve(entt::hashed_string{"mesh"}.value());
     ASSERT_TRUE(Mesh);
-    EXPECT_TRUE(Mesh.data(entt::hashed_string{"asset"}.value()));
     EXPECT_TRUE(Mesh.data(entt::hashed_string{"material"}.value()));
 
     const auto Light = entt::resolve(entt::hashed_string{"light"}.value());
@@ -75,7 +74,7 @@ entities:
     ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
     auto& Scene = *Loaded->first;
 
-    const auto RootEntity = FindNamedEntity(Scene, "Root");
+    const auto RootEntity  = FindNamedEntity(Scene, "Root");
     const auto ChildEntity = FindNamedEntity(Scene, "Child");
     ASSERT_NE(RootEntity, entt::null);
     ASSERT_NE(ChildEntity, entt::null);
@@ -86,10 +85,8 @@ entities:
 
     EXPECT_EQ(Scene.GetRegistry().get<NameComponent>(RootEntity).Name, "Root");
     EXPECT_EQ(Scene.GetRegistry().get<NameComponent>(ChildEntity).Name, "Child");
-    EXPECT_FLOAT_EQ(
-        static_cast<float>(Scene.GetRegistry().get<TransformComponent>(RootEntity).Translation.x), 1.0f);
-    EXPECT_FLOAT_EQ(
-        static_cast<float>(Scene.GetRegistry().get<TransformComponent>(ChildEntity).Translation.x), 4.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Scene.GetRegistry().get<TransformComponent>(RootEntity).Translation.x), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Scene.GetRegistry().get<TransformComponent>(ChildEntity).Translation.x), 4.0f);
 
     std::filesystem::remove(FilePath);
 }
@@ -126,9 +123,12 @@ entities:
     auto& Scene = *Loaded->first;
 
     const auto Snapshot = Scene.BuildSnapshot();
-    ASSERT_EQ(Snapshot.Meshes.size(), 1u);
-    EXPECT_EQ(Snapshot.Meshes.front().MeshAsset, "teapot.obj");
-    EXPECT_EQ(Snapshot.Meshes.front().MaterialId, "gold");
+    // Mesh resources are loaded by MeshSystem::OnUpdate once an RHI device exists.
+    // This document test validates the authoring component before runtime loading.
+    EXPECT_TRUE(Snapshot.Instances.empty());
+    const auto MeshEntities = Scene.GetRegistry().view<MeshComponent>();
+    ASSERT_NE(MeshEntities.begin(), MeshEntities.end());
+    EXPECT_EQ(MeshEntities.get<MeshComponent>(*MeshEntities.begin()).Asset, Path{"teapot.obj"});
 
     // Scene material instances are published to the engine-wide MaterialManager on
     // load, with texture paths resolved against the scene Assets root.
@@ -169,7 +169,7 @@ entities:
 }
 
 TEST(SceneDocument, RejectsLegacyMeshTextureField) {
-    const auto        LegacyPath   = WriteSceneFile(R"(
+    const auto LegacyPath   = WriteSceneFile(R"(
 entities:
   - components:
       camera: {}
@@ -182,9 +182,35 @@ entities:
     ASSERT_TRUE(LegacyLoaded.has_value()) << LegacyLoaded.error().ToString();
     ASSERT_EQ(LegacyLoaded->second.Warnings.size(), 1u);
     EXPECT_EQ(LegacyLoaded->second.Warnings.front().Path, "entities[1].components.mesh.texture");
-    EXPECT_TRUE(LegacyLoaded->first->BuildSnapshot().Meshes.empty());
+    EXPECT_TRUE(LegacyLoaded->first->BuildSnapshot().Instances.empty());
 
     std::filesystem::remove(LegacyPath);
+}
+
+TEST(SceneDocument, OmitsMeshWithNonNormalizedRelativeAssetPath) {
+    const std::array<StringView, 5> InvalidAssets{
+        "",
+        "./teapot.obj",
+        "models/../teapot.obj",
+        "../teapot.obj",
+        "/absolute/teapot.obj",
+    };
+
+    for (const auto Asset : InvalidAssets) {
+        const auto FilePath = WriteSceneFile(Format(R"(
+entities:
+  - components:
+      mesh:
+        asset: {}
+)",
+                                                    Asset));
+        const auto Loaded   = Scene::LoadFromFile(FilePath);
+        ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
+        ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
+        EXPECT_EQ(Loaded->second.Warnings.front().Path, "entities[0].components.mesh.asset");
+        EXPECT_TRUE(Loaded->first->GetRegistry().view<MeshComponent>().empty());
+        std::filesystem::remove(FilePath);
+    }
 }
 
 TEST(SceneDocument, PreservesMeshWithUnknownMaterialInstance) {
@@ -201,18 +227,17 @@ entities:
     const auto Loaded = Scene::LoadFromFile(FilePath);
     ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
     EXPECT_TRUE(Loaded->second.Warnings.empty());
-    auto& Scene = *Loaded->first;
+    auto&       Scene     = *Loaded->first;
     std::size_t MeshCount = 0;
     for (const auto Entity : Scene.GetRegistry().view<MeshComponent>()) {
         static_cast<void>(Entity);
         ++MeshCount;
     }
     EXPECT_EQ(MeshCount, 1u);
-    // A missing scene material instance no longer drops the mesh from the snapshot:
-    // the renderer falls back to the mesh-imported material, then the built-in default.
+    // A missing scene material instance remains on the authoring component. Mesh
+    // resource loading is performed by MeshSystem::OnUpdate at runtime.
     const auto Snapshot = Scene.BuildSnapshot();
-    ASSERT_EQ(Snapshot.Meshes.size(), 1u);
-    EXPECT_EQ(Snapshot.Meshes.front().MaterialId, "missing");
+    EXPECT_TRUE(Snapshot.Instances.empty());
 
     std::filesystem::remove(FilePath);
 }
@@ -237,24 +262,21 @@ entities:
     Scene.Tick(0.0f);
     static_cast<void>(Scene.BuildSnapshot());
 
-    const auto CameraEntity = FindNamedEntity(Scene, "Main Camera");
+    const auto CameraEntity  = FindNamedEntity(Scene, "Main Camera");
     const auto ClusterEntity = FindNamedEntity(Scene, "Teapot Cluster");
     ASSERT_NE(CameraEntity, entt::null);
     ASSERT_NE(ClusterEntity, entt::null);
-    const auto& CameraTransform = Scene.GetRegistry().get<TransformComponent>(CameraEntity);
+    const auto& CameraTransform  = Scene.GetRegistry().get<TransformComponent>(CameraEntity);
     const auto& ClusterTransform = Scene.GetRegistry().get<TransformComponent>(ClusterEntity);
 
     const auto WorldForward   = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), CameraTransform.WorldTransform);
     const auto Forward        = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
     const auto CameraPosition = hlslpp::float3(
-        CameraTransform.WorldTransform[3].x,
-        CameraTransform.WorldTransform[3].y,
-        CameraTransform.WorldTransform[3].z);
-    const auto ClusterPosition = hlslpp::float3(
-        ClusterTransform.WorldTransform[3].x,
-        ClusterTransform.WorldTransform[3].y,
-        ClusterTransform.WorldTransform[3].z);
-    const auto ToCluster = hlslpp::normalize(ClusterPosition - CameraPosition);
+        CameraTransform.WorldTransform[3].x, CameraTransform.WorldTransform[3].y, CameraTransform.WorldTransform[3].z);
+    const auto ClusterPosition = hlslpp::float3(ClusterTransform.WorldTransform[3].x,
+                                                ClusterTransform.WorldTransform[3].y,
+                                                ClusterTransform.WorldTransform[3].z);
+    const auto ToCluster       = hlslpp::normalize(ClusterPosition - CameraPosition);
 
     EXPECT_GT(static_cast<float>(hlslpp::dot(Forward, ToCluster)), 0.99f);
 
@@ -287,7 +309,7 @@ entities:
     auto& Scene = *Loaded->first;
 
     const std::array Views{
-        RenderViewSnapshot{
+        CameraViewRecord{
             .CameraPosition = hlslpp::float3(4.0f, 5.0f, 6.0f),
         },
     };
@@ -301,7 +323,7 @@ entities:
 }
 
 TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
-    const auto ValidPath = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
+    const auto ValidPath   = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
     const auto ValidLoaded = Scene::LoadFromFile(ValidPath);
     ASSERT_TRUE(ValidLoaded.has_value()) << ValidLoaded.error().ToString();
     auto& Scene = *ValidLoaded->first;
@@ -315,7 +337,7 @@ TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
 }
 
 TEST(SceneDocument, ReportsYamlSyntaxErrorsWithoutReplacingExistingScene) {
-    const auto ValidPath = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
+    const auto ValidPath   = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
     const auto ValidLoaded = Scene::LoadFromFile(ValidPath);
     ASSERT_TRUE(ValidLoaded.has_value()) << ValidLoaded.error().ToString();
     auto& Scene = *ValidLoaded->first;
@@ -326,9 +348,7 @@ TEST(SceneDocument, ReportsYamlSyntaxErrorsWithoutReplacingExistingScene) {
     ASSERT_FALSE(Loaded.has_value());
     EXPECT_TRUE(Loaded.error().ToString().contains("line"));
     EXPECT_TRUE(Loaded.error().ToString().contains("column"));
-    EXPECT_EQ(Scene.GetRegistry().get<NameComponent>(
-                  FindNamedEntity(Scene, "Valid")).Name,
-              "Valid");
+    EXPECT_EQ(Scene.GetRegistry().get<NameComponent>(FindNamedEntity(Scene, "Valid")).Name, "Valid");
 
     std::filesystem::remove(ValidPath);
 }
@@ -381,7 +401,7 @@ entities:
 
     for (const auto Document : InvalidDocuments) {
         const auto FilePath = WriteSceneFile(Document);
-        const auto Loaded = Scene::LoadFromFile(FilePath);
+        const auto Loaded   = Scene::LoadFromFile(FilePath);
         EXPECT_FALSE(Loaded.has_value()) << Loaded.error().ToString();
         std::filesystem::remove(FilePath);
     }
@@ -457,7 +477,7 @@ entities:
     const auto Loaded = Scene::LoadFromFile(FilePath);
 
     ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
-    auto& Scene = *Loaded->first;
+    auto&       Scene       = *Loaded->first;
     std::size_t CameraCount = 0;
     for (const auto Entity : Scene.GetRegistry().view<CameraComponent>()) {
         static_cast<void>(Entity);
@@ -467,7 +487,7 @@ entities:
     std::filesystem::remove(FilePath);
 }
 
-TEST(SceneDocument, BuildsPhysicalLightInfo) {
+TEST(SceneDocument, BuildsPhysicalLightRecord) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
   - components:
@@ -513,11 +533,11 @@ entities:
 
     ASSERT_EQ(Snapshot.Lights.size(), 3u);
     const auto Directional = std::ranges::find_if(
-        Snapshot.Lights, [](const LightInfo& Light) -> bool { return Light.Type == LightType::Directional; });
+        Snapshot.Lights, [](const LightRecord& Light) -> bool { return Light.Type == LightType::Directional; });
     const auto Point = std::ranges::find_if(
-        Snapshot.Lights, [](const LightInfo& Light) -> bool { return Light.Type == LightType::Point; });
+        Snapshot.Lights, [](const LightRecord& Light) -> bool { return Light.Type == LightType::Point; });
     const auto Spot = std::ranges::find_if(
-        Snapshot.Lights, [](const LightInfo& Light) -> bool { return Light.Type == LightType::Spot; });
+        Snapshot.Lights, [](const LightRecord& Light) -> bool { return Light.Type == LightType::Spot; });
     ASSERT_NE(Directional, Snapshot.Lights.end());
     ASSERT_NE(Point, Snapshot.Lights.end());
     ASSERT_NE(Spot, Snapshot.Lights.end());

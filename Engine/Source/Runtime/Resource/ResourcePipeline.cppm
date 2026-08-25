@@ -44,7 +44,7 @@ export [[nodiscard]] auto RequestGraphicsPipeline(StringView Name, const Graphic
             .ColorFormats      = Req.ColorFormats,
             .DepthFormat       = Req.DepthFormat,
         };
-        auto EnqueueResult = TaskGraph::Get().Enqueue(
+        auto EnqueueResult = TaskGraph::Get().EnqueueTask(
             ThreadQueue::RHI,
             [PipelineRef, Name = std::move(Name), PipelineDesc = std::move(PipelineDesc)]() mutable {
                 auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(Name, PipelineDesc);
@@ -84,7 +84,7 @@ export [[nodiscard]] auto RequestRayTracingPipeline(StringView Name, const RayTr
         }
         auto PipelineDesc = RHIRayTracingPipelineDesc{
             .Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth};
-        auto EnqueueResult = TaskGraph::Get().Enqueue(
+        auto EnqueueResult = TaskGraph::Get().EnqueueTask(
             ThreadQueue::RHI,
             [PipelineRef, Name = std::move(Name), PipelineDesc = std::move(PipelineDesc)]() mutable {
                 auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(Name, PipelineDesc);

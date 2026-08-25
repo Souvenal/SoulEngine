@@ -6,6 +6,10 @@ Runtime resource-request and asset-loading layer. Resource owns canonical
 request identities, async CPU preparation, and logical demand. RHI owns native
 payload creation, submission lifetime, and native destruction.
 
+BLAS requests consume RHI geometry descriptions and do not depend on Scene mesh
+records. Scene converts its GeometryRecord values into those descriptions at
+the renderer/resource boundary.
+
 ## Terms
 
 | Term | Definition |

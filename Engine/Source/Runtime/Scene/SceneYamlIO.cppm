@@ -1,8 +1,5 @@
 module;
 
-#include <assimp/Importer.hpp>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 #include <yaml.h>
@@ -655,7 +652,16 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Str
             }
             const auto FieldName = FieldEntry.First.Scalar();
             const auto FieldPath = MakeYamlPath(ComponentPath, FieldName);
-            const auto Field     = Type.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
+            if (Type == entt::resolve<MeshComponent>() && FieldName == "asset") {
+                if (!FieldEntry.Second.IsScalar()) {
+                    AppendComponentWarning(Report, FieldPath, "must be a scalar path");
+                    Valid = false;
+                    break;
+                }
+                Registry.get<MeshComponent>(Entity).Asset = ::SoulEngine::Path{FieldEntry.Second.Scalar()};
+                continue;
+            }
+            const auto Field = Type.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
             if (!Field) {
                 AppendComponentWarning(Report, FieldPath, "unknown component field");
                 Valid = false;
@@ -666,6 +672,24 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Str
                 AppendComponentWarning(Report, FieldPath, std::move(Error));
                 Valid = false;
                 break;
+            }
+        }
+
+        if (Valid && Type == entt::resolve<MeshComponent>()) {
+            const auto& Asset              = Registry.get<MeshComponent>(Entity).Asset;
+            bool        HasParentTraversal = false;
+            for (const auto& Part : Asset) {
+                if (Part == "..") {
+                    HasParentTraversal = true;
+                    break;
+                }
+            }
+            if (Asset.empty() || Asset == ::SoulEngine::Path{"."} || Asset.is_absolute() ||
+                Asset.lexically_normal() != Asset || HasParentTraversal) {
+                AppendComponentWarning(Report,
+                                       MakeYamlPath(ComponentPath, "asset"),
+                                       "must be a non-empty normalized path relative to the Scene Assets directory");
+                Valid = false;
             }
         }
 
@@ -713,15 +737,13 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
         }
     }
 
-    const auto Entity = Name.empty() ? Scene.CreateEntity(Parent)
-                                     : Scene.CreateEntityWithName(std::move(Name), Parent);
-    Scene.GetRegistry().replace<TransformComponent>(
-        Entity,
-        TransformComponent{
-            .Translation = LocalTransform.Translation,
-            .Rotation    = LocalTransform.Rotation,
-            .Scale       = LocalTransform.Scale,
-        });
+    const auto Entity = Name.empty() ? Scene.CreateEntity(Parent) : Scene.CreateEntityWithName(std::move(Name), Parent);
+    Scene.GetRegistry().replace<TransformComponent>(Entity,
+                                                    TransformComponent{
+                                                        .Translation = LocalTransform.Translation,
+                                                        .Rotation    = LocalTransform.Rotation,
+                                                        .Scale       = LocalTransform.Scale,
+                                                    });
     LoadComponents(Scene, Entity, Components, MakeYamlPath(Path, "components"), Report);
 
     if (!Children.IsDefined() || Children.IsNull())
@@ -774,8 +796,8 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
     if (!Entities || !Entities.IsSequence())
         return MakeStructuralError(MakeYamlPath(FilePath.string(), "entities"), "must be a sequence");
 
-    auto Temporary       = std::make_unique<Scene>();
-    Temporary->m_AssetRoot = (FilePath.parent_path() / "Assets").lexically_normal();
+    auto Temporary = std::make_unique<Scene>();
+    Temporary->SetAssetRoot((FilePath.parent_path() / "Assets").lexically_normal());
     if (auto Result = LoadMaterialInstances(*Temporary, MaterialInstances, "material_instances"); !Result)
         return std::unexpected(Result.error().Append(Format("Failed to load Scene document '{}'", FilePath.string())));
 
@@ -806,43 +828,7 @@ LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, StringView P
         ResolveTexturePath(Copy.RoughnessTexture);
         ResolveTexturePath(Copy.OcclusionTexture);
         ResolveTexturePath(Copy.EmissiveTexture);
-        MaterialManager::Get().RegisterMaterial(String(Id), Copy);
-    }
-
-    // Register all mesh assets with GeometryManager
-    auto& GeometryMgr = GeometryManager::Get();
-    GeometryMgr.Clear();
-
-    // Collect unique mesh asset paths
-    std::unordered_set<String> MeshAssets;
-    const auto Meshes = Temporary->m_Registry.view<MeshComponent>();
-    for (const auto Entity : Meshes) {
-        const auto& Mesh = Meshes.get<MeshComponent>(Entity);
-        if (!Mesh.Asset.empty()) {
-            MeshAssets.insert(Temporary->ResolveAssetPath(Mesh.Asset));
-        }
-    }
-
-    // Load and register each unique mesh
-    for (const auto& MeshPath : MeshAssets) {
-        Assimp::Importer Importer;
-        constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
-                                 aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
-                                 aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes;
-
-        const auto* Scene = Importer.ReadFile(MeshPath.c_str(), Flags);
-        if (!Scene || !Scene->mRootNode || Scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) {
-            LogWarning("Failed to load mesh '{}': {}", MeshPath, Importer.GetErrorString());
-            continue;
-        }
-
-        const Path MeshDirectory = Path(MeshPath).parent_path();
-
-        // Register materials from the mesh
-        MaterialManager::Get().RegisterMaterialsFromScene(Scene, MeshDirectory);
-
-        // Register geometry
-        GeometryMgr.RegisterScene(Scene, MeshDirectory, MeshPath);
+        static_cast<void>(MaterialManager::Get().RegisterMaterial(String(Id), Copy));
     }
 
     return std::pair{std::move(Temporary), std::move(Report)};
