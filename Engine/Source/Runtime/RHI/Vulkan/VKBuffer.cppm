@@ -334,8 +334,8 @@ class VulkanVertexBuffer final : public RHIVertexBuffer {
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer->Get();
     }
-    [[nodiscard]] auto GetDeviceAddress() const -> vk::DeviceAddress {
-        return m_Buffer->GetDeviceAddress();
+    [[nodiscard]] auto GetDeviceAddress() const noexcept -> Uint64 override {
+        return static_cast<Uint64>(m_Buffer->GetDeviceAddress());
     }
     VulkanVertexBuffer(const VulkanVertexBuffer&)                    = delete;
     auto operator=(const VulkanVertexBuffer&) -> VulkanVertexBuffer& = delete;
@@ -407,8 +407,8 @@ class VulkanIndexBuffer final : public RHIIndexBuffer {
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
         return m_Buffer->Get();
     }
-    [[nodiscard]] auto GetDeviceAddress() const -> vk::DeviceAddress {
-        return m_Buffer->GetDeviceAddress();
+    [[nodiscard]] auto GetDeviceAddress() const noexcept -> Uint64 override {
+        return static_cast<Uint64>(m_Buffer->GetDeviceAddress());
     }
     VulkanIndexBuffer(const VulkanIndexBuffer&)                    = delete;
     auto operator=(const VulkanIndexBuffer&) -> VulkanIndexBuffer& = delete;
@@ -634,6 +634,40 @@ class VulkanTransientShaderStorageArena final {
     VulkanHostBuffer    m_Buffer        = VulkanHostBuffer{String{}};
     Uint64              m_FrameCapacity = 0;
     std::vector<Uint64> m_NextOffsets   = {};
+};
+
+class VulkanTransientConstantBuffer final : public RHITransientConstantBuffer {
+  public:
+    VulkanTransientConstantBuffer(String Name, Uint64 Size, Uint32 Offset)
+        : RHITransientConstantBuffer(std::move(Name), Size), m_Offset(Offset) {}
+
+    [[nodiscard]] auto GetOffset() const noexcept -> Uint32 {
+        return m_Offset;
+    }
+
+    auto SetOffset(Uint32 Offset) noexcept -> void {
+        m_Offset = Offset;
+    }
+
+  private:
+    Uint32 m_Offset = 0;
+};
+
+class VulkanTransientShaderStorageBuffer final : public RHITransientShaderStorageBuffer {
+  public:
+    VulkanTransientShaderStorageBuffer(String Name, Uint64 Size, RHITransientBufferUsage Usage, Uint64 Offset)
+        : RHITransientShaderStorageBuffer(std::move(Name), Size, Usage), m_Offset(Offset) {}
+
+    [[nodiscard]] auto GetOffset() const noexcept -> Uint64 {
+        return m_Offset;
+    }
+
+    auto SetOffset(Uint64 Offset) noexcept -> void {
+        m_Offset = Offset;
+    }
+
+  private:
+    Uint64 m_Offset = 0;
 };
 
 } // namespace SoulEngine

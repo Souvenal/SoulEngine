@@ -80,22 +80,25 @@ class RHIRenderDevice {
     }
 
   public:
-    /// Allocate a logical transient constant-buffer handle.
-    /// The handle is written through a command list and resolved by the backend during Execute().
-    [[nodiscard]] auto AllocateTransientConstantBuffer(Uint64 Size)
-        -> std::expected<RHITransientConstantBuffer, ErrorMessage> {
-        if (Size == 0)
-            return std::unexpected(ErrorMessage("Transient constant buffer size must be greater than zero"));
-        return RHITransientConstantBuffer{NextTransientBufferId(), Size};
+    /// @brief Create a frame-affined transient constant buffer from a data snapshot.
+    [[nodiscard]] virtual auto CreateTransientConstantBuffer(StringView                         Name,
+                                                             const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> = 0;
+
+    [[nodiscard]] auto CreateTransientConstantBuffer(const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> {
+        return CreateTransientConstantBuffer("Transient/ConstantBuffer", Desc);
     }
 
-    /// Allocate a logical transient shader-storage-buffer handle.
-    /// The handle is written through a command list and resolved by the backend during Execute().
-    [[nodiscard]] auto AllocateTransientShaderStorageBuffer(Uint64 Size)
-        -> std::expected<RHITransientShaderStorageBuffer, ErrorMessage> {
-        if (Size == 0)
-            return std::unexpected(ErrorMessage("Transient shader storage buffer size must be greater than zero"));
-        return RHITransientShaderStorageBuffer{NextTransientBufferId(), Size};
+    /// @brief Create a frame-affined transient shader-storage buffer from a data snapshot.
+    [[nodiscard]] virtual auto CreateTransientShaderStorageBuffer(
+        StringView                              Name,
+        const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> = 0;
+
+    [[nodiscard]] auto CreateTransientShaderStorageBuffer(const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> {
+        return CreateTransientShaderStorageBuffer("Transient/ShaderStorageBuffer", Desc);
     }
 
     // ── RHICommand execution ────────────────────────────────────

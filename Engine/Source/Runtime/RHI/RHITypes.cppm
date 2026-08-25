@@ -1,12 +1,11 @@
 module;
 
-#include <magic_enum/magic_enum.hpp>
-
 export module RHI:Types;
 
 export import Core;
 import :Ref;
 import Shader;
+export import magic_enum;
 
 export import std;
 
@@ -77,6 +76,9 @@ class RHIVertexBuffer : public RHIObject {
     [[nodiscard]] auto GetStride() const noexcept -> Uint32 {
         return m_Stride;
     }
+    [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
+        return 0;
+    }
 
   protected:
     explicit RHIVertexBuffer(String Name, const RHIVertexBufferDesc& Desc)
@@ -100,6 +102,9 @@ class RHIIndexBuffer : public RHIObject {
     [[nodiscard]] auto GetIndexCount() const noexcept -> Uint64 {
         return m_IndexCount;
     }
+    [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
+        return 0;
+    }
 
   protected:
     explicit RHIIndexBuffer(String Name, const RHIIndexBufferDesc& Desc)
@@ -109,56 +114,78 @@ class RHIIndexBuffer : public RHIObject {
     Uint64 m_IndexCount = 0;
 };
 
-/// @brief RenderDevice-allocated logical constant-buffer range for one command-list execution.
-class RHITransientConstantBuffer final {
-  public:
-    RHITransientConstantBuffer() = default;
+/// @brief GPU access modes required by a transient buffer.
+enum class RHITransientBufferUsage : Uint8 {
+    Unknown             = 0,
+    UniformRead         = 1 << 0,
+    ShaderRead          = 1 << 1,
+    IndirectCommandRead = 1 << 2,
+};
 
-    [[nodiscard]] auto GetSize() const -> Uint64 {
+} // namespace SoulEngine
+
+export namespace magic_enum::customize {
+template <>
+struct enum_range<SoulEngine::RHITransientBufferUsage> {
+    static constexpr bool is_flags = true;
+};
+} // namespace magic_enum::customize
+
+export namespace SoulEngine {
+
+struct RHITransientConstantBufferDesc {
+    std::span<const std::byte> Data = {};
+};
+
+struct RHITransientShaderStorageBufferDesc {
+    std::span<const std::byte> Data   = {};
+    RHITransientBufferUsage    Usage  = RHITransientBufferUsage::ShaderRead;
+};
+
+/// @brief Logical per-frame uniform buffer resolved by the active RHI backend.
+class RHITransientConstantBuffer : public RHIObject {
+  public:
+    RHITransientConstantBuffer(const RHITransientConstantBuffer&)                    = delete;
+    auto operator=(const RHITransientConstantBuffer&) -> RHITransientConstantBuffer& = delete;
+    RHITransientConstantBuffer(RHITransientConstantBuffer&&)                         = delete;
+    auto operator=(RHITransientConstantBuffer&&) -> RHITransientConstantBuffer&      = delete;
+    virtual ~RHITransientConstantBuffer()                                             = default;
+
+    [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
         return m_Size;
     }
 
-    [[nodiscard]] auto IsValid() const -> bool {
-        return m_Id != 0;
-    }
-
-    auto operator==(const RHITransientConstantBuffer& Other) const -> bool {
-        return m_Id == Other.m_Id;
-    }
+  protected:
+    RHITransientConstantBuffer(String Name, Uint64 Size) : RHIObject(std::move(Name)), m_Size(Size) {}
 
   private:
-    friend class RHIRenderDevice;
-
-    RHITransientConstantBuffer(Uint64 Id, Uint64 Size) : m_Id(Id), m_Size(Size) {}
-
-    Uint64 m_Id   = 0;
     Uint64 m_Size = 0;
 };
 
-/// @brief RenderDevice-allocated logical shader-storage range for one command-list execution.
-class RHITransientShaderStorageBuffer final {
+/// @brief Logical per-frame storage buffer resolved by the active RHI backend.
+class RHITransientShaderStorageBuffer : public RHIObject {
   public:
-    RHITransientShaderStorageBuffer() = default;
+    RHITransientShaderStorageBuffer(const RHITransientShaderStorageBuffer&)                    = delete;
+    auto operator=(const RHITransientShaderStorageBuffer&) -> RHITransientShaderStorageBuffer& = delete;
+    RHITransientShaderStorageBuffer(RHITransientShaderStorageBuffer&&)                         = delete;
+    auto operator=(RHITransientShaderStorageBuffer&&) -> RHITransientShaderStorageBuffer&      = delete;
+    virtual ~RHITransientShaderStorageBuffer()                                                 = default;
 
-    [[nodiscard]] auto GetSize() const -> Uint64 {
+    [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
         return m_Size;
     }
 
-    [[nodiscard]] auto IsValid() const -> bool {
-        return m_Id != 0;
+    [[nodiscard]] auto GetUsage() const noexcept -> RHITransientBufferUsage {
+        return m_Usage;
     }
 
-    auto operator==(const RHITransientShaderStorageBuffer& Other) const -> bool {
-        return m_Id == Other.m_Id;
-    }
+  protected:
+    RHITransientShaderStorageBuffer(String Name, Uint64 Size, RHITransientBufferUsage Usage)
+        : RHIObject(std::move(Name)), m_Size(Size), m_Usage(Usage) {}
 
   private:
-    friend class RHIRenderDevice;
-
-    RHITransientShaderStorageBuffer(Uint64 Id, Uint64 Size) : m_Id(Id), m_Size(Size) {}
-
-    Uint64 m_Id   = 0;
-    Uint64 m_Size = 0;
+    Uint64                m_Size  = 0;
+    RHITransientBufferUsage m_Usage = RHITransientBufferUsage::Unknown;
 };
 
 /// Shader-visible sampling state object.
@@ -403,8 +430,8 @@ using RHIShaderParameterValue = std::variant<std::monostate,
                                              RHISampledTexture*,
                                              RHIVertexBuffer*,
                                              RHIIndexBuffer*,
-                                             RHITransientConstantBuffer,
-                                             RHITransientShaderStorageBuffer,
+                                             RHIRef<RHITransientConstantBuffer>,
+                                             RHIRef<RHITransientShaderStorageBuffer>,
                                              RHIResourceArray<RHISampledTexture>,
                                              RHISampler*,
                                              RHITopLevelAccelerationStructure*,
@@ -524,16 +551,18 @@ class RHIShaderParameters {
         return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }
 
-    [[nodiscard]] auto SetTransientConstantBuffer(StringView ParameterPath, RHITransientConstantBuffer Buffer)
+    [[nodiscard]] auto SetTransientConstantBuffer(StringView                              ParameterPath,
+                                                  RHIRef<RHITransientConstantBuffer> Buffer)
         -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
+        if (Buffer.GetState() == RHIRefState::Unknown)
             return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
         return Set(ParameterPath, ShaderResourceType::ConstantBuffer, false, Buffer);
     }
 
-    [[nodiscard]] auto SetTransientShaderStorageBuffer(StringView ParameterPath, RHITransientShaderStorageBuffer Buffer)
+    [[nodiscard]] auto SetTransientShaderStorageBuffer(StringView                                  ParameterPath,
+                                                       RHIRef<RHITransientShaderStorageBuffer> Buffer)
         -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
+        if (Buffer.GetState() == RHIRefState::Unknown)
             return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
         return Set(ParameterPath, ShaderResourceType::StorageBuffer, false, Buffer);
     }

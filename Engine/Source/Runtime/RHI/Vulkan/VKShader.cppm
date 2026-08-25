@@ -10,10 +10,9 @@
 
 module;
 
-#include <magic_enum/magic_enum.hpp>
-
 export module Vulkan:Shader;
 
+import magic_enum;
 import vulkan;
 
 import Core;
@@ -43,6 +42,8 @@ namespace SoulEngine {
         return vk::DescriptorType::eStorageImage;
     case ShaderResourceType::Sampler:
         return vk::DescriptorType::eSampler;
+    case ShaderResourceType::AccelerationStructure:
+        return vk::DescriptorType::eAccelerationStructureKHR;
     }
     return std::unexpected(ErrorMessage("Unsupported shader resource type in Vulkan lowering"));
 }

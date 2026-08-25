@@ -6,7 +6,6 @@ export module RHI:Command;
 
 export import :Types;
 export import :RayTracing;
-export import :RasterGeometry;
 import :Ref;
 
 export import std;
@@ -109,37 +108,11 @@ struct RHIDrawCmd {
 
 /// @brief Draw non-indexed primitives from GPU-written indirect commands.
 struct RHIDrawIndirectCmd {
-    RHIRef<RHIGraphicsPipeline>      PipelineRef    = nullptr;
-    RHITransientShaderStorageBuffer  IndirectBuffer = {};
-    Uint64                           Offset         = 0;
-    Uint32                           DrawCount      = 1;
-    Uint32                           Stride         = sizeof(Uint32) * 4;
-};
-
-/// Resolve logical ray-tracing geometry sources into transient shader-storage buffers.
-struct RHIWriteRayTracingGeometryDataCmd {
-    RHITransientShaderStorageBuffer        InstanceBuffer = {};
-    RHITransientShaderStorageBuffer        GeometryBuffer = {};
-    std::vector<RHIRayTracingInstanceData> Instances      = {};
-    std::vector<RHIRayTracingGeometryDesc> Geometries     = {};
-};
-
-/// @brief Resolve raster SubMesh refs into a shader-visible BDA geometry table.
-struct RHIWriteRasterGeometryDataCmd {
-    RHITransientShaderStorageBuffer      GeometryBuffer = {};
-    std::vector<RHIRasterGeometrySource> Sources        = {};
-};
-
-/// @brief Upload a CPU snapshot into a RenderDevice-allocated transient constant buffer.
-struct RHIWriteTransientConstantBufferCmd {
-    RHITransientConstantBuffer Buffer = {};
-    std::vector<std::byte>     Data   = {};
-};
-
-/// @brief Upload a CPU snapshot into a RenderDevice-allocated transient storage buffer.
-struct RHIWriteTransientShaderStorageBufferCmd {
-    RHITransientShaderStorageBuffer Buffer = {};
-    std::vector<std::byte>          Data   = {};
+    RHIRef<RHIGraphicsPipeline>     PipelineRef    = nullptr;
+    RHIRef<RHITransientShaderStorageBuffer> IndirectBuffer = nullptr;
+    Uint64                          Offset         = 0;
+    Uint32                          DrawCount      = 1;
+    Uint32                          Stride         = sizeof(Uint32) * 4;
 };
 
 /// @brief Build or update a persistent TLAS from renderer-provided logical instances.
@@ -169,18 +142,14 @@ using RHICommand = std::variant<RHISetViewportCmd,
                                 RHIDrawIndexedCmd,
                                 RHIDrawCmd,
                                 RHIDrawIndirectCmd,
-                                RHIWriteRayTracingGeometryDataCmd,
-                                RHIWriteRasterGeometryDataCmd,
-                                RHIWriteTransientConstantBufferCmd,
-                                RHIWriteTransientShaderStorageBufferCmd,
                                 RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
                                 RHITraceRaysCmd>;
 
 /// @brief One rendering pass with attachments and commands inside.
 /// Backend automatically wraps each pass with begin/end rendering.
 struct RHIPass {
-    RHIRenderingDesc        Desc     = {};
-    std::vector<RHICommand> Commands = {};
+    RHIRenderingDesc           Desc     = {};
+    std::vector<RHICommand>    Commands = {};
 
     // ── Builder helpers ──────────────────────────────────────────────
 
@@ -200,14 +169,12 @@ struct RHIPass {
     auto SetGraphicsPipeline(RHIRef<RHIGraphicsPipeline> PipelineRef) -> void {
         if (!PipelineRef)
             return;
-        Commands.emplace_back(
-            RHISetGraphicsPipelineCmd{.PipelineRef = std::move(PipelineRef)});
+        Commands.emplace_back(RHISetGraphicsPipelineCmd{.PipelineRef = std::move(PipelineRef)});
     }
     auto SetRayTracingPipeline(RHIRef<RHIRayTracingPipeline> PipelineRef) -> void {
         if (!PipelineRef)
             return;
-        Commands.emplace_back(
-            RHISetRayTracingPipelineCmd{.PipelineRef = std::move(PipelineRef)});
+        Commands.emplace_back(RHISetRayTracingPipelineCmd{.PipelineRef = std::move(PipelineRef)});
     }
     auto PushConstants(RHIRef<RHIGraphicsPipeline> PipelineRef, Uint32 Offset, const void* Data, Uint64 Size) -> void {
         if (Size == 0)
@@ -257,52 +224,6 @@ struct RHIPass {
             .Parameters  = std::move(Parameters),
             .Resources   = std::move(Resources),
         });
-    }
-    auto WriteRayTracingGeometryData(RHITransientShaderStorageBuffer        InstanceBuffer,
-                                     RHITransientShaderStorageBuffer        GeometryBuffer,
-                                     std::vector<RHIRayTracingInstanceData> Instances,
-                                     std::vector<RHIRayTracingGeometryDesc> Geometries) -> void {
-        Commands.emplace_back(RHIWriteRayTracingGeometryDataCmd{
-            .InstanceBuffer = InstanceBuffer,
-            .GeometryBuffer = GeometryBuffer,
-            .Instances      = std::move(Instances),
-            .Geometries     = std::move(Geometries),
-        });
-    }
-    auto WriteRasterGeometryData(RHITransientShaderStorageBuffer GeometryBuffer,
-                                 std::vector<RHIRasterGeometrySource> Sources) -> void {
-        if (!GeometryBuffer.IsValid() || Sources.empty())
-            return;
-        Commands.emplace_back(RHIWriteRasterGeometryDataCmd{
-            .GeometryBuffer = GeometryBuffer,
-            .Sources        = std::move(Sources),
-        });
-    }
-    [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
-        -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
-            return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
-        if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(ErrorMessage("Transient constant buffer write size does not match allocation size"));
-        Commands.emplace_back(RHIWriteTransientConstantBufferCmd{
-            .Buffer = Buffer,
-            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
-        });
-        return {};
-    }
-    [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
-                                                         std::span<const std::byte>      Data)
-        -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
-        if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(
-                ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
-        Commands.emplace_back(RHIWriteTransientShaderStorageBufferCmd{
-            .Buffer = Buffer,
-            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
-        });
-        return {};
     }
     auto BuildOrUpdateTopLevelAccelerationStructure(
         RHIRef<RHITopLevelAccelerationStructure>          TargetRef,
@@ -331,19 +252,20 @@ struct RHIPass {
             return;
         Commands.emplace_back(RHIDrawCmd{.PipelineRef = std::move(PipelineRef)});
     }
-    auto DrawIndirect(RHIRef<RHIGraphicsPipeline> PipelineRef,
-                      RHITransientShaderStorageBuffer IndirectBuffer,
-                      Uint64 Offset = 0,
-                      Uint32 DrawCount = 1,
-                      Uint32 Stride = sizeof(Uint32) * 4) -> void {
-        if (!PipelineRef || !IndirectBuffer.IsValid() || DrawCount == 0 || Stride < sizeof(Uint32) * 4)
+    auto DrawIndirect(RHIRef<RHIGraphicsPipeline>     PipelineRef,
+                      RHIRef<RHITransientShaderStorageBuffer> IndirectBuffer,
+                      Uint64                          Offset    = 0,
+                      Uint32                          DrawCount = 1,
+                      Uint32                          Stride    = sizeof(Uint32) * 4) -> void {
+        if (!PipelineRef || IndirectBuffer.GetState() == RHIRefState::Unknown || DrawCount == 0 ||
+            Stride < sizeof(Uint32) * 4)
             return;
         Commands.emplace_back(RHIDrawIndirectCmd{
-            .PipelineRef = std::move(PipelineRef),
+            .PipelineRef    = std::move(PipelineRef),
             .IndirectBuffer = IndirectBuffer,
-            .Offset = Offset,
-            .DrawCount = DrawCount,
-            .Stride = Stride,
+            .Offset         = Offset,
+            .DrawCount      = DrawCount,
+            .Stride         = Stride,
         });
     }
     auto DrawIndexed(RHIRef<RHIGraphicsPipeline>                                   PipelineRef,
@@ -368,13 +290,12 @@ struct RHIPass {
 /// Acceleration-structure builds and ray dispatch are not legal between
 /// vkCmdBeginRendering and vkCmdEndRendering, so callers place them here.
 struct RHINonRenderingPass {
-    std::vector<RHICommand> Commands = {};
+    std::vector<RHICommand>    Commands = {};
 
     auto SetRayTracingPipeline(RHIRef<RHIRayTracingPipeline> PipelineRef) -> void {
         if (!PipelineRef)
             return;
-        Commands.emplace_back(
-            RHISetRayTracingPipelineCmd{.PipelineRef = std::move(PipelineRef)});
+        Commands.emplace_back(RHISetRayTracingPipelineCmd{.PipelineRef = std::move(PipelineRef)});
     }
     auto PushConstants(RHIRef<RHIGraphicsPipeline> PipelineRef, Uint32 Offset, const void* Data, Uint64 Size) -> void {
         if (Size == 0)
@@ -424,52 +345,6 @@ struct RHINonRenderingPass {
             .Parameters  = std::move(Parameters),
             .Resources   = std::move(Resources),
         });
-    }
-    auto WriteRayTracingGeometryData(RHITransientShaderStorageBuffer        InstanceBuffer,
-                                     RHITransientShaderStorageBuffer        GeometryBuffer,
-                                     std::vector<RHIRayTracingInstanceData> Instances,
-                                     std::vector<RHIRayTracingGeometryDesc> Geometries) -> void {
-        Commands.emplace_back(RHIWriteRayTracingGeometryDataCmd{
-            .InstanceBuffer = InstanceBuffer,
-            .GeometryBuffer = GeometryBuffer,
-            .Instances      = std::move(Instances),
-            .Geometries     = std::move(Geometries),
-        });
-    }
-    auto WriteRasterGeometryData(RHITransientShaderStorageBuffer GeometryBuffer,
-                                 std::vector<RHIRasterGeometrySource> Sources) -> void {
-        if (!GeometryBuffer.IsValid() || Sources.empty())
-            return;
-        Commands.emplace_back(RHIWriteRasterGeometryDataCmd{
-            .GeometryBuffer = GeometryBuffer,
-            .Sources        = std::move(Sources),
-        });
-    }
-    [[nodiscard]] auto WriteTransientConstantBuffer(RHITransientConstantBuffer Buffer, std::span<const std::byte> Data)
-        -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
-            return std::unexpected(ErrorMessage("Transient constant buffer is invalid"));
-        if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(ErrorMessage("Transient constant buffer write size does not match allocation size"));
-        Commands.emplace_back(RHIWriteTransientConstantBufferCmd{
-            .Buffer = Buffer,
-            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
-        });
-        return {};
-    }
-    [[nodiscard]] auto WriteTransientShaderStorageBuffer(RHITransientShaderStorageBuffer Buffer,
-                                                         std::span<const std::byte>      Data)
-        -> std::expected<void, ErrorMessage> {
-        if (!Buffer.IsValid())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer is invalid"));
-        if (Data.size_bytes() != Buffer.GetSize())
-            return std::unexpected(
-                ErrorMessage("Transient shader storage buffer write size does not match allocation size"));
-        Commands.emplace_back(RHIWriteTransientShaderStorageBufferCmd{
-            .Buffer = Buffer,
-            .Data   = std::vector<std::byte>{Data.begin(), Data.end()},
-        });
-        return {};
     }
     auto BuildOrUpdateTopLevelAccelerationStructure(
         RHIRef<RHITopLevelAccelerationStructure>          TargetRef,

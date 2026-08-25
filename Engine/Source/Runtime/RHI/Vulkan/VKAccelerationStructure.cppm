@@ -28,15 +28,12 @@ namespace {
 
 class VulkanNativeAccelerationStructure final {
   public:
-    VulkanNativeAccelerationStructure(VulkanDeviceBuffer Storage, vk::raii::AccelerationStructureKHR AccelerationStructure)
-        : m_Storage(std::move(Storage)),
-          m_AccelerationStructure(std::move(AccelerationStructure)) {}
+    VulkanNativeAccelerationStructure(VulkanDeviceBuffer                 Storage,
+                                      vk::raii::AccelerationStructureKHR AccelerationStructure)
+        : m_Storage(std::move(Storage)), m_AccelerationStructure(std::move(AccelerationStructure)) {}
 
     [[nodiscard]] static auto
-    Create(const VulkanResourceContext& Context,
-           vk::AccelerationStructureTypeKHR Type,
-           Uint64 Size,
-           StringView Name)
+    Create(const VulkanResourceContext& Context, vk::AccelerationStructureTypeKHR Type, Uint64 Size, StringView Name)
         -> std::expected<SPtr<VulkanNativeAccelerationStructure>, ErrorMessage> {
         auto StorageResult = VulkanDeviceBuffer::Create(
             Context, Format("{}#Storage", Name), Size, vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR);
@@ -57,7 +54,8 @@ class VulkanNativeAccelerationStructure final {
         }
 
         Context.DebugUtils.SetObjectName(*RHIAccelerationStructure, Name);
-        return std::make_shared<VulkanNativeAccelerationStructure>(std::move(Storage), std::move(RHIAccelerationStructure));
+        return std::make_shared<VulkanNativeAccelerationStructure>(std::move(Storage),
+                                                                   std::move(RHIAccelerationStructure));
     }
 
     [[nodiscard]] auto Get() const -> vk::AccelerationStructureKHR {
@@ -88,9 +86,8 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
     VulkanBottomLevelAccelerationStructure(const VulkanBottomLevelAccelerationStructure&)                    = delete;
     auto operator=(const VulkanBottomLevelAccelerationStructure&) -> VulkanBottomLevelAccelerationStructure& = delete;
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext&                  Context,
-                                     StringView                                    Name,
-                                     const RHIBottomLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<RHIBottomLevelAccelerationStructure>, ErrorMessage> {
         if (!VulkanCapability::Get().IsRayTracingAvailable())
             return std::unexpected(ErrorMessage("Cannot create BLAS because hardware ray tracing is unavailable"));
@@ -106,7 +103,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
 
         for (const auto& GeometryDesc : Desc.Geometries) {
             auto* VertexBufferPtr = GeometryDesc.VertexBufferRef.TryGet();
-            auto* IndexBufferPtr = GeometryDesc.IndexBufferRef.TryGet();
+            auto* IndexBufferPtr  = GeometryDesc.IndexBufferRef.TryGet();
             if (!VertexBufferPtr || !IndexBufferPtr) {
                 return std::unexpected(ErrorMessage("BLAS triangle geometry requires both vertex and index buffers"));
             }
@@ -119,10 +116,8 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
                 IndexBuf.GetIndexCount() / 3 > std::numeric_limits<Uint32>::max()) {
                 return std::unexpected(ErrorMessage("BLAS geometry count exceeds Vulkan Uint32 limits"));
             }
-            const vk::DeviceAddress VertexAddress =
-                VertexBuf.GetDeviceAddress();
-            const vk::DeviceAddress IndexAddress =
-                IndexBuf.GetDeviceAddress();
+            const vk::DeviceAddress VertexAddress = VertexBuf.GetDeviceAddress();
+            const vk::DeviceAddress IndexAddress  = IndexBuf.GetDeviceAddress();
             if (VertexAddress == 0 || IndexAddress == 0)
                 return std::unexpected(ErrorMessage("BLAS geometry buffer has no device address"));
 
@@ -176,18 +171,18 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
         if (BuildGeometryCI.scratchData.deviceAddress == 0)
             return std::unexpected(ErrorMessage("BLAS scratch buffer has no device address"));
         const vk::AccelerationStructureBuildRangeInfoKHR* BuildRangePtr = BuildRanges.data();
-        if (auto R = Context.Immediate.SubmitAndWait(
-                VulkanImmediateQueue::Graphics,
-                vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                [&](const vk::raii::CommandBuffer& CmdBuf) {
-                    CmdBuf.buildAccelerationStructuresKHR(BuildGeometryCI, {BuildRangePtr});
-                });
+        if (auto R = Context.Immediate.SubmitAndWait(VulkanImmediateQueue::Graphics,
+                                                     vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+                                                     [&](const vk::raii::CommandBuffer& CmdBuf) {
+                                                         CmdBuf.buildAccelerationStructuresKHR(BuildGeometryCI,
+                                                                                               {BuildRangePtr});
+                                                     });
             !R) {
             return std::unexpected(R.error().Append("Failed to build BLAS"));
         }
 
-        auto Result             = std::make_unique<VulkanBottomLevelAccelerationStructure>(String(Name));
-        Result->m_Native        = std::move(*Native);
+        auto Result      = std::make_unique<VulkanBottomLevelAccelerationStructure>(String(Name));
+        Result->m_Native = std::move(*Native);
         return UPtr<RHIBottomLevelAccelerationStructure>{std::move(Result)};
     }
 
@@ -202,17 +197,15 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
 /// Vulkan persistent TLAS allocation. Instance uploads and builds are recorded by the command encoder.
 class VulkanTopLevelAccelerationStructure final : public RHITopLevelAccelerationStructure {
   public:
-    explicit VulkanTopLevelAccelerationStructure(String Name)
-        : RHITopLevelAccelerationStructure(std::move(Name)) {}
+    explicit VulkanTopLevelAccelerationStructure(String Name) : RHITopLevelAccelerationStructure(std::move(Name)) {}
 
     ~VulkanTopLevelAccelerationStructure() override = default;
 
     VulkanTopLevelAccelerationStructure(const VulkanTopLevelAccelerationStructure&)                    = delete;
     auto operator=(const VulkanTopLevelAccelerationStructure&) -> VulkanTopLevelAccelerationStructure& = delete;
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext&               Context,
-                                     StringView                                 Name,
-                                     const RHITopLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<UPtr<RHITopLevelAccelerationStructure>, ErrorMessage> {
         if (!VulkanCapability::Get().IsRayTracingAvailable())
             return std::unexpected(ErrorMessage("Cannot create TLAS because hardware ray tracing is unavailable"));
@@ -280,7 +273,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     [[nodiscard]] auto RecordBuild(const vk::raii::CommandBuffer&                    CmdBuf,
                                    std::span<const RHIAccelerationStructureInstance> Instances,
                                    RHITopLevelAccelerationStructureBuildMode         Mode,
-                                   std::vector<std::function<void()>>* RetiredPayloads)
+                                   std::vector<std::function<void()>>*               RetiredPayloads)
         -> std::expected<void, ErrorMessage> {
         if (Instances.empty())
             return std::unexpected(ErrorMessage("TLAS requires at least one instance"));
@@ -313,8 +306,18 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
                                               VkInstances.size() * sizeof(vk::AccelerationStructureInstanceKHR));
             !R)
             return std::unexpected(R.error());
-        const vk::DeviceAddress InstanceAddress =
-            m_InstanceBuffer->GetDeviceAddress();
+        const vk::MemoryBarrier2 InstanceUploadBarrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
+            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR,
+        };
+        const vk::DependencyInfo InstanceUploadDependency{
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers    = &InstanceUploadBarrier,
+        };
+        CmdBuf.pipelineBarrier2(InstanceUploadDependency);
+        const vk::DeviceAddress                           InstanceAddress = m_InstanceBuffer->GetDeviceAddress();
         vk::AccelerationStructureGeometryInstancesDataKHR InstanceData{
             .arrayOfPointers = vk::False,
             .data            = vk::DeviceOrHostAddressConstKHR{.deviceAddress = InstanceAddress},
@@ -335,8 +338,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
             .dstAccelerationStructure = m_Native->Get(),
             .geometryCount            = 1,
             .pGeometries              = &Geometry,
-            .scratchData =
-                vk::DeviceOrHostAddressKHR{.deviceAddress = m_ScratchBuffer->GetDeviceAddress()},
+            .scratchData = vk::DeviceOrHostAddressKHR{.deviceAddress = m_ScratchBuffer->GetDeviceAddress()},
         };
         const vk::AccelerationStructureBuildRangeInfoKHR Range{.primitiveCount = static_cast<Uint32>(Instances.size())};
         const vk::AccelerationStructureBuildRangeInfoKHR* RangePtr = &Range;
@@ -346,7 +348,8 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     }
 
   private:
-    [[nodiscard]] auto GrowTo(Uint32 RequiredCapacity, std::vector<std::function<void()>>* RetiredPayloads) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto GrowTo(Uint32 RequiredCapacity, std::vector<std::function<void()>>* RetiredPayloads)
+        -> std::expected<void, ErrorMessage> {
         const Uint32 NewCapacity = (std::max)(RequiredCapacity, m_InstanceCapacity * 2);
         vk::AccelerationStructureGeometryInstancesDataKHR InstanceData{
             .arrayOfPointers = vk::False,
@@ -367,11 +370,10 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
         const std::array<Uint32, 1> PrimitiveCounts{NewCapacity};
         const auto                  Sizes = m_Device->getAccelerationStructureBuildSizesKHR(
             vk::AccelerationStructureBuildTypeKHR::eDevice, BuildGeometryCI, PrimitiveCounts);
-        auto Native = VulkanNativeAccelerationStructure::Create(
-            *m_Context,
-            vk::AccelerationStructureTypeKHR::eTopLevel,
-            Sizes.accelerationStructureSize,
-            Format("{}::Growth", GetName()));
+        auto Native = VulkanNativeAccelerationStructure::Create(*m_Context,
+                                                                vk::AccelerationStructureTypeKHR::eTopLevel,
+                                                                Sizes.accelerationStructureSize,
+                                                                Format("{}::Growth", GetName()));
         if (!Native)
             return std::unexpected(Native.error().Append("Failed to grow TLAS storage"));
         auto InstanceBufferResult =
@@ -383,8 +385,10 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
         if (!InstanceBufferResult)
             return std::unexpected(InstanceBufferResult.error().Append("Failed to grow TLAS instance buffer"));
         auto InstanceBuffer      = std::make_shared<VulkanHostBuffer>(std::move(*InstanceBufferResult));
-        auto ScratchBufferResult = VulkanDeviceBuffer::Create(
-            *m_Context, Format("{}#Scratch", GetName()), Sizes.buildScratchSize, vk::BufferUsageFlagBits::eStorageBuffer);
+        auto ScratchBufferResult = VulkanDeviceBuffer::Create(*m_Context,
+                                                              Format("{}#Scratch", GetName()),
+                                                              Sizes.buildScratchSize,
+                                                              vk::BufferUsageFlagBits::eStorageBuffer);
         if (!ScratchBufferResult)
             return std::unexpected(ScratchBufferResult.error().Append("Failed to grow TLAS scratch buffer"));
         auto ScratchBuffer = std::make_shared<VulkanDeviceBuffer>(std::move(*ScratchBufferResult));
@@ -403,7 +407,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
         return {};
     }
 
-    const VulkanResourceContext*             m_Context           = nullptr;
+    const VulkanResourceContext*            m_Context           = nullptr;
     vk::raii::Device*                       m_Device            = nullptr;
     VmaAllocator                            m_Allocator         = nullptr;
     SPtr<VulkanNativeAccelerationStructure> m_Native            = nullptr;

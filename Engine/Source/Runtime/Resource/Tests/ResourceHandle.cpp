@@ -27,10 +27,12 @@ class ResourceManagerTest : public testing::Test {
 };
 
 TEST_F(ResourceManagerTest, EquivalentMeshBlasRequestsDeduplicateBeforeDependenciesAreReady) {
-    auto MeshRef = ResourceManager::Get().RequestMeshRef("NotYetLoadedMesh.obj");
-    ASSERT_TRUE(MeshRef);
-    auto FirstRef  = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
-    auto SecondRef = ResourceManager::Get().RequestBottomLevelAccelerationStructureRef(MeshRef);
+    const std::vector<RHITriangleAccelerationStructureGeometryDesc> Geometries{
+        RHITriangleAccelerationStructureGeometryDesc{}};
+    auto FirstRef =
+        ResourceManager::Get().RequestBottomLevelAccelerationStructureRef("NotYetLoadedMesh.obj", Geometries);
+    auto SecondRef =
+        ResourceManager::Get().RequestBottomLevelAccelerationStructureRef("NotYetLoadedMesh.obj", Geometries);
     ASSERT_TRUE(FirstRef);
     ASSERT_TRUE(SecondRef);
 

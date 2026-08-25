@@ -14,7 +14,6 @@ public struct RasterViewData {
 
 public struct InstanceData {
     public float4x4 worldTransform;
-    public float4   boundingSphere;
     public uint     materialIndex;
     public uint     entityId;
     public uint     geometryId;
@@ -26,8 +25,7 @@ public struct GeometryRecord {
     public float4* tangentBuffer;
     public float2* texCoordBuffer;
     public uint*   indexBuffer;
-    public uint    indexCount;
-    public uint    materialId;
+    public float4  boundingSphere;
 };
 
 public struct RasterFrameViewResources {
@@ -45,10 +43,6 @@ public struct RasterDrawResources {
 };
 
 public ParameterBlock<RasterDrawResources> g_rasterDraw;
-
-struct RasterInstanceIndex {
-    uint value;
-};
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -73,15 +67,19 @@ float3 transformNormalToWorld(float3 normal, float3x3 worldTransform) {
 }
 
 [shader("vertex")]
-VSOutput vertMain(uint vertexID : SV_VertexID, uniform RasterInstanceIndex instanceIndex) {
+VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceIndex : SV_InstanceID) {
     VSOutput output;
-    InstanceData instanceData = g_rasterDraw.instances[instanceIndex.value];
+    InstanceData instanceData = g_rasterDraw.instances[instanceIndex];
     GeometryRecord geometry = g_rasterDraw.geometries[instanceData.geometryId];
     uint localVertexIndex = geometry.indexBuffer[vertexID];
     float3 localPosition = geometry.positionBuffer[localVertexIndex];
     float3 localNormal = geometry.normalBuffer[localVertexIndex];
-    float4 localTangent = geometry.tangentBuffer[localVertexIndex];
-    float2 localUV = geometry.texCoordBuffer[localVertexIndex];
+    float4 localTangent = float4(1.0, 0.0, 0.0, 1.0);
+    if ((uint64_t)geometry.tangentBuffer != 0)
+        localTangent = geometry.tangentBuffer[localVertexIndex];
+    float2 localUV = float2(0.0, 0.0);
+    if ((uint64_t)geometry.texCoordBuffer != 0)
+        localUV = geometry.texCoordBuffer[localVertexIndex];
     float4 worldPosition = mul(float4(localPosition, 1.0), instanceData.worldTransform);
     float3x3 worldTransform = (float3x3)instanceData.worldTransform;
     output.worldPosition = worldPosition.xyz;
@@ -90,7 +88,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uniform RasterInstanceIndex insta
         normalize(mul(localTangent.xyz, worldTransform)),
         localTangent.w * getTransformOrientation(worldTransform));
     output.uv = localUV;
-    output.instanceIndex = instanceIndex.value;
+    output.instanceIndex = instanceIndex;
     output.position = mul(worldPosition, g_rasterFrameView.view.viewProjection);
     return output;
 }

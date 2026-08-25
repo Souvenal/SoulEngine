@@ -196,12 +196,13 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(TransientUniformArena.error().Append("VulkanTransientUniformArena creation failed"));
         m_TransientUniformArena = std::move(*TransientUniformArena);
 
-        constexpr Uint64 TransientShaderStorageArenaCapacity = 4ULL * 1024ULL * 1024ULL;
-        auto             TransientShaderStorageArena         = VulkanTransientShaderStorageArena::Create(
-            "Renderer/Transient/ShaderStorageArena",
-            TransientShaderStorageArenaCapacity,
-            *m_ResourceContext,
-            m_FramesInFlight);
+        const auto TransientShaderStorageArenaCapacity =
+            static_cast<Uint64>(Cfg.RhiVulkan.TransientShaderStorageBufferSize.value_or(64U * 1024U * 1024U));
+        auto             TransientShaderStorageArena =
+            VulkanTransientShaderStorageArena::Create("Renderer/Transient/ShaderStorageArena",
+                                                      TransientShaderStorageArenaCapacity,
+                                                      *m_ResourceContext,
+                                                      m_FramesInFlight);
         if (!TransientShaderStorageArena) {
             return std::unexpected(
                 TransientShaderStorageArena.error().Append("VulkanTransientShaderStorageArena creation failed"));
@@ -398,6 +399,89 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             });
     }
 
+    [[nodiscard]] auto CreateTransientConstantBuffer(StringView                         Name,
+                                                      const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> override {
+        using magic_enum::bitwise_operators::operator|;
+
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("Transient constant buffer data must not be empty"));
+
+        auto Resource = RHIRef<RHITransientConstantBuffer>::Create();
+        auto Data     = std::vector<std::byte>{Desc.Data.begin(), Desc.Data.end()};
+        auto Payload  = std::make_unique<VulkanTransientConstantBuffer>(String(Name), Data.size(), 0);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+
+        auto TaskRef = Resource;
+        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
+            ThreadQueue::RHI,
+            [this, TaskRef = std::move(TaskRef), Data = std::move(Data)] mutable {
+                auto Offset = m_TransientUniformArena.Allocate(m_CurrentFrame, Data.size());
+                if (!Offset) {
+                    m_TransientUploadError = Offset.error().Append("Transient constant buffer allocation failed");
+                    return;
+                }
+                if (auto R = m_TransientUniformArena.Write(Data.data(), Data.size(), *Offset); !R) {
+                    m_TransientUploadError = R.error().Append("Transient constant buffer upload failed");
+                    return;
+                }
+
+                static_cast<VulkanTransientConstantBuffer&>(*TaskRef).SetOffset(*Offset);
+                m_PendingTransientBufferUsage =
+                    m_PendingTransientBufferUsage | RHITransientBufferUsage::UniformRead;
+            });
+        if (!EnqueueResult) {
+            return std::unexpected(EnqueueResult.error());
+        }
+        return Resource;
+    }
+
+    [[nodiscard]] auto CreateTransientShaderStorageBuffer(
+        StringView                              Name,
+        const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> override {
+        using magic_enum::bitwise_operators::operator|;
+
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("Transient shader storage buffer data must not be empty"));
+        if (Desc.Usage == RHITransientBufferUsage::Unknown)
+            return std::unexpected(ErrorMessage("Transient shader storage buffer usage must not be unknown"));
+
+        auto Resource = RHIRef<RHITransientShaderStorageBuffer>::Create();
+        auto Data     = std::vector<std::byte>{Desc.Data.begin(), Desc.Data.end()};
+        auto Payload  = std::make_unique<VulkanTransientShaderStorageBuffer>(
+            String(Name), Data.size(), Desc.Usage, 0);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+
+        auto TaskRef = Resource;
+        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
+            ThreadQueue::RHI,
+            [this,
+             TaskRef = std::move(TaskRef),
+             Data = std::move(Data),
+             Usage = Desc.Usage] mutable {
+                auto Offset = m_TransientShaderStorageArena.Allocate(m_CurrentFrame, Data.size());
+                if (!Offset) {
+                    m_TransientUploadError = Offset.error().Append("Transient shader storage buffer allocation failed");
+                    return;
+                }
+                if (auto R = m_TransientShaderStorageArena.Write(Data.data(), Data.size(), *Offset); !R) {
+                    m_TransientUploadError = R.error().Append("Transient shader storage buffer upload failed");
+                    return;
+                }
+
+                static_cast<VulkanTransientShaderStorageBuffer&>(*TaskRef).SetOffset(*Offset);
+                m_PendingTransientBufferUsage =
+                    m_PendingTransientBufferUsage | Usage;
+            });
+        if (!EnqueueResult) {
+            return std::unexpected(EnqueueResult.error());
+        }
+        return Resource;
+    }
+
     [[nodiscard]] auto CreateSampler(StringView Name, const RHISamplerDesc& Desc)
         -> std::expected<RHIRef<RHISampler>, ErrorMessage> override {
         return EnqueueResourceCreation<RHISampler>(
@@ -466,8 +550,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (!Result)
             return std::unexpected(Result.error());
 
-        auto Resource = RHIRef<RHIGraphicsPipeline>::Create();
-        UPtr<RHIGraphicsPipeline> Payload = std::move(*Result);
+        auto                      Resource = RHIRef<RHIGraphicsPipeline>::Create();
+        UPtr<RHIGraphicsPipeline> Payload  = std::move(*Result);
         if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
             return std::unexpected(Publish.error());
         return Resource;
@@ -479,19 +563,19 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (!Result)
             return std::unexpected(Result.error());
 
-        auto Resource = RHIRef<RHIRayTracingPipeline>::Create();
-        UPtr<RHIRayTracingPipeline> Payload = std::move(*Result);
+        auto                        Resource = RHIRef<RHIRayTracingPipeline>::Create();
+        UPtr<RHIRayTracingPipeline> Payload  = std::move(*Result);
         if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
             return std::unexpected(Publish.error());
         return Resource;
     }
 
-    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(
-        StringView Name, const RHIBottomLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] auto CreateBottomLevelAccelerationStructure(StringView                                     Name,
+                                                              const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
         return EnqueueResourceCreation<RHIBottomLevelAccelerationStructure>(
-            [this, Name = String(Name),
-             Desc](RHIRef<RHIBottomLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
+            [this, Name = String(Name), Desc](
+                RHIRef<RHIBottomLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Result = VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
@@ -501,12 +585,12 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             });
     }
 
-    [[nodiscard]] auto CreateTopLevelAccelerationStructure(
-        StringView Name, const RHITopLevelAccelerationStructureDesc& Desc)
+    [[nodiscard]] auto CreateTopLevelAccelerationStructure(StringView                                  Name,
+                                                           const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> override {
         return EnqueueResourceCreation<RHITopLevelAccelerationStructure>(
-            [this, Name = String(Name),
-             Desc](RHIRef<RHITopLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
+            [this, Name = String(Name), Desc](
+                RHIRef<RHITopLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Result = VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
@@ -551,6 +635,31 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
   private:
+    [[nodiscard]] auto EmitTransientUploadBarrier() -> std::expected<void, ErrorMessage> {
+        using magic_enum::bitwise_operators::operator&;
+
+        if (m_PendingTransientBufferUsage == RHITransientBufferUsage::Unknown)
+            return {};
+        const auto PendingUsage = std::exchange(
+            m_PendingTransientBufferUsage, RHITransientBufferUsage::Unknown);
+        vk::AccessFlags2 DestinationAccess = {};
+        if ((PendingUsage & RHITransientBufferUsage::UniformRead) != RHITransientBufferUsage::Unknown)
+            DestinationAccess |= vk::AccessFlagBits2::eUniformRead;
+        if ((PendingUsage & RHITransientBufferUsage::ShaderRead) != RHITransientBufferUsage::Unknown)
+            DestinationAccess |= vk::AccessFlagBits2::eShaderRead;
+        if ((PendingUsage & RHITransientBufferUsage::IndirectCommandRead) != RHITransientBufferUsage::Unknown)
+            DestinationAccess |= vk::AccessFlagBits2::eIndirectCommandRead;
+        const vk::MemoryBarrier2 Barrier{
+            .srcStageMask  = vk::PipelineStageFlagBits2::eHost,
+            .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = DestinationAccess,
+        };
+        const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
+        m_FrameContext[m_CurrentFrame].PrimaryBuffer.pipelineBarrier2(Dependency);
+        return {};
+    }
+
     [[nodiscard]] auto InitializeImGui(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> {
         switch (WindowSys->GetType()) {
         case WindowSystemType::Glfw: {
@@ -605,7 +714,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto EnqueueResourceCreation(RHIRef<T> Resource, CreateFn&& Create)
         -> std::expected<void, ErrorMessage> {
         auto TaskRef       = Resource;
-        auto EnqueueResult = TaskGraph::Get().Enqueue(
+        auto EnqueueResult = TaskGraph::Get().EnqueueTask(
             ThreadQueue::RHI, [TaskRef = std::move(TaskRef), Create = std::forward<CreateFn>(Create)] mutable {
                 if (auto Result = Create(TaskRef); !Result)
                     LogError("Failed to create RHI resource: {}", Result.error().ToString());
@@ -805,6 +914,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_GraphicsQueue = m_Device.getQueue(m_GraphicsFamily, 0);
         m_ComputeQueue  = m_Device.getQueue(m_ComputeFamily, 0);
         m_TransferQueue = m_Device.getQueue(m_TransferFamily, 0);
+        m_DebugUtils.SetObjectName(*m_GraphicsQueue, "Internal/Queue/Graphics");
+        m_DebugUtils.SetObjectName(*m_ComputeQueue, "Internal/Queue/Compute");
+        m_DebugUtils.SetObjectName(*m_TransferQueue, "Internal/Queue/Transfer");
 
         VulkanCapability::Get().ResolveDeviceProperties(m_PhysicalDevice);
         if (VulkanCapability::Get().IsRayTracingAvailable())
@@ -1001,23 +1113,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                             return std::unexpected(ErrorMessage(
                                 "Execute: draw pipeline does not match the currently bound graphics pipeline"));
                         }
-                    } else if constexpr (std::is_same_v<CommandType, RHIWriteTransientConstantBufferCmd>) {
-                        if (!TypedCmd.Buffer.IsValid())
-                            return std::unexpected(
-                                ErrorMessage("Execute: transient constant buffer write has an invalid buffer"));
-                        if (TypedCmd.Data.size() != TypedCmd.Buffer.GetSize()) {
-                            return std::unexpected(ErrorMessage(
-                                "Execute: transient constant buffer write size does not match buffer size"));
-                        }
-                    } else if constexpr (std::is_same_v<CommandType, RHIWriteTransientShaderStorageBufferCmd>) {
-                        if (!TypedCmd.Buffer.IsValid()) {
-                            return std::unexpected(
-                                ErrorMessage("Execute: transient shader storage buffer write has an invalid buffer"));
-                        }
-                        if (TypedCmd.Data.size() != TypedCmd.Buffer.GetSize()) {
-                            return std::unexpected(ErrorMessage(
-                                "Execute: transient shader storage buffer write size does not match buffer size"));
-                        }
                     } else if constexpr (std::is_same_v<CommandType,
                                                         RHIBuildOrUpdateTopLevelAccelerationStructureCmd>) {
                         if (bRenderingScope) {
@@ -1155,11 +1250,13 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         }
 
         const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
+        // The overlay follows the blit and alpha-blends over the scene, so it
+        // must load and preserve the existing swapchain color.
         VulkanTransitionImage(Buf,
                               m_CommittedImageStates,
                               DstImage,
                               vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                              vk::AccessFlagBits2::eColorAttachmentWrite,
+                              vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite,
                               vk::ImageLayout::eColorAttachmentOptimal,
                               false);
 
@@ -1208,17 +1305,19 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(R.error().Append("Execute: transient constant arena reset failed"));
         if (auto R = m_TransientShaderStorageArena.BeginFrame(m_CurrentFrame); !R)
             return std::unexpected(R.error().Append("Execute: transient shader storage arena reset failed"));
+        TaskGraph::Get().DrainFrameTasks(ThreadQueue::RHI);
+        if (m_TransientUploadError)
+            return std::unexpected(std::exchange(m_TransientUploadError, std::nullopt).value());
+        if (auto R = EmitTransientUploadBarrier(); !R)
+            return std::unexpected(R.error().Append("Execute: transient upload barrier failed"));
         const Uint64 FrameTokenValue = m_Timeline.NextValue();
 
         std::vector<vk::CommandBuffer> Secondaries;
         Secondaries.reserve(CmdList.Scopes.size());
-        std::vector<std::pair<RHITransientConstantBuffer, VulkanTransientBufferSlice>> TransientConstantBuffers;
-        std::vector<std::pair<RHITransientShaderStorageBuffer, VulkanTransientBufferSlice>>
-                                           TransientShaderStorageBuffers;
         std::vector<std::function<void()>> RetiredPayloads;
 
         for (std::size_t ScopeIndex = 0; ScopeIndex < CmdList.Scopes.size(); ++ScopeIndex) {
-            const auto& Scope = CmdList.Scopes[ScopeIndex];
+            const auto&                   Scope = CmdList.Scopes[ScopeIndex];
             // Allocate one secondary for this ordered rendering or non-rendering scope.
             vk::CommandBufferAllocateInfo Alloc{
                 .commandPool        = *m_FrameContext[m_CurrentFrame].SubPool,
@@ -1251,21 +1350,13 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             {
                 auto                 ImageStateCopy = m_CommittedImageStates;
                 VulkanCommandVisitor Visitor{
-                    .Buf                           = SecBuf,
-                    .LocalStates                   = ImageStateCopy,
-                    .Descriptors                   = m_DescriptorManager.get(),
-                    .TransientUniformArena         = &m_TransientUniformArena,
-                    .TransientShaderStorageArena   = &m_TransientShaderStorageArena,
-                    .TransientConstantBuffers      = &TransientConstantBuffers,
-                    .TransientShaderStorageBuffers = &TransientShaderStorageBuffers,
-                    .RetiredPayloads               = &RetiredPayloads,
-                    .FrameIndex                    = m_CurrentFrame,
-                };
-                const auto IsTransientUpload = [](const RHICommand& Cmd) -> bool {
-                    return std::holds_alternative<RHIWriteTransientConstantBufferCmd>(Cmd) ||
-                           std::holds_alternative<RHIWriteTransientShaderStorageBufferCmd>(Cmd) ||
-                           std::holds_alternative<RHIWriteRayTracingGeometryDataCmd>(Cmd) ||
-                           std::holds_alternative<RHIWriteRasterGeometryDataCmd>(Cmd);
+                    SecBuf,
+                    ImageStateCopy,
+                    m_DescriptorManager.get(),
+                    &m_TransientUniformArena,
+                    &m_TransientShaderStorageArena,
+                    &RetiredPayloads,
+                    m_CurrentFrame,
                 };
                 const auto RecordCommand = [&Visitor](const RHICommand& Cmd) -> std::expected<void, ErrorMessage> {
                     std::visit(Visitor, Cmd);
@@ -1273,24 +1364,16 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                         return std::unexpected(*Visitor.Error);
                     return {};
                 };
-                const auto RecordScope = [&Visitor, &IsTransientUpload, &RecordCommand](
+                const auto RecordScope = [&Visitor, &RecordCommand](
                                              const auto& TypedScope) -> std::expected<void, ErrorMessage> {
                     using ScopeType = std::decay_t<decltype(TypedScope)>;
                     if constexpr (std::is_same_v<ScopeType, RHIPass>) {
-                        // Host writes require HOST pipeline stages, which Vulkan forbids inside dynamic rendering.
-                        // Resolve every transient upload before opening the rendering scope.
-                        for (const auto& Cmd : TypedScope.Commands) {
-                            if (!IsTransientUpload(Cmd))
-                                continue;
-                            if (auto R = RecordCommand(Cmd); !R)
-                                return R;
-                        }
                         // Storage-image layout transitions are illegal inside dynamic rendering.
                         // Pre-record pipeline and descriptor bindings so their image barriers land before
                         // BeginRendering.
                         for (const auto& Cmd : TypedScope.Commands) {
-                            if (IsTransientUpload(Cmd) || (!std::holds_alternative<RHISetGraphicsPipelineCmd>(Cmd) &&
-                                                           !std::holds_alternative<RHIBindShaderParametersCmd>(Cmd)))
+                            if (!std::holds_alternative<RHISetGraphicsPipelineCmd>(Cmd) &&
+                                !std::holds_alternative<RHIBindShaderParametersCmd>(Cmd))
                                 continue;
                             if (auto R = RecordCommand(Cmd); !R)
                                 return R;
@@ -1299,7 +1382,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                         if (Visitor.Error)
                             return std::unexpected(*Visitor.Error);
                         for (const auto& Cmd : TypedScope.Commands) {
-                            if (IsTransientUpload(Cmd))
+                            if (std::holds_alternative<RHISetGraphicsPipelineCmd>(Cmd) ||
+                                std::holds_alternative<RHIBindShaderParametersCmd>(Cmd))
                                 continue;
                             if (auto R = RecordCommand(Cmd); !R)
                                 return R;
@@ -1423,6 +1507,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     std::vector<VulkanFrameContext>   m_FrameContext;
     VulkanTransientUniformArena       m_TransientUniformArena       = {};
     VulkanTransientShaderStorageArena m_TransientShaderStorageArena = {};
+    RHITransientBufferUsage            m_PendingTransientBufferUsage = RHITransientBufferUsage::Unknown;
+    std::optional<ErrorMessage>        m_TransientUploadError             = std::nullopt;
 
     // ── Global descriptor manager ─────────────────────────────────────────
     UPtr<VulkanDescriptorManager> m_DescriptorManager = nullptr;

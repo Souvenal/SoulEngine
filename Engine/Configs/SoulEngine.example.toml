@@ -34,3 +34,8 @@ DebugUtils = true
 # Logical ConstantBuffer resources reserve aligned slots in this arena.
 # When omitted the backend defaults to 4096 bytes.
 ConstantArenaBufferSize = 4096
+
+# Per-frame transient shader-storage arena capacity in bytes.
+# This stores geometry, material, light, and indirect-command data.
+# When omitted, the Vulkan backend defaults to 64 MiB.
+TransientShaderStorageBufferSize = 67108864

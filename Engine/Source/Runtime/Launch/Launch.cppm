@@ -200,9 +200,6 @@ class EngineLoop {
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
 
-        // Release GPU geometry buffers before VMA allocator dies.
-        GeometryManager::Get().Clear();
-
         RHIRenderDevice::Destroy();
         if (m_WindowSystem) {
             m_WindowSystem->Shutdown();
@@ -245,6 +242,10 @@ class EngineLoop {
             if (m_FatalError.load(std::memory_order_acquire))
                 break;
 
+            // Each engine loop owns an independent ordinal. Render/RHI tasks
+            // carry the producer's ordinal and execute when the consumer
+            // reaches the same pipeline position.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
             m_Editor.BeginFrame(Slot.ImGuiSnapshot);
@@ -267,11 +268,10 @@ class EngineLoop {
             AppScene.Tick(Delta);
             if (auto SceneView = m_Editor.BuildSceneView()) {
                 const std::array SceneViews{std::move(*SceneView)};
-                const auto PickSnapshot = AppScene.BuildSnapshot();
+                const auto       PickSnapshot = AppScene.BuildSnapshot();
                 m_Editor.UpdateSceneSelection(AppScene, SceneViews.front(), PickSnapshot);
-                Slot.SceneData = AppScene.BuildSnapshot(SceneViews,
-                                                        m_Editor.GetSelectedEntity(),
-                                                        m_Editor.GetSelectedPixel());
+                Slot.SceneData =
+                    AppScene.BuildSnapshot(SceneViews, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             } else {
                 Slot.SceneData = AppScene.BuildSnapshot(m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             }
@@ -299,12 +299,10 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::Render);
-                if (!Task)
-                    break;
-                (*Task)();
-            }
+            // Advance RenderThread's local frame ordinal before draining or
+            // publishing tasks for this frame.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
+            TaskGraph::Get().DrainTasks(ThreadQueue::Render);
 
             if (!Slot.Renderer) {
                 LogError("Render loop received a frame without a renderer");
@@ -347,12 +345,12 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::RHI);
-                if (!Task)
-                    break;
-                (*Task)();
-            }
+            // Advance RHIThread's local frame ordinal before matching its
+            // frame-affined tasks. This intentionally does not read another
+            // thread's TLS value.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
+            TaskGraph::Get().DrainTasks(ThreadQueue::RHI);
+            TaskGraph::Get().DrainFrameTasks(ThreadQueue::RHI);
 
             // Resource handles are passive state reads; publish completed sampled-texture uploads here
             // on the RHI thread before the next command list can observe them.
@@ -396,7 +394,6 @@ class EngineLoop {
     std::chrono::steady_clock::time_point m_LastTickTime;
 
     std::array<FrameSlot, kSlotCount> m_Slots = {};
-
     Uint32 m_GameSlotIndex   = 0;
     Uint32 m_RenderSlotIndex = 0;
     Uint32 m_RHISlotIndex    = 0;

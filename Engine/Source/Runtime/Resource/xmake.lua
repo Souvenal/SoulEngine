@@ -9,6 +9,7 @@ target("STBImage")
 target("Resource")
     set_kind("moduleonly")
 
+    add_packages("magic_enum", {public = true})
     add_packages("stb", {public = true })
     add_packages("hlslpp", {public = true })
     add_packages("assimp", { public = true })

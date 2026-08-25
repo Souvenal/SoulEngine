@@ -1,8 +1,8 @@
 module;
-#include <magic_enum/magic_enum.hpp>
 
 export module WindowSystem:Types;
 
+import magic_enum;
 export import std;
 import Core;
 

@@ -90,9 +90,10 @@ struct ShaderConfig {
 /// Pure mirror of the `[RHI.Vulkan]` TOML table.  All fields are optional;
 /// the Vulkan backend provides the actual defaults.
 struct VulkanConfig {
-    std::optional<Uint32> ConstantArenaBufferSize; ///< Per-frame dynamic constant arena capacity (bytes)
-    std::optional<bool>   Validation;              ///< Enable Vulkan validation layer
-    std::optional<bool>   DebugUtils;              ///< Enable VK_EXT_debug_utils and debug messenger
+    std::optional<Uint32> ConstantArenaBufferSize;             ///< Per-frame dynamic constant arena capacity (bytes)
+    std::optional<Uint32> TransientShaderStorageBufferSize;    ///< Per-frame transient storage arena capacity (bytes)
+    std::optional<bool>   Validation;                          ///< Enable Vulkan validation layer
+    std::optional<bool>   DebugUtils;                           ///< Enable VK_EXT_debug_utils and debug messenger
 };
 
 /// @brief Top-level engine configuration, aggregating all subsystems.
@@ -243,6 +244,8 @@ class ConfigManager final : public Singleton<ConfigManager> {
 
         // --- Vulkan RHI config ---
         Cfg.RhiVulkan.ConstantArenaBufferSize = Table["RHI"]["Vulkan"]["ConstantArenaBufferSize"].value<Uint32>();
+        Cfg.RhiVulkan.TransientShaderStorageBufferSize =
+            Table["RHI"]["Vulkan"]["TransientShaderStorageBufferSize"].value<Uint32>();
         Cfg.RhiVulkan.Validation              = Table["RHI"]["Vulkan"]["Validation"].value<bool>();
         Cfg.RhiVulkan.DebugUtils              = Table["RHI"]["Vulkan"]["DebugUtils"].value<bool>();
 

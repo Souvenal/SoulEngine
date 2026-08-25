@@ -4,10 +4,10 @@ module;
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <hlsl++.h>
-#include <magic_enum/magic_enum.hpp>
 
 export module Resource:Material;
 
+import magic_enum;
 import std;
 
 export import Core;
@@ -137,7 +137,7 @@ class MaterialManager final : public Singleton<MaterialManager> {
 
     /// Register or update one material instance. New IDs append; an existing ID
     /// is overwritten in place.
-    auto RegisterMaterial(String Name, const PbrMaterial& Material) -> void {
+    [[nodiscard]] auto RegisterMaterial(String Name, const PbrMaterial& Material) -> Uint32 {
         std::scoped_lock Lock(m_Mutex);
 
         // Check if material with same name already exists
@@ -145,7 +145,7 @@ class MaterialManager final : public Singleton<MaterialManager> {
             if (Entry.Name == Name) {
                 Entry.Value         = Material;
                 m_Records[Entry.Id] = BuildMaterialRecord(Material);
-                return;
+                return Entry.Id;
             }
         }
 
@@ -158,13 +158,17 @@ class MaterialManager final : public Singleton<MaterialManager> {
             .Value = Material,
         });
         m_Records.emplace_back(BuildMaterialRecord(Material));
+        return NewId;
     }
 
     /// Register all materials from an Assimp scene.
-    auto RegisterMaterialsFromScene(const aiScene* Scene, const Path& MeshDirectory) -> void {
+    [[nodiscard]] auto RegisterMaterialsFromScene(const aiScene* Scene, const Path& MeshDirectory)
+        -> std::vector<Uint32> {
+        std::vector<Uint32> Result;
         if (!Scene)
-            return;
+            return Result;
 
+        Result.reserve(Scene->mNumMaterials);
         for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex) {
             const auto* AiMaterial   = Scene->mMaterials[MaterialIndex];
             aiString    MaterialName = {};
@@ -174,8 +178,9 @@ class MaterialManager final : public Singleton<MaterialManager> {
             String      Name     = HasName ? String(MaterialName.C_Str()) : Format("Material{}", MaterialIndex);
             PbrMaterial Material = ImportMaterial(AiMaterial, MeshDirectory);
 
-            RegisterMaterial(std::move(Name), Material);
+            Result.emplace_back(RegisterMaterial(std::move(Name), Material));
         }
+        return Result;
     }
 
     /// Find a material ID by name. Returns 0 (DefaultMaterial) if not found.
@@ -187,6 +192,15 @@ class MaterialManager final : public Singleton<MaterialManager> {
             }
         }
         return 0;
+    }
+
+    [[nodiscard]] auto FindMaterialIdOptional(StringView Name) -> std::optional<Uint32> {
+        std::scoped_lock Lock(m_Mutex);
+        for (const auto& Entry : m_Entries) {
+            if (Entry.Name == Name)
+                return Entry.Id;
+        }
+        return std::nullopt;
     }
 
     /// Get a material by ID.

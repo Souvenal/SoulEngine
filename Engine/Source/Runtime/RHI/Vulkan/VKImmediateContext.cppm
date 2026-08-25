@@ -1,10 +1,10 @@
 module;
 
 #include <vk_mem_alloc.h>
-#include <magic_enum/magic_enum.hpp>
 
 export module Vulkan:ImmediateContext;
 
+import magic_enum;
 import Core;
 import RHI;
 import vulkan;

@@ -6,6 +6,7 @@ import Core;
 import RHI;
 import Resource;
 import Scene;
+import TaskGraph;
 
 export import std;
 
@@ -44,7 +45,8 @@ class IRenderer {
 
     /// @brief Render the scene snapshot and return commands for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
-    [[nodiscard]] virtual auto Render(const SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Render(const SceneSnapshot& Scene)
+        -> std::expected<RenderResult, ErrorMessage> = 0;
 };
 
 /// @brief Factory type for renderer creation.

@@ -1,14 +1,14 @@
 module;
-#include <hlsl++.h>
 #include <entt/entity/entity.hpp>
+#include <hlsl++.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui_threaded_rendering.h>
-#include <magic_enum/magic_enum.hpp>
 
 export module Editor;
 
+import magic_enum;
 import :MainMenu;
 import :UIManager;
 import :UIPanels;
@@ -114,7 +114,7 @@ class Editor {
             m_TextureQueue.Shutdown();
             m_TextureQueue.UpdateTexFunc = nullptr;
         }
-        m_EditorWorld.ReleaseRHIResources();
+        m_EditorWorld.Shutdown();
         m_BoundRenderDevice = nullptr;
     }
 
@@ -143,7 +143,7 @@ class Editor {
     }
 
     /// @brief Build the editor-owned Scene View render request for this frame.
-    [[nodiscard]] auto BuildSceneView() const -> std::optional<RenderViewSnapshot> {
+    [[nodiscard]] auto BuildSceneView() const -> std::optional<CameraViewRecord> {
         return m_EditorWorld.BuildSceneView();
     }
 
@@ -160,9 +160,8 @@ class Editor {
     }
 
   public:
-    auto UpdateSceneSelection(const Scene& Scene,
-                              const RenderViewSnapshot& View,
-                              const SceneSnapshot& Snapshot) -> void {
+      // TODO: Remove this after refractoring selection logic
+    auto UpdateSceneSelection(const Scene& Scene, const CameraViewRecord& View, const SceneSnapshot& Snapshot) -> void {
         if (!m_ImGuiContext)
             return;
         ImGui::SetCurrentContext(m_ImGuiContext);
@@ -176,13 +175,13 @@ class Editor {
         const auto* Camera = m_EditorWorld.GetViewportCamera();
         if (!Camera)
             return;
-        if (Camera->ViewportWidth == 0 || Camera->ViewportHeight == 0 ||
-            IO.DisplaySize.x <= 0.0f || IO.DisplaySize.y <= 0.0f)
+        if (Camera->ViewportWidth == 0 || Camera->ViewportHeight == 0 || IO.DisplaySize.x <= 0.0f ||
+            IO.DisplaySize.y <= 0.0f)
             return;
 
         const float PixelX = IO.MousePos.x;
         const float PixelY = IO.MousePos.y;
-        const float Width = IO.DisplaySize.x;
+        const float Width  = IO.DisplaySize.x;
         const float Height = IO.DisplaySize.y;
         if (PixelX < 0.0f || PixelY < 0.0f || PixelX >= Width || PixelY >= Height) {
             ClearSelection();
@@ -191,71 +190,54 @@ class Editor {
 
         const auto PixelWidth  = static_cast<float>(Camera->ViewportWidth);
         const auto PixelHeight = static_cast<float>(Camera->ViewportHeight);
-        m_SelectedPixel = RenderPixelCoordinate{
+        m_SelectedPixel        = RenderPixelCoordinate{
             .X = (std::min)(static_cast<Uint32>((PixelX / Width) * PixelWidth), Camera->ViewportWidth - 1),
             .Y = (std::min)(static_cast<Uint32>((PixelY / Height) * PixelHeight), Camera->ViewportHeight - 1),
         };
 
-        const auto InverseViewProjection = hlslpp::inverse(View.ViewProjection);
-        const float NdcX = 2.0f * PixelX / Width - 1.0f;
-        const float NdcY = 1.0f - 2.0f * PixelY / Height;
-        const auto NearPoint = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 0.0f, 1.0f}, InverseViewProjection);
-        const auto FarPoint = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 1.0f, 1.0f}, InverseViewProjection);
-        const auto Origin = View.CameraPosition;
-        const auto NearWorld = hlslpp::float3(NearPoint.x / NearPoint.w, NearPoint.y / NearPoint.w, NearPoint.z / NearPoint.w);
+        const auto  InverseViewProjection = hlslpp::inverse(View.ViewProjection);
+        const float NdcX                  = 2.0f * PixelX / Width - 1.0f;
+        const float NdcY                  = 1.0f - 2.0f * PixelY / Height;
+        const auto  NearPoint             = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 0.0f, 1.0f}, InverseViewProjection);
+        const auto  FarPoint              = hlslpp::mul(hlslpp::float4{NdcX, NdcY, 1.0f, 1.0f}, InverseViewProjection);
+        const auto  Origin                = View.CameraPosition;
+        const auto  NearWorld =
+            hlslpp::float3(NearPoint.x / NearPoint.w, NearPoint.y / NearPoint.w, NearPoint.z / NearPoint.w);
         const auto FarWorld = hlslpp::float3(FarPoint.x / FarPoint.w, FarPoint.y / FarPoint.w, FarPoint.z / FarPoint.w);
         const auto Direction = hlslpp::normalize(FarWorld - NearWorld);
 
-        std::optional<entt::entity> HitEntity = std::nullopt;
-        float ClosestDistance = std::numeric_limits<float>::max();
-        auto& GeometryMgr = GeometryManager::Get();
-        for (const auto& Renderable : Snapshot.Meshes) {
-            // Get geometry records from GeometryManager
-            auto GeometryRecords = GeometryMgr.FindGeometryRecords(Renderable.MeshAsset);
-            if (GeometryRecords.empty())
+        std::optional<entt::entity> HitEntity       = std::nullopt;
+        float                       ClosestDistance = std::numeric_limits<float>::max();
+        for (const auto& Renderable : Snapshot.Instances) {
+            if (!Renderable.Geometry)
                 continue;
 
-            for (const auto& Record : GeometryRecords) {
-                if (Record.Positions.empty())
-                    continue;
-                hlslpp::float3 Min{Record.Positions.front().x, Record.Positions.front().y, Record.Positions.front().z};
-                hlslpp::float3 Max = Min;
-                for (const auto& Position : Record.Positions) {
-                    Min.x = std::min(static_cast<float>(Min.x), static_cast<float>(Position.x));
-                    Min.y = std::min(static_cast<float>(Min.y), static_cast<float>(Position.y));
-                    Min.z = std::min(static_cast<float>(Min.z), static_cast<float>(Position.z));
-                    Max.x = std::max(static_cast<float>(Max.x), static_cast<float>(Position.x));
-                    Max.y = std::max(static_cast<float>(Max.y), static_cast<float>(Position.y));
-                    Max.z = std::max(static_cast<float>(Max.z), static_cast<float>(Position.z));
-                }
-                const auto LocalCenter = (Min + Max) * 0.5f;
-                float RadiusSquared = 0.0f;
-                for (const auto& Position : Record.Positions) {
-                    const auto Offset = hlslpp::float3{Position.x, Position.y, Position.z} - LocalCenter;
-                    RadiusSquared = std::max(RadiusSquared, static_cast<float>(hlslpp::dot(Offset, Offset)));
-                }
-                const auto WorldCenter4 = hlslpp::mul(hlslpp::float4{LocalCenter.x, LocalCenter.y, LocalCenter.z, 1.0f}, Renderable.WorldTransform);
-                float TransformSquared = 0.0f;
-                for (Uint32 Row = 0; Row < 3; ++Row) {
-                    TransformSquared += Renderable.WorldTransform[Row].x * Renderable.WorldTransform[Row].x;
-                    TransformSquared += Renderable.WorldTransform[Row].y * Renderable.WorldTransform[Row].y;
-                    TransformSquared += Renderable.WorldTransform[Row].z * Renderable.WorldTransform[Row].z;
-                }
-                const auto WorldCenter = hlslpp::float3{WorldCenter4.x, WorldCenter4.y, WorldCenter4.z};
-                const float WorldRadius = std::sqrt(RadiusSquared * TransformSquared);
-                const auto ToCenter = Origin - WorldCenter;
-                const float B = hlslpp::dot(ToCenter, Direction);
-                const float C = hlslpp::dot(ToCenter, ToCenter) - WorldRadius * WorldRadius;
-                const float Discriminant = B * B - C;
-                if (Discriminant < 0.0f)
-                    continue;
-                float Distance = -B - std::sqrt(Discriminant);
-                if (Distance < 0.0f)
-                    Distance = -B + std::sqrt(Discriminant);
-                if (Distance >= 0.0f && Distance < ClosestDistance) {
-                    ClosestDistance = Distance;
-                    HitEntity = static_cast<entt::entity>(Renderable.EntityId);
-                }
+            const auto& Record = *Renderable.Geometry;
+            const auto& Sphere = Record.LocalBoundingSphere;
+            const auto  LocalCenter = hlslpp::float3{Sphere.x, Sphere.y, Sphere.z};
+            const auto  WorldCenter4 =
+                hlslpp::mul(hlslpp::float4{LocalCenter.x, LocalCenter.y, LocalCenter.z, 1.0f},
+                            Renderable.WorldTransform);
+            float TransformSquared = 0.0f;
+            for (Uint32 Row = 0; Row < 3; ++Row) {
+                TransformSquared += Renderable.WorldTransform[Row].x * Renderable.WorldTransform[Row].x;
+                TransformSquared += Renderable.WorldTransform[Row].y * Renderable.WorldTransform[Row].y;
+                TransformSquared += Renderable.WorldTransform[Row].z * Renderable.WorldTransform[Row].z;
+            }
+            const auto  WorldCenter  = hlslpp::float3{WorldCenter4.x, WorldCenter4.y, WorldCenter4.z};
+            const float WorldRadius  = std::abs(Sphere.w) * std::sqrt(TransformSquared);
+            const auto  ToCenter     = Origin - WorldCenter;
+            const float B            = hlslpp::dot(ToCenter, Direction);
+            const float C            = hlslpp::dot(ToCenter, ToCenter) - WorldRadius * WorldRadius;
+            const float Discriminant = B * B - C;
+            if (Discriminant < 0.0f)
+                continue;
+            float Distance = -B - std::sqrt(Discriminant);
+            if (Distance < 0.0f)
+                Distance = -B + std::sqrt(Discriminant);
+            if (Distance >= 0.0f && Distance < ClosestDistance) {
+                ClosestDistance = Distance;
+                HitEntity       = static_cast<entt::entity>(Renderable.EntityId);
             }
         }
         if (HitEntity)
@@ -263,7 +245,6 @@ class Editor {
         else
             ClearSelection();
     }
-
 
     [[nodiscard]] auto GetSelectedEntity() const -> std::optional<entt::entity> {
         return m_SelectedEntity;
@@ -352,18 +333,18 @@ class Editor {
     }
 
   private:
-    ImGuiContext*          m_ImGuiContext = nullptr;
-    std::vector<UIPanel>   m_Panels;
+    ImGuiContext*        m_ImGuiContext = nullptr;
+    std::vector<UIPanel> m_Panels;
 
     ImTextureQueue m_TextureQueue;
-    std::mutex      m_TextureQueueMutex;
+    std::mutex     m_TextureQueueMutex;
 
-    EditorWorld                         m_EditorWorld = {};
-    std::optional<entt::entity>          m_SelectedEntity = std::nullopt;
-    std::optional<RenderPixelCoordinate> m_SelectedPixel  = std::nullopt;
+    EditorWorld                          m_EditorWorld       = {};
+    std::optional<entt::entity>          m_SelectedEntity    = std::nullopt;
+    std::optional<RenderPixelCoordinate> m_SelectedPixel     = std::nullopt;
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
-    IWindowSystem* m_BoundWindowSystem = nullptr;
-    RHIRenderDevice* m_BoundRenderDevice = nullptr;
+    IWindowSystem*                       m_BoundWindowSystem = nullptr;
+    RHIRenderDevice*                     m_BoundRenderDevice = nullptr;
 };
 
 } // namespace SoulEngine

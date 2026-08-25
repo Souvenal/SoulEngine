@@ -3,10 +3,10 @@ module;
 #include <GLFW/glfw3.h>
 #include <entt/entt.hpp>
 #include <imgui_impl_glfw.h>
-#include <magic_enum/magic_enum.hpp>
 
 export module WindowSystem:Glfw;
 
+import magic_enum;
 import Core;
 import :Types;
 import :Interface;

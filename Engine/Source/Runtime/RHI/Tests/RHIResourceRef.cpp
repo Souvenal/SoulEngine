@@ -34,6 +34,17 @@ class MockVertexBuffer final : public RHIVertexBuffer {
     Uint32& m_DestructionCount;
 };
 
+class MockTransientConstantBuffer final : public RHITransientConstantBuffer {
+  public:
+    MockTransientConstantBuffer(String Name, Uint64 Size) : RHITransientConstantBuffer(std::move(Name), Size) {}
+};
+
+class MockTransientShaderStorageBuffer final : public RHITransientShaderStorageBuffer {
+  public:
+    MockTransientShaderStorageBuffer(String Name, Uint64 Size, RHITransientBufferUsage Usage)
+        : RHITransientShaderStorageBuffer(std::move(Name), Size, Usage) {}
+};
+
 class MockRenderDevice final : public RHIRenderDevice {
   public:
     MockRenderDevice() {
@@ -71,6 +82,31 @@ class MockRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto CreateIndexBuffer(StringView, const RHIIndexBufferDesc&)
         -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock index-buffer creation is not implemented"));
+    }
+
+    [[nodiscard]] auto CreateTransientConstantBuffer(StringView Name, const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> override {
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("mock transient constant-buffer data is empty"));
+        auto Resource = RHIRef<RHITransientConstantBuffer>::Create();
+        auto Payload = std::make_unique<MockTransientConstantBuffer>(String(Name), Desc.Data.size_bytes());
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
+    }
+
+    [[nodiscard]] auto CreateTransientShaderStorageBuffer(
+        StringView Name,
+        const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> override {
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("mock transient shader-storage data is empty"));
+        auto Resource = RHIRef<RHITransientShaderStorageBuffer>::Create();
+        auto Payload = std::make_unique<MockTransientShaderStorageBuffer>(
+            String(Name), Desc.Data.size_bytes(), Desc.Usage);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
     }
 
     [[nodiscard]] auto CreateSampledTexture(StringView, const RHISampledTextureDesc&)
@@ -203,6 +239,35 @@ TEST(RHIResourceRefTest, SynchronousCreateReturnsReadySamplerRef) {
     }
     Device.DrainDeletionQueue();
     EXPECT_EQ(Device.m_SamplerDestructions, 1);
+}
+
+TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
+    using magic_enum::bitwise_operators::operator|;
+
+    MockRenderDevice Device;
+    const std::array<std::byte, 16> Data = {};
+
+    auto Constant = Device.CreateTransientConstantBuffer(
+        "Test/TransientConstant", RHITransientConstantBufferDesc{.Data = Data});
+    ASSERT_TRUE(Constant.has_value());
+    ASSERT_TRUE(*Constant);
+    EXPECT_EQ((*Constant)->GetSize(), Data.size());
+
+    auto Storage = Device.CreateTransientShaderStorageBuffer(
+        "Test/TransientStorage",
+        RHITransientShaderStorageBufferDesc{
+            .Data       = Data,
+            .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
+        });
+    ASSERT_TRUE(Storage.has_value());
+    ASSERT_TRUE(*Storage);
+    EXPECT_EQ((*Storage)->GetSize(), Data.size());
+    EXPECT_EQ((*Storage)->GetUsage(),
+              RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead);
+
+    Constant = nullptr;
+    Storage = nullptr;
+    Device.DrainDeletionQueue();
 }
 
 TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
