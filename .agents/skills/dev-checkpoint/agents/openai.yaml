@@ -1,0 +1,3 @@
+interface:
+  display_name: "Dev Checkpoint"
+  short_description: "Persist task state across development sessions"
