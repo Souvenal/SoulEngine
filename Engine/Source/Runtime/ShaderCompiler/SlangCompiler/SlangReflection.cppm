@@ -49,9 +49,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
             ErrorMessage(Format("Shader parameter '{}' has an unsupported array count in reflection", ParameterName)));
     }
 
-    // Normalize Slang's documented runtime-array sentinel into the
-    // backend-independent Shader reflection contract.
-    if (ElementCount == SLANG_UNBOUNDED_SIZE)
+    // Normalize runtime-array sentinels into the backend-independent Shader
+    // reflection contract. Slang documents SLANG_UNBOUNDED_SIZE, but the
+    // current SDK can return INT32_MAX for unsized descriptor arrays.
+    if (ElementCount == SLANG_UNBOUNDED_SIZE ||
+        ElementCount == static_cast<size_t>(std::numeric_limits<Int32>::max()))
         return kShaderReflectionArrayUnboundedSize;
     return static_cast<Uint32>(ElementCount);
 }
