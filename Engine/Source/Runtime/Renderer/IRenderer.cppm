@@ -12,7 +12,7 @@ export import std;
 
 export namespace SoulEngine {
 
-/// @brief Render-thread packet kept alive until RHILoop finishes Execute().
+/// @brief Render-thread packet retained by its FrameSlot until GPU completion.
 struct RenderResult {
     RenderPassList CmdList = {};
 };

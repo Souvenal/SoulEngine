@@ -29,7 +29,6 @@ enum class SlotState {
     Empty,
     GameReady,
     RenderReady,
-    RHIDone,
 };
 
 /// @brief One element of the triple buffer.
@@ -41,6 +40,12 @@ struct FrameSlot {
     SPtr<IRenderer>         Renderer = nullptr;
     RenderResult            RenderPacket;
     ImDrawDataSnapshot      ImGuiSnapshot;
+    // Zero means this slot has not submitted GPU work yet, so its first
+    // RenderPacket does not need a timeline wait before replacement.
+    RHIFrameCompletion      Completion = {};
+    // RHIThread flips this false only while it may still read RenderPacket.
+    // RenderThread must observe true before replacing that packet.
+    bool                    RhiConsumedRenderPacket = true;
 };
 
 constexpr Uint32 kSlotCount = 3;
@@ -240,7 +245,10 @@ class EngineLoop {
             {
                 std::unique_lock Lock(Slot.Mutex);
                 Slot.Cv.wait(Lock, [this, &Slot] {
-                    return Slot.State == SlotState::Empty || Slot.State == SlotState::RHIDone ||
+                    // RenderReady means RenderThread consumed the previous
+                    // SceneData; GameThread may prepare the next snapshot even
+                    // while the old RenderPacket remains GPU-owned.
+                    return Slot.State == SlotState::Empty || Slot.State == SlotState::RenderReady ||
                            m_FatalError.load(std::memory_order_relaxed);
                 });
             }
@@ -324,12 +332,47 @@ class EngineLoop {
             // Editor UI overlays the scene output on the same render thread.
             m_Editor.AttachPresentationOverlay(RenderResult->CmdList, Slot.ImGuiSnapshot);
 
-            Slot.RenderPacket = std::move(*RenderResult);
+            {
+                std::lock_guard Lock(Slot.Mutex);
+                // RenderThread has finished reading SceneData. Publish this
+                // handoff before waiting on the old packet so GameThread can
+                // prepare the next SceneData independently.
+                Slot.State = SlotState::RenderReady;
+            }
+            Slot.Cv.notify_all();
+
+            RHIFrameCompletion PreviousCompletion = {};
+            {
+                std::unique_lock Lock(Slot.Mutex);
+                Slot.Cv.wait(Lock, [this, &Slot, &Stop] {
+                    // RHIThread must finish its CPU-side read before this
+                    // thread overwrites the slot-owned RenderPacket.
+                    return Slot.RhiConsumedRenderPacket || Stop.stop_requested() ||
+                           m_FatalError.load(std::memory_order_relaxed);
+                });
+                if (Stop.stop_requested() || m_FatalError.load(std::memory_order_acquire))
+                    break;
+                PreviousCompletion = Slot.Completion;
+            }
+
+            // This is the exact replacement boundary: CPU-side RHI access has
+            // ended above, and this wait proves the GPU no longer executes the
+            // old packet before its RHIRefs are released by replacement.
+            if (auto R = RHIRenderDevice::Get().WaitFinish(PreviousCompletion); !R) {
+                LogError("Render loop GPU completion wait failed:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
 
             {
                 std::lock_guard Lock(Slot.Mutex);
-                Slot.State = SlotState::RenderReady;
+                Slot.RenderPacket = std::move(*RenderResult);
+                // The newly published packet is now pending RHIThread
+                // consumption. RHIThread waits on this false value.
+                Slot.RhiConsumedRenderPacket = false;
             }
+            // Wake RHIThread after the complete packet and its RHIRefs are
+            // visible under the slot mutex.
             Slot.Cv.notify_all();
 
             m_RenderSlotIndex = (m_RenderSlotIndex + 1) % kSlotCount;
@@ -345,9 +388,16 @@ class EngineLoop {
 
             {
                 std::unique_lock Lock(Slot.Mutex);
-                Slot.Cv.wait(Lock, [&] { return Slot.State == SlotState::RenderReady || Stop.stop_requested(); });
+                Slot.Cv.wait(Lock, [&] {
+                    // RenderThread clears this flag only after waiting for the
+                    // old GPU work and publishing a complete new packet.
+                    // RHIThread can therefore consume the packet without
+                    // racing RenderThread's replacement.
+                    return !Slot.RhiConsumedRenderPacket || Stop.stop_requested() ||
+                           m_FatalError.load(std::memory_order_relaxed);
+                });
             }
-            if (Stop.stop_requested())
+            if (Stop.stop_requested() || m_FatalError.load(std::memory_order_acquire))
                 break;
 
             if (auto R = RHIRenderDevice::Get().BeginFrame(); !R) {
@@ -370,7 +420,9 @@ class EngineLoop {
             DrainRHIDeferredDeletions();
             ResourceManager::Get().TickRhiDependencies();
 
-            if (auto R = RHIRenderDevice::Get().Execute(std::move(Slot.RenderPacket.CmdList)); !R) {
+            // Execute borrows the slot-owned packet. RhiConsumedRenderPacket
+            // remains false while this call and EndFrame() read it.
+            if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
                 break;
@@ -379,21 +431,25 @@ class EngineLoop {
             // Tracy docs: "put the FrameMark macro after you have completed
             // rendering the frame. Ideally, that would be right after the
             // swap buffers command." — EndFrame() does submit + present.
-            if (auto R = RHIRenderDevice::Get().EndFrame(); !R) {
-                LogError("RHI EndFrame fatal error:\n{}", R.error().ToString());
+            auto CompletionResult = RHIRenderDevice::Get().EndFrame();
+            if (!CompletionResult) {
+                LogError("RHI EndFrame fatal error:\n{}", CompletionResult.error().ToString());
                 SignalFatalError();
                 break;
             }
             FrameMark;
 
-            Slot.RenderPacket = {};
-            ResourceManager::Get().CollectReleasedResources();
-
             {
                 std::lock_guard Lock(Slot.Mutex);
-                Slot.State = SlotState::RHIDone;
+                Slot.Completion = *CompletionResult;
+                // RHIThread is done with all CPU-side packet reads. GPU
+                // completion is tracked separately by the immutable token.
+                Slot.RhiConsumedRenderPacket = true;
             }
+            // RenderThread may be waiting to replace this packet; notify it
+            // even when the GPU timeline has already completed the work.
             Slot.Cv.notify_all();
+            ResourceManager::Get().CollectReleasedResources();
 
             m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
         }

@@ -119,16 +119,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     // ── Frame lifecycle — private ─────────────────────────────────────
 
-    auto RetireInFlightSubmissions() -> void {
-        auto CompletedValue = m_Timeline.GetCurrentValue();
-        if (!CompletedValue)
-            return;
-        while (!m_InFlightSubmissions.empty() &&
-               m_InFlightSubmissions.front().CompletionTimelineValue <= *CompletedValue) {
-            m_InFlightSubmissions.pop_front();
-        }
-    }
-
     [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
         // CPU-GPU sync: wait for the timeline semaphore to reach the value
         // from N frames ago (when this slot was last signalled).
@@ -138,9 +128,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // GPU done with this frame slot — safe to free scratch secondaries.
         m_FrameContext[m_CurrentFrame].ScratchSecondaries.clear();
-
-        // Free any GPU resources whose transfer operations have completed.
-        RetireInFlightSubmissions();
 
         auto& PresentCompleteSema = m_FrameContext[m_CurrentFrame].PresentComplete;
         auto  AcquireRes          = m_Swapchain.AcquireNextImage(PresentCompleteSema);
@@ -467,7 +454,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             if (!ImmediateDrain)
                 LogError("{}", ImmediateDrain.error().ToString());
             WaitIdle();
-            m_InFlightSubmissions.clear();
             DrainRHIDeferredDeletions();
         }
 
@@ -683,7 +669,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // Execute — consume RenderPassList and record commands
     // ═════════════════════════════════════════════════════════════════════════════
 
-    [[nodiscard]] auto Execute(RenderPassList&& PassList) -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> override {
         if (m_TransientUploadError)
             return std::unexpected(std::exchange(m_TransientUploadError, std::nullopt).value());
         if (auto R = EmitTransientUploadBarrier(); !R)
@@ -843,17 +829,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 .stage  = vk::PipelineStageFlagBits2::eTransfer,
                 .layout = vk::ImageLayout::ePresentSrcKHR,
             });
-        m_PendingCommandList = std::move(PassList);
         return {};
     }
 
-    [[nodiscard]] auto EndFrame() -> std::expected<void, ErrorMessage> override {
-        if (!m_PendingCommandList)
-            return std::unexpected(ErrorMessage("EndFrame called without a recorded frame"));
-
-        auto PassList = std::move(*m_PendingCommandList);
-        m_PendingCommandList.reset();
-
+    [[nodiscard]] auto EndFrame() -> std::expected<RHIFrameCompletion, ErrorMessage> override {
         auto& FC      = m_FrameContext[m_CurrentFrame];
         auto& Primary = FC.PrimaryBuffer;
 
@@ -893,11 +872,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = TimelineSignalSema.value;
 
-        m_InFlightSubmissions.push_back(VulkanInFlightSubmission{
-            .CompletionTimelineValue = TimelineSignalSema.value,
-            .CommandList             = std::move(PassList),
-        });
-
         // ── Present ────────────────────────────────────────────────────────
         auto PresentRes = m_Swapchain.Present(m_ResourceContext->GetGraphicsQueue());
         if (PresentRes == vk::Result::eErrorOutOfDateKHR || PresentRes == vk::Result::eSuboptimalKHR) {
@@ -908,7 +882,17 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         }
 
         m_CurrentFrame = (m_CurrentFrame + 1) % m_FramesInFlight;
-        return {};
+        return RHIFrameCompletion{.Value = TimelineSignalSema.value};
+    }
+
+    [[nodiscard]] auto WaitFinish(const RHIFrameCompletion& Completion)
+        -> std::expected<void, ErrorMessage> override {
+        // This is a read-only host wait on an immutable timeline value. It
+        // does not touch command buffers or frame ownership, so RenderThread
+        // may call it while RHIThread performs normal submission work.
+        if (Completion.Value == 0)
+            return {};
+        return m_Timeline.Wait(Completion.Value);
     }
 
     // ── RAII resources ─────────────────────────────────────────────────────
@@ -920,13 +904,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     VulkanSwapchain         m_Swapchain;
     VulkanTimelineSemaphore m_Timeline;
-
-    struct VulkanInFlightSubmission {
-        Uint64         CompletionTimelineValue = 0;
-        RenderPassList CommandList             = {};
-    };
-    std::deque<VulkanInFlightSubmission> m_InFlightSubmissions       = {};
-    std::optional<RenderPassList>         m_PendingCommandList       = std::nullopt;
 
     UPtr<VulkanResourceContext> m_ResourceContext = nullptr;
 
