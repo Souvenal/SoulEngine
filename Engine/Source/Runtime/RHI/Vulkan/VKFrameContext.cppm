@@ -21,27 +21,27 @@ struct VulkanFrameContext {
     vk::raii::CommandPool                Pool                            = nullptr;
     vk::raii::CommandBuffer              PrimaryBuffer                   = nullptr;
     vk::raii::CommandPool                SubPool                         = nullptr;
-    /// Per-frame scratch secondaries for RHICommandList execution.
+    /// Per-frame scratch secondaries for RenderPassList execution.
     /// Allocated each frame in Execute(), freed in next frame's BeginFrame
     /// after timeline wait guarantees GPU has consumed them.
     std::vector<vk::raii::CommandBuffer> ScratchSecondaries;
 
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context, Uint32 FrameIndex)
         -> std::expected<VulkanFrameContext, ErrorMessage> {
-        auto SemaRes = Context.Device.createSemaphore({});
+        auto SemaRes = Context.GetDevice().createSemaphore({});
         if (SemaRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to create present-complete semaphore"));
-        Context.DebugUtils.SetObjectName(*SemaRes.value, Format("Internal/Semaphore/PresentComplete/Frame{}", FrameIndex));
+        Context.GetDebugUtils().SetObjectName(*SemaRes.value, Format("Internal/Semaphore/PresentComplete/Frame{}", FrameIndex));
 
         // ── Main pool (for primary buffer) ───────────────────────────────
         vk::CommandPoolCreateInfo PoolCI{
             .flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-            .queueFamilyIndex = Context.GraphicsFamily,
+            .queueFamilyIndex = Context.GetGraphicsFamily(),
         };
-        auto PoolRes = Context.Device.createCommandPool(PoolCI);
+        auto PoolRes = Context.GetDevice().createCommandPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanFrameContext: failed to create main command pool"));
-        Context.DebugUtils.SetObjectName(*PoolRes.value, Format("Internal/CommandPool/Primary/Frame{}", FrameIndex));
+        Context.GetDebugUtils().SetObjectName(*PoolRes.value, Format("Internal/CommandPool/Primary/Frame{}", FrameIndex));
 
         // Allocate one primary command buffer from pool.
         vk::CommandBufferAllocateInfo PrimaryAlloc{
@@ -49,21 +49,21 @@ struct VulkanFrameContext {
             .level              = vk::CommandBufferLevel::ePrimary,
             .commandBufferCount = 1,
         };
-        auto PrimaryRes = Context.Device.allocateCommandBuffers(PrimaryAlloc);
+        auto PrimaryRes = Context.GetDevice().allocateCommandBuffers(PrimaryAlloc);
         if (PrimaryRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanFrameContext: failed to allocate primary command buffer"));
-        Context.DebugUtils.SetObjectName(
+        Context.GetDebugUtils().SetObjectName(
             *PrimaryRes.value[0], Format("Internal/CommandBuffer/Primary/Frame{}", FrameIndex));
 
-        // ── Sub pool (per RHICommandList secondary buffers) ─────────────────
+        // ── Sub pool (per RenderPassList secondary buffers) ────────────────
         vk::CommandPoolCreateInfo SubPoolCI{
             .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer | vk::CommandPoolCreateFlagBits::eTransient,
-            .queueFamilyIndex = Context.GraphicsFamily,
+            .queueFamilyIndex = Context.GetGraphicsFamily(),
         };
-        auto SubPoolRes = Context.Device.createCommandPool(SubPoolCI);
+        auto SubPoolRes = Context.GetDevice().createCommandPool(SubPoolCI);
         if (SubPoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanFrameContext: failed to create sub command pool"));
-        Context.DebugUtils.SetObjectName(*SubPoolRes.value, Format("Internal/CommandPool/Secondary/Frame{}", FrameIndex));
+        Context.GetDebugUtils().SetObjectName(*SubPoolRes.value, Format("Internal/CommandPool/Secondary/Frame{}", FrameIndex));
 
         return VulkanFrameContext{
             .PresentComplete                 = std::move(SemaRes.value),

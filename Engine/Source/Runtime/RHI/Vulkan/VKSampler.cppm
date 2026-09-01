@@ -37,7 +37,8 @@ class VulkanSampler final : public RHISampler {
   public:
     VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
         : RHISampler(std::move(Name), Desc),
-          m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))) {}
+          m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))),
+          m_DescriptorInfo{.sampler = **m_Sampler} {}
 
     ~VulkanSampler() override = default;
 
@@ -74,11 +75,11 @@ class VulkanSampler final : public RHISampler {
             .borderColor             = vk::BorderColor::eIntOpaqueBlack,
             .unnormalizedCoordinates = vk::False,
         };
-        auto Result = Context.Device.createSampler(SamplerCI);
+        auto Result = Context.GetDevice().createSampler(SamplerCI);
         if (Result.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanSampler::Create: failed to create VkSampler"));
 
-        Context.DebugUtils.SetObjectName(*Result.value, Name);
+        Context.GetDebugUtils().SetObjectName(*Result.value, Name);
         return std::make_unique<VulkanSampler>(String(Name), Desc, std::move(Result.value));
     }
 
@@ -86,8 +87,24 @@ class VulkanSampler final : public RHISampler {
         return **m_Sampler;
     }
 
+    /// Build a sampler descriptor write for this sampler.
+    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
+                                             Uint32            BindingIndex,
+                                             bool              /*IsReadOnly*/) const
+        -> vk::WriteDescriptorSet {
+        return vk::WriteDescriptorSet{
+            .dstSet          = Set,
+            .dstBinding      = BindingIndex,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType  = vk::DescriptorType::eSampler,
+            .pImageInfo      = &m_DescriptorInfo,
+        };
+    }
+
   private:
-    SPtr<vk::raii::Sampler> m_Sampler = nullptr;
+    SPtr<vk::raii::Sampler>         m_Sampler        = nullptr;
+    vk::DescriptorImageInfo m_DescriptorInfo = {};
 };
 
 } // namespace SoulEngine

@@ -1,28 +1,28 @@
 entities:
   - name: Main Camera
-    transform:
-      translation: [-65.0, 25.0, 0.0]
-      rotation: [0.0, -90.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
     components:
+      transform:
+        translation: [-65.0, 25.0, 0.0]
+        rotation: [0.0, -90.0, 0.0]
+        scale: [1.0, 1.0, 1.0]
       camera:
         fov_degrees: 60.0
         near_plane: 0.5
         far_plane: 500.0
   - name: Sponza
-    transform:
-      translation: [0.0, 0.0, 0.0]
-      rotation: [0.0, 0.0, 0.0]
-      scale: [0.05, 0.05, 0.05]
     components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [0.0, 0.0, 0.0]
+        scale: [0.05, 0.05, 0.05]
       mesh:
         asset: Sponza/glTF/Sponza.gltf
   - name: Sun
-    transform:
-      translation: [0.0, 0.0, 0.0]
-      rotation: [-45.0, 25.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
     components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [-45.0, 25.0, 0.0]
+        scale: [1.0, 1.0, 1.0]
       light:
         type: directional
         color_r: 1.0

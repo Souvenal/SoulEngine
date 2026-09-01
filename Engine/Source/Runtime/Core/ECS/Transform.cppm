@@ -7,7 +7,6 @@ export module Core:ECS.Transform;
 
 export import :ECS;
 export import :Util;
-export import :Math;
 
 import std;
 
@@ -117,5 +116,30 @@ class TransformSystem : public ISystem {
         return m_Registry.storage<entt::reactive>(DirtyTransformStorageId);
     }
 };
+
+} // namespace SoulEngine
+
+namespace SoulEngine {
+
+// Note: this namespace must stay named. In a named module, clang 23 silently
+// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
+// which would skip this entt meta registration at program startup.
+namespace MetaRegistration {
+
+using namespace entt::literals;
+
+struct TransformComponentMetaRegistration {
+    TransformComponentMetaRegistration() {
+        entt::meta_factory<TransformComponent>{"transform"_hs}
+            .data<&TransformComponent::Translation>("translation"_hs)
+            .data<&TransformComponent::Rotation>("rotation"_hs)
+            .data<&TransformComponent::Scale>("scale"_hs)
+            .func<&EmplaceComponent<TransformComponent>>("emplace"_hs);
+    }
+};
+
+TransformComponentMetaRegistration g_TransformComponentMetaRegistration = {};
+
+} // namespace MetaRegistration
 
 } // namespace SoulEngine

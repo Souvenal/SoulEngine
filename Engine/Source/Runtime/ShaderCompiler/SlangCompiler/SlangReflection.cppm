@@ -49,12 +49,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
             ErrorMessage(Format("Shader parameter '{}' has an unsupported array count in reflection", ParameterName)));
     }
 
-    // Runtime-sized descriptor arrays are represented with a sentinel here.
-    // The Vulkan backend must lower that sentinel to the actual bindless table
-    // capacity instead of using it directly as a descriptor count.
-    const bool bUnboundedArray = ElementCount == 0 || ElementCount == SLANG_UNBOUNDED_SIZE ||
-                                 ElementCount == static_cast<size_t>(std::numeric_limits<Int32>::max());
-    return bUnboundedArray ? std::numeric_limits<Uint32>::max() : static_cast<Uint32>(ElementCount);
+    // Normalize Slang's documented runtime-array sentinel into the
+    // backend-independent Shader reflection contract.
+    if (ElementCount == SLANG_UNBOUNDED_SIZE)
+        return kShaderReflectionArrayUnboundedSize;
+    return static_cast<Uint32>(ElementCount);
 }
 
 [[nodiscard]] auto ExtractParameterBlockBindings(slang::ShaderReflection*          ProgramLayout,
@@ -245,6 +244,16 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return Bindings;
 }
 
+[[nodiscard]] auto ExtractBindlessSpace(slang::ShaderReflection* ProgramLayout)
+    -> std::optional<Uint32> {
+    if (!ProgramLayout)
+        return std::nullopt;
+    const auto Space = ProgramLayout->getBindlessSpaceIndex();
+    if (Space == SLANG_UNKNOWN_SIZE)
+        return std::nullopt;
+    return static_cast<Uint32>(Space);
+}
+
 [[nodiscard]] auto AppendPushConstantRange(std::vector<ShaderPushConstantRange>& PushConstants,
                                            slang::VariableLayoutReflection*        Param,
                                            slang::ParameterCategory                Category)
@@ -429,6 +438,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         .Bindings      = std::move(*Bindings),
         .PushConstants = std::move(*PushConstants),
         .VertexInputs  = std::move(*VertexInputs),
+        .BindlessSpace = ExtractBindlessSpace(ProgramLayout),
     };
 }
 
@@ -468,6 +478,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         .Bindings      = std::move(*Bindings),
         .PushConstants = MergePushConstantRanges(std::move(PushConstants)),
         .VertexInputs  = {},
+        .BindlessSpace = ExtractBindlessSpace(ProgramLayout),
     };
 }
 

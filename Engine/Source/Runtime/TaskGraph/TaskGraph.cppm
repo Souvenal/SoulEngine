@@ -2,9 +2,9 @@ module;
 
 export module TaskGraph;
 
-import magic_enum;
+import std;
 import Core;
-export import std;
+import magic_enum;
 
 export namespace SoulEngine {
 

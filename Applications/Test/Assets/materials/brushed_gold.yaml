@@ -1,0 +1,7 @@
+material:
+  name: brushed_gold
+  diffuse: [1.0, 0.71, 0.22]
+  base_color_factor: [1.0, 1.0, 1.0, 1.0]
+  metallic_factor: 1.0
+  roughness_factor: 0.28
+  shading_model: pbr

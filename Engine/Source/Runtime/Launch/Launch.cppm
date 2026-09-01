@@ -172,14 +172,19 @@ class EngineLoop {
             m_RHIThread.request_stop();
 
         ResourceManager::Get().BeginShutdown();
-        TaskGraph::Get().Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
+        // Join the workers before stopping TaskGraph: a worker caught
+        // mid-frame finishes its in-flight slot against live task services
+        // instead of failing with spurious "TaskGraph is not running"
+        // errors during an otherwise clean shutdown.
         if (m_RenderThread.joinable())
             m_RenderThread.join();
         if (m_RHIThread.joinable())
             m_RHIThread.join();
+
+        TaskGraph::Get().Shutdown();
 
         CloseApplication();
 
@@ -345,6 +350,12 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
+            if (auto R = RHIRenderDevice::Get().BeginFrame(); !R) {
+                LogError("RHI BeginFrame fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
+
             // Advance RHIThread's local frame ordinal before matching its
             // frame-affined tasks. This intentionally does not read another
             // thread's TLS value.
@@ -355,6 +366,8 @@ class EngineLoop {
             // Resource handles are passive state reads; publish completed sampled-texture uploads here
             // on the RHI thread before the next command list can observe them.
             RHIRenderDevice::Get().Tick();
+            // Retire native resources whose last RHIRef was released since the previous frame.
+            DrainRHIDeferredDeletions();
             ResourceManager::Get().TickRhiDependencies();
 
             if (auto R = RHIRenderDevice::Get().Execute(std::move(Slot.RenderPacket.CmdList)); !R) {
@@ -365,7 +378,12 @@ class EngineLoop {
 
             // Tracy docs: "put the FrameMark macro after you have completed
             // rendering the frame. Ideally, that would be right after the
-            // swap buffers command." — Execute() does submit + present.
+            // swap buffers command." — EndFrame() does submit + present.
+            if (auto R = RHIRenderDevice::Get().EndFrame(); !R) {
+                LogError("RHI EndFrame fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
             FrameMark;
 
             Slot.RenderPacket = {};

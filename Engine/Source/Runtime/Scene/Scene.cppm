@@ -5,14 +5,12 @@ module;
 
 export module Scene;
 
-export import Core;
 export import Material;
 export import RHI;
 export import :Camera;
 export import :Mesh;
 export import :Light;
 import TaskGraph;
-// export import std;
 
 export namespace SoulEngine {
 
@@ -26,14 +24,15 @@ struct SceneSnapshot {
     std::vector<CameraViewRecord>        Views          = {};
     std::vector<InstanceRecord>          Instances      = {};
     std::vector<LightRecord>             Lights         = {};
+    RHIRefArray<RHISampledTexture>       Textures       = {};
     std::optional<entt::entity>          SelectedEntity = std::nullopt;
     std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt;
     float                                Time           = 0.0f;
 };
 
 struct ComponentWarning {
-    String Path    = {};
-    String Message = {};
+    String Location = {};
+    String Message  = {};
 };
 
 struct SceneLoadReport {
@@ -54,7 +53,6 @@ class Scene {
     SystemScheduler                            m_SystemScheduler;
     Path                                       m_AssetRoot         = {};
     entt::entity                               m_RootEntity        = entt::null;
-    std::map<String, PbrMaterial, std::less<>> m_MaterialInstances = {};
     std::vector<String>                        m_TexturePaths      = {};
     float                                      m_Time              = 0.0f;
 
@@ -136,18 +134,6 @@ class Scene {
         return m_TexturePaths;
     }
 
-    /// @brief Add or replace a scene-local PBR material instance.
-    auto SetMaterialInstance(String Id, PbrMaterial Material) -> void {
-        m_MaterialInstances.insert_or_assign(std::move(Id), std::move(Material));
-    }
-
-    [[nodiscard]] auto FindMaterialInstance(StringView Id) const -> const PbrMaterial* {
-        const auto It = m_MaterialInstances.find(String(Id));
-        if (It == m_MaterialInstances.end())
-            return nullptr;
-        return &It->second;
-    }
-
     [[nodiscard]] auto GetRegistry() -> entt::registry& {
         return m_Registry;
     }
@@ -200,6 +186,7 @@ class Scene {
             .Views          = CameraSys->CollectViews(),
             .Instances      = CollectSnapshotInstances(),
             .Lights         = LightSys->CollectLights(),
+            .Textures       = MeshSys->GetTextureArray(),
             .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
             .SelectedPixel  = SelectedPixel,
             .Time           = m_Time,
@@ -229,6 +216,7 @@ class Scene {
             .Views          = {Views.begin(), Views.end()},
             .Instances      = CollectSnapshotInstances(),
             .Lights         = LightSys->CollectLights(),
+            .Textures       = MeshSys->GetTextureArray(),
             .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
             .SelectedPixel  = SelectedPixel,
             .Time           = m_Time,

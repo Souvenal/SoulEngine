@@ -1,16 +1,7 @@
 import Pbr;
+import Material;
 import GBuffer;
-
-public struct DeferredFrameData {
-    public float exposureEV100;
-    public uint  lightCount;
-};
-
-public struct DeferredViewData {
-    public float4x4 inverseViewProjection;
-    public float4   cameraPosition;
-    public float2   viewportSize;
-};
+import Common;
 
 public struct DeferredLightData {
     public float4 colorIntensity;
@@ -20,9 +11,9 @@ public struct DeferredLightData {
 };
 
 public struct DeferredResources {
-    public ConstantBuffer<DeferredFrameData> frame;
-    public ConstantBuffer<DeferredViewData>  view;
-    public StructuredBuffer<PbrMaterialData> materials;
+    public ConstantBuffer<FrameData>         frame;
+    public ConstantBuffer<ViewData>          view;
+    public StructuredBuffer<MaterialRecord> materials;
     public StructuredBuffer<DeferredLightData> lights;
 };
 
@@ -47,7 +38,7 @@ VSOutput vertMain(uint vertexId : SV_VertexID) {
 
 float3 evaluateDeferredLight(
     DeferredLightData light,
-    PbrMaterial material,
+    MaterialSurface material,
     float3 worldPosition,
     float3 normal,
     float3 viewDirection)
@@ -90,15 +81,15 @@ float4 fragMain(VSOutput input) : SV_Target0 {
         pixel,
         depth,
         g_deferred.view.viewportSize,
-        g_deferred.view.inverseViewProjection);
+        g_deferred.view.viewProjectionInverse);
     float3 normal = normalize(g_gbuffer.normal.Load(int3(pixel, 0)));
     float3 albedo = g_gbuffer.albedo.Load(int3(pixel, 0)).rgb;
     uint materialId = g_gbuffer.materialId.Load(int3(pixel, 0));
-    PbrMaterialData materialData = g_deferred.materials[materialId];
-    PbrMaterial material = makePbrMaterial(
-        albedo,
-        materialData.metallicFactor,
-        materialData.roughnessFactor);
+    MaterialRecord materialData = g_deferred.materials[materialId];
+    MaterialSurface material = {};
+    material.baseColor = albedo;
+    material.metallic = saturate(materialData.metallicFactor);
+    material.roughness = saturateRoughness(materialData.roughnessFactor);
     float3 viewDirection = normalize(g_deferred.view.cameraPosition.xyz - worldPosition);
 
     float3 color = 0.035 * albedo;

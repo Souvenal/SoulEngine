@@ -19,7 +19,7 @@ class NoOpSystem final : public ISystem {
 } // namespace
 
 TEST(TransformTest, BuildsLocalMatrixFromTranslationRotationAndScale) {
-    const Transform Transform{
+    const TransformComponent Transform{
         .Translation = hlslpp::float3(1.25f, -2.0f, 3.5f),
         .Rotation    = hlslpp::float3(0.0f, 0.0f, 0.0f),
         .Scale       = hlslpp::float3(2.0f, 3.0f, 4.0f),

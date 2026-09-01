@@ -47,13 +47,13 @@ class VulkanNativeAccelerationStructure final {
             .type   = Type,
         };
         auto [Result, RHIAccelerationStructure] =
-            Context.Device.createAccelerationStructureKHR(AccelerationStructureCI, nullptr);
+            Context.GetDevice().createAccelerationStructureKHR(AccelerationStructureCI, nullptr);
         if (Result != vk::Result::eSuccess) {
             return std::unexpected(
                 ErrorMessage(Format("Failed to create Vulkan acceleration structure: {}", vk::to_string(Result))));
         }
 
-        Context.DebugUtils.SetObjectName(*RHIAccelerationStructure, Name);
+        Context.GetDebugUtils().SetObjectName(*RHIAccelerationStructure, Name);
         return std::make_shared<VulkanNativeAccelerationStructure>(std::move(Storage),
                                                                    std::move(RHIAccelerationStructure));
     }
@@ -152,7 +152,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
             .geometryCount = static_cast<Uint32>(Geometries.size()),
             .pGeometries   = Geometries.data(),
         };
-        const auto Sizes = Context.Device.getAccelerationStructureBuildSizesKHR(
+        const auto Sizes = Context.GetDevice().getAccelerationStructureBuildSizesKHR(
             vk::AccelerationStructureBuildTypeKHR::eDevice, BuildGeometryCI, PrimitiveCounts);
         auto Native = VulkanNativeAccelerationStructure::Create(
             Context, vk::AccelerationStructureTypeKHR::eBottomLevel, Sizes.accelerationStructureSize, Name);
@@ -171,7 +171,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
         if (BuildGeometryCI.scratchData.deviceAddress == 0)
             return std::unexpected(ErrorMessage("BLAS scratch buffer has no device address"));
         const vk::AccelerationStructureBuildRangeInfoKHR* BuildRangePtr = BuildRanges.data();
-        if (auto R = Context.Immediate.SubmitAndWait(VulkanImmediateQueue::Graphics,
+        if (auto R = Context.GetImmediateContext().SubmitAndWait(VulkanImmediateQueue::Graphics,
                                                      vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
                                                      [&](const vk::raii::CommandBuffer& CmdBuf) {
                                                          CmdBuf.buildAccelerationStructuresKHR(BuildGeometryCI,
@@ -229,7 +229,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
             .pGeometries   = &Geometry,
         };
         const std::array<Uint32, 1> PrimitiveCounts{Desc.InitialInstanceCapacity};
-        const auto                  Sizes = Context.Device.getAccelerationStructureBuildSizesKHR(
+        const auto                  Sizes = Context.GetDevice().getAccelerationStructureBuildSizesKHR(
             vk::AccelerationStructureBuildTypeKHR::eDevice, BuildGeometryCI, PrimitiveCounts);
         auto Native = VulkanNativeAccelerationStructure::Create(
             Context, vk::AccelerationStructureTypeKHR::eTopLevel, Sizes.accelerationStructureSize, Name);
@@ -253,8 +253,8 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 
         auto Result                = std::make_unique<VulkanTopLevelAccelerationStructure>(String(Name));
         Result->m_Context          = &Context;
-        Result->m_Device           = &Context.Device;
-        Result->m_Allocator        = Context.Allocator;
+        Result->m_Device           = &Context.GetDevice();
+        Result->m_Allocator        = Context.GetAllocator();
         Result->m_Native           = std::move(*Native);
         Result->m_InstanceBuffer   = std::move(InstanceBuffer);
         Result->m_ScratchBuffer    = std::move(ScratchBuffer);
@@ -268,6 +268,28 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 
     [[nodiscard]] auto GetAccelerationStructure() const -> vk::AccelerationStructureKHR {
         return m_Native->Get();
+    }
+
+    /// Build an acceleration-structure descriptor write for this TLAS.
+    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
+                                             Uint32            BindingIndex,
+                                             bool              /*IsReadOnly*/) const
+        -> vk::WriteDescriptorSet {
+        m_DescriptorAccelerationStructure = GetAccelerationStructure();
+        m_WriteDescriptorSetChain = {
+            vk::WriteDescriptorSet{
+                .dstSet          = Set,
+                .dstBinding      = BindingIndex,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType  = vk::DescriptorType::eAccelerationStructureKHR,
+            },
+            vk::WriteDescriptorSetAccelerationStructureKHR{
+                .accelerationStructureCount = 1,
+                .pAccelerationStructures   = &m_DescriptorAccelerationStructure,
+            },
+        };
+        return m_WriteDescriptorSetChain.get<vk::WriteDescriptorSet>();
     }
 
     [[nodiscard]] auto RecordBuild(const vk::raii::CommandBuffer&                    CmdBuf,
@@ -413,8 +435,11 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     SPtr<VulkanNativeAccelerationStructure> m_Native            = nullptr;
     SPtr<VulkanHostBuffer>                  m_InstanceBuffer    = nullptr;
     SPtr<VulkanDeviceBuffer>                m_ScratchBuffer     = nullptr;
-    Uint32                                  m_InstanceCapacity  = 0;
-    Uint32                                  m_LastInstanceCount = 0;
+    Uint32                                  m_InstanceCapacity             = 0;
+    Uint32                                  m_LastInstanceCount            = 0;
+    mutable vk::AccelerationStructureKHR m_DescriptorAccelerationStructure = nullptr;
+    mutable vk::StructureChain<vk::WriteDescriptorSet, vk::WriteDescriptorSetAccelerationStructureKHR>
+        m_WriteDescriptorSetChain = {};
 };
 
 } // namespace SoulEngine

@@ -14,7 +14,7 @@ export namespace SoulEngine {
 
 /// @brief Render-thread packet kept alive until RHILoop finishes Execute().
 struct RenderResult {
-    RHICommandList CmdList = {};
+    RenderPassList CmdList = {};
 };
 
 /// @brief Abstract base class for all renderers.

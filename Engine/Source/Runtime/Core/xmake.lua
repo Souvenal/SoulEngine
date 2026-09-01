@@ -15,7 +15,7 @@ target("Core")
     -- Clang's dependency scan compiles Config.cppm in consuming targets. Export its toml++
     -- configuration and header path so that scan/compile observes the same parser API; see TODO.md.
     add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0", {public = true})
-    add_packages("toml++", "hlslpp", "entt", {public = true})
+    add_packages("toml++", "hlslpp", "entt", "libyaml", {public = true})
 
     add_files("**.cppm")
 

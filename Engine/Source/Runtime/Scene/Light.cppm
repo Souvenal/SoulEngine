@@ -5,6 +5,7 @@ module;
 
 export module Scene:Light;
 
+import std;
 export import Core;
 
 export namespace SoulEngine {
@@ -117,26 +118,31 @@ class LightSystem : public ISystem {
 
 namespace SoulEngine {
 
-namespace {
+// Note: this namespace must stay named. In a named module, clang 23 silently
+// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
+// which would skip this entt meta registration at program startup.
+namespace MetaRegistration {
+
+using namespace entt::literals;
 
 struct LightComponentMetaRegistration {
     LightComponentMetaRegistration() {
-        entt::meta_factory<LightComponent>{}
-            .type("light")
-            .data<&LightComponent::SetType, &LightComponent::GetType>("type")
-            .data<&LightComponent::ColorR>("color_r")
-            .data<&LightComponent::ColorG>("color_g")
-            .data<&LightComponent::ColorB>("color_b")
-            .data<&LightComponent::Intensity>("intensity")
-            .data<&LightComponent::RangeMeters>("range_meters")
-            .data<&LightComponent::InnerConeAngleDegrees>("inner_cone_angle_degrees")
-            .data<&LightComponent::OuterConeAngleDegrees>("outer_cone_angle_degrees")
-            .data<&LightComponent::CastsShadows>("casts_shadows");
+        entt::meta_factory<LightComponent>{"light"_hs}
+            .data<&LightComponent::SetType, &LightComponent::GetType>("type"_hs)
+            .data<&LightComponent::ColorR>("color_r"_hs)
+            .data<&LightComponent::ColorG>("color_g"_hs)
+            .data<&LightComponent::ColorB>("color_b"_hs)
+            .data<&LightComponent::Intensity>("intensity"_hs)
+            .data<&LightComponent::RangeMeters>("range_meters"_hs)
+            .data<&LightComponent::InnerConeAngleDegrees>("inner_cone_angle_degrees"_hs)
+            .data<&LightComponent::OuterConeAngleDegrees>("outer_cone_angle_degrees"_hs)
+            .data<&LightComponent::CastsShadows>("casts_shadows"_hs)
+            .func<&EmplaceComponent<LightComponent>>("emplace"_hs);
     }
 };
 
 LightComponentMetaRegistration g_LightComponentMetaRegistration = {};
 
-} // namespace
+} // namespace MetaRegistration
 
 } // namespace SoulEngine

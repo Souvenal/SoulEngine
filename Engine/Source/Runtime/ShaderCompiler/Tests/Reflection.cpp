@@ -254,7 +254,7 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     EXPECT_EQ(It->Set, 2U);
     EXPECT_EQ(It->BindingIndex, 0U);
     EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
-	EXPECT_EQ(It->ArrayCount, std::numeric_limits<Uint32>::max());
+	EXPECT_EQ(It->ArrayCount, kShaderReflectionArrayUnboundedSize);
 }
 
 TEST_F(ReflectionTest, NestedParameterBlockIsRejected) {

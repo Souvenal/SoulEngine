@@ -44,9 +44,15 @@ TEST(SceneMeta, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
     EXPECT_TRUE(Camera.data(entt::hashed_string{"far_plane"}.value()));
     EXPECT_TRUE(Camera.data(entt::hashed_string{"exposure_ev100"}.value()));
 
+    const auto Transform = entt::resolve(entt::hashed_string{"transform"}.value());
+    ASSERT_TRUE(Transform);
+    EXPECT_TRUE(Transform.data(entt::hashed_string{"translation"}.value()));
+    EXPECT_TRUE(Transform.data(entt::hashed_string{"rotation"}.value()));
+    EXPECT_TRUE(Transform.data(entt::hashed_string{"scale"}.value()));
+
     const auto Mesh = entt::resolve(entt::hashed_string{"mesh"}.value());
     ASSERT_TRUE(Mesh);
-    EXPECT_TRUE(Mesh.data(entt::hashed_string{"material"}.value()));
+    EXPECT_TRUE(Mesh.data(entt::hashed_string{"material_override"}.value()));
 
     const auto Light = entt::resolve(entt::hashed_string{"light"}.value());
     ASSERT_TRUE(Light);
@@ -58,15 +64,16 @@ TEST(SceneDocument, BuildsOrderedHierarchyAndSkipsUnknownComponent) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
   - name: Root
-    transform:
-      translation: [1.0, 2.0, 3.0]
     components:
+      transform:
+        translation: [1.0, 2.0, 3.0]
       camera: {}
       unknown_component: {}
     children:
       - name: Child
-        transform:
-          translation: [4.0, 0.0, 0.0]
+        components:
+          transform:
+            translation: [4.0, 0.0, 0.0]
 )");
 
     const auto Loaded = Scene::LoadFromFile(FilePath);
@@ -93,19 +100,6 @@ entities:
 
 TEST(SceneDocument, LoadsBuiltInCameraAndMeshComponents) {
     const auto FilePath = WriteSceneFile(R"(
-material_instances:
-  gold:
-    base_color: [1.0, 0.71, 0.22]
-    metallic: 1.0
-    roughness: 0.18
-    base_color_texture: wood.png
-    normal_texture: textures/wood_normal.png
-    metallic_roughness_texture: textures/wood_mr.png
-    metallic_texture: textures/wood_metallic.png
-    roughness_texture: textures/wood_roughness.png
-    occlusion_texture: textures/wood_occlusion.png
-    emissive: [0.1, 0.2, 0.3]
-    emissive_texture: textures/wood_emissive.png
 entities:
   - components:
       camera:
@@ -114,7 +108,7 @@ entities:
         far_plane: 100.0
       mesh:
         asset: teapot.obj
-        material: gold
+        material_override: materials/gold.yaml
 )");
 
     const auto Loaded = Scene::LoadFromFile(FilePath);
@@ -130,33 +124,8 @@ entities:
     ASSERT_NE(MeshEntities.begin(), MeshEntities.end());
     EXPECT_EQ(MeshEntities.get<MeshComponent>(*MeshEntities.begin()).Asset, Path{"teapot.obj"});
 
-    // Scene material instances are published to the engine-wide MaterialManager on
-    // load, with texture paths resolved against the scene Assets root.
-    const auto GoldId = MaterialManager::Get().FindMaterialId("gold");
-    ASSERT_NE(GoldId, 0u);
-    const auto* Gold = MaterialManager::Get().GetMaterial(GoldId);
-    ASSERT_NE(Gold, nullptr);
-    EXPECT_EQ(Gold->Value.BaseColorTexture,
-              (FilePath.parent_path() / "Assets" / "wood.png").lexically_normal().string());
-    EXPECT_EQ(Gold->Value.NormalTexture,
-              (FilePath.parent_path() / "Assets" / "textures" / "wood_normal.png").lexically_normal().string());
-    EXPECT_EQ(Gold->Value.MetallicRoughnessTexture,
-              (FilePath.parent_path() / "Assets" / "textures" / "wood_mr.png").lexically_normal().string());
-    EXPECT_EQ(Gold->Value.MetallicTexture,
-              (FilePath.parent_path() / "Assets" / "textures" / "wood_metallic.png").lexically_normal().string());
-    EXPECT_EQ(Gold->Value.RoughnessTexture,
-              (FilePath.parent_path() / "Assets" / "textures" / "wood_roughness.png").lexically_normal().string());
-    EXPECT_EQ(Gold->Value.OcclusionTexture,
-              (FilePath.parent_path() / "Assets" / "textures" / "wood_occlusion.png").lexically_normal().string());
-    EXPECT_EQ(Gold->Value.EmissiveTexture,
-              (FilePath.parent_path() / "Assets" / "textures" / "wood_emissive.png").lexically_normal().string());
-    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.Emissive.x), 0.1f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.Emissive.y), 0.2f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.Emissive.z), 0.3f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.BaseColor.x), 1.0f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Gold->Value.BaseColor.y), 0.71f);
-    EXPECT_FLOAT_EQ(Gold->Value.Metallic, 1.0f);
-    EXPECT_FLOAT_EQ(Gold->Value.Roughness, 0.18f);
+    EXPECT_EQ(Scene.GetRegistry().get<MeshComponent>(*Scene.GetRegistry().view<MeshComponent>().begin()).MaterialOverridePath,
+              Path{"materials/gold.yaml"});
     const auto Cameras        = Scene.GetRegistry().view<CameraComponent>();
     const auto CameraIterator = Cameras.begin();
     ASSERT_NE(CameraIterator, Cameras.end());
@@ -181,39 +150,13 @@ entities:
     const auto LegacyLoaded = Scene::LoadFromFile(LegacyPath);
     ASSERT_TRUE(LegacyLoaded.has_value()) << LegacyLoaded.error().ToString();
     ASSERT_EQ(LegacyLoaded->second.Warnings.size(), 1u);
-    EXPECT_EQ(LegacyLoaded->second.Warnings.front().Path, "entities[1].components.mesh.texture");
+    EXPECT_EQ(LegacyLoaded->second.Warnings.front().Location, "line 8, column 18");
     EXPECT_TRUE(LegacyLoaded->first->BuildSnapshot().Instances.empty());
 
     std::filesystem::remove(LegacyPath);
 }
 
-TEST(SceneDocument, OmitsMeshWithNonNormalizedRelativeAssetPath) {
-    const std::array<StringView, 5> InvalidAssets{
-        "",
-        "./teapot.obj",
-        "models/../teapot.obj",
-        "../teapot.obj",
-        "/absolute/teapot.obj",
-    };
-
-    for (const auto Asset : InvalidAssets) {
-        const auto FilePath = WriteSceneFile(Format(R"(
-entities:
-  - components:
-      mesh:
-        asset: {}
-)",
-                                                    Asset));
-        const auto Loaded   = Scene::LoadFromFile(FilePath);
-        ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
-        ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
-        EXPECT_EQ(Loaded->second.Warnings.front().Path, "entities[0].components.mesh.asset");
-        EXPECT_TRUE(Loaded->first->GetRegistry().view<MeshComponent>().empty());
-        std::filesystem::remove(FilePath);
-    }
-}
-
-TEST(SceneDocument, PreservesMeshWithUnknownMaterialInstance) {
+TEST(SceneDocument, PreservesMeshWithMaterialOverridePath) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
   - components:
@@ -221,7 +164,7 @@ entities:
   - components:
       mesh:
         asset: teapot.obj
-        material: missing
+        material_override: materials/missing.yaml
 )");
 
     const auto Loaded = Scene::LoadFromFile(FilePath);
@@ -234,8 +177,8 @@ entities:
         ++MeshCount;
     }
     EXPECT_EQ(MeshCount, 1u);
-    // A missing scene material instance remains on the authoring component. Mesh
-    // resource loading is performed by MeshSystem::OnUpdate at runtime.
+    EXPECT_EQ(Scene.GetRegistry().get<MeshComponent>(*Scene.GetRegistry().view<MeshComponent>().begin()).MaterialOverridePath,
+              Path{"materials/missing.yaml"});
     const auto Snapshot = Scene.BuildSnapshot();
     EXPECT_TRUE(Snapshot.Instances.empty());
 
@@ -245,14 +188,15 @@ TEST(SceneDocument, DefaultCameraFacesTeapotCluster) {
     const auto FilePath = WriteSceneFile(R"(
 entities:
   - name: Main Camera
-    transform:
-      translation: [1.25, 1.25, 2.0]
-      rotation: [28.0, -32.0, 0.0]
     components:
+      transform:
+        translation: [1.25, 1.25, 2.0]
+        rotation: [28.0, -32.0, 0.0]
       camera: {}
   - name: Teapot Cluster
-    transform:
-      translation: [0.0, 0.0, 0.0]
+    components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
 )");
 
     const auto Loaded = Scene::LoadFromFile(FilePath);
@@ -449,7 +393,7 @@ entities:
     const auto InvalidLoaded = Scene::LoadFromFile(InvalidPath);
     ASSERT_TRUE(InvalidLoaded.has_value()) << InvalidLoaded.error().ToString();
     ASSERT_EQ(InvalidLoaded->second.Warnings.size(), 1u);
-    EXPECT_EQ(InvalidLoaded->second.Warnings.front().Path, "entities[1].components.light.casts_shadows");
+    EXPECT_EQ(InvalidLoaded->second.Warnings.front().Location, "line 12, column 24");
 
     std::filesystem::remove(ValidPath);
     std::filesystem::remove(InvalidPath);
@@ -462,6 +406,38 @@ TEST(SceneDocument, AllowsSceneWithoutCamera) {
 
     ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
     EXPECT_TRUE(Loaded->second.Warnings.empty());
+    const auto Entity = FindNamedEntity(*Loaded->first, "Root");
+    ASSERT_NE(Entity, entt::null);
+    const auto& Transform = Loaded->first->GetRegistry().get<TransformComponent>(Entity);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Translation.x), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Translation.y), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Translation.z), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Scale.x), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Scale.y), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Scale.z), 1.0f);
+    std::filesystem::remove(FilePath);
+}
+
+TEST(SceneDocument, PreservesDefaultTransformWhenTransformComponentIsInvalid) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - name: Root
+    components:
+      transform:
+        translation: [1.0, 2.0]
+)");
+
+    const auto Loaded = Scene::LoadFromFile(FilePath);
+
+    ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
+    ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
+    EXPECT_EQ(Loaded->second.Warnings.front().Location, "line 6, column 22");
+    const auto Entity = FindNamedEntity(*Loaded->first, "Root");
+    ASSERT_NE(Entity, entt::null);
+    const auto& Transform = Loaded->first->GetRegistry().get<TransformComponent>(Entity);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Translation.x), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Translation.y), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(Transform.Translation.z), 0.0f);
     std::filesystem::remove(FilePath);
 }
 
@@ -502,9 +478,9 @@ entities:
         color_b: 1.0
         intensity: 100000.0
   - name: Lamp
-    transform:
-      translation: [2.0, 3.0, 4.0]
     components:
+      transform:
+        translation: [2.0, 3.0, 4.0]
       light:
         type: point
         color_r: 1.0

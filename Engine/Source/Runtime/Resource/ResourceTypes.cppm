@@ -1,11 +1,8 @@
 module;
 
-#include <hlsl++.h>
-
 export module Resource:Types;
 
 export import Core;
-export import Material;
 export import RHI;
 export import ShaderCompiler;
 export import std;

@@ -5,6 +5,7 @@ module;
 
 export module Scene:Camera;
 
+import std;
 export import Core;
 export import RHI;
 
@@ -58,6 +59,16 @@ struct CameraViewRecord {
     hlslpp::float3      CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
     Float32             ExposureEV100  = 15.0f;
     CameraRenderTargets Targets        = {};
+
+    /// @brief Return the width of the camera's scene-color target.
+    [[nodiscard]] auto GetWidth() const -> Uint32 {
+        return Targets.SceneColorRT->GetWidth();
+    }
+
+    /// @brief Return the height of the camera's scene-color target.
+    [[nodiscard]] auto GetHeight() const -> Uint32 {
+        return Targets.SceneColorRT->GetHeight();
+    }
 };
 
 /// @brief Resource loader for named CameraRenderTargets.
@@ -303,21 +314,26 @@ class CameraSystem : public ISystem {
 
 namespace SoulEngine {
 
-namespace {
+// Note: this namespace must stay named. In a named module, clang 23 silently
+// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
+// which would skip this entt meta registration at program startup.
+namespace MetaRegistration {
+
+using namespace entt::literals;
 
 struct CameraComponentMetaRegistration {
     CameraComponentMetaRegistration() {
-        entt::meta_factory<CameraComponent>{}
-            .type("camera")
-            .data<&CameraComponent::FOV>("fov_degrees")
-            .data<&CameraComponent::NearPlane>("near_plane")
-            .data<&CameraComponent::FarPlane>("far_plane")
-            .data<&CameraComponent::ExposureEV100>("exposure_ev100");
+        entt::meta_factory<CameraComponent>{"camera"_hs}
+            .data<&CameraComponent::FOV>("fov_degrees"_hs)
+            .data<&CameraComponent::NearPlane>("near_plane"_hs)
+            .data<&CameraComponent::FarPlane>("far_plane"_hs)
+            .data<&CameraComponent::ExposureEV100>("exposure_ev100"_hs)
+            .func<&EmplaceComponent<CameraComponent>>("emplace"_hs);
     }
 };
 
 CameraComponentMetaRegistration g_CameraComponentMetaRegistration = {};
 
-} // namespace
+} // namespace MetaRegistration
 
 } // namespace SoulEngine

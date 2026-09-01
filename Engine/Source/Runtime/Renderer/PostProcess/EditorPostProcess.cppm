@@ -20,54 +20,82 @@ struct EditorSelectionConstants {
 /// @brief Queue preparation of the editor EntityId outline pipeline.
 [[nodiscard]] auto RequestEditorSelectionPipeline() -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> {
     const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "EditorSelectionOutline.slang";
-    return RequestGraphicsPipeline("EditorSelectionPass",
-                                   GraphicsPipelineRequest{
-                                       .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
-                                       .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
-                                       .DepthStencil = {.DepthTestEnable = false, .DepthWriteEnable = false},
-                                       .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
-                                   });
+    auto Result = RequestGraphicsPipeline(
+        "EditorSelectionPass",
+        GraphicsPipelineRequest{
+            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .DepthStencil = {.DepthTestEnable = false, .DepthWriteEnable = false},
+            .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
+    });
+    if (!Result)
+        return std::unexpected(Result.error());
+    return *Result;
 }
+
+/// @brief Construct the editor selection outline pass for one render view.
+class EditorSelectionPass final : public IRHIGraphicsPass {
+  public:
+    explicit EditorSelectionPass(RHIRef<RHIGraphicsPipeline> Pipeline)
+        : IRHIGraphicsPass(std::move(Pipeline)) {}
+
+    auto SetInput(const CameraViewRecord& View, const RenderPixelCoordinate& Pixel) -> void {
+        m_EntityIdRT = View.Targets.GBuffer.EntityIdRT;
+        m_SceneColorRT = View.Targets.SceneColorRT;
+        m_Pixel = Pixel;
+    }
+
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        m_Commands.clear();
+        m_Attachments = {};
+        if (!GetShaderBindingSet(m_Pipeline) || !m_EntityIdRT || !m_SceneColorRT)
+            return std::unexpected(ErrorMessage("Editor selection post-process resources are not ready"));
+
+        m_Attachments = RHIGraphicsAttachments{
+            .ColorAttachments =
+                {
+                    {.TextureRef = m_SceneColorRT, .Clear = false},
+                },
+        };
+        SetViewport(0.0f,
+                    0.0f,
+                    static_cast<Float32>(m_SceneColorRT->GetWidth()),
+                    static_cast<Float32>(m_SceneColorRT->GetHeight()));
+        SetScissorRect(0, 0, m_SceneColorRT->GetWidth(), m_SceneColorRT->GetHeight());
+
+        if (auto R = BindResource("g_editorSelection.entityId", m_EntityIdRT, true); !R)
+            return std::unexpected(R.error().Append("Editor selection entity ID binding failed"));
+        const EditorSelectionConstants Constants{
+            .SelectedPixelX = m_Pixel.X,
+            .SelectedPixelY = m_Pixel.Y,
+            .Enabled        = 1,
+        };
+        if (auto R = PushConstants(0, Constants); !R)
+            return std::unexpected(R.error().Append("Editor selection push constant binding failed"));
+        if (auto R = Commit(); !R)
+            return std::unexpected(R.error().Append("Editor selection binding commit failed"));
+        Draw();
+        return {};
+    }
+
+  private:
+    RHIRef<RHIRenderTarget> m_EntityIdRT = nullptr;
+    RHIRef<RHIRenderTarget> m_SceneColorRT = nullptr;
+    RenderPixelCoordinate  m_Pixel = {};
+};
 
 /// @brief Construct the editor selection outline pass for one render view.
 [[nodiscard]] auto BuildEditorSelectionPass(const CameraViewRecord&            View,
                                             const RenderPixelCoordinate&       Pixel,
                                             const RHIRef<RHIGraphicsPipeline>& Pipeline)
-    -> std::expected<RHIPass, ErrorMessage> {
+    -> std::expected<UPtr<IRHIPass>, ErrorMessage> {
     const auto& EntityIdRTRef = View.Targets.GBuffer.EntityIdRT;
     const auto& SceneColorRef = View.Targets.SceneColorRT;
-    if (!EntityIdRTRef || !SceneColorRef || !Pipeline)
+    if (!EntityIdRTRef || !SceneColorRef || Pipeline.GetState() == RHIRefState::Unknown)
         return std::unexpected(ErrorMessage("Editor selection post-process resources are not ready"));
 
-    RHIPass Pass{
-        .Desc =
-            RHIRenderingDesc{
-                .ColorAttachments =
-                    {
-                        {.TextureRef = SceneColorRef, .Clear = false},
-                    },
-            },
-    };
-    Pass.SetFullViewport();
-    Pass.SetFullScissorRect();
-    Pass.SetGraphicsPipeline(Pipeline);
-
-    auto Parameters = RHIShaderParameters::Create(*Pipeline);
-    if (auto R = Parameters.SetSampledRenderTarget("g_editorSelection.entityId", EntityIdRTRef); !R)
-        return std::unexpected(R.error().Append("Editor selection entity ID binding failed"));
-
-    const EditorSelectionConstants Constants{
-        .SelectedPixelX = Pixel.X,
-        .SelectedPixelY = Pixel.Y,
-        .Enabled        = 1,
-    };
-    Pass.PushConstants(Pipeline, 0, &Constants, sizeof(Constants));
-    Pass.BindShaderParameters(Pipeline,
-                              std::move(Parameters),
-                              RHIShaderParameterResources{
-                                  .RenderTargets = {SceneColorRef, EntityIdRTRef},
-                              });
-    Pass.Draw(Pipeline);
+    auto Pass = std::make_unique<EditorSelectionPass>(Pipeline);
+    Pass->SetInput(View, Pixel);
     return Pass;
 }
 
