@@ -116,9 +116,23 @@ class EditorWorld {
         m_EditorRootEntity = m_Registry.create();
         m_Registry.emplace<TransformComponent>(m_EditorRootEntity);
 
-        m_SystemScheduler.Register<TransformSystem>();
-        m_SystemScheduler.Register<CameraSystem>();
-        m_SystemScheduler.Register<EditorCameraSystem>(Window);
+        // EditorCameraSystem patches local transforms from input; it must run
+        // before TransformSystem so the changes propagate within the same frame.
+        const auto Setup = m_SystemScheduler.Register<TransformSystem>("TransformSystem")
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.Register<CameraSystem>("CameraSystem");
+                               })
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.Register<EditorCameraSystem>(
+                                       "EditorCameraSystem", {"TransformSystem"}, {}, Window);
+                               })
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.CompileDependency();
+                               });
+        if (!Setup) {
+            LogError("Editor system setup failed:\n{}", Setup.error().ToString());
+            return;
+        }
         m_SystemScheduler.SetupObservers();
 
         const auto CameraEntity = m_Registry.create();
@@ -170,7 +184,8 @@ class EditorWorld {
 
     /// @brief Update editor ECS systems for one frame.
     auto Tick(Float32 DeltaTime) -> void {
-        m_SystemScheduler.OnUpdate(DeltaTime);
+        if (const auto Result = m_SystemScheduler.OnUpdate(DeltaTime); !Result)
+            LogError("Editor system update failed:\n{}", Result.error().ToString());
         m_SystemScheduler.ClearObservers();
     }
 

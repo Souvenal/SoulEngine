@@ -7,17 +7,6 @@ import Core;
 
 using namespace SoulEngine;
 
-namespace {
-
-class NoOpSystem final : public ISystem {
-  public:
-    explicit NoOpSystem(entt::registry& Registry) : ISystem(Registry) {}
-
-    auto OnUpdate(Float32) -> void override {}
-};
-
-} // namespace
-
 TEST(TransformTest, BuildsLocalMatrixFromTranslationRotationAndScale) {
     const TransformComponent Transform{
         .Translation = hlslpp::float3(1.25f, -2.0f, 3.5f),
@@ -32,18 +21,6 @@ TEST(TransformTest, BuildsLocalMatrixFromTranslationRotationAndScale) {
     EXPECT_FLOAT_EQ(static_cast<float>(Matrix[3].x), 1.25f);
     EXPECT_FLOAT_EQ(static_cast<float>(Matrix[3].y), -2.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(Matrix[3].z), 3.5f);
-}
-
-TEST(SystemSchedulerTest, IgnoresDuplicateSystemRegistration) {
-    entt::registry Registry;
-    SystemScheduler Scheduler{Registry};
-    Scheduler.Register<NoOpSystem>();
-    const auto* First = Scheduler.Get<NoOpSystem>();
-    ASSERT_NE(First, nullptr);
-
-    Scheduler.Register<NoOpSystem>();
-
-    EXPECT_EQ(Scheduler.Get<NoOpSystem>(), First);
 }
 
 TEST(TransformSystemTest, UpdatesDirtyTransformSubtrees) {

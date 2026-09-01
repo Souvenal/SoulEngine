@@ -10,6 +10,20 @@ required because hlslpp comparison operators return component-wise vector
 results (HLSL semantics) that are a hard error inside EnTT's
 equality-comparable probe.
 
+## ECS
+
+**SystemScheduler** (`Core:ECS`):
+Owns and dispatches the ECS systems of a world. Every system registers under a
+unique name with optional Before/After name lists declaring execution
+dependencies; CompileDependency() resolves the dependency DAG (Kahn, ties
+broken by registration order) into a deterministic execution order.
+Registration and CompileDependency() are only allowed during the
+initialization phase; OnUpdate() requires a successful CompileDependency().
+Dangling name references and dependency cycles are reported as ErrorMessage
+diagnostics (cycles include one concrete name path).
+_Avoid_: relying on registration order for execution semantics, registering
+systems mid-frame
+
 ## Language
 
 ### Type aliases
