@@ -95,10 +95,21 @@ class Scene {
         m_RootEntity = m_Registry.create();
         m_Registry.emplace<TransformComponent>(m_RootEntity);
         m_Registry.ctx().emplace<entt::dispatcher>();
-        m_SystemScheduler.Register<TransformSystem>();
-        m_SystemScheduler.Register<MeshSystem>();
-        m_SystemScheduler.Register<LightSystem>();
-        m_SystemScheduler.Register<CameraSystem>();
+        const auto Setup = m_SystemScheduler.Register<TransformSystem>("TransformSystem")
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.Register<MeshSystem>("MeshSystem");
+                               })
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.Register<LightSystem>("LightSystem");
+                               })
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.Register<CameraSystem>("CameraSystem");
+                               })
+                               .and_then([&]() -> std::expected<void, ErrorMessage> {
+                                   return m_SystemScheduler.CompileDependency();
+                               });
+        if (!Setup)
+            LogError("Scene system setup failed:\n{}", Setup.error().ToString());
         m_SystemScheduler.SetupObservers();
     }
     ~Scene() {
@@ -150,7 +161,8 @@ class Scene {
     /// @brief Advance scene systems by one frame.
     /// @param DeltaTime Time elapsed since the previous frame in seconds.
     auto Tick(Float32 DeltaTime) -> void {
-        m_SystemScheduler.OnUpdate(DeltaTime);
+        if (const auto Result = m_SystemScheduler.OnUpdate(DeltaTime); !Result)
+            LogError("Scene system update failed:\n{}", Result.error().ToString());
         m_SystemScheduler.ClearObservers();
     }
 
