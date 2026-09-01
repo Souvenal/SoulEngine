@@ -3,15 +3,15 @@
 **Namespace:** SoulEngine
 
 Vulkan RHI backend. It is the current concrete implementation of the
-submission-owned RHIRef contract described by the RHI context.
+FrameSlot-owned RHIRef contract described by the RHI context.
 
 ## Terms
 
 | Term | Definition |
 |------|------------|
-| **Graphics timeline** | Device-level timeline semaphore signalled by every frame submission. A VulkanInFlightSubmission stores the corresponding completion value. |
-| **VulkanInFlightSubmission** | Queue entry containing the submitted RHICommandList. Its destruction releases command-held RHIRef values only after the graphics timeline reaches its completion value. |
-| **BeginFrame** | Waits for reuse of the backend frame context, resets frame-local scratch/descriptor/transient arenas, and calls RetireInFlightSubmissions() after the timeline observation. |
+| **Graphics timeline** | Device-level timeline semaphore signalled by every frame submission. RHIFrameCompletion stores the corresponding completion value. |
+| **Frame completion** | Backend-independent token returned by EndFrame(); RenderThread waits on it before replacing the slot-owned RenderResult. |
+| **BeginFrame** | Waits for reuse of the backend frame context and resets frame-local scratch/descriptor/transient arenas. |
 | **ImmediateContext** | Unified one-shot executor with transfer and graphics lanes. Each lane has a queue-local timeline and ordered completion callbacks. Tick() polls both lanes; Drain() waits and retires them at shutdown. |
 | **Immediate completion callback** | Callback retained by an immediate-lane timeline point. Async buffer/texture creation captures the RHI ref payload and marks it ready only after the required transfer/graphics chain completes. |
 | **Deferred deletion queue** | RHI-module-owned queue behind GDeferredDeletionQueue. Final RHIRef release enqueues native destruction; RHILoop drains it on the RHI thread after Tick() via DrainRHIDeferredDeletions(), and Shutdown() performs the final drain. |
@@ -72,19 +72,12 @@ runtime coverage.
 
 ## Frame submission lifetime
 
-VulkanRenderDevice::Execute() validates and records a ref-backed command list,
-signals the graphics timeline in the primary queue submission, and moves the
-whole list into m_InFlightSubmissions. The producer FrameSlot may therefore
-be cleared immediately after Execute() returns: the backend, not the slot,
-retains every ordinary command ref while the GPU can access it.
-
-At a later BeginFrame(), Vulkan waits for the reused backend frame context,
-polls the graphics timeline, and pops only submissions whose completion value
-has been reached. Popping destroys the retained command list and may enqueue
-last-ref native destruction. The next RHILoop iteration drains that queue after
-Tick().
-This ordering prevents a normal ref-backed frame resource from being destroyed
-while its Vulkan submission remains in flight.
+VulkanRenderDevice::Execute() validates and records a ref-backed command list
+borrowed from the producer FrameSlot. EndFrame() submits the primary command
+buffer and returns an RHIFrameCompletion token; it does not retain or move the
+list. RenderThread waits on that token immediately before replacing the slot's
+RenderResult, so the list's RHIRefs remain alive while the submission is in
+flight.
 
 TLAS backing capacity is fixed after creation for now. An update that exceeds
 the initial instance capacity fails instead of replacing native backing while
@@ -96,14 +89,15 @@ an earlier submission may still reference it.
   EnqueueResourceCreation; RHILoop drains that queue before Tick() and
   Execute().
 - VulkanImmediateContext, command pools, descriptors, frame arenas, and queue
-  submission are RHI-thread confined during normal operation.
+  submission are RHI-thread confined during normal operation. WaitFinish() is
+  the explicit exception: it performs only a read-only host wait on the device
+  timeline and is callable from RenderThread.
 - Initialization and shutdown remain main-thread lifecycle exceptions today.
-  Shutdown() waits idle, drains immediate callbacks, clears in-flight
-  submissions, drains deferred deletion, then releases Vulkan contexts. No
-  RHIRef may outlive this sequence.
+  Shutdown() waits idle, drains immediate callbacks, drains deferred deletion,
+  then releases Vulkan contexts. No RHIRef may outlive this sequence.
 - The ImGui overlay command contains borrowed ImGui data valid only through
-  Execute(); it is not placed in VulkanInFlightSubmission for post-submit
-  use. Dear ImGui owns its own texture lifetime.
+  Execute(); it is not retained by the backend after submission. Dear ImGui
+  owns its own texture lifetime.
 
 ## Relevant partitions
 
@@ -117,10 +111,12 @@ an earlier submission may still reference it.
 
 ## Guardrails
 
-- Do not remove the command-list move into m_InFlightSubmissions merely
-  because FrameSlot becomes reusable; those events are not equivalent.
+- Keep FrameSlot.RenderPacket alive until both RHI CPU consumption and its
+  RHIFrameCompletion timeline have completed; replacement is the retirement
+  boundary.
 - Do not enqueue a native destructor directly from a Game or Render thread. Use
   RHIRef final release and the deferred-deletion queue.
 - Do not reuse transient arena memory or a Vulkan frame context before its
   timeline wait completes.
-- Do not add a second backend without an equivalent submission-retention rule.
+- Do not add a second backend without an equivalent RHIFrameCompletion wait
+  implementation that is safe to call from RenderThread.

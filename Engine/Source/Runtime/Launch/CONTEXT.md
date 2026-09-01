@@ -9,28 +9,21 @@ Engine startup and the three-thread Game → Render → RHI pipeline.
 | Term | Definition |
 |------|------------|
 | **EngineLoop** | Lifecycle: PreInit → Init → Run → Shutdown. Run starts Render/RHI workers and runs GameLoop on the main thread. |
-| **GameLoop** | Main-thread loop: poll events, update application/editor state, wait for a reusable slot, build the SceneSnapshot, then publish GameReady. It accepts Empty or RHIDone slots. |
-| **RenderLoop** | Worker loop: wait for GameReady, drain Render tasks, render the slot snapshot into RenderResult/RHICommandList, then publish RenderReady. |
-| **RHILoop** | Worker loop: wait for RenderReady, drain RHI tasks, call RHIRenderDevice::Tick(), drain the RHI deferred deletion queue via DrainRHIDeferredDeletions(), poll Resource dependency waiters, execute the moved command list, then publish RHIDone. It calls WaitIdle() before exiting. |
-| **FrameSlot** | One of three synchronized handoff records containing SceneSnapshot, Renderer, ImGui snapshot, and RenderResult. The slot coordinates CPU pipeline ownership; it is not the Vulkan submission-retirement record. |
-| **Render packet** | RenderResult whose move-only RHICommandList is produced by RenderLoop. RHILoop moves that list into Execute(). For Vulkan, Execute() moves it again into backend in-flight submission storage. |
-| **SlotState** | Empty -> GameReady -> RenderReady -> RHIDone; GameLoop may immediately overwrite a RHIDone slot and does not write an intermediate Empty state. |
+| **GameLoop** | Main-thread loop: poll events, update application/editor state, wait for a slot in Empty or RenderReady, build the SceneSnapshot, then publish GameReady. |
+| **RenderLoop** | Worker loop: wait for GameReady, drain Render tasks, consume SceneData, publish RenderReady, wait for the prior packet's RHI/GPU completion, then replace RenderResult and wake RHILoop. |
+| **RHILoop** | Worker loop: wait for a slot packet marked not consumed, drain RHI tasks, call RHIRenderDevice::Tick(), drain deferred deletions, borrow the packet for Execute(), submit it through EndFrame(), store RHIFrameCompletion, mark the packet consumed, and notify RenderLoop. It calls WaitIdle() before exiting. |
+| **FrameSlot** | One of three synchronized handoff records containing SceneSnapshot, Renderer, ImGui snapshot, RenderResult, and its RHIFrameCompletion. The slot remains the RenderResult owner until RenderThread waits for GPU completion. |
+| **Render packet** | RenderResult produced by RenderLoop and borrowed by RHILoop for Execute(). The packet is not moved into backend storage; its RHIRefs remain in the FrameSlot until the next replacement. |
+| **SlotState** | Empty -> GameReady -> RenderReady -> GameReady; Empty is only the initial bootstrap state, while RenderReady lets GameThread prepare the next SceneData. RHI packet handoff uses a separate consumed flag. |
 | **FatalError** | Atomic fatal flag set by any loop; wakes waiting slots and causes coordinated shutdown. |
 
 ## RHI reference lifetime across slots
 
-A normal command list now carries RHIRef<T> values rather than raw RHI
-observers. RHILoop performs Execute(std::move(Slot.RenderPacket.CmdList)) and
-then assigns Slot.RenderPacket = {} before it sets RHIDone. Thus the slot
-command-list storage is cleared by RHILoop, **not** by the next GameLoop slot
-acquisition.
-
-The current Vulkan backend preserves correctness by retaining the moved command
-list in its own graphics-timeline VulkanInFlightSubmission. Reusing a
-FrameSlot therefore does not imply GPU completion, and FrameSlot reuse must
-not be used as the destruction proof. The intended clear-only-on-GameLoop-
-reacquire ownership policy is not implemented literally; backend submission
-retention is the active safety mechanism.
+A normal command list carries RHIRef<T> values rather than raw RHI observers.
+RHILoop borrows Slot.RenderPacket.CmdList for Execute() and leaves the packet
+in the FrameSlot after EndFrame() returns an RHIFrameCompletion. RenderLoop
+waits for the RHI-consumed flag and that completion token immediately before
+replacing the packet, so slot ownership itself proves the RHIRef lifetime.
 
 The ImGui overlay remains a borrowed Execute-time payload: its snapshot and
 texture queue are valid through Execute() and are cleared with the slot only

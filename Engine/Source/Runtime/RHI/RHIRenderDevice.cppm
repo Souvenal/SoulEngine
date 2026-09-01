@@ -14,6 +14,15 @@ enum class RHIBackendType {
     Vulkan,
 };
 
+/// @brief Backend-independent completion point for one submitted frame.
+///
+/// The token is returned by EndFrame() and stored by the caller alongside the
+/// submitted frame packet.  A zero value denotes a packet that has not been
+/// submitted yet and therefore requires no wait.
+struct RHIFrameCompletion {
+    Uint64 Value = 0;
+};
+
 class RHIRenderDevice {
   public:
     RHIRenderDevice()                                          = default;
@@ -93,12 +102,27 @@ class RHIRenderDevice {
     /// @brief Prepare the current backend frame slot before frame-affined tasks run.
     [[nodiscard]] virtual auto BeginFrame() -> std::expected<void, ErrorMessage> = 0;
 
-    /// @brief Execute a frame's worth of RHI commands.
-    /// Records the current frame's commands after BeginFrame() has completed.
-    [[nodiscard]] virtual auto Execute(RenderPassList&& PassList) -> std::expected<void, ErrorMessage> = 0;
+    /// @brief Execute a frame's worth of RHI commands borrowed from the caller.
+    ///
+    /// Records the current frame's commands after BeginFrame() has completed,
+    /// but does not take ownership of PassList.  The caller keeps the packet
+    /// alive until WaitFinish() confirms that its submission is no longer GPU
+    /// visible.
+    [[nodiscard]] virtual auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> = 0;
 
     /// @brief Finish and submit the current backend frame slot.
-    [[nodiscard]] virtual auto EndFrame() -> std::expected<void, ErrorMessage> = 0;
+    ///
+    /// Returns the backend-independent completion point that identifies this
+    /// submission.  The caller must retain the associated command packet until
+    /// WaitFinish() succeeds for the returned token.
+    [[nodiscard]] virtual auto EndFrame() -> std::expected<RHIFrameCompletion, ErrorMessage> = 0;
+
+    /// @brief Block until the GPU has completed the identified submission.
+    ///
+    /// This host wait is safe for the render thread and does not submit work or
+    /// mutate the command packet.  A zero-valued token returns immediately.
+    [[nodiscard]] virtual auto WaitFinish(const RHIFrameCompletion& Completion)
+        -> std::expected<void, ErrorMessage> = 0;
 
     // ── RHICommand context access ──────────────────────────────────────────
 

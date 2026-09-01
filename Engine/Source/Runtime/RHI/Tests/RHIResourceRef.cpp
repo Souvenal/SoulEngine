@@ -186,13 +186,16 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock TLAS creation is not implemented"));
     }
 
-    [[nodiscard]] auto Execute(RenderPassList&&) -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto Execute(RenderPassList&) -> std::expected<void, ErrorMessage> override {
         return {};
     }
     [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
         return {};
     }
-    [[nodiscard]] auto EndFrame() -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto EndFrame() -> std::expected<RHIFrameCompletion, ErrorMessage> override {
+        return RHIFrameCompletion{};
+    }
+    [[nodiscard]] auto WaitFinish(const RHIFrameCompletion&) -> std::expected<void, ErrorMessage> override {
         return {};
     }
     [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override {
