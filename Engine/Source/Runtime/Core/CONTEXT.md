@@ -1,16 +1,14 @@
 # Context: Core
 
-**Namespace:** `SoulEngine::Core`
-
 Foundation types, logging, config, and utilities shared by all other modules.
 
 ## Math
 
-**Transform**:
-`Core:Math` provides the reusable local three-dimensional translation, Euler
-rotation in degrees, and scale value. Its local matrix uses X -> Y -> Z
-rotation composition. Scene hierarchy code owns derived world matrices rather
-than this Core value type.
+`Core:Util.Types` hosts the hlslpp integration glue shared by all modules:
+EnTT `is_equality_comparable` specializations for hlslpp vector types,
+required because hlslpp comparison operators return component-wise vector
+results (HLSL semantics) that are a hard error inside EnTT's
+equality-comparable probe.
 
 ## Language
 

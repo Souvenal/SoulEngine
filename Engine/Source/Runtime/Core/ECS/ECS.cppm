@@ -8,6 +8,16 @@ export import :Util;
 
 export namespace SoulEngine {
 
+/// @brief Add or replace a reflected component on an entity.
+/// @tparam T Component type.
+/// @param Registry Registry that owns the component storage.
+/// @param Entity Entity that receives the component.
+/// @param Component Constructed component value.
+template <typename T>
+auto EmplaceComponent(entt::registry* Registry, entt::entity Entity, const T& Component) -> void {
+    Registry->emplace_or_replace<T>(Entity, Component);
+}
+
 /// @brief Base interface for all ECS systems.
 ///
 /// Systems process entities with specific components each frame.

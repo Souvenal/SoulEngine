@@ -1,16 +1,10 @@
 import Pbr;
+import Material;
 import GBuffer;
+import Common;
 
 static const float kRayEpsilon = 0.001;
 static const float kRayMaxDistance = 10000.0;
-
-public struct RayTracingViewData {
-    public float4x4 viewProjectionInverse;
-    public float4 cameraPosition;
-    public float4 pathSettings;
-    public float exposureEV100;
-    public uint lightCount;
-};
 
 public struct LightData {
     public float4 colorIntensity;
@@ -44,14 +38,22 @@ public struct RayTracingGeometryData {
     public uint materialIndex;
 };
 
+public struct RayTracingFrameData {
+    public float time;
+    public float exposureEV100;
+    public uint  lightCount;
+    public float4 pathSettings;
+};
+
 public struct RayTracingResources {
     public RaytracingAccelerationStructure tlas;
     public RWTexture2D<float4> output;
     public RWTexture2D<float4> accumulation;
     public RWTexture2D<float4> primaryNormal;
     public RWTexture2D<uint> primaryEntityId;
-    public ConstantBuffer<RayTracingViewData> view;
-    public StructuredBuffer<PbrMaterialData> materials;
+    public ConstantBuffer<RayTracingFrameData> frame;
+    public ConstantBuffer<ViewData>  view;
+    public StructuredBuffer<MaterialRecord> materials;
     public StructuredBuffer<LightData> lights;
     public StructuredBuffer<RayTracingInstanceData> instances;
     public StructuredBuffer<RayTracingGeometryData> geometries;
@@ -151,8 +153,8 @@ bool traceShadow(float3 origin, float3 direction, float maxDistance) {
 void rayGenMain() {
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 size = DispatchRaysDimensions().xy;
-    uint sampleIndex = uint(g_rayTracing.view.pathSettings.x);
-    uint maxBounces = max(uint(g_rayTracing.view.pathSettings.y), 1u);
+    uint sampleIndex = uint(g_rayTracing.frame.pathSettings.x);
+    uint maxBounces = max(uint(g_rayTracing.frame.pathSettings.y), 1u);
     uint randomState = hashUint(pixel.x + pixel.y * size.x + sampleIndex * 0x9e3779b9u);
 
     float2 jitter = float2(nextRandom(randomState), nextRandom(randomState));
@@ -187,13 +189,12 @@ void rayGenMain() {
         float3 normal = payload.normal;
         if (dot(normal, -ray.Direction) < 0.0)
             normal = -normal;
-        PbrSurfaceMaterial surface = resolvePbrMaterial(
-            g_rayTracing.materials[payload.materialIndex], payload.uv, normal, payload.tangent);
+        MaterialSurface surface = g_rayTracing.materials[payload.materialIndex].resolveSurface(
+            payload.uv, normal, payload.tangent);
         normal = surface.normal;
         float3 viewDirection = -ray.Direction;
-        PbrMaterial material = surface.material;
         radiance += throughput * surface.emissive;
-        for (uint lightIndex = 0u; lightIndex < g_rayTracing.view.lightCount; ++lightIndex) {
+        for (uint lightIndex = 0u; lightIndex < g_rayTracing.frame.lightCount; ++lightIndex) {
             LightData light = g_rayTracing.lights[lightIndex];
             uint lightType = uint(light.directionType.w);
             float3 lightDirection = float3(0.0);
@@ -219,9 +220,9 @@ void rayGenMain() {
             }
             float nDotL = saturate(dot(normal, lightDirection));
             if (nDotL > 0.0 && !traceShadow(payload.position + normal * kRayEpsilon, lightDirection, shadowDistance))
-                radiance += throughput * evaluatePbrBrdf(material, normal, viewDirection, lightDirection) * illuminance * nDotL * surface.occlusion;
+            radiance += throughput * evaluatePbrBrdf(surface, normal, viewDirection, lightDirection) * illuminance * nDotL * surface.occlusion;
         }
-        PbrBsdfSample sample = samplePbrBsdf(material,
+        PbrBsdfSample sample = samplePbrBsdf(surface,
                                               normal,
                                               viewDirection,
                                               nextRandom(randomState),
@@ -257,7 +258,7 @@ void rayGenMain() {
             g_rayTracing.primaryEntityId[pixel] = 0xffffffffu;
         }
     }
-    accumulated *= exp2(-g_rayTracing.view.exposureEV100);
+    accumulated *= exp2(-g_rayTracing.frame.exposureEV100);
     float3 displayColor = accumulated / (accumulated + 1.0);
     displayColor = pow(displayColor, 1.0 / 2.2);
     g_rayTracing.output[pixel] = float4(displayColor, 1.0);
@@ -299,7 +300,7 @@ void closestHitMain(inout PathPayload payload, in BuiltInTriangleIntersectionAtt
     float2 uv1 = loadTexCoord(geometry, indices.y);
     float2 uv2 = loadTexCoord(geometry, indices.z);
     float4 objectTangent = float4(1.0, 0.0, 0.0, 1.0);
-    if (g_rayTracing.materials[geometry.materialIndex].normalTextureIndex >= 0) {
+    if (hasTexture(g_rayTracing.materials[geometry.materialIndex].normalTexture)) {
         float4 tangent0 = loadTangent(geometry, indices.x);
         float4 tangent1 = loadTangent(geometry, indices.y);
         float4 tangent2 = loadTangent(geometry, indices.z);

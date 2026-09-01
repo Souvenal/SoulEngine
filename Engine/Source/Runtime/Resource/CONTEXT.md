@@ -75,5 +75,5 @@ the renderer/resource boundary.
 
 - Core — resource keys, errors, logging, TaskGraph
 - RHI — ref-backed native payloads and RHI-thread creation/readiness
-- ShaderCompiler / Material / import libraries — resource-family CPU preparation
+- ShaderCompiler — pipeline CPU preparation. The legacy Material/Texture partitions and the Material dependency were removed on 2026-08-27; material concerns live in the Material module.
 - Renderer / Scene / Application — request owners and consumers

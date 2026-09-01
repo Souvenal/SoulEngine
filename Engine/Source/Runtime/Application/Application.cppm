@@ -112,7 +112,7 @@ export namespace SoulEngine {
         return std::unexpected(Loaded.error().Append("Default Scene document load failed"));
     App->m_Scene = std::move(Loaded->first);
     for (const auto& Warning : Loaded->second.Warnings)
-        LogWarning("Default Scene warning at '{}': {}", Warning.Path, Warning.Message);
+        LogWarning("Default Scene warning at '{}': {}", Warning.Location, Warning.Message);
     return App;
 }
 

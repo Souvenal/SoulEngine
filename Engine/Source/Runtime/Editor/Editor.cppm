@@ -316,12 +316,8 @@ class Editor {
 
     /// @brief Render-thread entry point: consume the latest UI frame snapshot
     /// and append its draw pass to the command list. Skips silently until a
-    /// frame has been published and the pipeline, font texture, and dynamic
-    /// buffers are all ready.
-    auto AttachPresentationOverlay(RHICommandList& CmdList, ImDrawDataSnapshot& Snapshot) -> void {
-        if (!CmdList.PresentSourceRef.TryGet())
-            return;
-
+    /// frame has been published.
+    auto AttachPresentationOverlay(RenderPassList& CmdList, ImDrawDataSnapshot& Snapshot) -> void {
         if (!Snapshot.DrawData.Valid)
             return;
 

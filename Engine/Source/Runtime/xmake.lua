@@ -2,6 +2,19 @@
 -- C++ module BMI/object ownership is target-scoped in xmake. Keep every test file
 -- as a real binary target instead of registering many files on one aggregate test
 -- target; otherwise stale or mixed module artifacts can be reused across tests.
+function add_package_rpath(package_names)
+    on_load(function(target)
+        for _, package_name in ipairs(package_names) do
+            local package = target:pkg(package_name)
+            if package then
+                for _, linkdir in ipairs(package:get("linkdirs")) do
+                    target:add("rpathdirs", linkdir, {force = true})
+                end
+            end
+        end
+    end)
+end
+
 function test_module(module_name, opt)
     opt = opt or {}
 
@@ -21,6 +34,9 @@ function test_module(module_name, opt)
             -- test objects on MSVC, so force-link that archive instead of adding a project-local main.
             if is_plat("windows") then
                 add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+            end
+            if opt.rpath_packages then
+                add_package_rpath(opt.rpath_packages)
             end
             add_files(testfile)
             add_tests("default", {
@@ -61,11 +77,4 @@ target("SoulEngine")
     -- @rpath/libslang-compiler.*.dylib at launch without DYLD_LIBRARY_PATH
     -- (needed by IDE debuggers like VSCode/Zed which don't inherit env).
     add_packages("slang")
-    on_load(function(target)
-        local slang = target:pkg("slang")
-        if slang then
-            for _, linkdir in ipairs(slang:get("linkdirs")) do
-                target:add("rpathdirs", linkdir, {force = true})
-            end
-        end
-    end)
+    add_package_rpath({"slang"})

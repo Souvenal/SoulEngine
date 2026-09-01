@@ -16,33 +16,38 @@
 export module Shader;
 
 import Core;
+import magic_enum;
 
 export import std;
 
 export namespace SoulEngine {
 
-/// @brief Canonical pipeline stage enum.
+/// Sentinel used by shader reflection for an unbounded/runtime-sized array.
+inline constexpr Uint32 kShaderReflectionArrayUnboundedSize = std::numeric_limits<Uint32>::max();
+
+/// @brief Canonical pipeline stage flags.
 ///
 /// Used by the compiler to describe what stage to compile for, by the
 /// RHI to select pipeline bind points, and by reflection to label entry
 /// points.  Backends (Slang, Vulkan) map to/from their native stage
-/// types.
-enum class ShaderStage : Uint8 {
+/// types.  Values are bit flags so multi-stage sets (e.g. a graphics
+/// program's vertex+fragment) compose with magic_enum bitwise operators.
+enum class ShaderStage : Uint16 {
     Unknown       = 0,
-    Vertex        = 1,
-    Fragment      = 2,
-    Compute       = 3,
-    Hull          = 4,
-    Domain        = 5,
-    Geometry      = 6,
-    Mesh          = 7,
-    Amplification = 8,
-    RayGeneration = 9,
-    Intersection  = 10,
-    AnyHit        = 11,
-    ClosestHit    = 12,
-    Miss          = 13,
-    Callable      = 14,
+    Vertex        = 1 << 0,
+    Fragment      = 1 << 1,
+    Compute       = 1 << 2,
+    Hull          = 1 << 3,
+    Domain        = 1 << 4,
+    Geometry      = 1 << 5,
+    Mesh          = 1 << 6,
+    Amplification = 1 << 7,
+    RayGeneration = 1 << 8,
+    Intersection  = 1 << 9,
+    AnyHit        = 1 << 10,
+    ClosestHit    = 1 << 11,
+    Miss          = 1 << 12,
+    Callable      = 1 << 13,
 };
 
 /// @brief Minimal scalar-type vocabulary needed by normalized reflection.
@@ -62,36 +67,36 @@ enum class ShaderScalarType : Uint8 {
 /// needs them (texel buffers, immutable samplers, acceleration structures,
 /// combined image samplers, etc.).
 enum class ShaderResourceType : Uint8 {
-    Unknown        = 0,
-    ConstantBuffer = 1,
-    StorageBuffer  = 2,
+    Unknown               = 0,
+    ConstantBuffer        = 1,
+    StorageBuffer         = 2,
     /// Shader-read-only texture descriptor (DX: SRV).
-    SampledTexture = 3,
+    SampledTexture        = 3,
     /// Shader read-write texture/image descriptor (DX: UAV), not a render
     /// target attachment (DX: RTV/DSV).  Attachments usually use
     /// attachment-optimal layouts and may get hardware compression/tile-local
     /// paths; storage images commonly use general layouts for random access.
-    StorageTexture          = 4,
-    Sampler                 = 5,
+    StorageTexture        = 4,
+    Sampler               = 5,
     /// Top-level acceleration structure used for hardware ray traversal.
-    AccelerationStructure   = 6,
+    AccelerationStructure = 6,
 };
 
 /// @brief Reflected scalar/vector/matrix shape for a shader-visible value.
 struct ShaderValueType {
     ShaderScalarType ScalarType  = ShaderScalarType::Unknown;
-    Uint32     RowCount    = 1;
-    Uint32     ColumnCount = 1;
+    Uint32           RowCount    = 1;
+    Uint32           ColumnCount = 1;
 };
 
 /// @brief Reflected shader-visible resource binding.
 struct ShaderBinding {
     /// Shader parameter access path, e.g. "g_frame.cb"; not a resource key or file path.
-    String       ParameterPath = {};
-    Uint32       Set           = 0;
-    Uint32       BindingIndex  = 0;
+    String             ParameterPath = {};
+    Uint32             Set           = 0;
+    Uint32             BindingIndex  = 0;
     ShaderResourceType Type          = ShaderResourceType::Unknown;
-    Uint32       ArrayCount    = 1;
+    Uint32             ArrayCount    = 1;
 };
 
 /// @brief Reflected push-constant byte range.
@@ -110,7 +115,7 @@ struct ShaderVertexInputAttribute {
     String                SemanticName  = {};
     Uint32                SemanticIndex = 0;
     std::optional<Uint32> Location      = std::nullopt;
-    ShaderValueType             ValueType     = {};
+    ShaderValueType       ValueType     = {};
 };
 
 /// @brief Normalized pipeline reflection data.
@@ -121,6 +126,7 @@ struct ShaderReflection {
     std::vector<ShaderBinding>              Bindings      = {};
     std::vector<ShaderPushConstantRange>    PushConstants = {};
     std::vector<ShaderVertexInputAttribute> VertexInputs  = {};
+    std::optional<Uint32>                   BindlessSpace = std::nullopt;
 };
 
 /// @brief Compiled shader artifact for one graphics pipeline shader combination.
@@ -130,7 +136,7 @@ struct ShaderGraphicsProgram {
     std::vector<Uint32> Code                   = {};
     String              VertexEntryPointName   = {};
     String              FragmentEntryPointName = {};
-    ShaderReflection          Reflection             = {};
+    ShaderReflection    Reflection             = {};
 };
 
 /// @brief Logical category of one ray-tracing hit group.
@@ -142,21 +148,28 @@ enum class ShaderRayTracingHitGroupType : Uint8 {
 
 /// @brief Canonical entry-point names that form one linked ray-tracing hit group.
 struct ShaderRayTracingHitGroup {
-    ShaderRayTracingHitGroupType    Type                       = ShaderRayTracingHitGroupType::Triangles;
-    std::optional<String>     ClosestHitEntryPointName   = std::nullopt;
-    std::optional<String>     AnyHitEntryPointName       = std::nullopt;
-    std::optional<String>     IntersectionEntryPointName = std::nullopt;
+    ShaderRayTracingHitGroupType Type                       = ShaderRayTracingHitGroupType::Triangles;
+    std::optional<String>        ClosestHitEntryPointName   = std::nullopt;
+    std::optional<String>        AnyHitEntryPointName       = std::nullopt;
+    std::optional<String>        IntersectionEntryPointName = std::nullopt;
 };
 
 /// @brief Compiled shader artifact for one linked ray-tracing pipeline program.
 struct ShaderRayTracingProgram {
     /// SPIR-V binary containing all selected ray-tracing entry points.
-    std::vector<Uint32>                Code                     = {};
-    String                             RayGenerationEntryPointName = {};
-    std::vector<String>                MissEntryPointNames      = {};
-    std::vector<ShaderRayTracingHitGroup>    HitGroups                = {};
-    std::vector<String>                CallableEntryPointNames  = {};
-    ShaderReflection                         Reflection               = {};
+    std::vector<Uint32>                   Code                        = {};
+    String                                RayGenerationEntryPointName = {};
+    std::vector<String>                   MissEntryPointNames         = {};
+    std::vector<ShaderRayTracingHitGroup> HitGroups                   = {};
+    std::vector<String>                   CallableEntryPointNames     = {};
+    ShaderReflection                      Reflection                  = {};
 };
 
 } // namespace SoulEngine
+
+export namespace magic_enum::customize {
+template <>
+struct enum_range<SoulEngine::ShaderStage> {
+    static constexpr bool is_flags = true;
+};
+} // namespace magic_enum::customize

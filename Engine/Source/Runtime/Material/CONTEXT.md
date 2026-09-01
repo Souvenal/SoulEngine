@@ -2,33 +2,52 @@
 
 **Namespace:** `SoulEngine::Material`
 
-Renderer-neutral material domain model. It owns material value types, their cross-renderer shader-storage ABI, the
-engine-wide pure-CPU material instance registry, and their future template/instance
-vocabulary; it does not own scene serialization, asset loading, GPU handles,
-shader compilation, or Vulkan bindings.
+Runtime material domain model. It owns material records, their cross-renderer
+shader-storage ABI, resolved texture resource records, and their future
+template/instance vocabulary; it does not own scene serialization, shader
+compilation, or backend-specific Vulkan bindings.
 
 ## Terms
 
 | Term | Definition |
 |------|------------|
-| **Material** | Renderer-neutral description of surface appearance. It contains authoring/runtime CPU values, never backend handles. |
-| **PbrMaterial** | Current built-in material value. It contains base-color, metallic, roughness, and emissive factors plus optional renderer-neutral texture asset references for the V0 PBR maps. |
-| **PbrMaterialGpuData** | Cross-renderer storage-buffer ABI containing resolved PBR factors and logical texture-table indices, but never GPU handles or descriptor state. |
-| **Material Instance** | A named or referenced use of a material value. V0 IDs live in one flat `MaterialManager` table: scene documents use their `material_instances` names, mesh import uses `"<mesh asset identity>#<material slot>"` IDs built at the call site. |
-| **MaterialManager** | Engine-wide singleton pure-CPU registry (`MaterialManager` module, in Resource target). One flat `std::vector<MaterialEntry>` table; `RegisterMaterial(Name, Value)` appends or overwrites in place; `Clear()` drops everything (called by Scene replacement before registering the new scene); `GetMaterials()` returns a small value copy for the render thread; `FindMaterial()` is a free linear lookup. Manages texture references internally. |
+| **Material** | Runtime description of surface appearance. It contains imported CPU values and resource-backed texture records. |
+| **MaterialRecord** | Runtime resource record projected from Assimp's `aiMaterial`: common scalar/color properties, PBR extensions, and texture slots indexed by `aiTextureType` and slot index. |
+| **TextureRecord** | Runtime representation of one Assimp texture slot, including source metadata and its `RHIRef<RHISampledTexture>`. |
+| **MaterialRecord::GpuData** | Cross-renderer storage-buffer ABI containing resolved PBR factors and logical texture-table indices, but never GPU handles or descriptor state. |
+| **Material Instance** | A named or referenced use of a material value. The legacy flat `MaterialManager` ID table was deleted on 2026-08-27; instances migrate to stable `MaterialHandle` cache identities (scene identity + instance name, or mesh asset path + slot index). |
 | **Material Template** | Future shared definition of shader/pass interfaces and default values from which material instances override data. It is not represented in V0 because the only supported template is implicit PBR metallic-roughness. |
 
 ## Ownership and Dependencies
 
-- `Material` depends only on `Core` and `hlsl++`; `MaterialManager` (same target) additionally uses `std::mutex`/`SPtr`.
-- `Material` must not depend on `Scene`, `Resource`, `Renderer`, `RHI`, or backend modules.
-- `Scene` owns the authoring store (`material_instances` YAML, `SetMaterialInstance`) and, on a successful load, clears `MaterialManager` then registers resolved values (scene replacement never inherits stale instances).
-- `Resource` registers mesh-imported materials into `MaterialManager` during async mesh import (`SubMesh::MaterialId`).
-- `Renderer` captures the material table (`GetMaterials()`) once per frame, resolves each draw's instance chain (scene -> asset -> default) via `FindMaterial`, and builds its own GPU parameter snapshots.
+- `Material` depends on `Core`, `RHI`, EnTT, Assimp, and image decoding support;
+  it must not depend on `Scene`, `Resource`, `Renderer`, or backend modules.
+- `MaterialYamlRecord` owns YAML authoring data and Assets-relative texture paths.
+- `MaterialAssimpLoader` imports Assimp materials; `MaterialYamlLoader` imports
+  complete material YAML records. Both produce `MaterialRecord` handles.
+- Mesh import registers imported materials through `MeshLoader`'s
+  `MaterialAssimpCache`; `SubMesh` carries the resulting `MaterialHandle`.
+- `Renderer` captures material records once per frame, resolves each draw's material dependencies, and builds its own GPU parameter snapshots.
 - `RHI` remains material-agnostic; it only exposes shader parameters and resource binding primitives.
 
 ## Evolution
 
-Add texture references, templates, typed parameter layouts, and material-instance
-overrides here when their ownership becomes concrete. Keep scene serialization and
-renderer GPU caches outside this module unless they become general asset services.
+`Material:AssimpLoader` imports one Assimp `aiMaterial` into one cached
+`MaterialRecord`. Its cache key is formed by the normalized model path,
+material name, and material index; the index disambiguates empty or duplicate
+Assimp names. It owns the `TextureDataCache` used by its texture slots and
+does not assign material IDs, build GPU data, or publish descriptors.
+`MaterialRecord::Textures[type][index]` preserves Assimp's texture semantic
+and per-semantic slot index, including multi-slot types such as clearcoat,
+sheen, and transmission.
+
+Add typed import normalization, templates, and material-instance overrides here
+when their ownership becomes concrete. Keep scene serialization, GPU texture
+resolution, descriptor publication, and renderer frame caches outside this
+module.
+
+`Material:YamlLoader` loads a complete `material` YAML mapping into a
+`MaterialYamlRecord`, resolves its texture paths against the application
+`Assets` root, and creates a `MaterialRecord`. It owns an independent
+`TextureDataCache` for now; sharing this cache with the Assimp path is a future
+optimization.

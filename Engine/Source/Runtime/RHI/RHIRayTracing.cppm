@@ -83,6 +83,10 @@ class RHITopLevelAccelerationStructure : public RHIAccelerationStructure {
     auto operator=(RHITopLevelAccelerationStructure&&) -> RHITopLevelAccelerationStructure&      = delete;
     virtual ~RHITopLevelAccelerationStructure()                                                  = default;
 
+    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
+        return ShaderResourceType::AccelerationStructure;
+    }
+
   protected:
     explicit RHITopLevelAccelerationStructure(String Name) : RHIAccelerationStructure(std::move(Name)) {}
 };
@@ -209,13 +213,14 @@ struct RHIRayTracingShaderGroupDesc {
 /// Backend-agnostic RT pipeline policy. Shader program ownership is added by Phase 2.
 struct RHIRayTracingPipelineDesc {
     ShaderRayTracingProgram                   Program           = {};
+    RHIRef<RHIShaderBindingSet>               BindingSet        = nullptr;
     std::vector<RHIRayTracingShaderGroupDesc> ShaderGroups      = {};
     Uint32                                    MaxRecursionDepth = 1;
 };
 
 /// Empty polymorphic base for ray-tracing pipeline resources.
 /// Backend concrete classes own native pipeline-layout and shader-binding-table state.
-class RHIRayTracingPipeline : public RHIPipeline {
+class RHIRayTracingPipeline : public RHIObject {
   public:
     RHIRayTracingPipeline(const RHIRayTracingPipeline&)                    = delete;
     auto operator=(const RHIRayTracingPipeline&) -> RHIRayTracingPipeline& = delete;
@@ -223,8 +228,16 @@ class RHIRayTracingPipeline : public RHIPipeline {
     auto operator=(RHIRayTracingPipeline&&) -> RHIRayTracingPipeline&      = delete;
     virtual ~RHIRayTracingPipeline()                                       = default;
 
+    [[nodiscard]] auto GetShaderBindingSet() const -> const RHIRef<RHIShaderBindingSet>& {
+        return m_ShaderBindingSet;
+    }
+
   protected:
-    explicit RHIRayTracingPipeline(String Name) : RHIPipeline(std::move(Name)) {}
+    explicit RHIRayTracingPipeline(String Name, RHIRef<RHIShaderBindingSet> BindingSet)
+        : RHIObject(std::move(Name)), m_ShaderBindingSet(std::move(BindingSet)) {}
+
+  private:
+    RHIRef<RHIShaderBindingSet> m_ShaderBindingSet = nullptr;
 };
 
 } // namespace SoulEngine

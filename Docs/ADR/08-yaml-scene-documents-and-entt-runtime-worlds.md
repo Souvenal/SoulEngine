@@ -34,13 +34,16 @@ retaining that handoff.
   produce warnings and are omitted while the rest of the scene loads.
 - Scene owns an EnTT Scene Registry. It contains only spatial Scene Entities.
   Every Scene Entity has exactly one mandatory Scene Node, which owns ordered
-  hierarchy links, a `Core:Math` local Transform, and a derived world matrix.
+  hierarchy links and a derived world matrix. Local transform authoring is
+  represented by the optional `components.transform` component; runtime entity
+  creation always supplies a default `TransformComponent`.
   The world is right-handed and Y-up; document rotations are Euler angles in
   degrees, applied in local X → Y → Z order.
-- Optional ECS types use the `XxxComponent` naming convention. Components may
-  contain both document-loaded authoring fields and component-private runtime
-  fields. `CameraComponent`, `MeshComponent`,
-  and later `LightComponent` are the intended component model. A
+- ECS types use the `XxxComponent` naming convention and are represented under
+  the entity's `components` mapping using their registered EnTT meta names.
+  Components may contain both document-loaded authoring fields and
+  component-private runtime fields. `TransformComponent`, `CameraComponent`,
+  `MeshComponent`, and `LightComponent` are the component model. A
   `MeshComponent` persists a project-relative mesh asset path. Renderer-specific
   mesh resource references, uploads, and GPU representations are renderer-owned.
 - `entt::meta` is the single registration source for component document names
@@ -70,6 +73,8 @@ evolution.
 
 Keeping component-private runtime data beside authoring data avoids paired
 component synchronization while preserving a strict document-input boundary.
+Omitted document components retain their runtime defaults, including the
+default transform created for every entity.
 The renderer continues to consume immutable snapshots. Renderer-owned mesh
 resource caches retain resource ownership while the renderer resolves asset
 identities from those snapshots.

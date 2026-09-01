@@ -1,0 +1,7 @@
+material:
+  name: viking_room
+  base_color_factor: [1.0, 1.0, 1.0, 1.0]
+  metallic_factor: 0.0
+  roughness_factor: 0.9
+  base_color_texture: viking_room.png
+  shading_model: pbr

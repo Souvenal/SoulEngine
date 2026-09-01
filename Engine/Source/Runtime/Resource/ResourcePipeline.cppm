@@ -14,7 +14,9 @@ namespace SoulEngine {
 export [[nodiscard]] auto RequestGraphicsPipeline(StringView Name, const GraphicsPipelineRequest& Req)
     -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIGraphicsPipeline>::Create();
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef, Name = String(Name)]() mutable {
+    auto BindingSetRef = RHIRef<RHIShaderBindingSet>::Create();
+    auto EnqueueResult =
+        TaskGraph::Get().EnqueueBackground([Req, PipelineRef, BindingSetRef, Name = String(Name)]() mutable {
         const auto&       Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
 
@@ -46,7 +48,28 @@ export [[nodiscard]] auto RequestGraphicsPipeline(StringView Name, const Graphic
         };
         auto EnqueueResult = TaskGraph::Get().EnqueueTask(
             ThreadQueue::RHI,
-            [PipelineRef, Name = std::move(Name), PipelineDesc = std::move(PipelineDesc)]() mutable {
+            [PipelineRef,
+             BindingSetRef,
+             Name = std::move(Name),
+             PipelineDesc = std::move(PipelineDesc)]() mutable {
+                using magic_enum::bitwise_operators::operator|;
+
+                const auto BindingSetDesc = RHIShaderBindingSetDesc{
+                    .Reflection = PipelineDesc.Program.Reflection,
+                    .Stages     = ShaderStage::Vertex | ShaderStage::Fragment,
+                };
+                auto BindingSet = RHIRenderDevice::Get().CreateShaderBindingSet(Name, BindingSetDesc);
+                if (!BindingSet) {
+                    BindingSetRef.MarkFailed(BindingSet.error());
+                    PipelineRef.MarkFailed(BindingSet.error());
+                    return;
+                }
+                if (auto Publish = BindingSetRef.Publish(std::move(*BindingSet), RHIRefState::Ready); !Publish) {
+                    BindingSetRef.MarkFailed(Publish.error());
+                    PipelineRef.MarkFailed(Publish.error());
+                    return;
+                }
+                PipelineDesc.BindingSet = BindingSetRef;
                 auto Created = RHIRenderDevice::Get().CreateGraphicsPipeline(Name, PipelineDesc);
                 if (!Created) {
                     PipelineRef.MarkFailed(Created.error());
@@ -68,7 +91,9 @@ export [[nodiscard]] auto RequestGraphicsPipeline(StringView Name, const Graphic
 export [[nodiscard]] auto RequestRayTracingPipeline(StringView Name, const RayTracingPipelineRequest& Req)
     -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIRayTracingPipeline>::Create();
-    auto EnqueueResult = TaskGraph::Get().EnqueueBackground([Req, PipelineRef, Name = String(Name)]() mutable {
+    auto BindingSetRef = RHIRef<RHIShaderBindingSet>::Create();
+    auto EnqueueResult =
+        TaskGraph::Get().EnqueueBackground([Req, PipelineRef, BindingSetRef, Name = String(Name)]() mutable {
         const auto&       Cfg = ConfigManager::Get();
         std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
         auto              Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
@@ -86,7 +111,29 @@ export [[nodiscard]] auto RequestRayTracingPipeline(StringView Name, const RayTr
             .Program = std::move(*Program), .MaxRecursionDepth = Req.MaxRecursionDepth};
         auto EnqueueResult = TaskGraph::Get().EnqueueTask(
             ThreadQueue::RHI,
-            [PipelineRef, Name = std::move(Name), PipelineDesc = std::move(PipelineDesc)]() mutable {
+            [PipelineRef,
+             BindingSetRef,
+             Name = std::move(Name),
+             PipelineDesc = std::move(PipelineDesc)]() mutable {
+                using magic_enum::bitwise_operators::operator|;
+
+                const auto BindingSetDesc = RHIShaderBindingSetDesc{
+                    .Reflection = PipelineDesc.Program.Reflection,
+                    .Stages     = ShaderStage::RayGeneration | ShaderStage::Intersection | ShaderStage::AnyHit |
+                                 ShaderStage::ClosestHit | ShaderStage::Miss | ShaderStage::Callable,
+                };
+                auto BindingSet = RHIRenderDevice::Get().CreateShaderBindingSet(Name, BindingSetDesc);
+                if (!BindingSet) {
+                    BindingSetRef.MarkFailed(BindingSet.error());
+                    PipelineRef.MarkFailed(BindingSet.error());
+                    return;
+                }
+                if (auto Publish = BindingSetRef.Publish(std::move(*BindingSet), RHIRefState::Ready); !Publish) {
+                    BindingSetRef.MarkFailed(Publish.error());
+                    PipelineRef.MarkFailed(Publish.error());
+                    return;
+                }
+                PipelineDesc.BindingSet = BindingSetRef;
                 auto Created = RHIRenderDevice::Get().CreateRayTracingPipeline(Name, PipelineDesc);
                 if (!Created) {
                     PipelineRef.MarkFailed(Created.error());

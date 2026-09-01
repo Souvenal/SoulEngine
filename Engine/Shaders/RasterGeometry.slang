@@ -1,16 +1,6 @@
-import Pbr;
+import Material;
 import GBuffer;
-
-public struct RasterFrameData {
-    public float time;
-    public float exposureEV100;
-    public uint  lightCount;
-};
-
-public struct RasterViewData {
-    public float4x4 viewProjection;
-    public float4   cameraPosition;
-};
+import Common;
 
 public struct InstanceData {
     public float4x4 worldTransform;
@@ -20,17 +10,17 @@ public struct InstanceData {
 };
 
 public struct GeometryRecord {
-    public float3* positionBuffer;
-    public float3* normalBuffer;
-    public float4* tangentBuffer;
-    public float2* texCoordBuffer;
-    public uint*   indexBuffer;
     public float4  boundingSphere;
+    public uint64_t positionAddress;
+    public uint64_t normalAddress;
+    public uint64_t tangentAddress;
+    public uint64_t texCoordAddress;
+    public uint64_t indexAddress;
 };
 
 public struct RasterFrameViewResources {
-    public ConstantBuffer<RasterFrameData> frame;
-    public ConstantBuffer<RasterViewData>  view;
+    public ConstantBuffer<FrameData>       frame;
+    public ConstantBuffer<ViewData>        view;
     public StructuredBuffer<float4>        lights;
 };
 
@@ -39,7 +29,7 @@ public ParameterBlock<RasterFrameViewResources> g_rasterFrameView;
 public struct RasterDrawResources {
     public StructuredBuffer<InstanceData>     instances;
     public StructuredBuffer<GeometryRecord>   geometries;
-    public StructuredBuffer<PbrMaterialData>  materials;
+    public StructuredBuffer<MaterialRecord>   materials;
 };
 
 public ParameterBlock<RasterDrawResources> g_rasterDraw;
@@ -66,20 +56,29 @@ float3 transformNormalToWorld(float3 normal, float3x3 worldTransform) {
     return normalize(transformed * getTransformOrientation(worldTransform));
 }
 
+float3 loadFloat3(uint64_t address) {
+    float* values = (float*)address;
+    return float3(values[0], values[1], values[2]);
+}
+
+uint loadUint32(uint64_t address) {
+    return ((uint*)address)[0];
+}
+
 [shader("vertex")]
 VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceIndex : SV_InstanceID) {
     VSOutput output;
     InstanceData instanceData = g_rasterDraw.instances[instanceIndex];
     GeometryRecord geometry = g_rasterDraw.geometries[instanceData.geometryId];
-    uint localVertexIndex = geometry.indexBuffer[vertexID];
-    float3 localPosition = geometry.positionBuffer[localVertexIndex];
-    float3 localNormal = geometry.normalBuffer[localVertexIndex];
+    uint localVertexIndex = loadUint32(geometry.indexAddress + uint64_t(vertexID) * uint64_t(4));
+    float3 localPosition = loadFloat3(geometry.positionAddress + uint64_t(localVertexIndex) * uint64_t(12));
+    float3 localNormal = loadFloat3(geometry.normalAddress + uint64_t(localVertexIndex) * uint64_t(12));
     float4 localTangent = float4(1.0, 0.0, 0.0, 1.0);
-    if ((uint64_t)geometry.tangentBuffer != 0)
-        localTangent = geometry.tangentBuffer[localVertexIndex];
+    if (geometry.tangentAddress != 0)
+        localTangent = ((float4*)geometry.tangentAddress)[localVertexIndex];
     float2 localUV = float2(0.0, 0.0);
-    if ((uint64_t)geometry.texCoordBuffer != 0)
-        localUV = geometry.texCoordBuffer[localVertexIndex];
+    if (geometry.texCoordAddress != 0)
+        localUV = ((float2*)geometry.texCoordAddress)[localVertexIndex];
     float4 worldPosition = mul(float4(localPosition, 1.0), instanceData.worldTransform);
     float3x3 worldTransform = (float3x3)instanceData.worldTransform;
     output.worldPosition = worldPosition.xyz;
@@ -96,13 +95,12 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceIndex : SV_InstanceI
 [shader("fragment")]
 GBufferPixel fragMain(VSOutput input) {
     InstanceData instanceData = g_rasterDraw.instances[input.instanceIndex];
-    PbrSurfaceMaterial surface = resolvePbrMaterial(
-        g_rasterDraw.materials[instanceData.materialIndex],
+    MaterialSurface surface = g_rasterDraw.materials[instanceData.materialIndex].resolveSurface(
         input.uv,
         input.normal,
         input.tangent);
     return GBufferPixel(
-        float4(surface.material.baseColor, 1.0),
+        float4(surface.baseColor, 1.0),
         surface.normal,
         instanceData.materialIndex,
         instanceData.entityId);

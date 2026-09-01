@@ -15,6 +15,8 @@ import Scene;
 import TaskGraph;
 
 import :IRenderer;
+import :Common;
+import :RayTracing;
 
 export import std;
 
@@ -22,28 +24,15 @@ export namespace SoulEngine {
 
 constexpr Uint32 kPathTracingMaxBounces = 6;
 
-/// Constant-buffer ABI mirror for RayTracing.slang camera unprojection data.
-struct alignas(16) RayTracingViewConstants {
-    alignas(16) hlslpp::float4x4 ViewProjectionInverse = hlslpp::float4x4::identity();
-    alignas(16) hlslpp::interop::float4 CameraPosition = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, 0.0f, 0.0f, 1.0f}};
+/// @brief Ray-tracing frame ABI extending shared frame data with path settings.
+struct alignas(16) RayTracingFrameConstants {
+    RendererFrameConstants              Common = {};
     alignas(16) hlslpp::interop::float4 PathSettings = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, static_cast<float>(kPathTracingMaxBounces), 0.0f, 0.0f}};
-    Float32 ExposureEV100 = 15.0f;
-    Uint32  LightCount    = 0;
+        hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 };
-static_assert(sizeof(RayTracingViewConstants) == 112,
-              "RayTracingViewConstants must match RayTracing.slang RayTracingViewData std140 layout");
-static_assert(offsetof(RayTracingViewConstants, ViewProjectionInverse) == 0,
-              "RayTracingViewConstants::ViewProjectionInverse must match RayTracingViewData.viewProjectionInverse");
-static_assert(offsetof(RayTracingViewConstants, CameraPosition) == 64,
-              "RayTracingViewConstants::CameraPosition must match RayTracingViewData.cameraPosition");
-static_assert(offsetof(RayTracingViewConstants, PathSettings) == 80,
-              "RayTracingViewConstants::PathSettings must match RayTracingViewData.pathSettings");
-static_assert(offsetof(RayTracingViewConstants, ExposureEV100) == 96,
-              "RayTracingViewConstants::ExposureEV100 must match RayTracingViewData.exposureEV100");
-static_assert(offsetof(RayTracingViewConstants, LightCount) == 100,
-              "RayTracingViewConstants::LightCount must match RayTracingViewData.lightCount");
+static_assert(sizeof(RayTracingFrameConstants) == 32);
+static_assert(offsetof(RayTracingFrameConstants, Common) == 0);
+static_assert(offsetof(RayTracingFrameConstants, PathSettings) == 16);
 
 struct alignas(16) RayTracingLightGpuData {
     alignas(16) hlslpp::interop::float4 ColorIntensity = hlslpp::interop::float4{
@@ -135,7 +124,6 @@ class RayTracingRenderer final : public IRenderer {
         m_Accumulation       = {};
         m_OutputKey          = {};
         m_AccumulationKey    = {};
-        m_Parameters         = {};
         m_LastSceneSignature = 0;
         m_SampleIndex        = 0;
         m_HasAccumulation    = false;
@@ -165,7 +153,9 @@ class RayTracingRenderer final : public IRenderer {
         std::vector<RHIRayTracingInstanceData> GeometryInstances = {};
         GeometryInstances.reserve(Scene.Instances.size());
         std::vector<RHIRayTracingGeometryDesc> GeometrySources = {};
-        auto&                                  MaterialMgr     = MaterialManager::Get();
+        std::vector<MaterialRecord::GpuData> MaterialRecords = {MaterialRecord::GpuData{}};
+        std::unordered_map<const MaterialRecord*, Uint32> MaterialIDs = {};
+        MaterialIDs.reserve(Scene.Instances.size());
         for (const auto& Renderable : Scene.Instances) {
             if (!Renderable.Geometry)
                 continue;
@@ -211,6 +201,16 @@ class RayTracingRenderer final : public IRenderer {
             if (!Position || !Normal || !Tangent || !TexCoord || !Index || Record.IndexCount == 0)
                 continue;
 
+            Uint32 MaterialIndex = 0;
+            if (Renderable.Material) {
+                const auto* Material = std::addressof(*Renderable.Material);
+                const auto [MaterialIt, Inserted] =
+                    MaterialIDs.emplace(Material, static_cast<Uint32>(MaterialRecords.size()));
+                MaterialIndex = MaterialIt->second;
+                if (Inserted)
+                    MaterialRecords.emplace_back(Material->BuildGpuData(Scene.Textures));
+            }
+
             const auto FirstGeometry = static_cast<Uint32>(GeometrySources.size());
             GeometrySources.push_back(RHIRayTracingGeometryDesc{
                 .PositionBufferRef = PositionRef,
@@ -225,7 +225,7 @@ class RayTracingRenderer final : public IRenderer {
                 .IndexStride       = sizeof(Uint32),
                 .VertexCount       = Record.IndexCount,
                 .IndexCount        = Record.IndexCount,
-                .MaterialIndex     = Renderable.MaterialID,
+                .MaterialIndex     = MaterialIndex,
             });
             GeometryInstances.push_back(RHIRayTracingInstanceData{
                 .FirstGeometry = FirstGeometry,
@@ -260,32 +260,13 @@ class RayTracingRenderer final : public IRenderer {
             return Result;
 
         const auto SceneSignature = BuildSceneSignature(
-            Scene, View, Instances.size(), GeometrySources.size(), MaterialMgr.GetMaterialRecords());
+            Scene, View, Instances.size(), GeometrySources.size(), MaterialRecords);
         if (bTargetsChanged || !m_HasAccumulation || SceneSignature != m_LastSceneSignature) {
             m_SampleIndex        = 0;
             m_LastSceneSignature = SceneSignature;
             m_HasAccumulation    = true;
         }
 
-        if (m_Parameters.GetLayoutId() != Pipeline->GetShaderParameterLayout().GetId())
-            m_Parameters = RHIShaderParameters::Create(*Pipeline);
-        const auto& Textures = MaterialMgr.GetMaterialTextures();
-        if (auto R = m_Parameters.SetResourceArray("g_textures.uTextures", Textures); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer texture parameter binding failed"));
-        if (auto R = m_Parameters.SetSampler("g_samplers.uSamplerLinear", SamplerLinear); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer linear sampler parameter binding failed"));
-        if (auto R = m_Parameters.SetSampler("g_samplers.uSamplerAniso", SamplerAniso); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer anisotropic sampler parameter binding failed"));
-        if (auto R = m_Parameters.SetTopLevelAccelerationStructure("g_rayTracing.tlas", TlasPayload); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer TLAS parameter binding failed"));
-        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.output", Output); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer output parameter binding failed"));
-        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.accumulation", Accumulation); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer accumulation parameter binding failed"));
-        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.primaryNormal", ViewNormal); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer primary normal parameter binding failed"));
-        if (auto R = m_Parameters.SetStorageRenderTarget("g_rayTracing.primaryEntityId", ViewEntityId); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer primary entity ID parameter binding failed"));
         const auto GeometryInstanceDataBytes = std::as_bytes(std::span{GeometryInstances});
         auto GeometryInstanceBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
@@ -294,10 +275,6 @@ class RayTracingRenderer final : public IRenderer {
         if (!GeometryInstanceBuffer)
             return std::unexpected(GeometryInstanceBuffer.error().Append(
                 "RayTracingRenderer geometry-instance transient storage allocation failed"));
-        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.instances", *GeometryInstanceBuffer);
-            !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer geometry-instance parameter binding failed"));
-
         std::vector<RHIRayTracingGeometryData> GeometryGpuRecords = {};
         GeometryGpuRecords.reserve(GeometrySources.size());
         for (const auto& Geometry : GeometrySources)
@@ -309,11 +286,7 @@ class RayTracingRenderer final : public IRenderer {
         if (!GeometryBuffer)
             return std::unexpected(
                 GeometryBuffer.error().Append("RayTracingRenderer geometry transient storage allocation failed"));
-        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.geometries", *GeometryBuffer); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer geometry parameter binding failed"));
-
-        const auto MaterialRecords   = MaterialMgr.GetMaterialRecords();
-        const auto MaterialDataBytes = std::as_bytes(MaterialRecords);
+        const auto MaterialDataBytes = std::as_bytes(std::span{MaterialRecords});
         auto MaterialBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
                 .Data = MaterialDataBytes,
@@ -321,9 +294,6 @@ class RayTracingRenderer final : public IRenderer {
         if (!MaterialBuffer)
             return std::unexpected(
                 MaterialBuffer.error().Append("RayTracingRenderer material transient storage allocation failed"));
-        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.materials", *MaterialBuffer); !R) {
-            return std::unexpected(R.error().Append("RayTracingRenderer material parameter binding failed"));
-        }
         const auto Lights      = BuildLightData(Scene.Lights);
         const auto LightBytes  = std::as_bytes(std::span{Lights});
         auto LightBuffer =
@@ -333,30 +303,50 @@ class RayTracingRenderer final : public IRenderer {
         if (!LightBuffer)
             return std::unexpected(
                 LightBuffer.error().Append("RayTracingRenderer light transient storage allocation failed"));
-        if (auto R = m_Parameters.SetTransientShaderStorageBuffer("g_rayTracing.lights", *LightBuffer); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer light parameter binding failed"));
-        const auto ViewData   = BuildViewConstants(View, m_SampleIndex, static_cast<Uint32>(Scene.Lights.size()));
+        const auto FrameData = RayTracingFrameConstants{
+            .Common = RendererFrameConstants{
+                .Time          = Scene.Time,
+                .ExposureEV100 = View.ExposureEV100,
+                .LightCount    = static_cast<Uint32>(Scene.Lights.size()),
+            },
+            .PathSettings = hlslpp::interop::float4{hlslpp::float4{
+                static_cast<Float32>(m_SampleIndex), static_cast<Float32>(kPathTracingMaxBounces), 0.0f, 0.0f}},
+        };
+        const auto ViewData = RendererViewConstants{View};
+        auto FrameBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
+            .Data = std::as_bytes(std::span{&FrameData, 1}),
+        });
+        if (!FrameBuffer)
+            return std::unexpected(
+                FrameBuffer.error().Append("RayTracingRenderer frame transient constant allocation failed"));
         auto ViewBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
             .Data = std::as_bytes(std::span{&ViewData, 1}),
         });
         if (!ViewBuffer)
             return std::unexpected(
                 ViewBuffer.error().Append("RayTracingRenderer view transient constant allocation failed"));
-        if (auto R = m_Parameters.SetTransientConstantBuffer("g_rayTracing.view", *ViewBuffer); !R)
-            return std::unexpected(R.error().Append("RayTracingRenderer view parameter binding failed"));
-
-        RHINonRenderingPass Pass = {};
-        Pass.BuildOrUpdateTopLevelAccelerationStructure(TlasRef, Instances);
-        Pass.SetRayTracingPipeline(PipelineRef);
-        Pass.BindShaderParameters(PipelineRef,
-                                  m_Parameters,
-                                  RHIShaderParameterResources{
-                                      .Samplers      = {SamplerLinearRef, SamplerAnisoRef},
-                                      .RenderTargets = {OutputRef, AccumulationRef, ViewNormalRef, ViewEntityIdRef},
-                                  });
-        Pass.TraceRays(PipelineRef, Output->GetWidth(), Output->GetHeight());
-        Result.CmdList.Scopes.push_back(std::move(Pass));
-        Result.CmdList.PresentSourceRef = OutputRef;
+        auto Pass = std::make_unique<PathTracingPass>(PipelineRef);
+        Pass->SetInput(PathTracingPassInput{
+            .Tlas = TlasRef,
+            .Output = OutputRef,
+            .Accumulation = AccumulationRef,
+            .PrimaryNormal = ViewNormalRef,
+            .PrimaryEntityId = ViewEntityIdRef,
+            .LinearSampler = SamplerLinearRef,
+            .AnisotropicSampler = SamplerAnisoRef,
+            .Textures = Scene.Textures,
+            .InstancesBuffer = *GeometryInstanceBuffer,
+            .GeometryBuffer = *GeometryBuffer,
+            .MaterialBuffer = *MaterialBuffer,
+            .LightBuffer = *LightBuffer,
+            .FrameBuffer = *FrameBuffer,
+            .ViewBuffer = *ViewBuffer,
+            .AccelerationInstances = std::vector<RHIAccelerationStructureInstance>{
+                Instances.begin(), Instances.end()},
+            .Width = Output->GetWidth(),
+            .Height = Output->GetHeight(),
+        });
+        Result.CmdList.Passes.push_back(std::move(Pass));
         ++m_SampleIndex;
         return Result;
     }
@@ -433,7 +423,7 @@ class RayTracingRenderer final : public IRenderer {
                                                   const CameraViewRecord&         View,
                                                   std::size_t                     InstanceCount,
                                                   std::size_t                     GeometryCount,
-                                                  std::span<const MaterialRecord> MaterialData) -> Uint64 {
+                                                  std::span<const MaterialRecord::GpuData> MaterialData) -> Uint64 {
         Uint64 Signature = HashMatrix(1469598103934665603ULL, View.ViewProjection);
         Signature        = HashCombine(Signature, InstanceCount);
         Signature        = HashCombine(Signature, GeometryCount);
@@ -441,7 +431,9 @@ class RayTracingRenderer final : public IRenderer {
             if (Renderable.Geometry)
                 Signature = HashCombine(Signature, std::hash<String>{}(Renderable.Geometry->CacheKey));
             Signature = HashMatrix(Signature, Renderable.WorldTransform);
-            Signature = HashCombine(Signature, Renderable.MaterialID);
+            Signature = HashCombine(
+                Signature,
+                Renderable.Material ? std::hash<const MaterialRecord*>{}(std::addressof(*Renderable.Material)) : 0);
             Signature = HashCombine(Signature, Renderable.EntityId);
         }
         Signature = HashCombine(Signature, HashFloat(View.ExposureEV100));
@@ -467,7 +459,7 @@ class RayTracingRenderer final : public IRenderer {
             Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.z));
             Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.w));
             Signature = HashCombine(Signature, HashFloat(Material.RoughnessFactor));
-            Signature = HashCombine(Signature, HashFloat(static_cast<float>(Material.BaseColorTexture)));
+            Signature = HashCombine(Signature, Material.BaseColorTexture[0]);
         }
         return Signature;
     }
@@ -492,19 +484,6 @@ class RayTracingRenderer final : public IRenderer {
             Result.emplace_back();
         return Result;
     }
-    [[nodiscard]] static auto BuildViewConstants(const CameraViewRecord& View, Uint32 SampleIndex, Uint32 LightCount)
-        -> RayTracingViewConstants {
-        return RayTracingViewConstants{
-            .ViewProjectionInverse = hlslpp::inverse(View.ViewProjection),
-            .CameraPosition        = hlslpp::interop::float4{hlslpp::float4{
-                View.CameraPosition.x, View.CameraPosition.y, View.CameraPosition.z, 1.0f}},
-            .PathSettings          = hlslpp::interop::float4{hlslpp::float4{
-                static_cast<float>(SampleIndex), static_cast<float>(kPathTracingMaxBounces), 0.0f, 0.0f}},
-            .ExposureEV100         = View.ExposureEV100,
-            .LightCount            = LightCount,
-        };
-    }
-
     RHIRef<RHIRayTracingPipeline>                      m_Pipeline           = nullptr;
     ResourceRef<ResourceTopLevelAccelerationStructure> m_Tlas               = {};
     RHIRef<RHISampler>                                 m_SamplerLinear      = nullptr;
@@ -513,7 +492,6 @@ class RayTracingRenderer final : public IRenderer {
     RHIRef<RHIRenderTarget>                            m_Accumulation       = nullptr;
     String                                             m_OutputKey          = {};
     String                                             m_AccumulationKey    = {};
-    RHIShaderParameters                                m_Parameters         = {};
     Uint64                                             m_LastSceneSignature = 0;
     Uint32                                             m_SampleIndex        = 0;
     bool                                               m_HasAccumulation    = false;
