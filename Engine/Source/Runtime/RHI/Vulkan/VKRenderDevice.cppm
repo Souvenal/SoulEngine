@@ -689,7 +689,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (auto R = EmitTransientUploadBarrier(); !R)
             return std::unexpected(R.error().Append("Execute: transient upload barrier failed"));
 
-        std::vector<std::function<void()>> RetiredPayloads;
         auto& FC      = m_FrameContext[m_CurrentFrame];
         auto& Primary = FC.PrimaryBuffer;
 
@@ -790,7 +789,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                                 GraphicsPass.GetAttachments(),
                                 SecBuf,
                                 ImageStateCopy,
-                                &RetiredPayloads,
                             };
                             return RecordCommands(Visitor);
                         } else if constexpr (std::same_as<PipelineRefType, RHIRef<RHIRayTracingPipeline>>) {
@@ -801,7 +799,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                                 static_cast<VulkanRayTracingPipeline&>(*PipelineRef.TryGet()),
                                 SecBuf,
                                 ImageStateCopy,
-                                &RetiredPayloads,
                             };
                             return RecordCommands(Visitor);
                         } else {
@@ -847,7 +844,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 .layout = vk::ImageLayout::ePresentSrcKHR,
             });
         m_PendingCommandList = std::move(PassList);
-        m_PendingRetiredPayloads = std::move(RetiredPayloads);
         return {};
     }
 
@@ -900,7 +896,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_InFlightSubmissions.push_back(VulkanInFlightSubmission{
             .CompletionTimelineValue = TimelineSignalSema.value,
             .CommandList             = std::move(PassList),
-            .RetiredPayloads         = std::move(m_PendingRetiredPayloads),
         });
 
         // ── Present ────────────────────────────────────────────────────────
@@ -927,13 +922,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     VulkanTimelineSemaphore m_Timeline;
 
     struct VulkanInFlightSubmission {
-        Uint64                             CompletionTimelineValue = 0;
-        RenderPassList                     CommandList             = {};
-        std::vector<std::function<void()>> RetiredPayloads         = {};
+        Uint64         CompletionTimelineValue = 0;
+        RenderPassList CommandList             = {};
     };
     std::deque<VulkanInFlightSubmission> m_InFlightSubmissions       = {};
     std::optional<RenderPassList>         m_PendingCommandList       = std::nullopt;
-    std::vector<std::function<void()>>    m_PendingRetiredPayloads   = {};
 
     UPtr<VulkanResourceContext> m_ResourceContext = nullptr;
 

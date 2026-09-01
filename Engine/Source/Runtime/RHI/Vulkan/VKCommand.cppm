@@ -118,15 +118,12 @@ class VulkanCmdVisitor {
   protected:
     VulkanCmdVisitor(
         vk::raii::CommandBuffer&                                                        InBuffer,
-        VulkanImageTracker&                                                             InLocalStates,
-        std::vector<std::function<void()>>* InRetiredPayloads)
+        VulkanImageTracker&                                                             InLocalStates)
         : Buf(InBuffer),
-          LocalStates(InLocalStates),
-          RetiredPayloads(InRetiredPayloads) {}
+          LocalStates(InLocalStates) {}
 
     vk::raii::CommandBuffer&                         Buf;
     VulkanImageTracker&                             LocalStates;
-    std::vector<std::function<void()>>*              RetiredPayloads               = nullptr;
     std::optional<ErrorMessage>                      Error                         = std::nullopt;
 };
 
@@ -143,11 +140,9 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
         VulkanGraphicsPipeline&                          Pipeline,
         const RHIGraphicsAttachments&                    Attachments,
         vk::raii::CommandBuffer&                         InBuffer,
-        VulkanImageTracker&                             InLocalStates,
-        std::vector<std::function<void()>>*              InRetiredPayloads)
+        VulkanImageTracker&                             InLocalStates)
         : VulkanCmdVisitor(InBuffer,
-                           InLocalStates,
-                           InRetiredPayloads),
+                           InLocalStates),
           m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
         BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*Pipeline.GetShaderBindingSet().TryGet()),
@@ -350,11 +345,9 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
     VulkanRayTracingCmdVisitor(
         VulkanRayTracingPipeline&                                                      Pipeline,
         vk::raii::CommandBuffer&                                                        InBuffer,
-        VulkanImageTracker&                                                             InLocalStates,
-        std::vector<std::function<void()>>* InRetiredPayloads)
+        VulkanImageTracker&                                                             InLocalStates)
         : VulkanCmdVisitor(InBuffer,
-                           InLocalStates,
-                           InRetiredPayloads),
+                           InLocalStates),
           m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
         BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*Pipeline.GetShaderBindingSet().TryGet()),
@@ -369,8 +362,7 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
             return;
         }
         auto& Tlas = static_cast<VulkanTopLevelAccelerationStructure&>(*TargetPtr);
-        // TODO : Figure out what `RetirePayloads` does herer
-        if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode, RetiredPayloads); !R) {
+        if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode); !R) {
             Error = R.error().Append("Failed to record TLAS build");
             return;
         }

@@ -252,9 +252,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
         auto ScratchBuffer = std::make_shared<VulkanDeviceBuffer>(std::move(*ScratchBufferResult));
 
         auto Result                = std::make_unique<VulkanTopLevelAccelerationStructure>(String(Name));
-        Result->m_Context          = &Context;
         Result->m_Device           = &Context.GetDevice();
-        Result->m_Allocator        = Context.GetAllocator();
         Result->m_Native           = std::move(*Native);
         Result->m_InstanceBuffer   = std::move(InstanceBuffer);
         Result->m_ScratchBuffer    = std::move(ScratchBuffer);
@@ -294,15 +292,12 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 
     [[nodiscard]] auto RecordBuild(const vk::raii::CommandBuffer&                    CmdBuf,
                                    std::span<const RHIAccelerationStructureInstance> Instances,
-                                   RHITopLevelAccelerationStructureBuildMode         Mode,
-                                   std::vector<std::function<void()>>*               RetiredPayloads)
+                                   RHITopLevelAccelerationStructureBuildMode         Mode)
         -> std::expected<void, ErrorMessage> {
         if (Instances.empty())
             return std::unexpected(ErrorMessage("TLAS requires at least one instance"));
-        if (Instances.size() > m_InstanceCapacity) {
-            if (auto R = GrowTo(static_cast<Uint32>(Instances.size()), RetiredPayloads); !R)
-                return std::unexpected(R.error());
-        }
+        if (Instances.size() > m_InstanceCapacity)
+            return std::unexpected(ErrorMessage("TLAS instance capacity growth is disabled"));
         std::vector<vk::AccelerationStructureInstanceKHR> VkInstances;
         VkInstances.reserve(Instances.size());
         for (const auto& Instance : Instances) {
@@ -370,68 +365,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     }
 
   private:
-    [[nodiscard]] auto GrowTo(Uint32 RequiredCapacity, std::vector<std::function<void()>>* RetiredPayloads)
-        -> std::expected<void, ErrorMessage> {
-        const Uint32 NewCapacity = (std::max)(RequiredCapacity, m_InstanceCapacity * 2);
-        vk::AccelerationStructureGeometryInstancesDataKHR InstanceData{
-            .arrayOfPointers = vk::False,
-            .data            = vk::DeviceOrHostAddressConstKHR{.deviceAddress = 0},
-        };
-        vk::AccelerationStructureGeometryKHR Geometry{
-            .geometryType = vk::GeometryTypeKHR::eInstances,
-            .geometry     = vk::AccelerationStructureGeometryDataKHR{.instances = InstanceData},
-        };
-        vk::AccelerationStructureBuildGeometryInfoKHR BuildGeometryCI{
-            .type          = vk::AccelerationStructureTypeKHR::eTopLevel,
-            .flags         = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace |
-                             vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
-            .mode          = vk::BuildAccelerationStructureModeKHR::eBuild,
-            .geometryCount = 1,
-            .pGeometries   = &Geometry,
-        };
-        const std::array<Uint32, 1> PrimitiveCounts{NewCapacity};
-        const auto                  Sizes = m_Device->getAccelerationStructureBuildSizesKHR(
-            vk::AccelerationStructureBuildTypeKHR::eDevice, BuildGeometryCI, PrimitiveCounts);
-        auto Native = VulkanNativeAccelerationStructure::Create(*m_Context,
-                                                                vk::AccelerationStructureTypeKHR::eTopLevel,
-                                                                Sizes.accelerationStructureSize,
-                                                                Format("{}::Growth", GetName()));
-        if (!Native)
-            return std::unexpected(Native.error().Append("Failed to grow TLAS storage"));
-        auto InstanceBufferResult =
-            VulkanHostBuffer::Create(*m_Context,
-                                     Format("{}#InstanceBuffer", GetName()),
-                                     static_cast<Uint64>(NewCapacity) * sizeof(vk::AccelerationStructureInstanceKHR),
-                                     vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                                         vk::BufferUsageFlagBits::eShaderDeviceAddress);
-        if (!InstanceBufferResult)
-            return std::unexpected(InstanceBufferResult.error().Append("Failed to grow TLAS instance buffer"));
-        auto InstanceBuffer      = std::make_shared<VulkanHostBuffer>(std::move(*InstanceBufferResult));
-        auto ScratchBufferResult = VulkanDeviceBuffer::Create(*m_Context,
-                                                              Format("{}#Scratch", GetName()),
-                                                              Sizes.buildScratchSize,
-                                                              vk::BufferUsageFlagBits::eStorageBuffer);
-        if (!ScratchBufferResult)
-            return std::unexpected(ScratchBufferResult.error().Append("Failed to grow TLAS scratch buffer"));
-        auto ScratchBuffer = std::make_shared<VulkanDeviceBuffer>(std::move(*ScratchBufferResult));
-
-        auto OldNative         = std::move(m_Native);
-        auto OldInstanceBuffer = std::move(m_InstanceBuffer);
-        auto OldScratchBuffer  = std::move(m_ScratchBuffer);
-        m_Native               = std::move(*Native);
-        m_InstanceBuffer       = std::move(InstanceBuffer);
-        m_ScratchBuffer        = std::move(ScratchBuffer);
-        m_InstanceCapacity     = NewCapacity;
-        m_LastInstanceCount    = 0;
-        RetiredPayloads->emplace_back([Native         = std::move(OldNative),
-                                       InstanceBuffer = std::move(OldInstanceBuffer),
-                                       ScratchBuffer  = std::move(OldScratchBuffer)]() {});
-        return {};
-    }
-
-    const VulkanResourceContext*            m_Context           = nullptr;
     vk::raii::Device*                       m_Device            = nullptr;
-    VmaAllocator                            m_Allocator         = nullptr;
     SPtr<VulkanNativeAccelerationStructure> m_Native            = nullptr;
     SPtr<VulkanHostBuffer>                  m_InstanceBuffer    = nullptr;
     SPtr<VulkanDeviceBuffer>                m_ScratchBuffer     = nullptr;

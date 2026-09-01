@@ -10,11 +10,10 @@ submission-owned RHIRef contract described by the RHI context.
 | Term | Definition |
 |------|------------|
 | **Graphics timeline** | Device-level timeline semaphore signalled by every frame submission. A VulkanInFlightSubmission stores the corresponding completion value. |
-| **VulkanInFlightSubmission** | Queue entry containing the submitted RHICommandList and auxiliary RetiredPayloads. Its destruction releases command-held RHIRef values only after the graphics timeline reaches its completion value. |
+| **VulkanInFlightSubmission** | Queue entry containing the submitted RHICommandList. Its destruction releases command-held RHIRef values only after the graphics timeline reaches its completion value. |
 | **BeginFrame** | Waits for reuse of the backend frame context, resets frame-local scratch/descriptor/transient arenas, and calls RetireInFlightSubmissions() after the timeline observation. |
 | **ImmediateContext** | Unified one-shot executor with transfer and graphics lanes. Each lane has a queue-local timeline and ordered completion callbacks. Tick() polls both lanes; Drain() waits and retires them at shutdown. |
 | **Immediate completion callback** | Callback retained by an immediate-lane timeline point. Async buffer/texture creation captures the RHI ref payload and marks it ready only after the required transfer/graphics chain completes. |
-| **Retired payload** | Auxiliary native object, for example replaced TLAS backing storage, retained beside the frame submission until that submission retires. |
 | **Deferred deletion queue** | RHI-module-owned queue behind GDeferredDeletionQueue. Final RHIRef release enqueues native destruction; RHILoop drains it on the RHI thread after Tick() via DrainRHIDeferredDeletions(), and Shutdown() performs the final drain. |
 | **Transient arena** | Host-visible per-frame uniform or shader-storage backing buffer. The current arena segment is reused only after the matching frame-context timeline wait. |
 | **Swapchain image** | Backend-private image acquired for presentation. PresentSourceRef is transitioned/copied or rendered into it; it is not a Resource payload. |
@@ -87,9 +86,9 @@ Tick().
 This ordering prevents a normal ref-backed frame resource from being destroyed
 while its Vulkan submission remains in flight.
 
-RetiredPayloads follows the same submission timeline. It covers native
-scratch and old backing allocations used by a recorded TLAS update and
-supplements RHIRef retention.
+TLAS backing capacity is fixed after creation for now. An update that exceeds
+the initial instance capacity fails instead of replacing native backing while
+an earlier submission may still reference it.
 
 ## Threading and lifecycle
 
