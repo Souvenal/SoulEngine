@@ -15,7 +15,7 @@ submission-owned RHIRef contract described by the RHI context.
 | **ImmediateContext** | Unified one-shot executor with transfer and graphics lanes. Each lane has a queue-local timeline and ordered completion callbacks. Tick() polls both lanes; Drain() waits and retires them at shutdown. |
 | **Immediate completion callback** | Callback retained by an immediate-lane timeline point. Async buffer/texture creation captures the RHI ref payload and marks it ready only after the required transfer/graphics chain completes. |
 | **Retired payload** | Auxiliary native object, for example replaced TLAS backing storage, retained beside the frame submission until that submission retires. |
-| **Deferred deletion queue** | Base render-device queue. Final RHIRef release enqueues native destruction; normal-runtime RHIRenderDevice::Tick() drains it on the RHI thread. |
+| **Deferred deletion queue** | RHI-module-owned queue behind GDeferredDeletionQueue. Final RHIRef release enqueues native destruction; RHILoop drains it on the RHI thread after Tick() via DrainRHIDeferredDeletions(), and Shutdown() performs the final drain. |
 | **Transient arena** | Host-visible per-frame uniform or shader-storage backing buffer. The current arena segment is reused only after the matching frame-context timeline wait. |
 | **Swapchain image** | Backend-private image acquired for presentation. PresentSourceRef is transitioned/copied or rendered into it; it is not a Resource payload. |
 | **Vulkan object naming** | Application-defined `VK_EXT_debug_utils` labels assigned through `VulkanDebugUtils::SetObjectName`. Every Vulkan handle created or allocated and owned by SoulEngine, including internal handles, is required to receive a deterministic name after successful creation. |
@@ -44,7 +44,21 @@ native objects use the following grammar:
   staging buffer, scratch buffer, or shader binding table.
 - `Base::Role` identifies related Vulkan state, such as a pipeline layout or
   descriptor-set layout.
-- `Frame[index]::Role` identifies frame-scoped backend objects.
+- `Internal/<Type>/<Role>/<Instance>` identifies RHI-internal objects, with
+  the Vulkan object type immediately after `Internal/`.
+- `<Usage>/<Type>/<LogicalPath>` identifies RHI resources visible outside the
+  Vulkan backend.
+
+Examples:
+
+```text
+Internal/Instance
+Internal/Device
+Internal/CommandBuffer/Primary/Frame0
+Internal/CommandPool/Secondary/Frame0
+Camera/RenderTarget/EditorViewport/SceneColor
+Renderer/GraphicsPipeline/GeometryPass
+```
 
 Names must be deterministic, non-empty, and describe the object's role. New
 creation sites must follow this grammar instead of introducing ad hoc
@@ -68,7 +82,8 @@ retains every ordinary command ref while the GPU can access it.
 At a later BeginFrame(), Vulkan waits for the reused backend frame context,
 polls the graphics timeline, and pops only submissions whose completion value
 has been reached. Popping destroys the retained command list and may enqueue
-last-ref native destruction. The next RHI-thread Tick() drains that queue.
+last-ref native destruction. The next RHILoop iteration drains that queue after
+Tick().
 This ordering prevents a normal ref-backed frame resource from being destroyed
 while its Vulkan submission remains in flight.
 

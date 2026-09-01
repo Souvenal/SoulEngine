@@ -6,11 +6,11 @@
 
 module;
 
-#include <magic_enum/magic_enum.hpp>
 #include <slang.h>
 
 export module Slang:Types;
 
+import magic_enum;
 import std;
 import Core;
 import Shader;

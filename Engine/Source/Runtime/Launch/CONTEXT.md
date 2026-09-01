@@ -11,7 +11,7 @@ Engine startup and the three-thread Game → Render → RHI pipeline.
 | **EngineLoop** | Lifecycle: PreInit → Init → Run → Shutdown. Run starts Render/RHI workers and runs GameLoop on the main thread. |
 | **GameLoop** | Main-thread loop: poll events, update application/editor state, wait for a reusable slot, build the SceneSnapshot, then publish GameReady. It accepts Empty or RHIDone slots. |
 | **RenderLoop** | Worker loop: wait for GameReady, drain Render tasks, render the slot snapshot into RenderResult/RHICommandList, then publish RenderReady. |
-| **RHILoop** | Worker loop: wait for RenderReady, drain RHI tasks, call RHIRenderDevice::Tick(), poll Resource dependency waiters, execute the moved command list, then publish RHIDone. It calls WaitIdle() before exiting. |
+| **RHILoop** | Worker loop: wait for RenderReady, drain RHI tasks, call RHIRenderDevice::Tick(), drain the RHI deferred deletion queue via DrainRHIDeferredDeletions(), poll Resource dependency waiters, execute the moved command list, then publish RHIDone. It calls WaitIdle() before exiting. |
 | **FrameSlot** | One of three synchronized handoff records containing SceneSnapshot, Renderer, ImGui snapshot, and RenderResult. The slot coordinates CPU pipeline ownership; it is not the Vulkan submission-retirement record. |
 | **Render packet** | RenderResult whose move-only RHICommandList is produced by RenderLoop. RHILoop moves that list into Execute(). For Vulkan, Execute() moves it again into backend in-flight submission storage. |
 | **SlotState** | Empty -> GameReady -> RenderReady -> RHIDone; GameLoop may immediately overwrite a RHIDone slot and does not write an intermediate Empty state. |
@@ -38,8 +38,11 @@ after that call returns.
 
 ## Shutdown order
 
-1. Request worker stop, start ResourceManager shutdown, stop TaskGraph, and wake slots.
-2. Join RenderLoop and RHILoop; RHILoop waits for GPU idle on exit.
+1. Request worker stop, start ResourceManager shutdown, and wake slots.
+2. Join RenderLoop and RHILoop while TaskGraph is still running, so a worker
+   caught mid-frame finishes its in-flight slot against live task services
+   instead of failing with spurious "TaskGraph is not running" errors; RHILoop
+   waits for GPU idle on exit. TaskGraph stops only after both workers join.
 3. Close the application; clear slot snapshots/render packets; release Editor and renderer GPU owners.
 4. Clear ResourceManager so ordinary RHIRef owners release while the render device/deletion queue still exists.
 5. Destroy the RHI device, then the window system and Editor.

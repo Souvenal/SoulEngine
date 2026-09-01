@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 import TaskGraph;
+import Core;
 import std;
 
 using namespace SoulEngine;
@@ -19,18 +20,52 @@ class TaskGraphTest : public testing::Test {
     }
 };
 
-TEST_F(TaskGraphTest, ThreadQueueKeepsExistingEnqueueAndTryDequeueBehavior) {
+TEST_F(TaskGraphTest, DrainTasksExecutesAllUnboundTasks) {
     auto& Graph = TaskGraph::Get();
-    bool      Ran = false;
+    std::vector<int> Executed = {};
 
-    ASSERT_TRUE(Graph.Enqueue(ThreadQueue::Render, [&] { Ran = true; }).has_value());
+    ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] { Executed.push_back(1); }).has_value());
+    ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] { Executed.push_back(2); }).has_value());
 
-    auto Task = Graph.TryDequeue(ThreadQueue::Render);
-    ASSERT_TRUE(Task.has_value());
-    (*Task)();
+    Graph.DrainTasks(ThreadQueue::Render);
 
-    EXPECT_TRUE(Ran);
-    EXPECT_FALSE(Graph.TryDequeue(ThreadQueue::Render).has_value());
+    EXPECT_EQ(Executed, (std::vector<int>{1, 2}));
+}
+
+TEST_F(TaskGraphTest, DrainTasksAllowsTasksToEnqueueMoreTasks) {
+    auto& Graph = TaskGraph::Get();
+    bool      FollowUpRan = false;
+
+    ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] {
+        ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] { FollowUpRan = true; }).has_value());
+    }).has_value());
+
+    Graph.DrainTasks(ThreadQueue::Render);
+    EXPECT_TRUE(FollowUpRan);
+}
+
+TEST_F(TaskGraphTest, FrameBoundTasksDoNotRunBeforeTheirFrame) {
+    auto& Graph = TaskGraph::Get();
+    Graph.IncreaseThreadFrameIndex();
+    const auto          CurrentFrame = Graph.GetThreadFrameIndex();
+    std::vector<Uint64> ExecutedFrames = {};
+
+    ASSERT_TRUE(Graph.EnqueueFrameTask(ThreadQueue::RHI, CurrentFrame + 1,
+                                       [&] { ExecutedFrames.push_back(CurrentFrame + 1); })
+                    .has_value());
+    ASSERT_TRUE(Graph.EnqueueFrameTask(ThreadQueue::RHI, [&] { ExecutedFrames.push_back(CurrentFrame); }).has_value());
+
+    Graph.DrainFrameTasks(ThreadQueue::RHI);
+
+    EXPECT_EQ(ExecutedFrames, std::vector<Uint64>{CurrentFrame});
+
+    Graph.DrainFrameTasks(ThreadQueue::RHI);
+    EXPECT_EQ(ExecutedFrames, std::vector<Uint64>{CurrentFrame});
+
+    Graph.IncreaseThreadFrameIndex();
+    EXPECT_EQ(Graph.GetThreadFrameIndex(), CurrentFrame + 1);
+    Graph.DrainFrameTasks(ThreadQueue::RHI);
+    EXPECT_EQ(ExecutedFrames, (std::vector<Uint64>{CurrentFrame, CurrentFrame + 1}));
 }
 
 TEST_F(TaskGraphTest, BackgroundWorkerExecutesTasks) {
@@ -67,11 +102,9 @@ TEST_F(TaskGraphTest, ShutdownRejectsTasksAndAllowsRestart) {
     EXPECT_FALSE(Ran.load(std::memory_order_acquire));
 
     Graph.Init(1);
-    ASSERT_TRUE(Graph.Enqueue(ThreadQueue::Game, [&] { Ran.store(true, std::memory_order_release); }).has_value());
+    ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Game, [&] { Ran.store(true, std::memory_order_release); }).has_value());
 
-    auto Task = Graph.TryDequeue(ThreadQueue::Game);
-    ASSERT_TRUE(Task.has_value());
-    (*Task)();
+    Graph.DrainTasks(ThreadQueue::Game);
 
     EXPECT_TRUE(Ran.load(std::memory_order_acquire));
 }

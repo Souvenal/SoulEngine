@@ -18,12 +18,11 @@
 
 module;
 
-#include <magic_enum/magic_enum.hpp>
-
 export module ShaderCompiler;
 
 export import :Types;
 
+import magic_enum;
 import std;
 import Core;
 import Shader;

@@ -100,10 +100,7 @@ class EngineLoop {
     [[nodiscard]] auto Init() -> std::expected<void, ErrorMessage> {
         LogInfo("Soul Engine Initializing...");
 
-        if (auto R = m_Editor.Create(); !R) {
-            Shutdown();
-            return std::unexpected(R.error().Append("Editor creation failed"));
-        }
+        m_Editor.Initialize();
 
         auto WinResult = CreateWindowSystem();
         if (!WinResult)
@@ -116,6 +113,11 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Failed to create RHI context"));
         }
         LogInfo("RHI context created successfully");
+
+        if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
+            Shutdown();
+            return std::unexpected(R.error().Append("Editor presentation binding failed"));
+        }
 
         // 3 reserved threads for Game/Render/RHI
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
@@ -130,19 +132,15 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Default renderer selection failed"));
         }
         LogInfo("Renderer '{}' initialized successfully", InitialRenderer);
-
-        if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
-            Shutdown();
-            return std::unexpected(R.error().Append("Editor presentation binding failed"));
-        }
-        const auto InitialExtent = m_WindowSystem->GetFramebufferExtent();
-        m_Editor.ResizeSceneViewport(static_cast<Uint32>(std::max(0, InitialExtent.Width)),
-                                     static_cast<Uint32>(std::max(0, InitialExtent.Height)));
-
         // ── Create application from config ───────────────────────────────
         if (auto R = OpenApplication(Cfg.Application.Name.value_or("Test")); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Application opening failed"));
+        }
+        auto* CurrentApplication = GetCurrentApplication();
+        if (!CurrentApplication) {
+            Shutdown();
+            return std::unexpected(ErrorMessage("Application was not available after opening"));
         }
         LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
 
@@ -174,14 +172,19 @@ class EngineLoop {
             m_RHIThread.request_stop();
 
         ResourceManager::Get().BeginShutdown();
-        TaskGraph::Get().Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
+        // Join the workers before stopping TaskGraph: a worker caught
+        // mid-frame finishes its in-flight slot against live task services
+        // instead of failing with spurious "TaskGraph is not running"
+        // errors during an otherwise clean shutdown.
         if (m_RenderThread.joinable())
             m_RenderThread.join();
         if (m_RHIThread.joinable())
             m_RHIThread.join();
+
+        TaskGraph::Get().Shutdown();
 
         CloseApplication();
 
@@ -201,9 +204,6 @@ class EngineLoop {
 
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
-        
-        // Release GPU geometry buffers before VMA allocator dies.
-        GeometryManager::Get().Clear();
 
         RHIRenderDevice::Destroy();
         if (m_WindowSystem) {
@@ -228,10 +228,8 @@ class EngineLoop {
         tracy::SetThreadName("GameLoop");
         SetLogThreadRole(LogThreadRole::Game);
         while (!m_FatalError.load(std::memory_order_acquire)) {
-            if (m_WindowSystem->PollEvents())
+            if (m_WindowSystem->Tick())
                 break;
-
-            auto Resize = m_WindowSystem->ConsumeFramebufferResize();
 
             auto  Now      = std::chrono::steady_clock::now();
             float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
@@ -249,16 +247,13 @@ class EngineLoop {
             if (m_FatalError.load(std::memory_order_acquire))
                 break;
 
-            if (Resize) {
-                const auto Width  = static_cast<Uint32>(std::max(0, Resize->Width));
-                const auto Height = static_cast<Uint32>(std::max(0, Resize->Height));
-                m_Editor.ResizeSceneViewport(Width, Height);
-            }
-
+            // Each engine loop owns an independent ordinal. Render/RHI tasks
+            // carry the producer's ordinal and execute when the consumer
+            // reaches the same pipeline position.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
             m_Editor.BeginFrame(Slot.ImGuiSnapshot);
-            m_Editor.UpdateSceneCamera(Delta, *m_WindowSystem);
 
             auto* CurrentApplication = GetCurrentApplication();
             if (!CurrentApplication) {
@@ -273,16 +268,17 @@ class EngineLoop {
                 break;
             }
             auto& AppScene = CurrentApplication->GetScene();
+            m_Editor.Tick(Delta);
             AppScene.UpdateTime();
+            AppScene.Tick(Delta);
             if (auto SceneView = m_Editor.BuildSceneView()) {
-                const std::array Views{std::move(*SceneView)};
-                const auto PickSnapshot = AppScene.BuildSnapshot(Views);
-                m_Editor.UpdateSceneSelection(PickSnapshot);
+                const std::array SceneViews{std::move(*SceneView)};
+                const auto       PickSnapshot = AppScene.BuildSnapshot();
+                m_Editor.UpdateSceneSelection(AppScene, SceneViews.front(), PickSnapshot);
                 Slot.SceneData =
-                    AppScene.BuildSnapshot(Views, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
+                    AppScene.BuildSnapshot(SceneViews, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             } else {
-                Slot.SceneData =
-                    AppScene.BuildSnapshot({}, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
+                Slot.SceneData = AppScene.BuildSnapshot(m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
             }
 
             {
@@ -308,12 +304,10 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::Render);
-                if (!Task)
-                    break;
-                (*Task)();
-            }
+            // Advance RenderThread's local frame ordinal before draining or
+            // publishing tasks for this frame.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
+            TaskGraph::Get().DrainTasks(ThreadQueue::Render);
 
             if (!Slot.Renderer) {
                 LogError("Render loop received a frame without a renderer");
@@ -356,16 +350,24 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::RHI);
-                if (!Task)
-                    break;
-                (*Task)();
+            if (auto R = RHIRenderDevice::Get().BeginFrame(); !R) {
+                LogError("RHI BeginFrame fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
             }
+
+            // Advance RHIThread's local frame ordinal before matching its
+            // frame-affined tasks. This intentionally does not read another
+            // thread's TLS value.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
+            TaskGraph::Get().DrainTasks(ThreadQueue::RHI);
+            TaskGraph::Get().DrainFrameTasks(ThreadQueue::RHI);
 
             // Resource handles are passive state reads; publish completed sampled-texture uploads here
             // on the RHI thread before the next command list can observe them.
             RHIRenderDevice::Get().Tick();
+            // Retire native resources whose last RHIRef was released since the previous frame.
+            DrainRHIDeferredDeletions();
             ResourceManager::Get().TickRhiDependencies();
 
             if (auto R = RHIRenderDevice::Get().Execute(std::move(Slot.RenderPacket.CmdList)); !R) {
@@ -376,7 +378,12 @@ class EngineLoop {
 
             // Tracy docs: "put the FrameMark macro after you have completed
             // rendering the frame. Ideally, that would be right after the
-            // swap buffers command." — Execute() does submit + present.
+            // swap buffers command." — EndFrame() does submit + present.
+            if (auto R = RHIRenderDevice::Get().EndFrame(); !R) {
+                LogError("RHI EndFrame fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
             FrameMark;
 
             Slot.RenderPacket = {};
@@ -405,7 +412,6 @@ class EngineLoop {
     std::chrono::steady_clock::time_point m_LastTickTime;
 
     std::array<FrameSlot, kSlotCount> m_Slots = {};
-
     Uint32 m_GameSlotIndex   = 0;
     Uint32 m_RenderSlotIndex = 0;
     Uint32 m_RHISlotIndex    = 0;

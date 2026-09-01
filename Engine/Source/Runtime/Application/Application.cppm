@@ -12,10 +12,6 @@
 
 module;
 
-// Required while Scene exposes entt::registry in its object layout. Application owns Scene
-// and can instantiate its lifetime operations, so EnTT must be directly reachable here.
-#include <entt/entt.hpp>
-
 export module Application;
 
 import Core;
@@ -58,18 +54,18 @@ class Application {
     /// Used by the GameLoop to update mutable scene data before building
     /// the next frame's SceneSnapshot.
     [[nodiscard]] auto GetScene() -> Scene& {
-        return m_Scene;
+        return *m_Scene;
     }
 
     /// @brief Read-only access to the active scene.
     [[nodiscard]] auto GetScene() const -> const Scene& {
-        return m_Scene;
+        return *m_Scene;
     }
 
   protected:
     String m_Name;
     Path   m_RootDirectory = {};
-    Scene  m_Scene;
+    UPtr<Scene> m_Scene = {};
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -111,11 +107,12 @@ export namespace SoulEngine {
     App->m_Name = String(Name);
     App->m_RootDirectory = (ConfigManager::Get().ApplicationsRootDirPath() / Name).lexically_normal();
     const auto ScenePath = App->m_RootDirectory / "Scene.yaml";
-    auto Loaded = App->m_Scene.LoadFromFile(ScenePath);
+    auto Loaded = Scene::LoadFromFile(ScenePath);
     if (!Loaded)
         return std::unexpected(Loaded.error().Append("Default Scene document load failed"));
-    for (const auto& Warning : Loaded->Warnings)
-        LogWarning("Default Scene warning at '{}': {}", Warning.Path, Warning.Message);
+    App->m_Scene = std::move(Loaded->first);
+    for (const auto& Warning : Loaded->second.Warnings)
+        LogWarning("Default Scene warning at '{}': {}", Warning.Location, Warning.Message);
     return App;
 }
 

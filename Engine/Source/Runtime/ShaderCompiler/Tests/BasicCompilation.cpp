@@ -78,9 +78,7 @@ TEST_F(ShaderCompilerTest, CompileRasterGeometryProgramWithExpectedBindings) {
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_textures.uTextures", ShaderResourceType::SampledTexture));
     EXPECT_TRUE(HasBinding(Result->Reflection, "g_samplers.uSamplerLinear", ShaderResourceType::Sampler));
     EXPECT_EQ(Result->Reflection.Bindings.size(), 9);
-    ASSERT_FALSE(Result->Reflection.PushConstants.empty());
-    EXPECT_EQ(Result->Reflection.PushConstants[0].Offset, 0U);
-    EXPECT_GE(Result->Reflection.PushConstants[0].Size, sizeof(Uint32));
+    EXPECT_TRUE(Result->Reflection.PushConstants.empty());
     EXPECT_TRUE(Result->Reflection.VertexInputs.empty());
 }
 

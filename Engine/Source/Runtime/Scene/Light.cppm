@@ -5,6 +5,7 @@ module;
 
 export module Scene:Light;
 
+import std;
 export import Core;
 
 export namespace SoulEngine {
@@ -55,7 +56,7 @@ struct LightComponent {
 };
 
 /// @brief Immutable world-space light record consumed by renderers.
-struct LightSnapshot {
+struct LightRecord {
     LightType      Type            = LightType::Unknown;
     hlslpp::float3 Color           = hlslpp::float3(1.0f, 1.0f, 1.0f);
     Float32        Intensity       = 0.0f;
@@ -67,30 +68,81 @@ struct LightSnapshot {
     bool           CastsShadows    = false;
 };
 
+/// @brief System for collecting light data from entities.
+///
+/// Collects LightComponent + SceneNode pairs into LightRecord records for rendering.
+class LightSystem : public ISystem {
+  public:
+    explicit LightSystem(entt::registry& Registry) : ISystem(Registry) {}
+    ~LightSystem() override = default;
+
+    /// @brief Update all light components (currently no per-frame logic needed).
+    /// @param DeltaTime Time elapsed since last frame in seconds.
+    auto OnUpdate(Float32 DeltaTime) -> void override {
+        // LightSystem doesn't need per-frame updates currently
+    }
+
+    /// @brief Collect all valid light snapshots from the registry.
+    /// @return Vector of LightRecord for all valid light entities.
+    [[nodiscard]] auto CollectLights() const -> std::vector<LightRecord> {
+        std::vector<LightRecord> Lights;
+
+        const auto LightView = m_Registry.view<LightComponent, TransformComponent>();
+        for (const auto Entity : LightView) {
+            const auto& Light     = LightView.get<LightComponent>(Entity);
+            const auto& Transform = LightView.get<TransformComponent>(Entity);
+
+            const auto WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), Transform.WorldTransform);
+            const auto Direction    = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+            const auto AngleScale   = std::numbers::pi_v<Float32> / 180.0f;
+
+            Lights.emplace_back(LightRecord{
+                .Type      = Light.Type,
+                .Color     = hlslpp::float3(Light.ColorR, Light.ColorG, Light.ColorB),
+                .Intensity = Light.Intensity,
+                .Position  = hlslpp::float3(
+                    Transform.WorldTransform[3].x, Transform.WorldTransform[3].y, Transform.WorldTransform[3].z),
+                .RangeMeters     = Light.RangeMeters,
+                .Direction       = Direction,
+                .InnerConeCosine = std::cos(Light.InnerConeAngleDegrees * AngleScale),
+                .OuterConeCosine = std::cos(Light.OuterConeAngleDegrees * AngleScale),
+                .CastsShadows    = Light.CastsShadows,
+            });
+        }
+
+        return Lights;
+    }
+};
+
 } // namespace SoulEngine
 
 namespace SoulEngine {
 
-namespace {
+// Note: this namespace must stay named. In a named module, clang 23 silently
+// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
+// which would skip this entt meta registration at program startup.
+namespace MetaRegistration {
+
+using namespace entt::literals;
 
 struct LightComponentMetaRegistration {
     LightComponentMetaRegistration() {
-        entt::meta_factory<LightComponent>{}
-            .type("light")
-            .data<&LightComponent::SetType, &LightComponent::GetType>("type")
-            .data<&LightComponent::ColorR>("color_r")
-            .data<&LightComponent::ColorG>("color_g")
-            .data<&LightComponent::ColorB>("color_b")
-            .data<&LightComponent::Intensity>("intensity")
-            .data<&LightComponent::RangeMeters>("range_meters")
-            .data<&LightComponent::InnerConeAngleDegrees>("inner_cone_angle_degrees")
-            .data<&LightComponent::OuterConeAngleDegrees>("outer_cone_angle_degrees")
-            .data<&LightComponent::CastsShadows>("casts_shadows");
+        entt::meta_factory<LightComponent>{"light"_hs}
+            .data<&LightComponent::SetType, &LightComponent::GetType>("type"_hs)
+            .data<&LightComponent::ColorR>("color_r"_hs)
+            .data<&LightComponent::ColorG>("color_g"_hs)
+            .data<&LightComponent::ColorB>("color_b"_hs)
+            .data<&LightComponent::Intensity>("intensity"_hs)
+            .data<&LightComponent::RangeMeters>("range_meters"_hs)
+            .data<&LightComponent::InnerConeAngleDegrees>("inner_cone_angle_degrees"_hs)
+            .data<&LightComponent::OuterConeAngleDegrees>("outer_cone_angle_degrees"_hs)
+            .data<&LightComponent::CastsShadows>("casts_shadows"_hs)
+            .func<&EmplaceComponent<LightComponent>>("emplace"_hs);
     }
 };
 
 LightComponentMetaRegistration g_LightComponentMetaRegistration = {};
 
-} // namespace
+} // namespace MetaRegistration
 
 } // namespace SoulEngine

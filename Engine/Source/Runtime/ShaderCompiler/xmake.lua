@@ -10,5 +10,6 @@ target("ShaderCompiler")
 
 test_module("ShaderCompiler", {
     deps = {"ShaderCompiler", "Core", "Shader"},
-    packages = {"slang"}
+    packages = {"slang"},
+    rpath_packages = {"slang"}
 })

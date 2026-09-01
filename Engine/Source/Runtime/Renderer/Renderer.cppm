@@ -3,6 +3,7 @@ export module Renderer;
 import Core;
 import std;
 
+export import :Common;
 export import :IRenderer;
 export import :RasterRenderer;
 export import :RayTracingRenderer;

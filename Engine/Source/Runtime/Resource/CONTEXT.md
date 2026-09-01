@@ -6,6 +6,10 @@ Runtime resource-request and asset-loading layer. Resource owns canonical
 request identities, async CPU preparation, and logical demand. RHI owns native
 payload creation, submission lifetime, and native destruction.
 
+BLAS requests consume RHI geometry descriptions and do not depend on Scene mesh
+records. Scene converts its GeometryRecord values into those descriptions at
+the renderer/resource boundary.
+
 ## Terms
 
 | Term | Definition |
@@ -71,5 +75,5 @@ payload creation, submission lifetime, and native destruction.
 
 - Core — resource keys, errors, logging, TaskGraph
 - RHI — ref-backed native payloads and RHI-thread creation/readiness
-- ShaderCompiler / Material / import libraries — resource-family CPU preparation
+- ShaderCompiler — pipeline CPU preparation. The legacy Material/Texture partitions and the Material dependency were removed on 2026-08-27; material concerns live in the Material module.
 - Renderer / Scene / Application — request owners and consumers

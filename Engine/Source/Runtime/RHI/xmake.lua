@@ -1,7 +1,7 @@
 target("RHI")
     set_kind("moduleonly")
 
-    add_deps("Core", "Shader", "WindowSystem")
+    add_deps("Core", "Shader", "WindowSystem", "TaskGraph")
     add_packages("magic_enum", "imgui", "imgui-club", {public = true})
 
     add_files("*.cppm")      -- RHI primary module + partitions

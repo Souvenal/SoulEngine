@@ -34,10 +34,51 @@ class MockVertexBuffer final : public RHIVertexBuffer {
     Uint32& m_DestructionCount;
 };
 
+class MockTransientConstantBuffer final : public RHITransientConstantBuffer {
+  public:
+    MockTransientConstantBuffer(String Name, Uint64 Size) : RHITransientConstantBuffer(std::move(Name), Size) {}
+};
+
+class MockTransientShaderStorageBuffer final : public RHITransientShaderStorageBuffer {
+  public:
+    MockTransientShaderStorageBuffer(String Name, Uint64 Size, RHITransientBufferUsage Usage)
+        : RHITransientShaderStorageBuffer(std::move(Name), Size, Usage) {}
+};
+
+TEST(RHIRefArrayTest, ReservesNullDescriptorSlotZero) {
+    RHIDeferredDeletionQueue DeletionQueue;
+    GDeferredDeletionQueue = &DeletionQueue;
+
+    {
+        RHIRefArray<int> Resources;
+        EXPECT_EQ(Resources.GetSize(), 1U);
+        EXPECT_FALSE(Resources.GetElement(RHIRefArray<int>::NullDescriptorSlot));
+
+        auto Resource = RHIRef<int>::Create();
+        ASSERT_TRUE(Resource.Publish(std::make_unique<int>(42), RHIRefState::Ready).has_value());
+        ASSERT_TRUE(Resources.Append(Resource).has_value());
+
+        const auto Index = Resources.FindIndex(Resource);
+        ASSERT_TRUE(Index.has_value());
+        EXPECT_EQ(*Index, RHIRefArray<int>::FirstResourceSlot);
+        EXPECT_EQ(Resources.GetSize(), 2U);
+        EXPECT_TRUE(Resources.GetElement(RHIRefArray<int>::FirstResourceSlot));
+
+        const auto Changed = Resources.GetChangedElements();
+        ASSERT_EQ(Changed.size(), 1U);
+        EXPECT_EQ(Changed[0].first, RHIRefArray<int>::FirstResourceSlot);
+        EXPECT_EQ(Changed[0].second, Resource);
+
+        Resource = nullptr;
+    }
+    DeletionQueue.Drain();
+    GDeferredDeletionQueue = nullptr;
+}
+
 class MockRenderDevice final : public RHIRenderDevice {
   public:
     MockRenderDevice() {
-        GDeferredDeletionQueue = &GetDeletionQueue();
+        GDeferredDeletionQueue = &m_DeletionQueue;
     }
     ~MockRenderDevice() override {
         GDeferredDeletionQueue = nullptr;
@@ -73,6 +114,31 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock index-buffer creation is not implemented"));
     }
 
+    [[nodiscard]] auto CreateTransientConstantBuffer(StringView Name, const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> override {
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("mock transient constant-buffer data is empty"));
+        auto Resource = RHIRef<RHITransientConstantBuffer>::Create();
+        auto Payload = std::make_unique<MockTransientConstantBuffer>(String(Name), Desc.Data.size_bytes());
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
+    }
+
+    [[nodiscard]] auto CreateTransientShaderStorageBuffer(
+        StringView Name,
+        const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> override {
+        if (Desc.Data.empty())
+            return std::unexpected(ErrorMessage("mock transient shader-storage data is empty"));
+        auto Resource = RHIRef<RHITransientShaderStorageBuffer>::Create();
+        auto Payload = std::make_unique<MockTransientShaderStorageBuffer>(
+            String(Name), Desc.Data.size_bytes(), Desc.Usage);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
+    }
+
     [[nodiscard]] auto CreateSampledTexture(StringView, const RHISampledTextureDesc&)
         -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock sampled-texture creation is not implemented"));
@@ -92,6 +158,11 @@ class MockRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto CreateRenderTarget(StringView, const RHIRenderTargetDesc&)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock render-target creation is not implemented"));
+    }
+
+    [[nodiscard]] auto CreateShaderBindingSet(StringView, const RHIShaderBindingSetDesc&)
+        -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock shader-binding-set creation is not implemented"));
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(StringView, const RHIGraphicsPipelineDesc&)
@@ -115,7 +186,13 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock TLAS creation is not implemented"));
     }
 
-    [[nodiscard]] auto Execute(RHICommandList&&) -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto Execute(RenderPassList&&) -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto EndFrame() -> std::expected<void, ErrorMessage> override {
         return {};
     }
     [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override {
@@ -123,16 +200,10 @@ class MockRenderDevice final : public RHIRenderDevice {
     }
     auto WaitIdle() -> void override {}
     auto Shutdown() -> void override {
-        GetDeletionQueue().Drain();
+        m_DeletionQueue.Drain();
     }
 
-    bool   m_FailVertexBuffer    = false;
-    bool   m_GpuComplete         = false;
-    Uint32 m_VertexDestructions  = 0;
-    Uint32 m_SamplerDestructions = 0;
-
-  protected:
-    auto TickBackendCompletions() -> void override {
+    auto Tick() -> void override {
         if (!m_GpuComplete)
             return;
         auto Callbacks = std::move(m_CompletionCallbacks);
@@ -140,7 +211,13 @@ class MockRenderDevice final : public RHIRenderDevice {
             Complete();
     }
 
+    bool   m_FailVertexBuffer    = false;
+    bool   m_GpuComplete         = false;
+    Uint32 m_VertexDestructions  = 0;
+    Uint32 m_SamplerDestructions = 0;
+
   private:
+    RHIDeferredDeletionQueue           m_DeletionQueue       = {};
     std::vector<std::function<void()>> m_CompletionCallbacks = {};
 };
 
@@ -201,8 +278,37 @@ TEST(RHIResourceRefTest, SynchronousCreateReturnsReadySamplerRef) {
         EXPECT_EQ(Sampler->GetState(), RHIRefState::Ready);
         EXPECT_NE(Sampler->TryGet(), nullptr);
     }
-    Device.DrainDeletionQueue();
+    DrainRHIDeferredDeletions();
     EXPECT_EQ(Device.m_SamplerDestructions, 1);
+}
+
+TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
+    using magic_enum::bitwise_operators::operator|;
+
+    MockRenderDevice Device;
+    const std::array<std::byte, 16> Data = {};
+
+    auto Constant = Device.CreateTransientConstantBuffer(
+        "Test/TransientConstant", RHITransientConstantBufferDesc{.Data = Data});
+    ASSERT_TRUE(Constant.has_value());
+    ASSERT_TRUE(*Constant);
+    EXPECT_EQ((*Constant)->GetSize(), Data.size());
+
+    auto Storage = Device.CreateTransientShaderStorageBuffer(
+        "Test/TransientStorage",
+        RHITransientShaderStorageBufferDesc{
+            .Data       = Data,
+            .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
+        });
+    ASSERT_TRUE(Storage.has_value());
+    ASSERT_TRUE(*Storage);
+    EXPECT_EQ((*Storage)->GetSize(), Data.size());
+    EXPECT_EQ((*Storage)->GetUsage(),
+              RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead);
+
+    Constant = nullptr;
+    Storage = nullptr;
+    DrainRHIDeferredDeletions();
 }
 
 TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
@@ -224,7 +330,7 @@ TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
 
     Buffer = nullptr;
     Copy   = nullptr;
-    Device.DrainDeletionQueue();
+    DrainRHIDeferredDeletions();
     EXPECT_EQ(Device.m_VertexDestructions, 1);
 }
 
@@ -251,6 +357,8 @@ TEST(RHIResourceRefTest, CompletionCallbackKeepsPayloadAliveUntilGpuCompletion) 
 
     Device.m_GpuComplete = true;
     Device.Tick();
+    EXPECT_EQ(Device.m_VertexDestructions, 0);
+    DrainRHIDeferredDeletions();
     EXPECT_EQ(Device.m_VertexDestructions, 1);
 }
 

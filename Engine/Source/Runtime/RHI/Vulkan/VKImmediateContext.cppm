@@ -4,12 +4,14 @@ module;
 
 export module Vulkan:ImmediateContext;
 
+import magic_enum;
 import Core;
 import RHI;
 import vulkan;
 import std;
 
 import :Semaphore;
+import :Debug;
 
 namespace SoulEngine {
 
@@ -40,13 +42,15 @@ class VulkanImmediateContext {
     VulkanImmediateContext() = default;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device,
+                                     VulkanDebugUtils& DebugUtils,
                                      vk::raii::Queue& TransferQueue,
                                      Uint32 TransferFamily,
                                      vk::raii::Queue& GraphicsQueue,
                                      Uint32 GraphicsFamily)
         -> std::expected<VulkanImmediateContext, ErrorMessage> {
         VulkanImmediateContext Context;
-        Context.m_Device = &Device;
+        Context.m_Device     = &Device;
+        Context.m_DebugUtils = &DebugUtils;
         // These are distinct logical immediate queues even if both roles use
         // the same native VkQueue. They retain separate timeline token domains.
         if (auto R = Context.InitializeQueue(VulkanImmediateQueue::Transfer, TransferQueue, TransferFamily); !R)
@@ -164,11 +168,12 @@ class VulkanImmediateContext {
     /// independent even when two logical queues share that native VkQueue, so
     /// queue-qualified completion tokens cannot be confused.
     struct QueueState {
-        vk::raii::Queue* Queue = nullptr;
-        vk::raii::CommandPool Pool = nullptr;
+        vk::raii::Queue*       Queue          = nullptr;
+        vk::raii::CommandPool  Pool           = nullptr;
         VulkanTimelineSemaphore Timeline;
-        Uint64 LastSubmitted = 0;
-        std::deque<PendingCallback> Callbacks = {};
+        Uint64                 LastSubmitted  = 0;
+        Uint64                 NextSubmission = 0;
+        std::deque<PendingCallback> Callbacks  = {};
     };
 
     [[nodiscard]] auto SubmitRaw(VulkanImmediateQueue Queue,
@@ -187,6 +192,12 @@ class VulkanImmediateContext {
         if (CmdRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Immediate task command-buffer allocation failed"));
         auto CmdBuf = std::move(CmdRes.value[0]);
+        if (m_DebugUtils)
+            m_DebugUtils->SetObjectName(
+                *CmdBuf,
+                Format("Internal/CommandBuffer/Immediate/{}/Submission{}",
+                       magic_enum::enum_name(Queue),
+                       State->NextSubmission++));
         if (auto R = CmdBuf.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
             R != vk::Result::eSuccess) {
             return std::unexpected(ErrorMessage("Immediate task command-buffer begin failed"));
@@ -277,7 +288,8 @@ class VulkanImmediateContext {
         // The transient pool belongs to the family executing this logical
         // queue's command buffers. A transfer-only family cannot execute
         // graphics or fragment pipeline stages.
-        auto Timeline = VulkanTimelineSemaphore::Create(*m_Device);
+        auto Timeline = VulkanTimelineSemaphore::Create(
+            *m_Device, m_DebugUtils, Format("Internal/Semaphore/Immediate/{}", magic_enum::enum_name(Kind)));
         if (!Timeline)
             return std::unexpected(Timeline.error());
         auto PoolRes = m_Device->createCommandPool(vk::CommandPoolCreateInfo{
@@ -287,6 +299,9 @@ class VulkanImmediateContext {
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Immediate task command-pool creation failed"));
         State->Queue = &Queue;
+        if (m_DebugUtils)
+            m_DebugUtils->SetObjectName(
+                *PoolRes.value, Format("Internal/CommandPool/Immediate/{}", magic_enum::enum_name(Kind)));
         State->Pool = std::move(PoolRes.value);
         State->Timeline = std::move(*Timeline);
         return {};
@@ -314,9 +329,10 @@ class VulkanImmediateContext {
         }
     }
 
-    vk::raii::Device* m_Device = nullptr;
-    QueueState m_Transfer = {};
-    QueueState m_Graphics = {};
+    vk::raii::Device* m_Device     = nullptr;
+    VulkanDebugUtils* m_DebugUtils = nullptr;
+    QueueState        m_Transfer   = {};
+    QueueState        m_Graphics   = {};
 };
 
 } // namespace SoulEngine

@@ -3,6 +3,7 @@
 import Core;
 import Scene;
 import Renderer;
+import TaskGraph;
 
 using namespace SoulEngine;
 

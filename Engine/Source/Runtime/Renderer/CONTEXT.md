@@ -16,7 +16,7 @@ into each FrameSlot.
 | **Renderer cache** | Engine-global cache of attached renderers. Renderer-local request/resource wrappers may survive renderer switching until engine shutdown. |
 | **Recorded resource ref** | An RHIRef<T> whose `operator bool()` confirms a Ready payload before recording. The command copies the ref as the GPU-use lifetime carrier. |
 | **GBuffer** | Camera-owned collection of four color render targets plus one shared depth render target: albedo, normal, material ID, entity ID, and depth. |
-| **ViewRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
+| **CameraRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
 | **Geometry pass** | Raster RHIPass that writes the four G-buffer color attachments and the shared depth attachment. |
 | **Lighting pass** | Separate raster RHIPass that samples the G-buffer, including shared depth, and writes SceneColorRT. |
 | **Post-process pass** | A raster RHIPass appended after scene lighting. Post-process builders live under `Renderer/PostProcess/` and operate on the current view's ref-backed targets. |
@@ -29,25 +29,40 @@ into each FrameSlot.
   the selected shared renderer into a FrameSlot.
 - RenderLoop calls IRenderer::Render(), stores the result, and publishes
   RenderReady; it does not make Vulkan calls.
-- Renderer requests textures, meshes, buffers, pipelines, samplers, BLAS, and
-  TLAS through ResourceManager. Native creation is queued to the RHI thread.
+- Renderer requests textures, pipelines, samplers, BLAS, and TLAS through
+  ResourceManager. MeshSystem owns MeshRecord and GeometryRecord loading.
+  Native creation is queued to the RHI thread.
+- RayTracingRenderer converts Scene-owned GeometryRecord values into RHI
+  triangle geometry descriptions before requesting a BLAS; Resource does not
+  depend on Scene mesh types.
 - Renderer resolves each draw's material through MaterialManager (scene instance
   -> mesh-imported asset instance -> built-in default) and PbrMaterialResolver
   deduplicates GPU entries by (instance ID, HasUV0, HasTangents).
-- A renderer records only ready refs. The command list copies refs for pass
-  attachments, pipelines, vertex/index buffers, shader parameter resources,
-  TLAS/BLAS instances, and the present source. Do not store a raw pointer
-  obtained from TryGet() in a command.
+- A renderer records only ready persistent refs. Transient refs may remain
+  pending until the RHI frame task completes; the command visitor owns the
+  Ready/Failed validation. The command list copies refs for pass attachments,
+  pipelines, vertex/index buffers, shader parameter resources, transient
+  buffers, TLAS/BLAS instances, and the present source. Do not store a raw
+  pointer obtained from TryGet() in a command.
 - Vulkan retains the submitted command list through its graphics timeline. A
   renderer cache release or Resource transient collection after submission
   cannot destroy an ordinary ref-backed resource still visible to the GPU.
+- Renderer creates current-frame transient data through typed
+  `CreateTransientXXXBuffer` calls. The descriptors contain byte spans that are
+  copied by the RHI creation path; renderer code never captures borrowed Scene
+  records or stores upload work on individual scopes.
+- Uploadable records own their `GpuData` ABI mirror and `BuildGpuData()`
+  method. Renderer passes the resulting byte snapshot to a transient RHI
+  creation descriptor and never queries a native Vulkan buffer object.
 - RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and assigns SceneColorRT as the present source.
   RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
   and transient geometry/material/view buffers; Renderer never observes a
   Vulkan device address or descriptor index.
-  RasterRenderer uses a typed transient SubMesh geometry table and GPU indirect
-  commands for vertex pulling; the table command retains independent source
-  buffer refs while Vulkan resolves device addresses during command recording.
+  RasterRenderer consumes Geometry-granularity InstanceRecord values and
+  resolves them into GPU-ABI geometry and instance tables plus indirect commands for vertex pulling. Geometry/instance
+  data is published as frame-affined transient resource creation tasks before
+  scope recording and publishes the required shader-read and
+  indirect-command-read visibility.
 
 ## Dependencies
 

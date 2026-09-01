@@ -57,8 +57,8 @@ class VulkanDeviceTexture : public RHIObject {
             return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: invalid format"));
 
         const bool         bConcurrentSharing = Desc.ConcurrentSharing &&
-                                                Context.GraphicsFamily != Context.TransferFamily;
-        const std::array   QueueFamilies{Context.GraphicsFamily, Context.TransferFamily};
+                                                Context.GetGraphicsFamily() != Context.GetTransferFamily();
+        const std::array   QueueFamilies{Context.GetGraphicsFamily(), Context.GetTransferFamily()};
         vk::ImageCreateInfo ImageCI{
             .imageType             = vk::ImageType::e2D,
             .format                = Desc.Format,
@@ -78,7 +78,7 @@ class VulkanDeviceTexture : public RHIObject {
         VkImage           RawImage = nullptr;
         VmaAllocation     RawAlloc = nullptr;
         VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
-        if (vmaCreateImage(Context.Allocator, &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
+        if (vmaCreateImage(Context.GetAllocator(), &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
             return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: vmaCreateImage failed"));
 
         const auto VkImage = static_cast<vk::Image>(RawImage);
@@ -96,14 +96,19 @@ class VulkanDeviceTexture : public RHIObject {
                                  .baseArrayLayer = 0,
                                  .layerCount     = 1},
         };
-        auto ViewRes = Context.Device.createImageView(ViewCI);
+        auto ViewRes = Context.GetDevice().createImageView(ViewCI);
         if (ViewRes.result != vk::Result::eSuccess) {
-            vmaDestroyImage(Context.Allocator, RawImage, RawAlloc);
+            vmaDestroyImage(Context.GetAllocator(), RawImage, RawAlloc);
             return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: vkCreateImageView failed"));
         }
 
         return std::make_shared<VulkanDeviceTexture>(
-            String(Name), Context.Allocator, VkImage, RawAlloc, std::move(ViewRes.value), Context.DebugUtils);
+            String(Name),
+            Context.GetAllocator(),
+            VkImage,
+            RawAlloc,
+            std::move(ViewRes.value),
+            Context.GetDebugUtils());
     }
 
     ~VulkanDeviceTexture() {
@@ -229,7 +234,12 @@ class VulkanSampledTexture final : public RHISampledTexture {
         : RHISampledTexture(std::move(Name)),
           m_Texture(std::move(Tex)),
           m_Width(Width),
-          m_Height(Height) {}
+          m_Height(Height),
+          m_DescriptorInfo{
+              .sampler     = nullptr,
+              .imageView   = m_Texture->GetImageView(),
+              .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+          } {}
 
     ~VulkanSampledTexture() override = default;
 
@@ -290,7 +300,8 @@ class VulkanSampledTexture final : public RHISampledTexture {
                 },
         };
         if (auto R =
-                (*Texture)->CopyFrom(*Staging, Context.Immediate, Desc.Width, Desc.Height, VkFmt, std::move(Completion));
+                (*Texture)
+                    ->CopyFrom(*Staging, Context.GetImmediateContext(), Desc.Width, Desc.Height, VkFmt, std::move(Completion));
             !R)
             return std::unexpected(R.error().Append("VulkanSampledTexture::Create: transfer submission failed"));
         return std::make_unique<VulkanSampledTexture>(String(Name), std::move(*Texture), Desc.Width, Desc.Height);
@@ -314,10 +325,26 @@ class VulkanSampledTexture final : public RHISampledTexture {
         return m_Texture->GetImageView();
     }
 
+    /// Build a sampled-image descriptor write for this texture.
+    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
+                                             Uint32            BindingIndex,
+                                             Uint32            ArrayElement,
+                                             bool              /*IsReadOnly*/) const -> vk::WriteDescriptorSet {
+        return vk::WriteDescriptorSet{
+            .dstSet          = Set,
+            .dstBinding      = BindingIndex,
+            .dstArrayElement = ArrayElement,
+            .descriptorCount = 1,
+            .descriptorType  = vk::DescriptorType::eSampledImage,
+            .pImageInfo      = &m_DescriptorInfo,
+        };
+    }
+
   private:
-    SPtr<VulkanDeviceTexture> m_Texture = nullptr;
-    Uint32                    m_Width   = 0;
-    Uint32                    m_Height  = 0;
+    SPtr<VulkanDeviceTexture>         m_Texture        = nullptr;
+    Uint32                            m_Width          = 0;
+    Uint32                            m_Height         = 0;
+    vk::DescriptorImageInfo m_DescriptorInfo = {};
 };
 
 class VulkanRenderTarget final : public RHIRenderTarget {
@@ -333,7 +360,17 @@ class VulkanRenderTarget final : public RHIRenderTarget {
           m_Width(Width),
           m_Height(Height),
           m_Format(Format),
-          m_Usage(Usage) {}
+          m_Usage(Usage),
+          m_SampledDescriptorInfo{
+              .sampler     = nullptr,
+              .imageView   = m_Texture->GetImageView(),
+              .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+          },
+          m_StorageDescriptorInfo{
+              .sampler     = nullptr,
+              .imageView   = m_Texture->GetImageView(),
+              .imageLayout = vk::ImageLayout::eGeneral,
+          } {}
 
     ~VulkanRenderTarget() override = default;
 
@@ -415,12 +452,30 @@ class VulkanRenderTarget final : public RHIRenderTarget {
         return m_Texture->GetImageView();
     }
 
+    /// Build a sampled-image descriptor write for this render target.
+    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
+                                             Uint32            BindingIndex,
+                                             Uint32            ArrayElement,
+                                             bool              IsReadOnly) const -> vk::WriteDescriptorSet {
+        return vk::WriteDescriptorSet{
+            .dstSet          = Set,
+            .dstBinding      = BindingIndex,
+            .dstArrayElement = ArrayElement,
+            .descriptorCount = 1,
+            .descriptorType  = IsReadOnly ? vk::DescriptorType::eSampledImage : vk::DescriptorType::eStorageImage,
+            .pImageInfo      = IsReadOnly ? &m_SampledDescriptorInfo : &m_StorageDescriptorInfo,
+        };
+    }
+
+    /// Build a storage-image descriptor write for this render target.
   private:
-    SPtr<VulkanDeviceTexture> m_Texture = nullptr;
-    Uint32                    m_Width   = 0;
-    Uint32                    m_Height  = 0;
-    RHIFormat                 m_Format  = RHIFormat::Unknown;
-    RHITextureUsage           m_Usage   = RHITextureUsage::None;
+    SPtr<VulkanDeviceTexture>         m_Texture        = nullptr;
+    Uint32                            m_Width          = 0;
+    Uint32                            m_Height         = 0;
+    RHIFormat                         m_Format         = RHIFormat::Unknown;
+    RHITextureUsage                   m_Usage          = RHITextureUsage::None;
+    vk::DescriptorImageInfo m_SampledDescriptorInfo = {};
+    vk::DescriptorImageInfo m_StorageDescriptorInfo = {};
 };
 
 } // namespace SoulEngine

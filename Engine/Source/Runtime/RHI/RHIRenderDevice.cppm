@@ -5,7 +5,7 @@ export import std;
 import :Types;
 import :Ref;
 import :RayTracing;
-import :Command; // RHICommandList
+import :Pass;
 
 export namespace SoulEngine {
 
@@ -47,6 +47,9 @@ class RHIRenderDevice {
     [[nodiscard]] virtual auto CreateRenderTarget(StringView Name, const RHIRenderTargetDesc& Desc)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> = 0;
 
+    [[nodiscard]] virtual auto CreateShaderBindingSet(StringView Name, const RHIShaderBindingSetDesc& Desc)
+        -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> = 0;
+
     [[nodiscard]] virtual auto CreateGraphicsPipeline(StringView Name, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> = 0;
 
@@ -61,49 +64,41 @@ class RHIRenderDevice {
                                                                    const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
 
-    /// @brief Poll backend completions and retire deferred RHI resources.
-    auto Tick() -> void {
-        TickBackendCompletions();
-        DrainDeletionQueue();
+    /// @brief Retire backend-native completion callbacks. Called once per frame on the RHI thread.
+    virtual auto Tick() -> void = 0;
+
+    /// @brief Create a frame-affined transient constant buffer from a data snapshot.
+    [[nodiscard]] virtual auto CreateTransientConstantBuffer(StringView                         Name,
+                                                             const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> = 0;
+
+    [[nodiscard]] auto CreateTransientConstantBuffer(const RHITransientConstantBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> {
+        return CreateTransientConstantBuffer("Transient/ConstantBuffer", Desc);
     }
 
-    /// @brief Drain the deferred deletion queue. Exposed for tests.
-    auto DrainDeletionQueue() -> void {
-        m_DeletionQueue.Drain();
+    /// @brief Create a frame-affined transient shader-storage buffer from a data snapshot.
+    [[nodiscard]] virtual auto CreateTransientShaderStorageBuffer(
+        StringView                              Name,
+        const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> = 0;
+
+    [[nodiscard]] auto CreateTransientShaderStorageBuffer(const RHITransientShaderStorageBufferDesc& Desc)
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> {
+        return CreateTransientShaderStorageBuffer("Transient/ShaderStorageBuffer", Desc);
     }
 
-  protected:
-    /// @brief Retire backend-native completion callbacks. Called by Tick() on the RHI thread.
-    virtual auto       TickBackendCompletions() -> void = 0;
-    [[nodiscard]] auto GetDeletionQueue() -> RHIDeferredDeletionQueue& {
-        return m_DeletionQueue;
-    }
+    // ── RHI frame lifecycle and command execution ─────────────────────────
 
-  public:
-    /// Allocate a logical transient constant-buffer handle.
-    /// The handle is written through a command list and resolved by the backend during Execute().
-    [[nodiscard]] auto AllocateTransientConstantBuffer(Uint64 Size)
-        -> std::expected<RHITransientConstantBuffer, ErrorMessage> {
-        if (Size == 0)
-            return std::unexpected(ErrorMessage("Transient constant buffer size must be greater than zero"));
-        return RHITransientConstantBuffer{NextTransientBufferId(), Size};
-    }
-
-    /// Allocate a logical transient shader-storage-buffer handle.
-    /// The handle is written through a command list and resolved by the backend during Execute().
-    [[nodiscard]] auto AllocateTransientShaderStorageBuffer(Uint64 Size)
-        -> std::expected<RHITransientShaderStorageBuffer, ErrorMessage> {
-        if (Size == 0)
-            return std::unexpected(ErrorMessage("Transient shader storage buffer size must be greater than zero"));
-        return RHITransientShaderStorageBuffer{NextTransientBufferId(), Size};
-    }
-
-    // ── RHICommand execution ────────────────────────────────────
+    /// @brief Prepare the current backend frame slot before frame-affined tasks run.
+    [[nodiscard]] virtual auto BeginFrame() -> std::expected<void, ErrorMessage> = 0;
 
     /// @brief Execute a frame's worth of RHI commands.
-    /// Replaces the old single-threaded BeginFrame/EndFrame pattern.
-    /// The backend handles submission + present internally.
-    [[nodiscard]] virtual auto Execute(RHICommandList&& CmdList) -> std::expected<void, ErrorMessage> = 0;
+    /// Records the current frame's commands after BeginFrame() has completed.
+    [[nodiscard]] virtual auto Execute(RenderPassList&& PassList) -> std::expected<void, ErrorMessage> = 0;
+
+    /// @brief Finish and submit the current backend frame slot.
+    [[nodiscard]] virtual auto EndFrame() -> std::expected<void, ErrorMessage> = 0;
 
     // ── RHICommand context access ──────────────────────────────────────────
 
@@ -150,7 +145,6 @@ class RHIRenderDevice {
         return NextId.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RHIDeferredDeletionQueue     m_DeletionQueue = {};
     static UPtr<RHIRenderDevice> s_Instance;
 };
 
@@ -205,7 +199,7 @@ inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
     }
 
     s_Instance             = std::move(Ctx);
-    GDeferredDeletionQueue = &s_Instance->m_DeletionQueue;
+    GDeferredDeletionQueue = &GDeferredDeletionQueueStorage;
     return {};
 }
 

@@ -1,0 +1,7 @@
+material:
+  name: copper
+  diffuse: [0.62, 0.28, 0.10]
+  base_color_factor: [1.0, 1.0, 1.0, 1.0]
+  metallic_factor: 0.0
+  roughness_factor: 0.42
+  shading_model: pbr

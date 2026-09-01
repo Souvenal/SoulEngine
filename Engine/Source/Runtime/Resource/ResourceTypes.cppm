@@ -1,11 +1,8 @@
 module;
 
-#include <hlsl++.h>
-
 export module Resource:Types;
 
 export import Core;
-export import Material;
 export import RHI;
 export import ShaderCompiler;
 export import std;
@@ -52,17 +49,8 @@ struct ResourceTraitInfo {
 template <typename T>
 struct ResourceTraits;
 
-class ResourceMesh;
 class ResourceBottomLevelAccelerationStructure;
 class ResourceTopLevelAccelerationStructure;
-
-template <>
-struct ResourceTraits<ResourceMesh> {
-    static constexpr ResourceTraitInfo Info{
-        "mesh",
-        ResourceLifetimePolicy::CachedAsset,
-    };
-};
 
 template <>
 struct ResourceTraits<ResourceBottomLevelAccelerationStructure> {
@@ -81,7 +69,7 @@ struct ResourceTraits<ResourceTopLevelAccelerationStructure> {
 };
 
 using ManagedResourceTypes =
-    std::tuple<ResourceMesh, ResourceBottomLevelAccelerationStructure, ResourceTopLevelAccelerationStructure>;
+    std::tuple<ResourceBottomLevelAccelerationStructure, ResourceTopLevelAccelerationStructure>;
 
 template <typename T, typename Tuple>
 struct TupleContains;
@@ -101,8 +89,6 @@ concept ManagedResource = DefinedResourceTraits<T> && TupleContains<T, ManagedRe
 
 template <typename T>
 concept ManagedAssetResource = ManagedResource<T>;
-
-static_assert(ManagedResource<ResourceMesh>);
 
 /// @brief ResourceContext-owned high-level asset payload.
 template <ManagedResource T>
@@ -124,8 +110,8 @@ struct GraphicsPipelineRequest {
     RHIRasterizerState       Rasterizer        = {};
     RHIBlendState            Blend             = {};
     RHIDepthStencilState     DepthStencil      = {};
-    std::vector<RHIFormat>   ColorFormats = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                 DepthFormat  = RHIFormat::Unknown;
+    std::vector<RHIFormat>   ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
+    RHIFormat                DepthFormat       = RHIFormat::Unknown;
 };
 
 /// @brief Async hardware ray-tracing pipeline request descriptor.
@@ -374,38 +360,10 @@ class ResourceRef {
     ReleaseFn         m_Release = nullptr;
 };
 
-template <ManagedResource T>
-[[nodiscard]] auto AcquireResourceRef(ResourceContext& Context, const ResourceHandle<T>& Handle) -> ResourceRef<T>;
-
-// SubMesh and MeshGroup have been replaced by GeometryRecord in Resource:Geometry module.
-// Use GeometryManager for centralized geometry management.
-
-/// @brief High-level imported mesh asset.
-///
-/// After the GeometryManager refactoring, ResourceMesh only stores the mesh name.
-/// Actual geometry data is managed by GeometryManager.
-class ResourceMesh {
-  private:
-    String m_MeshName = {};
-
-  public:
-    ResourceMesh() = default;
-
-    explicit ResourceMesh(String name) : m_MeshName(std::move(name)) {}
-
-    [[nodiscard]] auto GetMeshName() const -> const String& {
-        return m_MeshName;
-    }
-
-    auto SetMeshName(String name) -> void {
-        m_MeshName = std::move(name);
-    }
-};
-
 /// Policy for lowering a mesh asset into one reusable BLAS payload.
 enum class BottomLevelAccelerationStructureGeometryPolicy : Uint8 {
     Unknown = 0,
-    AllGeometryRecords,  ///< Use all GeometryRecords from GeometryManager
+    AllGeometryRecords, ///< Use all GeometryRecords from the mesh resource
 };
 
 /// Request options contributing to a reusable BLAS identity.

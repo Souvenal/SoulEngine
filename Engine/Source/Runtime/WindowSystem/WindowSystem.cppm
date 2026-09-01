@@ -19,7 +19,7 @@ export namespace SoulEngine {
     auto Result = GlfwWindowSystem::Create();
     if (!Result)
         return std::unexpected(std::move(Result).error());
-    return std::make_unique<GlfwWindowSystem>(std::move(*Result));
+    return std::move(*Result);
 }
 
 } // namespace SoulEngine
