@@ -82,6 +82,18 @@ struct RHITraceRaysCmd {
     Uint32                        Depth       = 1;
 };
 
+/// @brief Copy a small texel region from a render target into one readback
+/// buffer. The backend chooses an internal ring position and stamps it with
+/// the submission's timeline value.
+struct RHICopyTextureToBufferCmd {
+    RHIRef<RHIRenderTarget>   Source    = nullptr;
+    Uint32                    SrcX      = 0;
+    Uint32                    SrcY      = 0;
+    Uint32                    SrcWidth  = 1;
+    Uint32                    SrcHeight = 1;
+    RHIRef<RHIReadbackBuffer> Target    = nullptr;
+};
+
 /// @brief All command types dispatched via std::visit.
 using RHICommand = std::variant<RHISetViewportCmd,
                                 RHISetScissorCmd,
@@ -89,7 +101,8 @@ using RHICommand = std::variant<RHISetViewportCmd,
                                 RHIDrawCmd,
                                 RHIDrawIndirectCmd,
                                 RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
-                                RHITraceRaysCmd>;
+                                RHITraceRaysCmd,
+                                RHICopyTextureToBufferCmd>;
 
 /// @brief One Dear ImGui overlay to record over the acquired presentation image.
 ///

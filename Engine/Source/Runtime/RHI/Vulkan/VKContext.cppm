@@ -13,9 +13,9 @@ import std;
 
 import :Capability;
 import :Debug;
-import :Descriptor;
 import :ImmediateContext;
 import :SurfaceProvider;
+import :Semaphore;
 
 export namespace SoulEngine {
 
@@ -133,6 +133,12 @@ class VulkanResourceContext final {
         if (auto Res = Result->CreateLogicalDevice(); !Res)
             return std::unexpected(Res.error());
 
+        auto Timeline = VulkanTimelineSemaphore::Create(
+            Result->m_Device, &Result->m_DebugUtils, "Internal/Semaphore/GraphicsTimeline");
+        if (!Timeline)
+            return std::unexpected(Timeline.error().Append("Vulkan graphics timeline creation failed"));
+        Result->m_Timeline = std::move(*Timeline);
+
         // ── VMA ───────────────────────────────────────────────────────────
         if (auto Res = Result->CreateVMA(Context); !Res)
             return std::unexpected(Res.error());
@@ -148,13 +154,6 @@ class VulkanResourceContext final {
         if (!Immediate)
             return std::unexpected(Immediate.error().Append("VulkanImmediateContext creation failed"));
         Result->m_ImmediateContext = std::move(*Immediate);
-
-        // ── Global descriptor manager ─────────────────────────────────────
-        auto Descriptors =
-            VulkanDescriptorManager::Create(Result->m_Device, Result->m_DebugUtils, Result->m_FramesInFlight);
-        if (!Descriptors)
-            return std::unexpected(Descriptors.error().Append("VulkanDescriptorManager creation failed"));
-        Result->m_DescriptorManager = std::make_unique<VulkanDescriptorManager>(std::move(*Descriptors));
 
         return Result;
     }
@@ -181,7 +180,6 @@ class VulkanResourceContext final {
     [[nodiscard]] auto GetImmediateContext() const -> VulkanImmediateContext& {
         return const_cast<VulkanImmediateContext&>(m_ImmediateContext);
     }
-    [[nodiscard]] auto GetDescriptorManager() const -> VulkanDescriptorManager& { return *m_DescriptorManager; }
     [[nodiscard]] auto GetImageTracker() const -> VulkanImageTracker& {
         return const_cast<VulkanImageTracker&>(m_ImageTracker);
     }
@@ -191,6 +189,9 @@ class VulkanResourceContext final {
     [[nodiscard]] auto GetComputeFamily() const -> Uint32 { return m_ComputeFamily; }
     [[nodiscard]] auto GetTransferFamily() const -> Uint32 { return m_TransferFamily; }
     [[nodiscard]] auto GetFramesInFlight() const -> Uint32 { return m_FramesInFlight; }
+    [[nodiscard]] auto GetTimeline() const -> VulkanTimelineSemaphore& {
+        return const_cast<VulkanTimelineSemaphore&>(m_Timeline);
+    }
 
   private:
     [[nodiscard]] auto CreateInstance(vk::raii::Context& Context) -> std::expected<void, ErrorMessage> {
@@ -533,8 +534,8 @@ class VulkanResourceContext final {
     VmaAllocator                     m_Allocator      = nullptr;
     VulkanImmediateContext           m_ImmediateContext;
     // ── Global descriptor manager ─────────────────────────────────────────
-    UPtr<VulkanDescriptorManager>    m_DescriptorManager = nullptr;
     VulkanImageTracker               m_ImageTracker;
+    VulkanTimelineSemaphore           m_Timeline;
     Uint32                           m_FramesInFlight = 2;
 };
 

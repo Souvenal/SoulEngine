@@ -25,13 +25,13 @@ class VulkanTimelineSemaphore {
     VulkanTimelineSemaphore(VulkanTimelineSemaphore&& Other) noexcept
         : m_Device(std::exchange(Other.m_Device, nullptr)),
           m_Semaphore(std::move(Other.m_Semaphore)),
-          m_NextValue(Other.m_NextValue.load()) {}
+          m_HostValue(Other.m_HostValue.load()) {}
 
     auto operator=(VulkanTimelineSemaphore&& Other) noexcept -> VulkanTimelineSemaphore& {
         if (this != &Other) {
             m_Device    = std::exchange(Other.m_Device, nullptr);
             m_Semaphore = std::move(Other.m_Semaphore);
-            m_NextValue.store(Other.m_NextValue.load());
+            m_HostValue.store(Other.m_HostValue.load());
         }
         return *this;
     }
@@ -61,28 +61,27 @@ class VulkanTimelineSemaphore {
         return Result;
     }
 
-    /// Advances the monotonic counter and returns the new value.
-    /// Callers pass this value to queue submit as the signal value, then
-    /// retain it to check completion later.
-    [[nodiscard]] auto NextValue() noexcept -> Uint64 {
-        return ++m_NextValue;
+    /// Advances the host-side monotonic counter and returns the new value.
+    /// The device-side semaphore reaches this value only after a submission
+    /// explicitly signals it.
+    [[nodiscard]] auto IncreaseHostValue() noexcept -> Uint64 {
+        return ++m_HostValue;
     }
 
-    /// Returns semaphore's current GPU-side counter value (non-blocking).
+    /// Returns the device-side semaphore counter value (non-blocking).
     /// Calls vkGetSemaphoreCounterValue.
-    [[nodiscard]] auto GetCurrentValue() -> std::expected<Uint64, ErrorMessage> {
+    [[nodiscard]] auto GetDeviceValue() -> Uint64 {
         auto Res = m_Semaphore.getCounterValue();
         if (Res.result != vk::Result::eSuccess) {
-            return std::unexpected(
-                ErrorMessage(Format("vkGetSemaphoreCounterValue failed: {}", vk::to_string(Res.result))));
+            LogError("vkGetSemaphoreCounterValue failed: {}", vk::to_string(Res.result));
+            return 0;
         }
         return Res.value;
     }
 
     /// Blocks CPU until semaphore reaches at least `Value`.
     /// Calls vkWaitSemaphores with the given timeout (default: infinite).
-    [[nodiscard]] auto Wait(Uint64 Value, Uint64 TimeoutNs = std::numeric_limits<Uint64>::max())
-        -> std::expected<void, ErrorMessage> {
+    auto Wait(Uint64 Value, Uint64 TimeoutNs = std::numeric_limits<Uint64>::max()) -> void {
         vk::Semaphore         Sem = *m_Semaphore;
         vk::SemaphoreWaitInfo WaitInfo{
             .semaphoreCount = 1,
@@ -90,18 +89,17 @@ class VulkanTimelineSemaphore {
             .pValues        = &Value,
         };
         if (auto R = m_Device->waitSemaphores(WaitInfo, TimeoutNs); R != vk::Result::eSuccess) {
-            return std::unexpected(ErrorMessage(Format("vkWaitSemaphores failed: {}", vk::to_string(R))));
+            LogError("vkWaitSemaphores failed: {}", vk::to_string(R));
         }
-        return {};
     }
 
     /// Returns a SemaphoreSubmitInfo for the next timeline value.
-    /// Calls NextValue internally.
+    /// Calls IncreaseHostValue internally.
     [[nodiscard]] auto GetSignalSubmitInfo(vk::PipelineStageFlagBits2 Stage = vk::PipelineStageFlagBits2::eNone)
         -> vk::SemaphoreSubmitInfo {
         return vk::SemaphoreSubmitInfo{
             .semaphore = *m_Semaphore,
-            .value     = NextValue(),
+            .value     = IncreaseHostValue(),
             .stageMask = Stage,
         };
     }
@@ -113,7 +111,7 @@ class VulkanTimelineSemaphore {
   private:
     vk::raii::Device*   m_Device    = nullptr;
     vk::raii::Semaphore m_Semaphore = nullptr;
-    std::atomic<Uint64> m_NextValue = 0;
+    std::atomic<Uint64> m_HostValue = 0;
 };
 
 } // namespace SoulEngine

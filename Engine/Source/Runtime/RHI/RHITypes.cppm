@@ -22,6 +22,10 @@ class RHIObject {
         return m_Name;
     }
 
+    [[nodiscard]] auto GetId() const -> Uint64 {
+        return m_Id;
+    }
+
     [[nodiscard]] virtual auto GetShaderBindingType() const -> ShaderResourceType {
         return ShaderResourceType::Unknown;
     }
@@ -34,12 +38,15 @@ class RHIObject {
     }
 
   protected:
-    explicit RHIObject(String Name) : m_Name(std::move(Name)) {}
+    explicit RHIObject(String Name) : m_Name(std::move(Name)), m_Id(s_NextId.fetch_add(1, std::memory_order_relaxed)) {}
     RHIObject(RHIObject&&)                    = default;
     auto operator=(RHIObject&&) -> RHIObject& = default;
 
   private:
+    inline static std::atomic<Uint64> s_NextId = 1;
+
     String m_Name = {};
+    Uint64 m_Id   = 0;
 };
 
 class RHIRenderTarget;
@@ -165,8 +172,8 @@ struct RHITransientConstantBufferDesc {
 };
 
 struct RHITransientShaderStorageBufferDesc {
-    std::span<const std::byte> Data   = {};
-    RHITransientBufferUsage    Usage  = RHITransientBufferUsage::ShaderRead;
+    std::span<const std::byte> Data  = {};
+    RHITransientBufferUsage    Usage = RHITransientBufferUsage::ShaderRead;
 };
 
 /// @brief Logical per-frame uniform buffer resolved by the active RHI backend.
@@ -176,7 +183,7 @@ class RHITransientConstantBuffer : public RHIObject {
     auto operator=(const RHITransientConstantBuffer&) -> RHITransientConstantBuffer& = delete;
     RHITransientConstantBuffer(RHITransientConstantBuffer&&)                         = delete;
     auto operator=(RHITransientConstantBuffer&&) -> RHITransientConstantBuffer&      = delete;
-    virtual ~RHITransientConstantBuffer()                                             = default;
+    virtual ~RHITransientConstantBuffer()                                            = default;
 
     [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
         return m_Size;
@@ -227,7 +234,7 @@ class RHITransientShaderStorageBuffer : public RHIObject {
         : RHIObject(std::move(Name)), m_Size(Size), m_Usage(Usage) {}
 
   private:
-    Uint64                m_Size  = 0;
+    Uint64                  m_Size  = 0;
     RHITransientBufferUsage m_Usage = RHITransientBufferUsage::Unknown;
 };
 
@@ -279,6 +286,50 @@ class RHIGraphicsPipeline : public RHIObject {
 
   private:
     RHIRef<RHIShaderBindingSet> m_ShaderBindingSet = nullptr;
+};
+
+/// @brief Descriptor for a persistent GPU-to-CPU readback buffer.
+struct RHIReadbackBufferDesc {
+    Uint32 Size = 0; ///< Bytes per readback payload; the payload must be single-copy atomic.
+};
+
+/// @brief Persistent GPU-to-CPU readback payload.
+///
+/// Backends may use a private multi-frame ring to avoid CPU/GPU read races.
+/// The payload must stay single-copy atomic (e.g. one aligned Uint32); larger
+/// payloads require a seqlock-style upgrade first.
+class RHIReadbackBuffer : public RHIObject {
+  public:
+    RHIReadbackBuffer(const RHIReadbackBuffer&)                    = delete;
+    auto operator=(const RHIReadbackBuffer&) -> RHIReadbackBuffer& = delete;
+    RHIReadbackBuffer(RHIReadbackBuffer&&)                         = delete;
+    auto operator=(RHIReadbackBuffer&&) -> RHIReadbackBuffer&      = delete;
+    virtual ~RHIReadbackBuffer()                                   = default;
+
+    [[nodiscard]] auto GetSize() const noexcept -> Uint32 {
+        return m_Size;
+    }
+
+    /// @brief Try to copy out the newest GPU-completed payload.
+    /// @return The payload, or std::nullopt when no completed write exists.
+    template <typename T>
+        requires std::is_trivially_copyable_v<T>
+    [[nodiscard]] auto TryRead() const -> std::optional<T> {
+        if (sizeof(T) > m_Size)
+            return std::nullopt;
+
+        T Out{};
+        return TryReadBytes(std::as_writable_bytes(std::span<T>{&Out, 1})) ? std::optional<T>{Out} : std::nullopt;
+    }
+
+  protected:
+    explicit RHIReadbackBuffer(String Name, const RHIReadbackBufferDesc& Desc)
+        : RHIObject(std::move(Name)), m_Size(Desc.Size) {}
+
+    [[nodiscard]] virtual auto TryReadBytes(std::span<std::byte> Out) const -> bool = 0;
+
+  private:
+    Uint32 m_Size = 0;
 };
 
 // ── Opaque handle types ───────────────────────────────────────────────────
@@ -355,6 +406,8 @@ enum class RHITextureUsage : Uint32 {
     ShaderResource = 1u << 2,
     FrameOutput    = 1u << 3,
     ShaderStorage  = 1u << 4,
+    TransferSrc    = 1u << 5,
+    TransferDst    = 1u << 6,
 };
 
 [[nodiscard]] inline auto operator|(RHITextureUsage a, RHITextureUsage b) -> RHITextureUsage {
@@ -391,21 +444,31 @@ class RHIRenderTarget : public RHIObject {
 };
 
 /// @brief Type-erased ref-backed resource retained by a shader binding set.
-using RHIShaderBindingResource = std::variant<std::monostate,
-                                              RHIRef<RHIVertexBuffer>,
-                                              RHIRef<RHIIndexBuffer>,
-                                              RHIRef<RHITransientConstantBuffer>,
-                                              RHIRef<RHITransientShaderStorageBuffer>,
-                                              RHIRef<RHISampledTexture>,
-                                              RHIRef<RHISampler>,
-                                              RHIRef<RHIRenderTarget>,
-                                              RHIRef<RHITopLevelAccelerationStructure>>;
-
 /// @brief Reflected shader interface used to construct a binding set.
 struct RHIShaderBindingSetDesc {
     ShaderReflection Reflection = {};
     /// Bitmask of every stage in the shader program (magic_enum flags).
     ShaderStage      Stages     = ShaderStage::Unknown;
+};
+
+struct RHIShaderBindingRequest {
+    StringView         ParameterPath  = {};
+    RHIObject*         Resource       = nullptr;
+    ShaderResourceType Type           = ShaderResourceType::Unknown;
+    // Sampled textures and render targets share SampledTexture at the shader
+    // level; retain this concrete kind so Vulkan can dispatch the raw pointer safely.
+    bool               IsRenderTarget = false;
+    bool               IsReadOnly     = true;
+
+    RHIShaderBindingRequest() = default;
+
+    template <typename T>
+    RHIShaderBindingRequest(StringView ParameterPathIn, RHIRef<T> Resource, bool IsReadOnlyIn)
+        : ParameterPath(ParameterPathIn),
+          Resource(Resource.TryGet()),
+          Type(Resource ? Resource->GetShaderBindingType() : ShaderResourceType::Unknown),
+          IsRenderTarget(std::same_as<T, RHIRenderTarget>),
+          IsReadOnly(IsReadOnlyIn) {}
 };
 
 /// @brief Backend-owned descriptor resources for one reflected shader layout.
@@ -414,120 +477,133 @@ class RHIShaderBindingSet : public RHIObject {
     /// @brief One reflected binding slot: the shader-side contract plus the
     /// bound resource.
     struct Slot {
-        ShaderBinding            Info     = {};
-        RHIShaderBindingResource Resource = {};
-        bool                     IsReadOnly = true;
+        ShaderBinding      Info           = {};
+        RHIObject*         Resource       = nullptr;
+        // The shader type alone cannot distinguish sampled textures from
+        // render targets after binding resources are type-erased.
+        bool               IsRenderTarget = false;
+        bool               IsReadOnly     = true;
     };
 
     RHIShaderBindingSet(const RHIShaderBindingSet&)                    = delete;
     auto operator=(const RHIShaderBindingSet&) -> RHIShaderBindingSet& = delete;
     RHIShaderBindingSet(RHIShaderBindingSet&&)                         = delete;
     auto operator=(RHIShaderBindingSet&&) -> RHIShaderBindingSet&      = delete;
-    virtual ~RHIShaderBindingSet() = default;
+    virtual ~RHIShaderBindingSet()                                     = default;
 
-    [[nodiscard]] auto GetBindings() const -> std::span<const Slot> {
-        return m_Bindings;
+    [[nodiscard]] auto GetBindingsBySet() const -> std::span<const std::vector<Slot>> {
+        return m_BindingsBySet;
     }
 
     [[nodiscard]] auto HasUnboundBindings() const -> bool {
-        if (m_Reflection.BindlessSpace && !m_BindlessTextures)
+        if (m_BindlessSpace && !m_BindlessTextures)
             return true;
-        return std::ranges::any_of(m_Bindings, [](const Slot& Binding) {
-            return std::holds_alternative<std::monostate>(Binding.Resource);
+        return std::ranges::any_of(m_BindingsBySet, [](const auto& Bindings) {
+            return std::ranges::any_of(Bindings, [](const Slot& Binding) { return Binding.Resource == nullptr; });
         });
     }
 
-    template <typename T>
-    [[nodiscard]] auto BindResource(StringView ResourceNameInShader,
-                                    RHIRef<T>   Resource,
-                                    bool        IsReadOnly)
+    [[nodiscard]] auto BindResources(std::span<const RHIShaderBindingRequest> Resources)
         -> std::expected<void, ErrorMessage> {
-        for (Uint32 BindingIndex = 0; BindingIndex < m_Bindings.size(); ++BindingIndex) {
-            auto& Slot = m_Bindings[BindingIndex];
-            if (Slot.Info.ParameterPath != ResourceNameInShader)
-                continue;
+        if (Resources.empty())
+            return std::unexpected(ErrorMessage("Shader binding resource batch must not be empty"));
 
-            if (Slot.Info.ArrayCount != 1) {
-                return std::unexpected(
-                    ErrorMessage(Format("Shader parameter '{}' is an array; bind an RHIRefArray reference instead",
-                                        ResourceNameInShader)));
-            }
-            if (Resource.GetState() == RHIRefState::Unknown) {
-                return std::unexpected(
-                    ErrorMessage(Format("RHI resource for shader parameter '{}' is invalid", ResourceNameInShader)));
-            }
-            const auto* Object = Resource.TryGet();
-            if (Object && Object->GetShaderBindingType() != Slot.Info.Type) {
-                return std::unexpected(ErrorMessage(
-                    Format("RHI resource type does not match shader parameter '{}'", ResourceNameInShader)));
-            }
+        std::vector<Slot*> FlatBindings;
+        for (auto& SetBindings : m_BindingsBySet)
+            for (auto& Binding : SetBindings)
+                FlatBindings.push_back(&Binding);
 
-            // Buffer bindings are always transient arena slices bound through
-            // dynamic descriptors; persistent buffers use vertex input or
-            // device addresses instead of descriptor bindings.
-            const bool IsBufferBinding = Slot.Info.Type == ShaderResourceType::ConstantBuffer ||
-                                         Slot.Info.Type == ShaderResourceType::StorageBuffer;
-            const bool ResourceIsTransient = Object && Object->IsTransient();
-            if (IsBufferBinding && !ResourceIsTransient) {
-                return std::unexpected(ErrorMessage(
-                    Format("Shader parameter '{}' expects a transient buffer", ResourceNameInShader)));
-            }
-            if (!IsBufferBinding && ResourceIsTransient) {
-                return std::unexpected(ErrorMessage(
-                    Format("Shader parameter '{}' does not accept a transient buffer", ResourceNameInShader)));
-            }
-
-            // Rebinding the identical resource is a no-op, so per-frame
-            // rebuilds of an unchanged view stay legal on persistent slots.
-            if (RHIShaderBindingResource NewResource{Resource}; Slot.Resource == NewResource)
-                return {};
-
-            // Persistent bindings are bind-once: the descriptor is written when
-            // the binding set has not been referenced by any submission yet.
-            // Transient slots rebind every frame with the frame's arena slice
-            // without rewriting the descriptor.
-            if (!std::holds_alternative<std::monostate>(Slot.Resource) && !ResourceIsTransient) {
+        // We first query each request's set and index
+        std::vector<std::pair<Uint32, Uint32>> BindingLocations;
+        BindingLocations.reserve(Resources.size());
+        for (const auto& Request : Resources) {
+            const auto It = std::ranges::find_if(
+                FlatBindings, [&](const Slot* Slot) { return Slot->Info.ParameterPath == Request.ParameterPath; });
+            if (It == FlatBindings.end())
                 return std::unexpected(ErrorMessage(Format(
-                    "Shader parameter '{}' is already bound; persistent bindings are bind-once",
-                    ResourceNameInShader)));
+                    "Shader parameter '{}' is not present in the shader binding layout", Request.ParameterPath)));
+            const auto Location = std::pair{(*It)->Info.Set, (*It)->Info.BindingIndex};
+            BindingLocations.push_back(Location);
+            if (!Request.Resource)
+                return std::unexpected(
+                    ErrorMessage(Format("Shader parameter '{}' has no ready resource", Request.ParameterPath)));
+            if (Request.Type != (*It)->Info.Type)
+                return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {}, received {}",
+                                                           Request.ParameterPath,
+                                                           magic_enum::enum_name((*It)->Info.Type),
+                                                           magic_enum::enum_name(Request.Type))));
+            if ((*It)->Info.ArrayCount != 1)
+                return std::unexpected(ErrorMessage(Format(
+                    "Shader parameter '{}' is an array and cannot use scalar batch binding", Request.ParameterPath)));
+        }
+
+        // Then we check if all set index are the same
+        const auto SetIndex = BindingLocations.front().first;
+        for (Uint32 Index = 0; Index < BindingLocations.size(); ++Index)
+            for (Uint32 Previous = 0; Previous < Index; ++Previous)
+                if (BindingLocations[Index] == BindingLocations[Previous])
+                    return std::unexpected(ErrorMessage(
+                        Format("Shader parameter '{}' appears more than once in a binding batch",
+                               Resources[Index].ParameterPath)));
+        if (std::ranges::any_of(BindingLocations, [SetIndex](const auto& Location) {
+                return Location.first != SetIndex;
+            })) {
+            String Details;
+            for (Uint32 Index = 0; Index < Resources.size(); ++Index) {
+                if (!Details.empty())
+                    Details += ", ";
+                Details += Format("'{}' (set {}, binding {})",
+                                  Resources[Index].ParameterPath,
+                                  BindingLocations[Index].first,
+                                  BindingLocations[Index].second);
             }
-
-            Slot.Resource   = std::move(Resource);
-            Slot.IsReadOnly = IsReadOnly;
-            return OnResourceBound(BindingIndex);
+            return std::unexpected(
+                ErrorMessage(Format("Shader binding batch contains multiple descriptor sets: {}", Details)));
         }
+        if (Resources.size() != m_BindingsBySet[SetIndex].size())
+            return std::unexpected(ErrorMessage(Format("Shader binding set {} requires {} resources, received {}",
+                                                       SetIndex,
+                                                       m_BindingsBySet[SetIndex].size(),
+                                                       Resources.size())));
 
-        return std::unexpected(
-            ErrorMessage(Format("Shader parameter '{}' is not present in the shader binding layout",
-                                ResourceNameInShader)));
+        // After checking, we write the resource info into the slot
+        for (Uint32 Index = 0; Index < Resources.size(); ++Index) {
+            const auto [BindingSet, BindingIndex] = BindingLocations[Index];
+            auto& SetBindings = m_BindingsBySet[BindingSet];
+            const auto Slot = std::ranges::find_if(
+                SetBindings, [BindingIndex](const RHIShaderBindingSet::Slot& Candidate) {
+                    return Candidate.Info.BindingIndex == BindingIndex;
+                });
+            Slot->Resource = Resources[Index].Resource;
+            Slot->IsRenderTarget = Resources[Index].IsRenderTarget;
+            Slot->IsReadOnly = Resources[Index].IsReadOnly;
+        }
+        return OnResourcesBound(SetIndex);
     }
 
-    template <typename T>
-    [[nodiscard]] auto BindResource(RHIRefArray<T> Resource)
+    /// Binds the sampled-image array used by the reflected bindless space.
+    [[nodiscard]] auto BindBindlessResource(RHIRefArray<RHISampledTexture> Resource)
         -> std::expected<void, ErrorMessage> {
-        if (!m_Reflection.BindlessSpace)
+        if (!m_BindlessSpace)
             return std::unexpected(ErrorMessage("Shader binding set has no reflected bindless space"));
-        if constexpr (!std::same_as<T, RHISampledTexture>) {
-            return std::unexpected(ErrorMessage("Only sampled-texture arrays support bindless shader bindings"));
-        } else {
-            if (m_BindlessTextures && *m_BindlessTextures != Resource)
-                return std::unexpected(ErrorMessage("Shader binding set cannot use multiple bindless texture arrays"));
-            m_BindlessTextures = std::move(Resource);
-            return {};
-        }
+        if (!Resource)
+            return std::unexpected(ErrorMessage("Bindless sampled-texture array is invalid"));
+        if (m_BindlessTextures && *m_BindlessTextures != Resource)
+            return std::unexpected(ErrorMessage("Shader binding set cannot use multiple bindless texture arrays"));
+        m_BindlessTextures = std::move(Resource);
+        return OnBindlessResourceBound();
     }
 
     template <typename T>
-    [[nodiscard]] auto PushConstants(Uint32 Offset, const T& Data)
-        -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto PushConstants(Uint32 Offset, const T& Data) -> std::expected<void, ErrorMessage> {
         const auto Bytes = std::as_bytes(std::span<const T>{&Data, 1});
         const auto Size  = static_cast<Uint64>(Bytes.size_bytes());
         if (Size == 0)
             return std::unexpected(ErrorMessage("Push constant data must not be empty"));
 
-        const auto End = static_cast<Uint64>(Offset) + Size;
+        const auto End          = static_cast<Uint64>(Offset) + Size;
         Uint64     ReflectedEnd = 0;
-        for (const auto& Range : m_Reflection.PushConstants)
+        for (const auto& Range : m_PushConstantRanges)
             ReflectedEnd = (std::max)(ReflectedEnd, static_cast<Uint64>(Range.Offset) + Range.Size);
         if (End > ReflectedEnd) {
             return std::unexpected(ErrorMessage(
@@ -541,36 +617,46 @@ class RHIShaderBindingSet : public RHIObject {
         return {};
     }
 
-    [[nodiscard]] virtual auto Commit() -> std::expected<void, ErrorMessage> = 0;
-
   protected:
-    /// @brief One pass-local push-constant write awaiting Commit().
+    /// @brief One pass-local push-constant write awaiting state capture.
     struct PushConstantWrite {
-        Uint32              Offset = 0;
-        std::vector<std::byte> Data = {};
+        Uint32                 Offset = 0;
+        std::vector<std::byte> Data   = {};
     };
 
     RHIShaderBindingSet(String Name, const RHIShaderBindingSetDesc& Desc)
-        : RHIObject(std::move(Name)), m_Reflection(Desc.Reflection), m_Stages(Desc.Stages) {
-        m_Bindings.reserve(m_Reflection.Bindings.size());
-        for (const auto& Reflected : m_Reflection.Bindings)
-            m_Bindings.push_back(Slot{.Info = Reflected, .Resource = {}});
-        std::ranges::sort(m_Bindings, [](const Slot& Left, const Slot& Right) {
-            return std::pair{Left.Info.Set, Left.Info.BindingIndex} <
-                   std::pair{Right.Info.Set, Right.Info.BindingIndex};
-        });
+        : RHIObject(std::move(Name)),
+          m_BindlessSpace(Desc.Reflection.BindlessSpace),
+          m_PushConstantRanges(Desc.Reflection.PushConstants),
+          m_Stages(Desc.Stages) {
+        // Step 1: Resolve set count
+        Uint32 SetCount = 0;
+        // +1 because set index start with 0
+        for (const auto& Reflected : Desc.Reflection.Bindings)
+            SetCount = std::max(SetCount, Reflected.Set + 1);
+        if (m_BindlessSpace)
+            SetCount = std::max(SetCount, *m_BindlessSpace + 1);
+
+        // Step 2: sort all bindings by set and binding index
+        m_BindingsBySet.resize(SetCount);
+        for (const auto& Reflected : Desc.Reflection.Bindings)
+            m_BindingsBySet[Reflected.Set].push_back(Slot{.Info = Reflected});
+        for (auto& SetBindings : m_BindingsBySet)
+            std::ranges::sort(SetBindings, [](const auto& Left, const auto& Right) {
+                return Left.Info.BindingIndex < Right.Info.BindingIndex;
+            });
     }
 
-    [[nodiscard]] virtual auto OnResourceBound(Uint32 BindingIndex)
-        -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto OnResourcesBound(Uint32) -> std::expected<void, ErrorMessage> = 0;
+    /// Applies backend-specific updates after the bindless array is stored.
+    [[nodiscard]] virtual auto OnBindlessResourceBound() -> std::expected<void, ErrorMessage> = 0;
 
-    std::vector<PushConstantWrite> m_PendingPushConstants = {};
-    std::optional<RHIRefArray<RHISampledTexture>> m_BindlessTextures = std::nullopt;
-    ShaderReflection m_Reflection = {};
-    ShaderStage m_Stages = ShaderStage::Unknown;
-
-  private:
-    std::vector<Slot>              m_Bindings            = {};
+    std::vector<std::vector<Slot>>                m_BindingsBySet        = {};
+    std::vector<PushConstantWrite>                m_PendingPushConstants = {};
+    std::optional<RHIRefArray<RHISampledTexture>> m_BindlessTextures     = std::nullopt;
+    std::optional<Uint32>                         m_BindlessSpace        = std::nullopt;
+    std::vector<ShaderPushConstantRange>          m_PushConstantRanges   = {};
+    ShaderStage                                   m_Stages               = ShaderStage::Unknown;
 };
 
 struct RHISampledTextureDesc {
@@ -621,15 +707,15 @@ struct RHIDepthStencilState {
 };
 
 struct RHIGraphicsPipelineDesc {
-    ShaderGraphicsProgram    Program           = {};
-    RHIRef<RHIShaderBindingSet> BindingSet      = nullptr;
-    RHIVertexInputLayoutDesc VertexInputLayout = {};
-    RHIPrimitiveTopology     Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState       Rasterizer        = {};
-    RHIBlendState            Blend             = {};
-    RHIDepthStencilState     DepthStencil      = {};
-    std::vector<RHIFormat>   ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                DepthFormat       = RHIFormat::Unknown;
+    ShaderGraphicsProgram       Program           = {};
+    RHIRef<RHIShaderBindingSet> BindingSet        = nullptr;
+    RHIVertexInputLayoutDesc    VertexInputLayout = {};
+    RHIPrimitiveTopology        Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState          Rasterizer        = {};
+    RHIBlendState               Blend             = {};
+    RHIDepthStencilState        DepthStencil      = {};
+    std::vector<RHIFormat>      ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
+    RHIFormat                   DepthFormat       = RHIFormat::Unknown;
 };
 
 // ── Clear values ─────────────────────────────────────────────────────────────

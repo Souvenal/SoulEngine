@@ -106,7 +106,8 @@ struct CameraRenderTargetsLoader {
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::R32_UINT,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource,
+            // TransferSrc enables editor picking readback copies.
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource | RHITextureUsage::TransferSrc,
         };
         const RHIRenderTargetDesc MaterialIdDesc{
             .Width  = Width,

@@ -8,6 +8,7 @@ module;
 export module Renderer:RayTracingRenderer;
 
 import Core;
+import EditorTypes;
 import Material;
 import Resource;
 import RHI;
@@ -129,10 +130,12 @@ class RayTracingRenderer final : public IRenderer {
         m_HasAccumulation    = false;
     }
 
-    [[nodiscard]] auto Render(const SceneSnapshot& Scene)
+    [[nodiscard]] auto Render(const GameSnapshot& Scene, const EditorSnapshot& Editor)
         -> std::expected<RenderResult, ErrorMessage> override {
         RenderResult Result = {};
-        if (Scene.Views.empty())
+        std::vector<CameraViewRecord> Views = Scene.Views;
+        Views.insert(Views.end(), Editor.Views.begin(), Editor.Views.end());
+        if (Views.empty())
             return Result;
 
         auto& Resources        = ResourceManager::Get();
@@ -242,7 +245,7 @@ class RayTracingRenderer final : public IRenderer {
         if (Instances.empty())
             return Result;
 
-        const auto& View            = Scene.Views.front();
+        const auto& View            = Views.front();
         auto        ViewOutputRef   = View.Targets.GBuffer.AlbedoRT;
         auto        ViewNormalRef   = View.Targets.GBuffer.NormalRT;
         auto        ViewEntityIdRef = View.Targets.GBuffer.EntityIdRT;
@@ -419,7 +422,7 @@ class RayTracingRenderer final : public IRenderer {
         return Seed;
     }
 
-    [[nodiscard]] static auto BuildSceneSignature(const SceneSnapshot&            Scene,
+    [[nodiscard]] static auto BuildSceneSignature(const GameSnapshot&             Scene,
                                                   const CameraViewRecord&         View,
                                                   std::size_t                     InstanceCount,
                                                   std::size_t                     GeometryCount,

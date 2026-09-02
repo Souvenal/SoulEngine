@@ -160,6 +160,11 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock render-target creation is not implemented"));
     }
 
+    [[nodiscard]] auto CreateReadbackBuffer(StringView, const RHIReadbackBufferDesc&)
+        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock readback-buffer creation is not implemented"));
+    }
+
     [[nodiscard]] auto CreateShaderBindingSet(StringView, const RHIShaderBindingSetDesc&)
         -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock shader-binding-set creation is not implemented"));

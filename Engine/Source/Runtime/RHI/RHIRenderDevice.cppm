@@ -56,6 +56,10 @@ class RHIRenderDevice {
     [[nodiscard]] virtual auto CreateRenderTarget(StringView Name, const RHIRenderTargetDesc& Desc)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> = 0;
 
+    /// @brief Create a persistent host-visible GPU-to-CPU readback buffer.
+    [[nodiscard]] virtual auto CreateReadbackBuffer(StringView Name, const RHIReadbackBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> = 0;
+
     [[nodiscard]] virtual auto CreateShaderBindingSet(StringView Name, const RHIShaderBindingSetDesc& Desc)
         -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> = 0;
 

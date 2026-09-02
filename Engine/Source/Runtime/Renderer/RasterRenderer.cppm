@@ -8,6 +8,7 @@ module;
 export module Renderer:RasterRenderer;
 
 import Core;
+import EditorTypes;
 import Material;
 import Resource;
 import RHI;
@@ -16,7 +17,7 @@ import TaskGraph;
 
 import :IRenderer;
 import :Common;
-import :PostProcess.EditorPostProcess;
+import :Editor.EntityPicking;
 import :Raster;
 
 export import std;
@@ -212,12 +213,6 @@ class RasterRenderer final : public IRenderer {
             return std::unexpected(DeferredPipelineRequest.error().Append("Deferred lighting pipeline request failed"));
         m_DeferredPipeline = std::move(*DeferredPipelineRequest);
 
-        auto EditorSelectionPipelineRequest = RequestEditorSelectionPipeline();
-        if (!EditorSelectionPipelineRequest)
-            return std::unexpected(
-                EditorSelectionPipelineRequest.error().Append("Editor selection post-process pipeline request failed"));
-        m_EditorSelectionPipeline = std::move(*EditorSelectionPipelineRequest);
-
         auto SamplerLinear = RHIRenderDevice::Get().CreateSampler("Renderer/Raster/Sampler/Linear",
                                                                   {.Profile = RHISamplerProfile::LinearRepeat});
         if (!SamplerLinear)
@@ -235,24 +230,25 @@ class RasterRenderer final : public IRenderer {
 
     auto OnDetach() -> void override {
         m_Pipeline                = {};
-        m_EditorSelectionPipeline = {};
         m_DeferredPipeline        = {};
         m_SamplerLinear           = {};
         m_SamplerAniso            = {};
     }
 
-    [[nodiscard]] auto Render(const SceneSnapshot& Scene)
+    [[nodiscard]] auto Render(const GameSnapshot& Scene, const EditorSnapshot& Editor)
         -> std::expected<RenderResult, ErrorMessage> override {
         RenderResult Result = {};
-        if (Scene.Views.empty())
+        std::vector<CameraViewRecord> Views = Scene.Views;
+        Views.insert(Views.end(), Editor.Views.begin(), Editor.Views.end());
+        if (Views.empty())
             return Result;
 
         auto DrawData = RasterFrameDrawData::Create(Scene.Instances, Scene.Textures);
         if (!DrawData)
             return std::unexpected(DrawData.error().Append("Raster frame draw-data construction failed"));
 
-        for (const auto& View : Scene.Views) {
-            if (auto R = RenderView(Result.CmdList, *DrawData, View, Scene); !R)
+        for (const auto& View : Views) {
+            if (auto R = RenderView(Result.CmdList, *DrawData, View, Scene, Editor); !R)
                 return std::unexpected(R.error().Append("Raster geometry view rendering failed"));
         }
 
@@ -263,7 +259,8 @@ class RasterRenderer final : public IRenderer {
     [[nodiscard]] auto RenderView(RenderPassList&             CmdList,
                                   const RasterFrameDrawData& DrawData,
                                   const CameraViewRecord&    View,
-                                  const SceneSnapshot&       Scene) -> std::expected<void, ErrorMessage> {
+                                  const GameSnapshot&         Scene,
+                                  const EditorSnapshot&       Editor) -> std::expected<void, ErrorMessage> {
         const auto& AlbedoRTRef                = View.Targets.GBuffer.AlbedoRT;
         const auto& NormalRTRef                = View.Targets.GBuffer.NormalRT;
         const auto& EntityIdRTRef              = View.Targets.GBuffer.EntityIdRT;
@@ -271,7 +268,6 @@ class RasterRenderer final : public IRenderer {
         const auto& DepthRTRef                 = View.Targets.GBuffer.DepthRT;
         const auto& SceneColorRTRef            = View.Targets.SceneColorRT;
         const auto& PipelineRef                = m_Pipeline;
-        const auto& EditorSelectionPipelineRef = m_EditorSelectionPipeline;
         const auto& SamplerLinearRef           = m_SamplerLinear;
         const auto& SamplerAnisoRef            = m_SamplerAniso;
         const auto& DeferredPipelineRef        = m_DeferredPipeline;
@@ -329,6 +325,15 @@ class RasterRenderer final : public IRenderer {
             CmdList.Passes.push_back(std::move(Pass));
         }
 
+        // Read back the EntityId texel under the cursor after the geometry
+        // pass has written the GBuffer.
+        if (Editor.Picking) {
+            auto PickingPass = BuildEntityPickingPass(EntityIdRTRef, *Editor.Picking);
+            if (!PickingPass)
+                return std::unexpected(PickingPass.error().Append("Entity picking pass construction failed"));
+            CmdList.Passes.push_back(std::move(*PickingPass));
+        }
+
         auto DeferredFrameBuffer =
             RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
                 .Data = std::as_bytes(std::span{&FrameData, 1}),
@@ -360,18 +365,7 @@ class RasterRenderer final : public IRenderer {
                 .LightBuffer = *LightBuffer,
             });
         CmdList.Passes.push_back(std::move(LightingPass));
-        if (Scene.SelectedPixel) {
-            auto EditorSelectionPass =
-                BuildEditorSelectionPass(View, *Scene.SelectedPixel, EditorSelectionPipelineRef);
-            if (!EditorSelectionPass)
-                return std::unexpected(
-                    EditorSelectionPass.error().Append("Editor selection post-process pass construction failed"));
-            auto& PresentPass = static_cast<IRHIGraphicsPass&>(**EditorSelectionPass);
-            PresentPass.SetPresentOutput();
-            CmdList.Passes.push_back(std::move(*EditorSelectionPass));
-        } else {
-            static_cast<IRHIGraphicsPass&>(*CmdList.Passes.back()).SetPresentOutput();
-        }
+        static_cast<IRHIGraphicsPass&>(*CmdList.Passes.back()).SetPresentOutput();
         return {};
     }
 
@@ -400,7 +394,6 @@ class RasterRenderer final : public IRenderer {
         return Result;
     }
     RHIRef<RHIGraphicsPipeline>           m_Pipeline                = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_EditorSelectionPipeline = nullptr;
     RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline        = nullptr;
     RHIRef<RHISampler>                    m_SamplerLinear           = nullptr;
     RHIRef<RHISampler>                    m_SamplerAniso            = nullptr;

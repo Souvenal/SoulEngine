@@ -14,20 +14,12 @@ import TaskGraph;
 
 export namespace SoulEngine {
 
-/// @brief Physical framebuffer coordinate selected by the editor.
-struct RenderPixelCoordinate {
-    Uint32 X = 0;
-    Uint32 Y = 0;
-};
-
-struct SceneSnapshot {
-    std::vector<CameraViewRecord>        Views          = {};
-    std::vector<InstanceRecord>          Instances      = {};
-    std::vector<LightRecord>             Lights         = {};
-    RHIRefArray<RHISampledTexture>       Textures       = {};
-    std::optional<entt::entity>          SelectedEntity = std::nullopt;
-    std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt;
-    float                                Time           = 0.0f;
+struct GameSnapshot {
+    std::vector<CameraViewRecord>  Views     = {};
+    std::vector<InstanceRecord>    Instances = {};
+    std::vector<LightRecord>       Lights    = {};
+    RHIRefArray<RHISampledTexture> Textures  = {};
+    float                          Time      = 0.0f;
 };
 
 struct ComponentWarning {
@@ -181,57 +173,21 @@ class Scene {
         return CreateEntityInternal(std::move(Name), Parent);
     }
 
-    /// @brief Build a complete scene snapshot using system collect methods.
-    /// @param SelectedEntity Optional selected entity for editor.
-    /// @param SelectedPixel Optional selected pixel coordinate for editor.
-    /// @return Complete scene snapshot.
-    [[nodiscard]] auto BuildSnapshot(std::optional<entt::entity>          SelectedEntity = std::nullopt,
-                                     std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt)
-        -> SceneSnapshot {
+    /// @brief Build a complete game snapshot using system collect methods.
+    /// @return Complete game snapshot.
+    [[nodiscard]] auto BuildSnapshot() -> GameSnapshot {
         const auto* CameraSys = m_SystemScheduler.Get<CameraSystem>();
         const auto* MeshSys   = m_SystemScheduler.Get<MeshSystem>();
         const auto* LightSys  = m_SystemScheduler.Get<LightSystem>();
         if (!CameraSys || !MeshSys || !LightSys)
-            return SceneSnapshot{.SelectedEntity = std::nullopt, .SelectedPixel = SelectedPixel, .Time = m_Time};
+            return GameSnapshot{.Time = m_Time};
 
-        return SceneSnapshot{
-            .Views          = CameraSys->CollectViews(),
-            .Instances      = CollectSnapshotInstances(),
-            .Lights         = LightSys->CollectLights(),
-            .Textures       = MeshSys->GetTextureArray(),
-            .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
-            .SelectedPixel  = SelectedPixel,
-            .Time           = m_Time,
-        };
-    }
-
-    /// TODO: Remove this after unifying scene world and editor world
-    /// 
-    /// @brief Build a snapshot using explicitly supplied render views.
-    /// @param Views Render views to place in the snapshot.
-    /// @param SelectedEntity Optional selected entity for editor.
-    /// @param SelectedPixel Optional selected pixel coordinate for editor.
-    /// @return Complete scene snapshot with system-collected mesh and light data.
-    [[nodiscard]] auto BuildSnapshot(std::span<const CameraViewRecord>    Views,
-                                     std::optional<entt::entity>          SelectedEntity = std::nullopt,
-                                     std::optional<RenderPixelCoordinate> SelectedPixel  = std::nullopt)
-        -> SceneSnapshot {
-        const auto* MeshSys  = m_SystemScheduler.Get<MeshSystem>();
-        const auto* LightSys = m_SystemScheduler.Get<LightSystem>();
-        if (!MeshSys || !LightSys)
-            return SceneSnapshot{.Views          = {Views.begin(), Views.end()},
-                                 .SelectedEntity = std::nullopt,
-                                 .SelectedPixel  = SelectedPixel,
-                                 .Time           = m_Time};
-
-        return SceneSnapshot{
-            .Views          = {Views.begin(), Views.end()},
-            .Instances      = CollectSnapshotInstances(),
-            .Lights         = LightSys->CollectLights(),
-            .Textures       = MeshSys->GetTextureArray(),
-            .SelectedEntity = SelectedEntity && m_Registry.valid(*SelectedEntity) ? SelectedEntity : std::nullopt,
-            .SelectedPixel  = SelectedPixel,
-            .Time           = m_Time,
+        return GameSnapshot{
+            .Views     = CameraSys->CollectViews(),
+            .Instances = CollectSnapshotInstances(),
+            .Lights    = LightSys->CollectLights(),
+            .Textures  = MeshSys->GetTextureArray(),
+            .Time      = m_Time,
         };
     }
 
