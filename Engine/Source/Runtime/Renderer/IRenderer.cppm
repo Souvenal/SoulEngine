@@ -3,6 +3,7 @@ module;
 export module Renderer:IRenderer;
 
 import Core;
+export import EditorTypes;
 import RHI;
 import Resource;
 import Scene;
@@ -45,7 +46,7 @@ class IRenderer {
 
     /// @brief Render the scene snapshot and return commands for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
-    [[nodiscard]] virtual auto Render(const SceneSnapshot& Scene)
+    [[nodiscard]] virtual auto Render(const GameSnapshot& Scene, const EditorSnapshot& Editor)
         -> std::expected<RenderResult, ErrorMessage> = 0;
 };
 

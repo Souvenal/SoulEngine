@@ -7,7 +7,7 @@ export import :Common;
 export import :IRenderer;
 export import :RasterRenderer;
 export import :RayTracingRenderer;
-export import :PostProcess.EditorPostProcess;
+export import :Editor.EntityPicking;
 
 namespace SoulEngine {
 

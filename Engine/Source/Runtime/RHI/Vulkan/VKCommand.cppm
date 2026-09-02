@@ -55,53 +55,36 @@ class VulkanCmdVisitor {
                               vk::PipelineBindPoint BindPoint,
                               vk::PipelineStageFlags2 TransitionStages) -> void {
         const vk::PipelineLayout Layout = BindingSet.GetPipelineLayout();
-        const auto SetObjects = BindingSet.GetDescriptorSets();
-        std::vector<vk::DescriptorSet> Sets;
-        Sets.reserve(SetObjects.size());
-        for (const auto& Set : SetObjects)
-            Sets.push_back(*Set);
 
-        if (BindingSet.HasUnboundBindings()) {
-            Error = ErrorMessage(
-                Format("Shader binding set '{}' has unbound resources", BindingSet.GetName()));
-            return;
-        }
-
-        for (const auto& Slot : BindingSet.GetBindings()) {
-            if (Slot.Info.Type != ShaderResourceType::SampledTexture &&
-                Slot.Info.Type != ShaderResourceType::StorageTexture)
-                continue;
-            const auto* Ref = std::get_if<RHIRef<RHIRenderTarget>>(&Slot.Resource);
-            if (!Ref)
-                continue;
-            const auto* Target = static_cast<const VulkanRenderTarget*>(Ref->TryGet());
-            if (!Target) {
-                Error = ErrorMessage(
-                    Format("Shader binding '{}' has no ready render target", Slot.Info.ParameterPath));
-                return;
+        for (const auto& SetBindings : BindingSet.GetBindingsBySet())
+            for (const auto& Slot : SetBindings) {
+                if ((Slot.Info.Type != ShaderResourceType::SampledTexture &&
+                     Slot.Info.Type != ShaderResourceType::StorageTexture) ||
+                    !Slot.IsRenderTarget)
+                    continue;
+                const auto* Target = static_cast<const VulkanRenderTarget*>(Slot.Resource);
+                if (!Target)
+                    continue;
+                const bool IsSampled = Slot.Info.Type == ShaderResourceType::SampledTexture;
+                LocalStates.Transition(
+                    Buf,
+                    Target->GetVkImage(),
+                    VulkanImageState{
+                        .stage  = TransitionStages,
+                        .access = IsSampled ? vk::AccessFlagBits2::eShaderRead
+                                            : vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
+                        .layout = IsSampled ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eGeneral,
+                        .aspect = ToVkImageAspect(Target->GetFormat()),
+                    });
             }
-            const bool IsSampled = Slot.Info.Type == ShaderResourceType::SampledTexture;
-            LocalStates.Transition(
-                Buf,
-                Target->GetVkImage(),
-                VulkanImageState{
-                    .stage  = TransitionStages,
-                    .access = IsSampled ? vk::AccessFlagBits2::eShaderRead
-                                        : vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-                    .layout = IsSampled ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eGeneral,
-                    .aspect = ToVkImageAspect(Target->GetFormat()),
-                });
-        }
 
-        BindingSet.Flush();
-
-        auto State = BindingSet.PopCommittedState();
+        auto State = BindingSet.CaptureBindingState();
         if (!State) {
-            Error = State.error().Append("Failed to resolve shader binding snapshot");
+            Error = State.error().Append("Failed to capture shader binding state");
             return;
         }
-        if (!Sets.empty())
-            Buf.bindDescriptorSets(BindPoint, Layout, 0, Sets, State->DynamicOffsets);
+        if (!State->DescriptorSets.empty())
+            Buf.bindDescriptorSets(BindPoint, Layout, 0, State->DescriptorSets, State->DynamicOffsets);
         for (const auto& PushConstant : State->PushConstants) {
             Buf.pushConstants(Layout,
                               BindingSet.GetShaderStageFlags(),
@@ -396,5 +379,61 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
     VulkanRayTracingPipeline& m_Pipeline;
 };
 
+
+class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
+  public:
+    using VulkanCmdVisitor::operator();
+
+    VulkanTransferCmdVisitor(vk::raii::CommandBuffer&                              InBuffer,
+                             VulkanImageTracker&                                   InLocalStates)
+        : VulkanCmdVisitor(InBuffer, InLocalStates) {}
+
+    auto operator()(const RHICopyTextureToBufferCmd& Cmd) -> void {
+        const auto* SourcePtr = Cmd.Source.TryGet();
+        auto*       TargetPtr = Cmd.Target.TryGet();
+        if (!SourcePtr || !TargetPtr) {
+            Error = ErrorMessage("Copy-to-readback references resources that are not ready");
+            return;
+        }
+        const auto& Src = static_cast<const VulkanRenderTarget&>(*SourcePtr);
+        auto&       Dst = static_cast<VulkanReadbackBuffer&>(*TargetPtr);
+        if (Cmd.SrcX + Cmd.SrcWidth > Src.GetWidth() || Cmd.SrcY + Cmd.SrcHeight > Src.GetHeight()) {
+            Error = ErrorMessage("Copy-to-readback source region exceeds the source target");
+            return;
+        }
+        // The picking contract keeps payloads at one 32-bit texel; larger
+        // regions must stay within the slot.
+        const Uint64 PayloadBytes = static_cast<Uint64>(Cmd.SrcWidth) * Cmd.SrcHeight * sizeof(Uint32);
+        if (PayloadBytes > Dst.GetSize()) {
+            Error = ErrorMessage("Copy-to-readback payload exceeds the target size");
+            return;
+        }
+        const auto Offset = Dst.AllocateWriteOffset();
+
+        LocalStates.Transition(Buf,
+                               Src.GetVkImage(),
+                               VulkanImageState{
+                                   .stage  = vk::PipelineStageFlagBits2::eTransfer,
+                                   .access = vk::AccessFlagBits2::eTransferRead,
+                                   .layout = vk::ImageLayout::eTransferSrcOptimal,
+                                   .aspect = ToVkImageAspect(Src.GetFormat()),
+                               });
+        const vk::BufferImageCopy Region{
+            .bufferOffset      = Offset,
+            .bufferRowLength   = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource  = {.aspectMask     = ToVkImageAspect(Src.GetFormat()),
+                                  .mipLevel       = 0,
+                                  .baseArrayLayer = 0,
+                                  .layerCount     = 1},
+            .imageOffset       = {static_cast<Int32>(Cmd.SrcX), static_cast<Int32>(Cmd.SrcY), 0},
+            .imageExtent       = {Cmd.SrcWidth, Cmd.SrcHeight, 1},
+        };
+        Buf.copyImageToBuffer(Src.GetVkImage(),
+                              vk::ImageLayout::eTransferSrcOptimal,
+                              Dst.GetVkBuffer(),
+                              {Region});
+    }
+};
 
 } // namespace SoulEngine

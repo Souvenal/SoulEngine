@@ -392,6 +392,10 @@ class VulkanRenderTarget final : public RHIRenderTarget {
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::RenderTarget)) != 0;
         const bool IsFrameOutput =
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::FrameOutput)) != 0;
+        const bool IsTransferSrc =
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::TransferSrc)) != 0;
+        const bool IsTransferDst =
+            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::TransferDst)) != 0;
         const bool IsStorage =
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0;
         const bool IsShaderResource =
@@ -407,8 +411,10 @@ class VulkanRenderTarget final : public RHIRenderTarget {
             Usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
         if (IsColor)
             Usage |= vk::ImageUsageFlagBits::eColorAttachment;
-        if (IsFrameOutput)
+        if (IsFrameOutput || IsTransferSrc)
             Usage |= vk::ImageUsageFlagBits::eTransferSrc;
+        if (IsTransferDst)
+            Usage |= vk::ImageUsageFlagBits::eTransferDst;
         if (IsStorage)
             Usage |= vk::ImageUsageFlagBits::eStorage;
         if (IsShaderResource)

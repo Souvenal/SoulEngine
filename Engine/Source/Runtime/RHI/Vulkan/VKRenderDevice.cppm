@@ -56,17 +56,16 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         auto Resources = VulkanResourceContext::Create(WindowSys, m_FramesInFlight);
         if (!Resources)
             return std::unexpected(Resources.error().Append("VulkanResourceContext creation failed"));
-        // Resource factory contexts borrow RenderDevice-owned Vulkan services.
-        // VulkanResourceContext now owns those services and remains borrowed
-        // by the resource factories through this RenderDevice-held pointer.
+        // VulkanResourceContext owns shared Vulkan services and is borrowed by
+        // resource factories through this RenderDevice-held pointer.
         m_ResourceContext = std::move(*Resources);
 
-        auto Semaphore =
-            VulkanTimelineSemaphore::Create(
-                m_ResourceContext->GetDevice(), &m_ResourceContext->GetDebugUtils(), "Internal/Semaphore/GraphicsTimeline");
-        if (!Semaphore)
-            return std::unexpected(Semaphore.error());
-        m_Timeline = std::move(*Semaphore);
+        // ── Global descriptor manager ─────────────────────────────────────
+        auto Descriptors = VulkanDescriptorManager::Create(
+            m_ResourceContext->GetDevice(), m_ResourceContext->GetDebugUtils());
+        if (!Descriptors)
+            return std::unexpected(Descriptors.error().Append("VulkanDescriptorManager creation failed"));
+        m_DescriptorManager = std::move(*Descriptors);
 
         // ── VulkanSwapchain ───────────────────────────────────────────────
         auto Swapchain = VulkanSwapchain::Create(*m_ResourceContext);
@@ -123,8 +122,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // CPU-GPU sync: wait for the timeline semaphore to reach the value
         // from N frames ago (when this slot was last signalled).
         uint64_t WaitValue = m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue;
-        if (auto R = m_Timeline.Wait(WaitValue); !R)
-            return std::unexpected(R.error().Append("BeginFrame: timeline wait failed"));
+        m_ResourceContext->GetTimeline().Wait(WaitValue);
 
         // GPU done with this frame slot — safe to free scratch secondaries.
         m_FrameContext[m_CurrentFrame].ScratchSecondaries.clear();
@@ -365,12 +363,26 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             });
     }
 
+    [[nodiscard]] auto CreateReadbackBuffer(StringView Name, const RHIReadbackBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> override {
+        return EnqueueResourceCreation<RHIReadbackBuffer>(
+            [this, Name = String(Name), Desc](RHIRef<RHIReadbackBuffer>& Resource) -> std::expected<void, ErrorMessage> {
+                auto Result = VulkanReadbackBuffer::Create(
+                    *m_ResourceContext, Name, Desc, m_FramesInFlight + 1);
+                if (!Result) {
+                    Resource.MarkFailed(Result.error());
+                    return std::unexpected(Result.error());
+                }
+                return Resource.Publish(std::move(*Result), RHIRefState::Ready);
+            });
+    }
+
     [[nodiscard]] auto CreateShaderBindingSet(StringView Name, const RHIShaderBindingSetDesc& Desc)
         -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> override {
         if (!m_ResourceContext)
             return std::unexpected(ErrorMessage("Vulkan shader binding set requires resource context"));
 
-        auto Created = VulkanShaderBindingSet::Create(*m_ResourceContext, Name, Desc);
+        auto Created = VulkanShaderBindingSet::Create(*m_ResourceContext, m_DescriptorManager, Name, Desc);
         if (!Created)
             return std::unexpected(Created.error());
 
@@ -439,6 +451,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     auto Tick() -> void override {
         m_ResourceContext->GetImmediateContext().Tick();
+        m_DescriptorManager.Tick();
     }
 
     auto WaitIdle() -> void override {
@@ -459,11 +472,12 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
         m_Swapchain.Cleanup();
-        m_Timeline              = {};
         m_TransientShaderStorageArena = {};
         m_TransientUniformArena       = {};
         m_FrameContext.clear();
 
+        // Descriptor sets and their pool must be released while VkDevice is alive.
+        m_DescriptorManager.Shutdown();
         m_ResourceContext.reset();
     }
 
@@ -523,7 +537,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         InitInfo.QueueFamily         = m_ResourceContext->GetGraphicsFamily();
         InitInfo.Queue               = static_cast<VkQueue>(*m_ResourceContext->GetGraphicsQueue());
         InitInfo.DescriptorPool =
-            static_cast<VkDescriptorPool>(m_ResourceContext->GetDescriptorManager().GetDescriptorPool());
+            static_cast<VkDescriptorPool>(m_DescriptorManager.GetDescriptorPool());
         InitInfo.MinImageCount       = m_Swapchain.GetImageCount();
         InitInfo.ImageCount          = m_Swapchain.GetImageCount();
         InitInfo.UseDynamicRendering = true;
@@ -668,7 +682,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // ═════════════════════════════════════════════════════════════════════════════
     // Execute — consume RenderPassList and record commands
     // ═════════════════════════════════════════════════════════════════════════════
-
     [[nodiscard]] auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> override {
         if (m_TransientUploadError)
             return std::unexpected(std::exchange(m_TransientUploadError, std::nullopt).value());
@@ -684,6 +697,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 return std::unexpected(ErrorMessage(
                     Format("Execute: pass {} is null", PassIndex)));
             const auto& Pipeline = Pass->GetPipeline();
+            // Compute passes may carry no pipeline when they only record copy
+            // commands; dispatch work requires a compute pipeline (later stage).
+            const bool IsTransfer = Pass->GetType() == RHIPassType::Transfer &&
+                                    std::holds_alternative<std::monostate>(Pipeline);
+            if (!IsTransfer) {
             const auto  PipelineState = std::visit(
                 [](const auto& PipelineRef) -> RHIRefState {
                     using PipelineRefType = std::decay_t<decltype(PipelineRef)>;
@@ -716,6 +734,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     Format("Execute: pass {} has invalid pipeline state {}",
                            PassIndex,
                            magic_enum::enum_name(PipelineState))));
+            }
             if (auto R = Pass->Record(); !R)
                 return std::unexpected(
                     R.error().Append(Format("Execute: pass {} recording failed", PassIndex)));
@@ -788,7 +807,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                             };
                             return RecordCommands(Visitor);
                         } else {
-                            return std::unexpected(ErrorMessage("Execute: pass has no pipeline"));
+                            if (Pass->GetType() != RHIPassType::Transfer)
+                                return std::unexpected(ErrorMessage("Execute: pass has no pipeline"));
+                            VulkanTransferCmdVisitor Visitor{SecBuf, ImageStateCopy};
+                            return RecordCommands(Visitor);
                         }
                     },
                     Pass->GetPipeline());
@@ -852,7 +874,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             .stageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
         };
 
-        auto TimelineSignalSema = m_Timeline.GetSignalSubmitInfo(vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+        auto TimelineSignalSema =
+            m_ResourceContext->GetTimeline().GetSignalSubmitInfo(vk::PipelineStageFlagBits2::eColorAttachmentOutput);
 
         vk::SemaphoreSubmitInfo SignalSemas[] = {
             RenderingCompleteSema,
@@ -892,7 +915,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // may call it while RHIThread performs normal submission work.
         if (Completion.Value == 0)
             return {};
-        return m_Timeline.Wait(Completion.Value);
+        m_ResourceContext->GetTimeline().Wait(Completion.Value);
+        return {};
     }
 
     // ── RAII resources ─────────────────────────────────────────────────────
@@ -903,9 +927,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // ── VulkanSwapchain & sync ──────────────────────────────────────────────────
 
     VulkanSwapchain         m_Swapchain;
-    VulkanTimelineSemaphore m_Timeline;
-
     UPtr<VulkanResourceContext> m_ResourceContext = nullptr;
+    VulkanDescriptorManager m_DescriptorManager = {};
 
     std::vector<VulkanFrameContext>   m_FrameContext;
     VulkanTransientUniformArena       m_TransientUniformArena       = {};

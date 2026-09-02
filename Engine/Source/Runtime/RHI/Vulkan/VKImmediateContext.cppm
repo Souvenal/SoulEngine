@@ -113,8 +113,7 @@ class VulkanImmediateContext {
         if (!Submission)
             return std::unexpected(Submission.error());
         auto* State = GetState(Queue);
-        if (auto R = State->Timeline.Wait(Submission->Value); !R)
-            return std::unexpected(R.error().Append("Immediate task CPU wait failed"));
+        State->Timeline.Wait(Submission->Value);
         TickState(*State);
         return {};
     }
@@ -131,8 +130,7 @@ class VulkanImmediateContext {
         for (auto* State : {&m_Transfer, &m_Graphics}) {
             if (!State->Queue || State->LastSubmitted == 0)
                 continue;
-            if (auto R = State->Timeline.Wait(State->LastSubmitted); !R)
-                return std::unexpected(R.error().Append("Immediate task timeline drain failed"));
+            State->Timeline.Wait(State->LastSubmitted);
         }
         Tick();
         return {};
@@ -226,7 +224,7 @@ class VulkanImmediateContext {
             });
         }
 
-        const TimelinePoint Point{.Queue = Queue, .Value = State->Timeline.NextValue()};
+        const TimelinePoint Point{.Queue = Queue, .Value = State->Timeline.IncreaseHostValue()};
         const vk::SemaphoreSubmitInfo SignalInfo{
             .semaphore = State->Timeline.Get(),
             .value     = Point.Value,
@@ -258,8 +256,7 @@ class VulkanImmediateContext {
         auto* State = GetState(Point.Queue);
         if (!State)
             return false;
-        auto Current = State->Timeline.GetCurrentValue();
-        return Current && *Current >= Point.Value;
+        return State->Timeline.GetDeviceValue() >= Point.Value;
     }
 
     /// Retire Callback on Tick after Token reaches its timeline value.
@@ -268,16 +265,6 @@ class VulkanImmediateContext {
         if (!State || Point.Value == 0)
             return;
         State->Callbacks.emplace_back(PendingCallback{.Value = Point.Value, .Callback = std::move(Callback)});
-    }
-
-    /// Block the CPU until Token completes. Use only where CPU visibility is required.
-    [[nodiscard]] auto Wait(TimelinePoint Point) -> std::expected<void, ErrorMessage> {
-        if (Point.Value == 0)
-            return {};
-        auto* State = GetState(Point.Queue);
-        if (!State)
-            return std::unexpected(ErrorMessage("Immediate task wait references an unavailable queue"));
-        return State->Timeline.Wait(Point.Value);
     }
 
     [[nodiscard]] auto InitializeQueue(VulkanImmediateQueue Kind, vk::raii::Queue& Queue, Uint32 Family)
@@ -320,10 +307,8 @@ class VulkanImmediateContext {
         if (!State.Queue || State.Callbacks.empty())
             return;
         // Callbacks are append-only in timeline submission order.
-        auto Current = State.Timeline.GetCurrentValue();
-        if (!Current)
-            return;
-        while (!State.Callbacks.empty() && State.Callbacks.front().Value <= *Current) {
+        const auto Current = State.Timeline.GetDeviceValue();
+        while (!State.Callbacks.empty() && State.Callbacks.front().Value <= Current) {
             State.Callbacks.front().Callback();
             State.Callbacks.pop_front();
         }

@@ -36,7 +36,8 @@ struct FrameSlot {
     std::mutex              Mutex;
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
-    SceneSnapshot           SceneData;
+    GameSnapshot            GameData;
+    EditorSnapshot          EditorData;
     SPtr<IRenderer>         Renderer = nullptr;
     RenderResult            RenderPacket;
     ImDrawDataSnapshot      ImGuiSnapshot;
@@ -119,14 +120,15 @@ class EngineLoop {
         }
         LogInfo("RHI context created successfully");
 
+        // TaskGraph must be running before Editor binds its presentation: the
+        // editor world creates RHI resources through the queued RHI path.
+        auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
+        TaskGraph::Get().Init(WorkerCount);
+
         if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
-
-        // 3 reserved threads for Game/Render/RHI
-        auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
-        TaskGraph::Get().Init(WorkerCount);
 
         ResourceManager::Get().Init();
 
@@ -196,7 +198,8 @@ class EngineLoop {
         // Release frame slot snapshots and command observers before
         // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
         for (auto& Slot : m_Slots) {
-            Slot.SceneData    = {};
+            Slot.GameData     = {};
+            Slot.EditorData   = {};
             Slot.Renderer     = nullptr;
             Slot.RenderPacket = {};
         }
@@ -279,15 +282,8 @@ class EngineLoop {
             m_Editor.Tick(Delta);
             AppScene.UpdateTime();
             AppScene.Tick(Delta);
-            if (auto SceneView = m_Editor.BuildSceneView()) {
-                const std::array SceneViews{std::move(*SceneView)};
-                const auto       PickSnapshot = AppScene.BuildSnapshot();
-                m_Editor.UpdateSceneSelection(AppScene, SceneViews.front(), PickSnapshot);
-                Slot.SceneData =
-                    AppScene.BuildSnapshot(SceneViews, m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
-            } else {
-                Slot.SceneData = AppScene.BuildSnapshot(m_Editor.GetSelectedEntity(), m_Editor.GetSelectedPixel());
-            }
+            Slot.GameData = AppScene.BuildSnapshot();
+            Slot.EditorData = m_Editor.BuildSnapshot();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
@@ -322,7 +318,7 @@ class EngineLoop {
                 SignalFatalError();
                 break;
             }
-            auto RenderResult = Slot.Renderer->Render(Slot.SceneData);
+            auto RenderResult = Slot.Renderer->Render(Slot.GameData, Slot.EditorData);
             if (!RenderResult) {
                 LogError("Render fatal error:\n{}", RenderResult.error().ToString());
                 SignalFatalError();

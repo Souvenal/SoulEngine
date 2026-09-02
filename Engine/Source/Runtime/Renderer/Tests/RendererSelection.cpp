@@ -28,7 +28,7 @@ class RendererSelectionTestRenderer final : public IRenderer {
         m_IsAttached = false;
     }
 
-    [[nodiscard]] auto Render(const SceneSnapshot&) -> std::expected<RenderResult, ErrorMessage> override {
+    [[nodiscard]] auto Render(const GameSnapshot&, const EditorSnapshot&) -> std::expected<RenderResult, ErrorMessage> override {
         return RenderResult{};
     }
 

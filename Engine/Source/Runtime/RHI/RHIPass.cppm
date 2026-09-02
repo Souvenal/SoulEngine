@@ -12,6 +12,8 @@ export namespace SoulEngine {
 enum class RHIPassType : Uint8 {
     Unknown = 0,
     Graphics,
+    Compute,
+    Transfer,
     RayTracing,
 };
 
@@ -39,23 +41,21 @@ class IRHIPass {
   protected:
     explicit IRHIPass(RHIPipeline Pipeline) : m_Pipeline(std::move(Pipeline)) {}
 
-    template <typename T>
-    [[nodiscard]] auto BindResource(StringView ResourceNameInShader,
-                                    RHIRef<T>   Resource,
-                                    bool        IsReadOnly) -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet(m_Pipeline);
-        if (!BindingSet)
-            return std::unexpected(
-                ErrorMessage(Format("Pass has no pipeline shader binding set for '{}'", ResourceNameInShader)));
-        return BindingSet->BindResource(ResourceNameInShader, std::move(Resource), IsReadOnly);
-    }
-
-    template <typename T>
-    [[nodiscard]] auto BindResource(RHIRefArray<T> Resource) -> std::expected<void, ErrorMessage> {
+    /// Binds the sampled-image array used by the pass pipeline's bindless space.
+    [[nodiscard]] auto BindBindlessResource(RHIRefArray<RHISampledTexture> Resource)
+        -> std::expected<void, ErrorMessage> {
         auto* BindingSet = GetShaderBindingSet(m_Pipeline);
         if (!BindingSet)
             return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
-        return BindingSet->BindResource(std::move(Resource));
+        return BindingSet->BindBindlessResource(std::move(Resource));
+    }
+
+    [[nodiscard]] auto BindResources(std::span<const RHIShaderBindingRequest> Resources)
+        -> std::expected<void, ErrorMessage> {
+        auto* BindingSet = GetShaderBindingSet(m_Pipeline);
+        if (!BindingSet)
+            return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
+        return BindingSet->BindResources(Resources);
     }
 
     template <typename T>
@@ -64,13 +64,6 @@ class IRHIPass {
         if (!BindingSet)
             return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
         return BindingSet->PushConstants(Offset, Data);
-    }
-
-    [[nodiscard]] auto Commit() -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet(m_Pipeline);
-        if (!BindingSet)
-            return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
-        return BindingSet->Commit();
     }
 
     RHIPipeline             m_Pipeline = {};
@@ -147,6 +140,46 @@ class IRHIGraphicsPass : public IRHIPass {
 
     RHIGraphicsAttachments m_Attachments = {};
     bool                   m_PresentOutput = false;
+};
+
+class IRHIComputePass : public IRHIPass {
+  public:
+    /// A compute pass may carry an empty pipeline until dispatch commands are
+    /// added with the compute pipeline stage.
+    explicit IRHIComputePass(RHIPipeline Pipeline = {}) : IRHIPass(std::move(Pipeline)) {}
+
+    [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
+        return RHIPassType::Compute;
+    }
+
+};
+
+class IRHITransferPass : public IRHIPass {
+  public:
+    IRHITransferPass() : IRHIPass(RHIPipeline{}) {}
+
+    [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
+        return RHIPassType::Transfer;
+    }
+
+  protected:
+    auto CopyTextureToBuffer(RHIRef<RHIRenderTarget>   Source,
+                             Uint32                    SrcX,
+                             Uint32                    SrcY,
+                             RHIRef<RHIReadbackBuffer> Target,
+                             Uint32                    SrcWidth  = 1,
+                             Uint32                    SrcHeight = 1) -> void {
+        if (!Source || !Target || SrcWidth == 0 || SrcHeight == 0)
+            return;
+        m_Commands.emplace_back(RHICopyTextureToBufferCmd{
+            .Source    = std::move(Source),
+            .SrcX      = SrcX,
+            .SrcY      = SrcY,
+            .SrcWidth  = SrcWidth,
+            .SrcHeight = SrcHeight,
+            .Target    = std::move(Target),
+        });
+    }
 };
 
 class IRHIRayTracingPass : public IRHIPass {

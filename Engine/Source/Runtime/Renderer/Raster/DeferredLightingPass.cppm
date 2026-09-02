@@ -58,31 +58,27 @@ class DeferredLightingPass final : public IRHIGraphicsPass {
                     static_cast<Float32>(Input.SceneColor->GetHeight()));
         SetScissorRect(0, 0, Input.SceneColor->GetWidth(), Input.SceneColor->GetHeight());
 
-        if (auto R = BindResource("g_gbuffer.albedo", std::move(Input.Albedo), true); !R)
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_gbuffer.albedo", std::move(Input.Albedo), true},
+                RHIShaderBindingRequest{"g_gbuffer.normal", std::move(Input.Normal), true},
+                RHIShaderBindingRequest{"g_gbuffer.materialId", std::move(Input.MaterialId), true},
+                RHIShaderBindingRequest{"g_gbuffer.entityId", std::move(Input.EntityId), true},
+                RHIShaderBindingRequest{"g_gbuffer.depth", std::move(Input.Depth), true},
+            }); !R)
             return std::unexpected(R.error());
-        if (auto R = BindResource("g_gbuffer.normal", std::move(Input.Normal), true); !R)
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true},
+                RHIShaderBindingRequest{"g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true},
+            }); !R)
             return std::unexpected(R.error());
-        if (auto R = BindResource("g_gbuffer.materialId", std::move(Input.MaterialId), true); !R)
+        if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
             return std::unexpected(R.error());
-        if (auto R = BindResource("g_gbuffer.entityId", std::move(Input.EntityId), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_gbuffer.depth", std::move(Input.Depth), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource(std::move(Input.Textures)); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_deferred.frame", std::move(Input.FrameBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_deferred.view", std::move(Input.ViewBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_deferred.materials", std::move(Input.MaterialBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_deferred.lights", std::move(Input.LightBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = Commit(); !R)
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_deferred.frame", std::move(Input.FrameBuffer), true},
+                RHIShaderBindingRequest{"g_deferred.view", std::move(Input.ViewBuffer), true},
+                RHIShaderBindingRequest{"g_deferred.materials", std::move(Input.MaterialBuffer), true},
+                RHIShaderBindingRequest{"g_deferred.lights", std::move(Input.LightBuffer), true},
+            }); !R)
             return std::unexpected(R.error());
         Draw();
         return {};

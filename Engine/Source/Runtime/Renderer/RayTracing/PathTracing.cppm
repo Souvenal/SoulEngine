@@ -48,38 +48,29 @@ class PathTracingPass final : public IRHIRayTracingPass {
             Input.Height == 0)
             return std::unexpected(ErrorMessage("Path tracing pass resources are not ready"));
 
-        if (auto R = BindResource("g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true); !R)
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true},
+                RHIShaderBindingRequest{"g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true},
+            }); !R)
             return std::unexpected(R.error());
-        if (auto R = BindResource("g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true); !R)
+        if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
             return std::unexpected(R.error());
-        if (auto R = BindResource(std::move(Input.Textures)); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.tlas", Input.Tlas, true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.output", std::move(Input.Output), false); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.accumulation", std::move(Input.Accumulation), false); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.primaryNormal", std::move(Input.PrimaryNormal), false); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.primaryEntityId", std::move(Input.PrimaryEntityId), false); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.instances", std::move(Input.InstancesBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.geometries", std::move(Input.GeometryBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.materials", std::move(Input.MaterialBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.lights", std::move(Input.LightBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.frame", std::move(Input.FrameBuffer), true); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResource("g_rayTracing.view", std::move(Input.ViewBuffer), true); !R)
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_rayTracing.tlas", Input.Tlas, true},
+                RHIShaderBindingRequest{"g_rayTracing.output", std::move(Input.Output), false},
+                RHIShaderBindingRequest{"g_rayTracing.accumulation", std::move(Input.Accumulation), false},
+                RHIShaderBindingRequest{"g_rayTracing.primaryNormal", std::move(Input.PrimaryNormal), false},
+                RHIShaderBindingRequest{"g_rayTracing.primaryEntityId", std::move(Input.PrimaryEntityId), false},
+                RHIShaderBindingRequest{"g_rayTracing.instances", std::move(Input.InstancesBuffer), true},
+                RHIShaderBindingRequest{"g_rayTracing.geometries", std::move(Input.GeometryBuffer), true},
+                RHIShaderBindingRequest{"g_rayTracing.materials", std::move(Input.MaterialBuffer), true},
+                RHIShaderBindingRequest{"g_rayTracing.lights", std::move(Input.LightBuffer), true},
+                RHIShaderBindingRequest{"g_rayTracing.frame", std::move(Input.FrameBuffer), true},
+                RHIShaderBindingRequest{"g_rayTracing.view", std::move(Input.ViewBuffer), true},
+            }); !R)
             return std::unexpected(R.error());
 
         BuildOrUpdateTopLevelAccelerationStructure(Input.Tlas, Input.AccelerationInstances);
-        if (auto R = Commit(); !R)
-            return std::unexpected(R.error());
         TraceRays(Input.Width, Input.Height);
         return {};
     }

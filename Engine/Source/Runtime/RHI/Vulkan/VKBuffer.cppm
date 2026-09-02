@@ -13,6 +13,7 @@ import :Capability;
 import :Types;
 import :Context;
 import :Debug;
+import :Semaphore;
 
 namespace SoulEngine {
 
@@ -814,6 +815,143 @@ class VulkanTransientShaderStorageBuffer final : public RHITransientShaderStorag
     Uint32                                   m_Offset = 0;
     const VulkanTransientShaderStorageArena* m_Arena  = nullptr;
     vk::DescriptorBufferInfo                 m_DescriptorInfo = {};
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VulkanReadbackBuffer — persistent host-visible GPU-to-CPU ring
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Persistent mapped ring buffer written by GPU transfer/compute work and
+/// polled from the CPU. See RHIReadbackBuffer for the race protocol. The
+/// completed-value query borrows the resource-context graphics timeline;
+/// TryRead() is only valid while the resource context is alive.
+class VulkanReadbackBuffer final : public RHIReadbackBuffer {
+  public:
+    VulkanReadbackBuffer(String                      Name,
+                         const RHIReadbackBufferDesc& Desc,
+                         VulkanTimelineSemaphore&     CompletedTimeline,
+                         Uint32                       RingSize)
+        : RHIReadbackBuffer(std::move(Name), Desc),
+          m_CompletedTimeline(&CompletedTimeline),
+          m_RingSize(RingSize),
+          m_WriteValues(RingSize) {
+        for (auto& Value : m_WriteValues)
+            Value.store(0, std::memory_order_relaxed);
+    }
+
+    ~VulkanReadbackBuffer() override {
+        if (m_Allocation)
+            vmaDestroyBuffer(m_Allocator, static_cast<VkBuffer>(m_Buffer), m_Allocation);
+    }
+    VulkanReadbackBuffer(const VulkanReadbackBuffer&)                    = delete;
+    auto operator=(const VulkanReadbackBuffer&) -> VulkanReadbackBuffer& = delete;
+    VulkanReadbackBuffer(VulkanReadbackBuffer&&)                         = delete;
+    auto operator=(VulkanReadbackBuffer&&) -> VulkanReadbackBuffer&      = delete;
+
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     StringView                   Name,
+                                     const RHIReadbackBufferDesc& Desc,
+                                     Uint32                       RingSize)
+        -> std::expected<UPtr<VulkanReadbackBuffer>, ErrorMessage> {
+        if (Desc.Size == 0 || RingSize == 0)
+            return std::unexpected(ErrorMessage("VulkanReadbackBuffer::Create: size and ring size must be non-zero"));
+
+        auto Result = std::make_unique<VulkanReadbackBuffer>(String(Name), Desc, Context.GetTimeline(), RingSize);
+        Result->m_Allocator = Context.GetAllocator();
+
+        const Uint64 Size = static_cast<Uint64>(Desc.Size) * RingSize;
+        vk::BufferCreateInfo BufCI{
+            .size        = Size,
+            // eStorageBuffer keeps the buffer usable as a compute-dispatch
+            // write target when the compute pipeline lands.
+            .usage       = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+            .sharingMode = vk::SharingMode::eExclusive,
+        };
+
+        VmaAllocationCreateInfo AllocInfo{
+            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO,
+        };
+
+        VmaAllocationInfo AllocationInfo{};
+        if (vmaCreateBuffer(Context.GetAllocator(),
+                            reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
+                            &AllocInfo,
+                            reinterpret_cast<VkBuffer*>(&Result->m_Buffer),
+                            &Result->m_Allocation,
+                            &AllocationInfo) != VK_SUCCESS)
+            return std::unexpected(ErrorMessage("VulkanReadbackBuffer::Create: VMA buffer creation failed"));
+        if (!AllocationInfo.pMappedData) {
+            vmaDestroyBuffer(Context.GetAllocator(),
+                             static_cast<VkBuffer>(Result->m_Buffer),
+                             Result->m_Allocation);
+            Result->m_Buffer     = nullptr;
+            Result->m_Allocation = nullptr;
+            return std::unexpected(ErrorMessage("VulkanReadbackBuffer::Create: allocation is not mapped"));
+        }
+        Result->m_Mapped = static_cast<std::byte*>(AllocationInfo.pMappedData);
+
+        VkMemoryPropertyFlags MemoryProps = 0;
+        vmaGetAllocationMemoryProperties(Context.GetAllocator(), Result->m_Allocation, &MemoryProps);
+        Result->m_Coherent = (MemoryProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+
+        Context.GetDebugUtils().SetObjectName(Result->m_Buffer, Result->GetName());
+        return Result;
+    }
+
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        return m_Buffer;
+    }
+    [[nodiscard]] auto AllocateWriteOffset() -> Uint64 {
+        Uint32 OldestSlot  = 0;
+        Uint64 OldestValue = m_WriteValues[0].load(std::memory_order_acquire);
+        for (Uint32 Slot = 1; Slot < m_RingSize; ++Slot) {
+            const Uint64 Value = m_WriteValues[Slot].load(std::memory_order_acquire);
+            if (Value < OldestValue) {
+                OldestSlot  = Slot;
+                OldestValue = Value;
+            }
+        }
+        m_WriteValues[OldestSlot].store(m_CompletedTimeline->IncreaseHostValue(), std::memory_order_release);
+        return GetSlotOffset(OldestSlot);
+    }
+    [[nodiscard]] auto GetSlotOffset(Uint32 Slot) const -> Uint64 {
+        return static_cast<Uint64>(Slot) * GetSize();
+    }
+
+  protected:
+    [[nodiscard]] auto TryReadBytes(std::span<std::byte> Out) const -> bool override {
+        const auto Completed = m_CompletedTimeline->GetDeviceValue();
+
+        Uint64 BestValue = 0;
+        Uint32 BestSlot  = std::numeric_limits<Uint32>::max();
+        for (Uint32 Slot = 0; Slot < m_RingSize; ++Slot) {
+            const Uint64 Value = m_WriteValues[Slot].load(std::memory_order_acquire);
+            if (Value != 0 && Value <= Completed && Value > BestValue) {
+                BestValue = Value;
+                BestSlot  = Slot;
+            }
+        }
+        if (BestSlot == std::numeric_limits<Uint32>::max())
+            return false;
+
+        const Uint64 Offset = GetSlotOffset(BestSlot);
+        if (!m_Coherent)
+            vmaInvalidateAllocation(m_Allocator, m_Allocation, Offset, Out.size());
+        std::memcpy(Out.data(), m_Mapped + Offset, Out.size());
+        return true;
+    }
+
+  private:
+    VmaAllocator             m_Allocator         = nullptr;
+    vk::Buffer               m_Buffer            = nullptr;
+    VmaAllocation            m_Allocation        = nullptr;
+    std::byte*               m_Mapped            = nullptr;
+    VulkanTimelineSemaphore* m_CompletedTimeline = nullptr; // borrowed; device outlives this buffer
+    Uint32                   m_RingSize          = 0;
+    std::vector<std::atomic<Uint64>> m_WriteValues = {};
+    bool                     m_Coherent          = false;
+    static constexpr Uint64  kReservedWriteValue = std::numeric_limits<Uint64>::max();
 };
 
 } // namespace SoulEngine

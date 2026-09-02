@@ -8,35 +8,48 @@ export module Editor:EditorWorld;
 
 import std;
 import Core;
+import EditorTypes;
 import RHI;
 import Scene;
 import WindowSystem;
 
 namespace SoulEngine {
 
+/// @brief Editor-only state attached to an editor viewport camera entity.
+struct EditorViewportComponent {
+    std::optional<RenderPixelCoordinate> PendingPixel        = std::nullopt;
+    std::optional<RenderPixelCoordinate> SelectedPixel       = std::nullopt;
+    std::optional<entt::entity>           HoveredEntity       = std::nullopt;
+    std::optional<entt::entity>           SelectedEntity      = std::nullopt;
+    RHIRef<RHIReadbackBuffer>             Readback            = nullptr;
+    bool                                  SelectionRequested = false;
+};
+
 class EditorCameraSystem final : public ISystem {
   public:
     /// @brief Create an editor camera system bound to one window system.
-    ///
-    /// The window system is non-owning. It is used only to subscribe to
-    /// KeyboardFrameEvent and MouseFrameEvent and to switch the cursor mode
-    /// between Normal and Disabled. Keyboard and mouse data are received
-    /// through the frame events; this system does not query input state from
-    /// the window system directly.
     explicit EditorCameraSystem(entt::registry& Registry, IWindowSystem& Window)
         : ISystem(Registry), m_Window(&Window) {}
 
     auto OnUpdate(Float32 DeltaTime) -> void override {
-        const bool CameraInputActive = ImGui::GetCurrentContext() && !ImGui::GetIO().WantCaptureMouse &&
-                                       m_MouseFrameEvent.IsButtonDown(WindowMouseButton::Right);
+        UpdatePerspective(DeltaTime);
+        UpdateSelection();
+    }
+
+  private:
+    auto UpdatePerspective(Float32 DeltaTime) -> void {
+        if (!ImGui::GetCurrentContext())
+            return;
+        const auto& IO = ImGui::GetIO();
+        const bool CameraInputActive = !IO.WantCaptureMouse && ImGui::IsMouseDown(ImGuiMouseButton_Right);
         m_Window->SetCursorMode(CameraInputActive ? CursorMode::Disabled : CursorMode::Normal);
         if (!CameraInputActive)
             return;
 
-        const auto        CursorDelta  = m_MouseFrameEvent.GetCursorDelta();
-        const auto        ForwardAxis  = GetAxis(WindowKey::W, WindowKey::S);
-        const auto        RightAxis    = GetAxis(WindowKey::D, WindowKey::A);
-        const auto        VerticalAxis = GetAxis(WindowKey::E, WindowKey::Q);
+        const auto        CursorDelta  = IO.MouseDelta;
+        const auto        ForwardAxis  = GetAxis(ImGuiKey_W, ImGuiKey_S);
+        const auto        RightAxis    = GetAxis(ImGuiKey_D, ImGuiKey_A);
+        const auto        VerticalAxis = GetAxis(ImGuiKey_E, ImGuiKey_Q);
         constexpr Float32 Sensitivity  = 0.0025f;
         constexpr Float32 MaxPitch     = 1.55334306f;
 
@@ -53,46 +66,61 @@ class EditorCameraSystem final : public ISystem {
             m_Registry.patch<TransformComponent>(CameraEntity, [&](auto& Transform) -> void {
                 if (MoveDirection.x != 0.0f || MoveDirection.y != 0.0f || MoveDirection.z != 0.0f)
                     Transform.Translation += hlslpp::normalize(MoveDirection) * (2.0f * DeltaTime);
-                Transform.Translation += Forward * (m_MouseFrameEvent.ScrollY * 0.75f);
-                Transform.Rotation.y  += CursorDelta.X * Sensitivity * (180.0f / std::numbers::pi_v<Float32>);
+                Transform.Translation += Forward * (IO.MouseWheel * 0.75f);
+                Transform.Rotation.y  += CursorDelta.x * Sensitivity * (180.0f / std::numbers::pi_v<Float32>);
                 Transform.Rotation.x =
                     std::clamp(static_cast<Float32>(Transform.Rotation.x) +
-                                   CursorDelta.Y * Sensitivity * (180.0f / std::numbers::pi_v<Float32>),
+                                   CursorDelta.y * Sensitivity * (180.0f / std::numbers::pi_v<Float32>),
                                -MaxPitch * (180.0f / std::numbers::pi_v<Float32>),
                                MaxPitch * (180.0f / std::numbers::pi_v<Float32>));
             });
         }
     }
 
-    auto SetupObservers() -> void override {
-        auto& Dispatcher = m_Window->GetEventDispatcher();
-        Dispatcher.sink<KeyboardFrameEvent>().connect<&EditorCameraSystem::OnKeyboardFrame>(*this);
-        Dispatcher.sink<MouseFrameEvent>().connect<&EditorCameraSystem::OnMouseFrame>(*this);
+    auto UpdateSelection() -> void {
+        if (!ImGui::GetCurrentContext())
+            return;
+        const auto& IO = ImGui::GetIO();
+        for (const auto CameraEntity : m_Registry.view<EditorViewportComponent>()) {
+            auto& Viewport = m_Registry.get<EditorViewportComponent>(CameraEntity);
+            if (Viewport.Readback) {
+                if (const auto EntityId = Viewport.Readback->TryRead<Uint32>()) {
+                    Viewport.HoveredEntity = *EntityId == GBuffer::BackgroundEntityId
+                                                 ? std::nullopt
+                                                 : std::optional<entt::entity>{static_cast<entt::entity>(*EntityId)};
+                    if (Viewport.SelectionRequested) {
+                        Viewport.SelectedEntity      = Viewport.HoveredEntity;
+                        Viewport.SelectionRequested = false;
+                        if (Viewport.SelectedEntity)
+                            LogInfo("Editor viewport selected entity: {}",
+                                    static_cast<Uint32>(*Viewport.SelectedEntity));
+                    }
+                }
+            }
+            const auto& Camera = m_Registry.get<CameraComponent>(CameraEntity);
+            if (Camera.ViewportWidth == 0 || Camera.ViewportHeight == 0 || IO.DisplaySize.x <= 0.0f ||
+                IO.DisplaySize.y <= 0.0f || IO.MousePos.x < 0.0f || IO.MousePos.y < 0.0f ||
+                IO.MousePos.x >= IO.DisplaySize.x || IO.MousePos.y >= IO.DisplaySize.y)
+                continue;
+            const RenderPixelCoordinate Pixel{
+                .X = (std::min)(static_cast<Uint32>((IO.MousePos.x / IO.DisplaySize.x) * Camera.ViewportWidth),
+                                Camera.ViewportWidth - 1),
+                .Y = (std::min)(static_cast<Uint32>((IO.MousePos.y / IO.DisplaySize.y) * Camera.ViewportHeight),
+                                Camera.ViewportHeight - 1),
+            };
+            Viewport.PendingPixel = Pixel;
+            if (!IO.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                Viewport.SelectionRequested = true;
+                Viewport.SelectedPixel       = Pixel;
+            }
+        }
     }
 
-    auto TeardownObservers() -> void override {
-        auto& Dispatcher = m_Window->GetEventDispatcher();
-        Dispatcher.sink<KeyboardFrameEvent>().disconnect<&EditorCameraSystem::OnKeyboardFrame>(*this);
-        Dispatcher.sink<MouseFrameEvent>().disconnect<&EditorCameraSystem::OnMouseFrame>(*this);
-    }
-
-  private:
-    auto OnKeyboardFrame(KeyboardFrameEvent& Event) -> void {
-        m_KeyboardFrameEvent = Event;
-    }
-
-    auto OnMouseFrame(MouseFrameEvent& Event) -> void {
-        m_MouseFrameEvent = Event;
-    }
-
-    [[nodiscard]] auto GetAxis(WindowKey Positive, WindowKey Negative) const -> Float32 {
-        return (m_KeyboardFrameEvent.IsKeyDown(Positive) ? 1.0f : 0.0f) -
-               (m_KeyboardFrameEvent.IsKeyDown(Negative) ? 1.0f : 0.0f);
+    [[nodiscard]] auto GetAxis(ImGuiKey Positive, ImGuiKey Negative) const -> Float32 {
+        return (ImGui::IsKeyDown(Positive) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(Negative) ? 1.0f : 0.0f);
     }
 
     IWindowSystem*     m_Window             = nullptr;
-    KeyboardFrameEvent m_KeyboardFrameEvent = {};
-    MouseFrameEvent    m_MouseFrameEvent    = {};
 };
 
 } // namespace SoulEngine
@@ -144,6 +172,14 @@ class EditorWorld {
                                                });
         m_Registry.emplace<NameComponent>(CameraEntity, NameComponent{.Name = "EditorViewportCamera"});
         m_Registry.emplace<CameraComponent>(CameraEntity);
+        auto& Viewport = m_Registry.emplace<EditorViewportComponent>(CameraEntity);
+        if (const auto Readback = RHIRenderDevice::Get().CreateReadbackBuffer(
+                "Editor/Viewport/Picking", RHIReadbackBufferDesc{.Size = sizeof(Uint32)});
+            Readback) {
+            Viewport.Readback = *Readback;
+        } else {
+            LogWarning("Editor viewport picking readback unavailable: {}", Readback.error().ToString());
+    }
 
         BindWindowEvents(Window);
     }
@@ -190,15 +226,24 @@ class EditorWorld {
     }
 
     /// @brief Build the editor-owned Scene View render request for this frame.
-    [[nodiscard]] auto BuildSceneView() const -> std::optional<CameraViewRecord> {
+    [[nodiscard]] auto BuildSnapshot() -> EditorSnapshot {
         const auto* CameraSys = m_SystemScheduler.Get<CameraSystem>();
         if (!CameraSys)
-            return std::nullopt;
+            return {};
 
-        const auto CameraViews = CameraSys->CollectViews();
-        if (CameraViews.empty())
-            return std::nullopt;
-        return CameraViews.front();
+        EditorSnapshot Snapshot{.Views = CameraSys->CollectViews()};
+        for (const auto CameraEntity : m_Registry.view<EditorViewportComponent>()) {
+            auto& Viewport = m_Registry.get<EditorViewportComponent>(CameraEntity);
+            if (!Viewport.PendingPixel || !Viewport.Readback)
+                continue;
+            Snapshot.Picking = ScenePickingRequest{
+                .Pixel = *Viewport.PendingPixel,
+                .Target = Viewport.Readback,
+            };
+            Viewport.PendingPixel.reset();
+            break;
+        }
+        return Snapshot;
     }
 
     /// @brief Return the editor viewport camera component.

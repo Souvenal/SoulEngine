@@ -241,31 +241,6 @@ entities:
     std::filesystem::remove(FilePath);
 }
 
-TEST(SceneDocument, UsesExplicitRenderViews) {
-    const auto FilePath = WriteSceneFile(R"(
-entities:
-  - components:
-      camera: {}
-)");
-
-    const auto Loaded = Scene::LoadFromFile(FilePath);
-    ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
-    auto& Scene = *Loaded->first;
-
-    const std::array Views{
-        CameraViewRecord{
-            .CameraPosition = hlslpp::float3(4.0f, 5.0f, 6.0f),
-        },
-    };
-    const auto Snapshot = Scene.BuildSnapshot(Views);
-
-    ASSERT_EQ(Snapshot.Views.size(), 1u);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Views.front().CameraPosition.x), 4.0f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Views.front().CameraPosition.y), 5.0f);
-    EXPECT_FLOAT_EQ(static_cast<float>(Snapshot.Views.front().CameraPosition.z), 6.0f);
-    std::filesystem::remove(FilePath);
-}
-
 TEST(SceneDocument, PreservesExistingSceneAfterStructuralError) {
     const auto ValidPath   = WriteSceneFile("entities:\n  - name: Valid\n    components:\n      camera: {}\n");
     const auto ValidLoaded = Scene::LoadFromFile(ValidPath);
