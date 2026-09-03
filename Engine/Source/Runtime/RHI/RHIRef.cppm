@@ -57,7 +57,7 @@ class RHIDeferredDeletionQueue {
 ///
 /// RHIRenderDevice::Create() points GDeferredDeletionQueue here; tests may
 /// temporarily redirect the pointer to a local queue instance.
-inline RHIDeferredDeletionQueue GDeferredDeletionQueueStorage = {};
+RHIDeferredDeletionQueue GDeferredDeletionQueueStorage = {};
 
 /// @brief Process-wide deferred deletion queue. Set by RHIRenderDevice::Create().
 RHIDeferredDeletionQueue* GDeferredDeletionQueue = nullptr;

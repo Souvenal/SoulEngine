@@ -19,6 +19,10 @@
 
 module;
 
+// MSVC bug, fstream is needed here
+// TODO: remove this guard
+#include <fstream>
+
 #include <slang.h>
 // Slang follows the COM ABI convention (vtable layout, addRef/release lifecycle).
 // Its COM-style interfaces require a dedicated smart pointer instead of
