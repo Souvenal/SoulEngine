@@ -1,11 +1,12 @@
 /// @file   IO.cppm
 /// @brief  File-system IO utilities.
+module;
 
 export module Core:Util.IO;
 
+export import std;
 export import :Util.Types;
 export import :Util.Error;
-export import std;
 
 export namespace SoulEngine {
 

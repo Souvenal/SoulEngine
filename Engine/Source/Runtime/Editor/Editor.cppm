@@ -1,5 +1,5 @@
 module;
-#include <entt/entity/entity.hpp>
+#include <entt/entt.hpp>
 #include <hlsl++.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>

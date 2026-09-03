@@ -36,7 +36,7 @@ namespace {
         return vk::DescriptorType::eSampler;
     case ShaderResourceType::AccelerationStructure:
         return vk::DescriptorType::eAccelerationStructureKHR;
-    case ShaderResourceType::Unknown:
+    default:
         return {};
     }
 }
