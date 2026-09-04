@@ -4,6 +4,7 @@ export import WindowSystem;
 export import std;
 import :Types;
 import :Ref;
+import :Pipeline;
 import :RayTracing;
 import :Pass;
 
@@ -65,6 +66,9 @@ class RHIRenderDevice {
 
     [[nodiscard]] virtual auto CreateGraphicsPipeline(StringView Name, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> = 0;
+
+    [[nodiscard]] virtual auto CreateComputePipeline(StringView Name, const RHIComputePipelineDesc& Desc)
+        -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> = 0;
 
     [[nodiscard]] virtual auto CreateRayTracingPipeline(StringView Name, const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> = 0;

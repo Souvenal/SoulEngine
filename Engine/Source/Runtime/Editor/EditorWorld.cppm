@@ -8,122 +8,11 @@ export module Editor:EditorWorld;
 
 import std;
 import Core;
+import :EditorCamera;
 import EditorTypes;
 import RHI;
 import Scene;
 import WindowSystem;
-
-namespace SoulEngine {
-
-/// @brief Editor-only state attached to an editor viewport camera entity.
-struct EditorViewportComponent {
-    std::optional<RenderPixelCoordinate> PendingPixel        = std::nullopt;
-    std::optional<RenderPixelCoordinate> SelectedPixel       = std::nullopt;
-    std::optional<entt::entity>           HoveredEntity       = std::nullopt;
-    std::optional<entt::entity>           SelectedEntity      = std::nullopt;
-    RHIRef<RHIReadbackBuffer>             Readback            = nullptr;
-    bool                                  SelectionRequested = false;
-};
-
-class EditorCameraSystem final : public ISystem {
-  public:
-    /// @brief Create an editor camera system bound to one window system.
-    explicit EditorCameraSystem(entt::registry& Registry, IWindowSystem& Window)
-        : ISystem(Registry), m_Window(&Window) {}
-
-    auto OnUpdate(Float32 DeltaTime) -> void override {
-        UpdatePerspective(DeltaTime);
-        UpdateSelection();
-    }
-
-  private:
-    auto UpdatePerspective(Float32 DeltaTime) -> void {
-        if (!ImGui::GetCurrentContext())
-            return;
-        const auto& IO = ImGui::GetIO();
-        const bool CameraInputActive = !IO.WantCaptureMouse && ImGui::IsMouseDown(ImGuiMouseButton_Right);
-        m_Window->SetCursorMode(CameraInputActive ? CursorMode::Disabled : CursorMode::Normal);
-        if (!CameraInputActive)
-            return;
-
-        const auto        CursorDelta  = IO.MouseDelta;
-        const auto        ForwardAxis  = GetAxis(ImGuiKey_W, ImGuiKey_S);
-        const auto        RightAxis    = GetAxis(ImGuiKey_D, ImGuiKey_A);
-        const auto        VerticalAxis = GetAxis(ImGuiKey_E, ImGuiKey_Q);
-        constexpr Float32 Sensitivity  = 0.0025f;
-        constexpr Float32 MaxPitch     = 1.55334306f;
-
-        for (const auto CameraEntity : m_Registry.view<CameraComponent, TransformComponent>()) {
-            const auto& CurrentTransform     = m_Registry.get<TransformComponent>(CameraEntity);
-            const auto  EditorWorldTransform = CurrentTransform.GetLocalMatrix();
-            const auto  WorldForward = hlslpp::mul(hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f), EditorWorldTransform);
-            const auto  Forward = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-            const auto  HorizontalForward = hlslpp::normalize(hlslpp::float3(Forward.x, 0.0f, Forward.z));
-            const auto  Up                = hlslpp::float3(0.0f, 1.0f, 0.0f);
-            const auto  Right             = hlslpp::normalize(hlslpp::cross(HorizontalForward, Up));
-            const auto  MoveDirection     = HorizontalForward * ForwardAxis + Right * RightAxis + Up * VerticalAxis;
-
-            m_Registry.patch<TransformComponent>(CameraEntity, [&](auto& Transform) -> void {
-                if (MoveDirection.x != 0.0f || MoveDirection.y != 0.0f || MoveDirection.z != 0.0f)
-                    Transform.Translation += hlslpp::normalize(MoveDirection) * (2.0f * DeltaTime);
-                Transform.Translation += Forward * (IO.MouseWheel * 0.75f);
-                Transform.Rotation.y  += CursorDelta.x * Sensitivity * (180.0f / std::numbers::pi_v<Float32>);
-                Transform.Rotation.x =
-                    std::clamp(static_cast<Float32>(Transform.Rotation.x) +
-                                   CursorDelta.y * Sensitivity * (180.0f / std::numbers::pi_v<Float32>),
-                               -MaxPitch * (180.0f / std::numbers::pi_v<Float32>),
-                               MaxPitch * (180.0f / std::numbers::pi_v<Float32>));
-            });
-        }
-    }
-
-    auto UpdateSelection() -> void {
-        if (!ImGui::GetCurrentContext())
-            return;
-        const auto& IO = ImGui::GetIO();
-        for (const auto CameraEntity : m_Registry.view<EditorViewportComponent>()) {
-            auto& Viewport = m_Registry.get<EditorViewportComponent>(CameraEntity);
-            if (Viewport.Readback) {
-                if (const auto EntityId = Viewport.Readback->TryRead<Uint32>()) {
-                    Viewport.HoveredEntity = *EntityId == GBuffer::BackgroundEntityId
-                                                 ? std::nullopt
-                                                 : std::optional<entt::entity>{static_cast<entt::entity>(*EntityId)};
-                    if (Viewport.SelectionRequested) {
-                        Viewport.SelectedEntity      = Viewport.HoveredEntity;
-                        Viewport.SelectionRequested = false;
-                        if (Viewport.SelectedEntity)
-                            LogInfo("Editor viewport selected entity: {}",
-                                    static_cast<Uint32>(*Viewport.SelectedEntity));
-                    }
-                }
-            }
-            const auto& Camera = m_Registry.get<CameraComponent>(CameraEntity);
-            if (Camera.ViewportWidth == 0 || Camera.ViewportHeight == 0 || IO.DisplaySize.x <= 0.0f ||
-                IO.DisplaySize.y <= 0.0f || IO.MousePos.x < 0.0f || IO.MousePos.y < 0.0f ||
-                IO.MousePos.x >= IO.DisplaySize.x || IO.MousePos.y >= IO.DisplaySize.y)
-                continue;
-            const RenderPixelCoordinate Pixel{
-                .X = (std::min)(static_cast<Uint32>((IO.MousePos.x / IO.DisplaySize.x) * Camera.ViewportWidth),
-                                Camera.ViewportWidth - 1),
-                .Y = (std::min)(static_cast<Uint32>((IO.MousePos.y / IO.DisplaySize.y) * Camera.ViewportHeight),
-                                Camera.ViewportHeight - 1),
-            };
-            Viewport.PendingPixel = Pixel;
-            if (!IO.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                Viewport.SelectionRequested = true;
-                Viewport.SelectedPixel       = Pixel;
-            }
-        }
-    }
-
-    [[nodiscard]] auto GetAxis(ImGuiKey Positive, ImGuiKey Negative) const -> Float32 {
-        return (ImGui::IsKeyDown(Positive) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(Negative) ? 1.0f : 0.0f);
-    }
-
-    IWindowSystem*     m_Window             = nullptr;
-};
-
-} // namespace SoulEngine
 
 export namespace SoulEngine {
 
@@ -146,13 +35,11 @@ class EditorWorld {
 
         // EditorCameraSystem patches local transforms from input; it must run
         // before TransformSystem so the changes propagate within the same frame.
-        const auto Setup = m_SystemScheduler.Register<TransformSystem>("TransformSystem")
+        const auto Setup = m_SystemScheduler.Register<EditorCameraSystem>(
+                                   "EditorCameraSystem", {}, {}, Window)
                                .and_then([&]() -> std::expected<void, ErrorMessage> {
-                                   return m_SystemScheduler.Register<CameraSystem>("CameraSystem");
-                               })
-                               .and_then([&]() -> std::expected<void, ErrorMessage> {
-                                   return m_SystemScheduler.Register<EditorCameraSystem>(
-                                       "EditorCameraSystem", {"TransformSystem"}, {}, Window);
+                                   return m_SystemScheduler.Register<TransformSystem>(
+                                       "TransformSystem", {}, {"EditorCameraSystem"});
                                })
                                .and_then([&]() -> std::expected<void, ErrorMessage> {
                                    return m_SystemScheduler.CompileDependency();
@@ -171,15 +58,14 @@ class EditorWorld {
                                                    .Rotation    = hlslpp::float3(23.46f, -35.29f, 0.0f),
                                                });
         m_Registry.emplace<NameComponent>(CameraEntity, NameComponent{.Name = "EditorViewportCamera"});
-        m_Registry.emplace<CameraComponent>(CameraEntity);
-        auto& Viewport = m_Registry.emplace<EditorViewportComponent>(CameraEntity);
+        auto& Camera = m_Registry.emplace<EditorCameraComponent>(CameraEntity);
         if (const auto Readback = RHIRenderDevice::Get().CreateReadbackBuffer(
                 "Editor/Viewport/Picking", RHIReadbackBufferDesc{.Size = sizeof(Uint32)});
             Readback) {
-            Viewport.Readback = *Readback;
+            Camera.Readback = *Readback;
         } else {
             LogWarning("Editor viewport picking readback unavailable: {}", Readback.error().ToString());
-    }
+        }
 
         BindWindowEvents(Window);
     }
@@ -227,31 +113,30 @@ class EditorWorld {
 
     /// @brief Build the editor-owned Scene View render request for this frame.
     [[nodiscard]] auto BuildSnapshot() -> EditorSnapshot {
-        const auto* CameraSys = m_SystemScheduler.Get<CameraSystem>();
+        const auto* CameraSys = m_SystemScheduler.Get<EditorCameraSystem>();
         if (!CameraSys)
             return {};
 
         EditorSnapshot Snapshot{.Views = CameraSys->CollectViews()};
-        for (const auto CameraEntity : m_Registry.view<EditorViewportComponent>()) {
-            auto& Viewport = m_Registry.get<EditorViewportComponent>(CameraEntity);
-            if (!Viewport.PendingPixel || !Viewport.Readback)
-                continue;
-            Snapshot.Picking = ScenePickingRequest{
-                .Pixel = *Viewport.PendingPixel,
-                .Target = Viewport.Readback,
-            };
-            Viewport.PendingPixel.reset();
+        for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
+            const auto& Camera = m_Registry.get<EditorCameraComponent>(CameraEntity);
+            Snapshot.SelectedEntity = Camera.SelectedEntity;
+            Snapshot.ReadbackTarget = Camera.Readback;
+            const auto& IO     = ImGui::GetIO();
+            if (Camera.ViewportWidth > 0 && Camera.ViewportHeight > 0 && IO.DisplaySize.x > 0.0f &&
+                IO.DisplaySize.y > 0.0f && IO.MousePos.x >= 0.0f && IO.MousePos.y >= 0.0f &&
+                IO.MousePos.x < IO.DisplaySize.x && IO.MousePos.y < IO.DisplaySize.y) {
+                Snapshot.HoverPixel = PixelCoordinate{
+                    .X = (std::min)(static_cast<Uint32>((IO.MousePos.x / IO.DisplaySize.x) * Camera.ViewportWidth),
+                                    Camera.ViewportWidth - 1),
+                    .Y = (std::min)(static_cast<Uint32>((IO.MousePos.y / IO.DisplaySize.y) * Camera.ViewportHeight),
+                                    Camera.ViewportHeight - 1),
+                };
+                Snapshot.IsHovering = true;
+            }
             break;
         }
         return Snapshot;
-    }
-
-    /// @brief Return the editor viewport camera component.
-    [[nodiscard]] auto GetViewportCamera() const -> const CameraComponent* {
-        const auto CameraView = m_Registry.view<CameraComponent>();
-        if (CameraView.empty())
-            return nullptr;
-        return &CameraView.get<CameraComponent>(*CameraView.begin());
     }
 
     /// @brief Shut down editor ECS systems and release their owned resources.
@@ -259,11 +144,10 @@ class EditorWorld {
         UnbindWindowEvents();
 
         static_cast<void>(m_SystemScheduler.Remove<EditorCameraSystem>());
-        static_cast<void>(m_SystemScheduler.Remove<CameraSystem>());
         static_cast<void>(m_SystemScheduler.Remove<TransformSystem>());
 
         // Clearing the registry releases component-held RHI references and
-        // allows CameraSystem's cache to be released with the system itself.
+        // allows EditorCameraSystem's cache to be released with the system itself.
         m_Registry.clear();
 
         m_EditorRootEntity = entt::null;
@@ -272,8 +156,8 @@ class EditorWorld {
   private:
     auto OnFramebufferResize(FramebufferResizeEvent& Event) -> void {
         auto& Dispatcher = m_Registry.ctx().get<entt::dispatcher>();
-        for (const auto CameraEntity : m_Registry.view<CameraComponent>()) {
-            Dispatcher.enqueue<CameraResizeEvent>(CameraResizeEvent{
+        for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
+            Dispatcher.enqueue<EditorCameraResizeEvent>(EditorCameraResizeEvent{
                 .CameraEntity = CameraEntity,
                 .Width        = static_cast<Uint32>(Event.CurrentExtent.Width),
                 .Height       = static_cast<Uint32>(Event.CurrentExtent.Height),

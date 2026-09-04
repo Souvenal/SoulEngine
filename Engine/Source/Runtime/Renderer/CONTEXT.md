@@ -20,8 +20,11 @@ into each FrameSlot.
 | **Geometry pass** | Raster RHIPass that writes the four G-buffer color attachments and the shared depth attachment. |
 | **Lighting pass** | Separate raster RHIPass that samples the G-buffer, including shared depth, and writes SceneColorRT. |
 | **Post-process pass** | A raster RHIPass appended after scene lighting. Post-process builders live under `Renderer/PostProcess/` and operate on the current view's ref-backed targets. |
-| **Editor selection outline** | Editor post-process that reads the EntityId G-buffer at the selected pixel, then marks pixels adjacent to the selected ID with the orange outline color while preserving SceneColorRT for non-outline pixels. |
+| **EditorViewRecord** | Editor-only view snapshot carrying one editor camera pose, its persistent camera render targets, and the R8_UNORM selection mask used by editor post-processing. |
+| **Editor selection outline** | Editor post-process that reads the EntityId G-buffer at the selected pixel, then marks pixels adjacent to the selected ID with the orange outline color while preserving SceneColorRT for non-outline pixels. RasterRenderer consumes the editor-camera mask; it does not create one per frame. |
 | **Present source** | Ref-backed final engine-owned SceneColorRT assigned to RHICommandList::PresentSourceRef; it is presented by the backend, not rendered directly into the swapchain by Renderer. |
+| **GeometryRecordTable** | Slang facade (Common/Geometry.slang) over the per-pass geometry record table. Shader parameter blocks embed it instead of a raw `StructuredBuffer<GeometryRecord>`; it exposes `pullVertex(recordIndex, vertexIndex)` and `pullBoundingSphere(recordIndex)` and fully encapsulates the GPU-address ABI of GeometryRecord. Reflection recurses into such resource-facade structs, so host code binds the inner member path (e.g. `g_rasterDraw.geometryTable.records`), not the facade itself. |
+| **VertexInfo** | Decoded vertex attributes (position, normal, tangent, uv) returned by `GeometryRecordTable::pullVertex`. Null tangent/texCoord addresses pull silent defaults ((1,0,0,1) and (0,0)). |
 
 ## Relationships
 

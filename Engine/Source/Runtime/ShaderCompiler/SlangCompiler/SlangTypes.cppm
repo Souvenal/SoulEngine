@@ -20,12 +20,6 @@ namespace SoulEngine {
 // File-local helpers for normalizing Slang reflection details before public mappings.
 namespace {
 
-[[nodiscard]] auto StripArrayTypeLayout(slang::TypeLayoutReflection* TypeLayout) -> slang::TypeLayoutReflection* {
-    while (TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::Array)
-        TypeLayout = TypeLayout->getElementTypeLayout();
-    return TypeLayout;
-}
-
 [[nodiscard]] auto ToShaderTextureResourceType(SlangResourceAccess Access)
     -> std::expected<ShaderResourceType, ErrorMessage> {
     switch (Access) {
@@ -44,6 +38,17 @@ namespace {
     }
 }
 
+} // namespace
+
+[[nodiscard]] auto StripArrayTypeLayout(slang::TypeLayoutReflection* TypeLayout) -> slang::TypeLayoutReflection* {
+    while (TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::Array)
+        TypeLayout = TypeLayout->getElementTypeLayout();
+    return TypeLayout;
+}
+
+/// Map the type layout of a leaf variable (array layers stripped) to the
+/// engine's ResourceType.  Used by the reflection DFS, which reaches leaves
+/// through the variable tree rather than through binding ranges.
 [[nodiscard]] auto ToShaderResourceTypeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
     -> std::expected<ShaderResourceType, ErrorMessage> {
     TypeLayout = StripArrayTypeLayout(TypeLayout);
@@ -71,8 +76,6 @@ namespace {
                                                    magic_enum::enum_name(TypeLayout->getKind()))));
     }
 }
-
-} // namespace
 
 /// Map a SlangStage enum value to the project's Stage.
 [[nodiscard]] auto ToShaderStage(SlangStage Stage) -> ShaderStage {
@@ -110,38 +113,6 @@ namespace {
     }
 }
 
-/// Map a Slang binding type + optional leaf type layout to the engine's ResourceType.
-/// TypeLayout supplies details that BindingType alone does not carry: ParameterBlock
-/// field kind and texture access mode (sampled vs storage).
-[[nodiscard]] auto ToShaderResourceType(slang::BindingType BindingType, slang::TypeLayoutReflection* TypeLayout)
-    -> std::expected<ShaderResourceType, ErrorMessage> {
-    const auto BaseBindingType = static_cast<slang::BindingType>(
-        static_cast<SlangBindingTypeIntegral>(BindingType) &
-        static_cast<SlangBindingTypeIntegral>(slang::BindingType::BaseMask));
-    switch (BaseBindingType) {
-    case slang::BindingType::ConstantBuffer:
-        return ShaderResourceType::ConstantBuffer;
-    case slang::BindingType::ParameterBlock:
-        // ParameterBlock is only a descriptor-container binding. TypeLayout is the
-        // reflected field/leaf resource inside that block.
-        return ToShaderResourceTypeFromLeafLayout(TypeLayout);
-    case slang::BindingType::Sampler:
-        return ShaderResourceType::Sampler;
-    case slang::BindingType::Texture:
-        TypeLayout = StripArrayTypeLayout(TypeLayout);
-        if (!TypeLayout)
-            return std::unexpected(ErrorMessage("Texture binding reflection is missing a type layout"));
-        return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
-    case slang::BindingType::TypedBuffer:
-    case slang::BindingType::RawBuffer:
-        return ShaderResourceType::StorageBuffer;
-    case slang::BindingType::RayTracingAccelerationStructure:
-        return ShaderResourceType::AccelerationStructure;
-    default:
-        return std::unexpected(ErrorMessage(
-            Format("Unsupported Slang binding type {} in normalized reflection", magic_enum::enum_name(BindingType))));
-    }
-}
 [[nodiscard]] auto ToShaderScalarType(slang::TypeReflection::ScalarType ScalarType) -> ShaderScalarType {
     switch (ScalarType) {
     case slang::TypeReflection::ScalarType::Float32:

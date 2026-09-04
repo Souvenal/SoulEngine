@@ -114,6 +114,11 @@ struct GraphicsPipelineRequest {
     RHIFormat                DepthFormat       = RHIFormat::Unknown;
 };
 
+/// @brief Async compute pipeline request descriptor.
+struct ComputePipelineRequest {
+    ShaderEntry ComputeEntry = {};
+};
+
 /// @brief Async hardware ray-tracing pipeline request descriptor.
 struct RayTracingPipelineRequest {
     ShaderEntry                                RayGeneration     = {};

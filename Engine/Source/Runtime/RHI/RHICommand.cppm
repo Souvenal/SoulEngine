@@ -5,6 +5,7 @@ module;
 export module RHI:Command;
 
 export import :Types;
+export import :Pipeline;
 export import :RayTracing;
 import :Ref;
 
@@ -30,25 +31,6 @@ struct RHISetScissorCmd {
     Uint32 Height = 0;
 };
 
-// TODO: Move this to RHITypes when done migrating RHIRayTracing to RHITypes
-using RHIPipeline = std::variant<std::monostate,
-                                 RHIRef<RHIGraphicsPipeline>,
-                                 RHIRef<RHIRayTracingPipeline>>;
-
-[[nodiscard]] auto GetShaderBindingSet(const RHIPipeline& Pipeline) -> RHIShaderBindingSet* {
-    return std::visit(
-        [](const auto& PipelineRef) -> RHIShaderBindingSet* {
-            using PipelineRefType = std::decay_t<decltype(PipelineRef)>;
-            if constexpr (std::same_as<PipelineRefType, std::monostate>)
-                return nullptr;
-            else {
-                const auto* PipelineObject = PipelineRef.TryGet();
-                return PipelineObject ? PipelineObject->GetShaderBindingSet().TryGet() : nullptr;
-            }
-        },
-        Pipeline);
-}
-
 /// @brief Draw indexed primitives.
 struct RHIDrawIndexedCmd {
     std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs = {};
@@ -66,6 +48,13 @@ struct RHIDrawIndirectCmd {
     Uint64                          Offset         = 0;
     Uint32                          DrawCount      = 1;
     Uint32                          Stride         = sizeof(Uint32) * 4;
+};
+
+/// @brief Dispatch compute workgroups.
+struct RHIDispatchCmd {
+    Uint32 GroupCountX = 1;
+    Uint32 GroupCountY = 1;
+    Uint32 GroupCountZ = 1;
 };
 
 /// @brief Build or update a persistent TLAS from renderer-provided logical instances.
@@ -100,6 +89,7 @@ using RHICommand = std::variant<RHISetViewportCmd,
                                 RHIDrawIndexedCmd,
                                 RHIDrawCmd,
                                 RHIDrawIndirectCmd,
+                                RHIDispatchCmd,
                                 RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
                                 RHITraceRaysCmd,
                                 RHICopyTextureToBufferCmd>;

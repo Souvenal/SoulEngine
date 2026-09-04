@@ -17,6 +17,8 @@ namespace SoulEngine {
 
 [[nodiscard]] auto ToVkFormat(RHIFormat Fmt) -> vk::Format {
     switch (Fmt) {
+    case RHIFormat::R8_UNORM:
+        return vk::Format::eR8Unorm;
     case RHIFormat::R8G8B8A8_UNORM:
         return vk::Format::eR8G8B8A8Unorm;
     case RHIFormat::B8G8R8A8_UNORM:
@@ -54,59 +56,6 @@ namespace SoulEngine {
     default:
         return vk::ImageAspectFlagBits::eColor;
     }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// Barrier state tracking (Sync2)
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// Per-buffer GPU state for automatic barrier generation.
-/// Buffers have no image-layout concept; layout tracking is not needed.
-struct VulkanBufferState {
-    vk::PipelineStageFlags2 stage       = vk::PipelineStageFlagBits2::eNone;
-    vk::AccessFlags2        access      = vk::AccessFlagBits2::eNone;
-    Uint32                  queueFamily = vk::QueueFamilyIgnored;
-    bool                    isWrite     = false;
-};
-
-auto VulkanTransitionBuffer(vk::raii::CommandBuffer&                Buf,
-                      std::unordered_map<vk::Buffer, VulkanBufferState>& States,
-                      vk::Buffer                                   Buffer,
-                      vk::PipelineStageFlags2                     DstStage,
-                      vk::AccessFlags2                            DstAccess,
-                      bool                                         IsWrite,
-                      vk::DeviceSize                               Offset = 0,
-                      vk::DeviceSize                               Size   = vk::WholeSize) -> void {
-    auto It      = States.find(Buffer);
-    auto Current = (It != States.end()) ? It->second : VulkanBufferState{};
-
-    const bool NeedsBarrier = (Current.stage != DstStage) || (Current.access != DstAccess) || Current.isWrite;
-    if (NeedsBarrier) {
-        vk::BufferMemoryBarrier2 Barrier{
-            .srcStageMask        = Current.stage,
-            .srcAccessMask       = Current.access,
-            .dstStageMask        = DstStage,
-            .dstAccessMask       = DstAccess,
-            .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-            .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-            .buffer              = Buffer,
-            .offset              = Offset,
-            .size                = Size,
-        };
-        vk::DependencyInfo Dep{
-            .dependencyFlags          = vk::DependencyFlagBits::eByRegion,
-            .bufferMemoryBarrierCount = 1,
-            .pBufferMemoryBarriers    = &Barrier,
-        };
-        Buf.pipelineBarrier2(Dep);
-    }
-
-    States[Buffer] = VulkanBufferState{
-        .stage       = DstStage,
-        .access      = DstAccess,
-        .queueFamily = vk::QueueFamilyIgnored,
-        .isWrite     = IsWrite,
-    };
 }
 
 } // namespace SoulEngine

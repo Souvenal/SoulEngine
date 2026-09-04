@@ -47,7 +47,7 @@ TEST_F(ShaderCompilerErrorPathTest, InvalidEntryPointName) {
         .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "doesNotExist", .Backend = ShaderBackend::Slang},
         .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
-    ExpectErrorContains(Result, "Vertex entry point 'doesNotExist' not found");
+    ExpectErrorContains(Result, "Entry point 'doesNotExist' not found");
 }
 
 TEST_F(ShaderCompilerErrorPathTest, InvalidFragmentEntryPointName) {
@@ -55,7 +55,7 @@ TEST_F(ShaderCompilerErrorPathTest, InvalidFragmentEntryPointName) {
         .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
         .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "doesNotExist", .Backend = ShaderBackend::Slang},
     });
-    ExpectErrorContains(Result, "Fragment entry point 'doesNotExist' not found");
+    ExpectErrorContains(Result, "Entry point 'doesNotExist' not found");
 }
 
 TEST_F(ShaderCompilerErrorPathTest, BackendsMustMatch) {

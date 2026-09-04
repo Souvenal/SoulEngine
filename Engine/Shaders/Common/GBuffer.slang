@@ -1,4 +1,4 @@
-module GBuffer;
+implementing Common;
 
 /// Shared read-only resources for visibility and deferred passes.
 public struct GBuffer {

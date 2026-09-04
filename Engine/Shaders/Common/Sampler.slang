@@ -1,14 +1,12 @@
-module Common;
+implementing Common;
 
 // Sampler resources are shared by shaders that access sampled textures.
-// g_samplers.uSamplerLinear = linear-repeat
-// g_samplers.uSamplerAniso  = linear-repeat + max anisotropy
+// uSamplerLinear = linear-repeat
+// uSamplerAniso  = linear-repeat + max anisotropy
 public struct SamplerResources {
     public SamplerState uSamplerLinear;
     public SamplerState uSamplerAniso;
 };
-
-public ParameterBlock<SamplerResources> g_samplers;
 
 public struct FrameData {
     public float time;

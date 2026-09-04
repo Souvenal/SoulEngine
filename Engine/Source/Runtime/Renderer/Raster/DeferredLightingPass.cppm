@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:Raster.DeferredLightingPass;
+export module Renderer:RasterPasses.DeferredLightingPass;
 
 import Core;
 import RHI;
@@ -30,7 +30,7 @@ struct DeferredLightingPassInput {
 class DeferredLightingPass final : public IRHIGraphicsPass {
   public:
     explicit DeferredLightingPass(RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(std::move(Pipeline)) {}
+        : IRHIGraphicsPass("DeferredLightingPass", std::move(Pipeline)) {}
 
     auto SetInput(DeferredLightingPassInput Input) -> void {
         m_Input = std::move(Input);
@@ -41,8 +41,8 @@ class DeferredLightingPass final : public IRHIGraphicsPass {
         m_Attachments = {};
         auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet(m_Pipeline) || !Input.SceneColor || !Input.Albedo || !Input.Normal || !Input.MaterialId ||
-            !Input.EntityId || !Input.Depth || !Input.LinearSampler || !Input.AnisotropicSampler || !Input.Textures ||
+        if (!GetShaderBindingSet() || !Input.SceneColor || !Input.Albedo || !Input.Normal || !Input.MaterialId ||
+            !Input.EntityId || !Input.Depth || !Input.Textures ||
             !Input.FrameBuffer || !Input.ViewBuffer || !Input.MaterialBuffer || !Input.LightBuffer)
             return std::unexpected(ErrorMessage("Deferred lighting pass resources are not ready"));
 
@@ -64,11 +64,6 @@ class DeferredLightingPass final : public IRHIGraphicsPass {
                 RHIShaderBindingRequest{"g_gbuffer.materialId", std::move(Input.MaterialId), true},
                 RHIShaderBindingRequest{"g_gbuffer.entityId", std::move(Input.EntityId), true},
                 RHIShaderBindingRequest{"g_gbuffer.depth", std::move(Input.Depth), true},
-            }); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true},
-                RHIShaderBindingRequest{"g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true},
             }); !R)
             return std::unexpected(R.error());
         if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)

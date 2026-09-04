@@ -401,20 +401,20 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
             .maxPipelineRayRecursionDepth = Desc.MaxRecursionDepth,
             .layout                      = VulkanBindingSet->GetPipelineLayout(),
         };
-        auto [PipelineResult, RHIPipeline] =
+        auto [PipelineResult, VkPipeline] =
             Context.GetDevice().createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
         if (PipelineResult != vk::Result::eSuccess) {
             return std::unexpected(ErrorMessage(Format(
                 "Failed to create ray-tracing pipeline: {}", vk::to_string(PipelineResult))));
         }
-        Context.GetDebugUtils().SetObjectName(*RHIPipeline, Name);
+        Context.GetDebugUtils().SetObjectName(*VkPipeline, Name);
 
         const Uint32 GroupCount = static_cast<Uint32>(ShaderStates->Groups.size());
         const Uint64 HandleDataSize = static_cast<Uint64>(GroupCount) * Properties.shaderGroupHandleSize;
         if (HandleDataSize > std::numeric_limits<std::size_t>::max())
             return std::unexpected(ErrorMessage("Ray-tracing shader group handle query size exceeds host address space"));
         std::vector<Uint8> Handles(HandleDataSize);
-        const auto HandleResult = RHIPipeline.getRayTracingShaderGroupHandlesKHR(
+        const auto HandleResult = VkPipeline.getRayTracingShaderGroupHandlesKHR(
             0, GroupCount, Handles.size(), Handles.data());
         if (HandleResult != vk::Result::eSuccess) {
             return std::unexpected(ErrorMessage(Format(
@@ -459,7 +459,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         }
 
         auto Result = std::make_unique<VulkanRayTracingPipeline>(String(Name), Desc);
-        Result->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
+        Result->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
         Result->m_Bindings = BuildReflectedBindings(Desc.Program.Reflection);
         Result->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
         Result->m_ShaderBindingTable = std::make_shared<VulkanHostBuffer>(std::move(*SbtBuffer));
@@ -471,7 +471,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     }
 
     [[nodiscard]] auto Get() const -> vk::Pipeline {
-        return *(*m_Pipeline);
+        return *(*m_VkPipeline);
     }
 
     [[nodiscard]] auto GetRayGenerationRegion() const -> const vk::StridedDeviceAddressRegionKHR& {
@@ -491,7 +491,7 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     }
 
   private:
-    SPtr<vk::raii::Pipeline>                         m_Pipeline = nullptr;
+    SPtr<vk::raii::Pipeline>                         m_VkPipeline = nullptr;
     std::vector<VulkanReflectedDescriptorBinding>          m_Bindings = {};
     SPtr<VulkanHostBuffer>                                 m_ShaderBindingTable = nullptr;
     vk::StridedDeviceAddressRegionKHR                m_RayGenerationRegion = {};

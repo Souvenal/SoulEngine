@@ -1,7 +1,6 @@
-import Material;
-import Common;
-
 module Pbr;
+
+import Common.Material;
 
 public static const float kPbrPi = 3.14159265359;
 

@@ -88,6 +88,71 @@ export [[nodiscard]] auto RequestGraphicsPipeline(StringView Name, const Graphic
     return PipelineRef;
 }
 
+export [[nodiscard]] auto RequestComputePipeline(StringView Name, const ComputePipelineRequest& Req)
+    -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> {
+    auto PipelineRef   = RHIRef<RHIComputePipeline>::Create();
+    auto BindingSetRef = RHIRef<RHIShaderBindingSet>::Create();
+    auto EnqueueResult =
+        TaskGraph::Get().EnqueueBackground([Req, PipelineRef, BindingSetRef, Name = String(Name)]() mutable {
+        const auto&       Cfg = ConfigManager::Get();
+        std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+
+        auto Program = ShaderCompiler::Get().CompileCompute(ComputeCompileDesc{
+            .Compute     = Req.ComputeEntry,
+            .IncludeDirs = IncludeDirs,
+        });
+        if (!Program) {
+            auto Error = Program.error().Append(Format("Compute pipeline shader '{}'/'{}'",
+                                                       Req.ComputeEntry.SourcePath.string(),
+                                                       Req.ComputeEntry.EntryPoint));
+            LogError("Failed to prepare compute pipeline: {}", Error.ToString());
+            PipelineRef.MarkFailed(std::move(Error));
+            return;
+        }
+
+        auto PipelineDesc = RHIComputePipelineDesc{
+            .Program = std::move(*Program),
+        };
+        auto EnqueueResult = TaskGraph::Get().EnqueueTask(
+            ThreadQueue::RHI,
+            [PipelineRef,
+             BindingSetRef,
+             Name = std::move(Name),
+             PipelineDesc = std::move(PipelineDesc)]() mutable {
+                const auto BindingSetDesc = RHIShaderBindingSetDesc{
+                    .Reflection = PipelineDesc.Program.Reflection,
+                    .Stages     = ShaderStage::Compute,
+                };
+                auto BindingSet = RHIRenderDevice::Get().CreateShaderBindingSet(Name, BindingSetDesc);
+                if (!BindingSet) {
+                    BindingSetRef.MarkFailed(BindingSet.error());
+                    PipelineRef.MarkFailed(BindingSet.error());
+                    return;
+                }
+                if (auto Publish = BindingSetRef.Publish(std::move(*BindingSet), RHIRefState::Ready); !Publish) {
+                    BindingSetRef.MarkFailed(Publish.error());
+                    PipelineRef.MarkFailed(Publish.error());
+                    return;
+                }
+                PipelineDesc.BindingSet = BindingSetRef;
+                auto Created = RHIRenderDevice::Get().CreateComputePipeline(Name, PipelineDesc);
+                if (!Created) {
+                    PipelineRef.MarkFailed(Created.error());
+                    return;
+                }
+                if (auto Publish = PipelineRef.Publish(std::move(*Created), RHIRefState::Ready); !Publish)
+                    PipelineRef.MarkFailed(Publish.error());
+            });
+        if (!EnqueueResult)
+            PipelineRef.MarkFailed(EnqueueResult.error());
+    });
+    if (!EnqueueResult) {
+        PipelineRef.MarkFailed(EnqueueResult.error());
+        return std::unexpected(EnqueueResult.error());
+    }
+    return PipelineRef;
+}
+
 export [[nodiscard]] auto RequestRayTracingPipeline(StringView Name, const RayTracingPipelineRequest& Req)
     -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> {
     auto PipelineRef   = RHIRef<RHIRayTracingPipeline>::Create();

@@ -1,6 +1,6 @@
 module Material;
 
-import Common;
+import Common.All;
 
 public struct MaterialSurface {
     public float3 baseColor;
@@ -55,37 +55,37 @@ public struct MaterialRecord {
     public Texture2D<float4>.Handle occlusionTexture;
     public Texture2D<float4>.Handle emissiveTexture;
 
-    public MaterialSurface resolveSurface(float2 uv, float3 geometricNormal, float4 tangent) {
+    public MaterialSurface resolveSurface(float2 uv, float3 geometricNormal, float4 tangent, SamplerState linearSampler) {
         float3 baseColor = baseColorFactor.rgb;
         if (hasTexture(baseColorTexture))
-            baseColor *= pow(nonuniform(baseColorTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).rgb, 2.2);
+            baseColor *= pow(nonuniform(baseColorTexture).SampleLevel(linearSampler, uv, 0.0).rgb, 2.2);
 
         float metallic = metallicFactor;
         float roughness = roughnessFactor;
         if (hasTexture(metallicRoughnessTexture)) {
-            float4 packed = nonuniform(metallicRoughnessTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0);
+            float4 packed = nonuniform(metallicRoughnessTexture).SampleLevel(linearSampler, uv, 0.0);
             roughness *= packed.g;
             metallic *= packed.b;
         }
         if (hasTexture(metallicTexture))
-            metallic *= nonuniform(metallicTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).r;
+            metallic *= nonuniform(metallicTexture).SampleLevel(linearSampler, uv, 0.0).r;
         if (hasTexture(roughnessTexture))
-            roughness *= nonuniform(roughnessTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).r;
+            roughness *= nonuniform(roughnessTexture).SampleLevel(linearSampler, uv, 0.0).r;
 
         float3 normal = normalize(geometricNormal);
         if (hasTexture(normalTexture)) {
-            float3 sample = nonuniform(normalTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).xyz * 2.0 - 1.0;
+            float3 sample = nonuniform(normalTexture).SampleLevel(linearSampler, uv, 0.0).xyz * 2.0 - 1.0;
             float3 basisTangent = normalize(tangent.xyz - normal * dot(normal, tangent.xyz));
             float3 bitangent = normalize(cross(normal, basisTangent)) * tangent.w;
             normal = normalize(sample.x * basisTangent + sample.y * bitangent + sample.z * normal);
         }
 
         float occlusion = hasTexture(occlusionTexture)
-            ? nonuniform(occlusionTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).r
+            ? nonuniform(occlusionTexture).SampleLevel(linearSampler, uv, 0.0).r
             : 1.0;
         float3 resolvedEmissive = emissive;
         if (hasTexture(emissiveTexture))
-            resolvedEmissive *= pow(nonuniform(emissiveTexture).SampleLevel(g_samplers.uSamplerLinear, uv, 0.0).rgb, 2.2);
+            resolvedEmissive *= pow(nonuniform(emissiveTexture).SampleLevel(linearSampler, uv, 0.0).rgb, 2.2);
 
         MaterialSurface result;
         result.baseColor = baseColor;

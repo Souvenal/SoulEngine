@@ -3,6 +3,7 @@ export module RHI;
 export import Core;
 export import :Types;
 export import :Ref;
+export import :Pipeline;
 export import :RayTracing;
 export import :RenderDevice;
 export import :Command;

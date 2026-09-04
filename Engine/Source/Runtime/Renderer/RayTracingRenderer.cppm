@@ -77,7 +77,7 @@ class RayTracingRenderer final : public IRenderer {
     }
 
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
-        const auto ShaderPath      = ConfigManager::Get().EngineShadersDirPath() / "RayTracing.slang";
+        const auto ShaderPath      = ConfigManager::Get().EngineShadersDirPath() / "RayTracing" / "RayTracing.slang";
         auto&      Resources       = ResourceManager::Get();
         auto       PipelineRequest = RequestRayTracingPipeline(
             "RayTracingPass",
@@ -134,7 +134,9 @@ class RayTracingRenderer final : public IRenderer {
         -> std::expected<RenderResult, ErrorMessage> override {
         RenderResult Result = {};
         std::vector<CameraViewRecord> Views = Scene.Views;
-        Views.insert(Views.end(), Editor.Views.begin(), Editor.Views.end());
+        Views.reserve(Scene.Views.size() + Editor.Views.size());
+        for (const auto& EditorView : Editor.Views)
+            Views.emplace_back(EditorView.ToCameraViewRecord());
         if (Views.empty())
             return Result;
 
@@ -336,7 +338,6 @@ class RayTracingRenderer final : public IRenderer {
             .PrimaryNormal = ViewNormalRef,
             .PrimaryEntityId = ViewEntityIdRef,
             .LinearSampler = SamplerLinearRef,
-            .AnisotropicSampler = SamplerAnisoRef,
             .Textures = Scene.Textures,
             .InstancesBuffer = *GeometryInstanceBuffer,
             .GeometryBuffer = *GeometryBuffer,

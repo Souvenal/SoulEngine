@@ -206,28 +206,47 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         // PipelineColorBlendAttachmentState is for per attached framebuffer
         // PipelineColorBlendStateCreateInfo is for global settings
         //
-        // TODO: expose this in RHI
-        // write through
-        std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments(
-            static_cast<Uint32>(Desc.ColorFormats.size()),
-            vk::PipelineColorBlendAttachmentState{
-                // .blendEnable = Desc.Blend.Attachments[0].BlendEnable,
-                .blendEnable    = vk::False,
-                .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments;
+        RHIBlendAttachments.reserve(Desc.ColorFormats.size());
+        for (size_t i = 0; i < Desc.ColorFormats.size(); ++i) {
+            const auto& Attachment = Desc.Blend.Attachments[i];
+            const auto ToVkBlendFactor = [](RHIBlendFactor F) -> vk::BlendFactor {
+                switch (F) {
+                case RHIBlendFactor::Zero:             return vk::BlendFactor::eZero;
+                case RHIBlendFactor::One:              return vk::BlendFactor::eOne;
+                case RHIBlendFactor::SrcColor:         return vk::BlendFactor::eSrcColor;
+                case RHIBlendFactor::OneMinusSrcColor: return vk::BlendFactor::eOneMinusSrcColor;
+                case RHIBlendFactor::DstColor:         return vk::BlendFactor::eDstColor;
+                case RHIBlendFactor::OneMinusDstColor: return vk::BlendFactor::eOneMinusDstColor;
+                case RHIBlendFactor::SrcAlpha:         return vk::BlendFactor::eSrcAlpha;
+                case RHIBlendFactor::OneMinusSrcAlpha: return vk::BlendFactor::eOneMinusSrcAlpha;
+                case RHIBlendFactor::DstAlpha:         return vk::BlendFactor::eDstAlpha;
+                case RHIBlendFactor::OneMinusDstAlpha: return vk::BlendFactor::eOneMinusDstAlpha;
+                }
+                return vk::BlendFactor::eZero;
+            };
+            const auto ToVkBlendOp = [](RHIBlendOp Op) -> vk::BlendOp {
+                switch (Op) {
+                case RHIBlendOp::Add:             return vk::BlendOp::eAdd;
+                case RHIBlendOp::Subtract:        return vk::BlendOp::eSubtract;
+                case RHIBlendOp::ReverseSubtract: return vk::BlendOp::eReverseSubtract;
+                case RHIBlendOp::Min:             return vk::BlendOp::eMin;
+                case RHIBlendOp::Max:             return vk::BlendOp::eMax;
+                }
+                return vk::BlendOp::eAdd;
+            };
+            RHIBlendAttachments.push_back(vk::PipelineColorBlendAttachmentState{
+                .blendEnable         = Attachment.BlendEnable ? vk::True : vk::False,
+                .srcColorBlendFactor = ToVkBlendFactor(Attachment.SrcColorBlendFactor),
+                .dstColorBlendFactor = ToVkBlendFactor(Attachment.DstColorBlendFactor),
+                .colorBlendOp        = ToVkBlendOp(Attachment.ColorBlendOp),
+                .srcAlphaBlendFactor = ToVkBlendFactor(Attachment.SrcAlphaBlendFactor),
+                .dstAlphaBlendFactor = ToVkBlendFactor(Attachment.DstAlphaBlendFactor),
+                .alphaBlendOp        = ToVkBlendOp(Attachment.AlphaBlendOp),
+                .colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                       vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
             });
-        // Alpha blending
-        // vk::PipelineColorBlendAttachmentState RHIBlendAttachment{
-        //     .blendEnable         = vk::True,
-        //     .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
-        //     .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-        //     .colorBlendOp        = vk::BlendOp::eAdd,
-        //     .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-        //     .dstAlphaBlendFactor = vk::BlendFactor::eZero,
-        //     .alphaBlendOp        = vk::BlendOp::eAdd,
-        //     .colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-        //     vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-        // };
+        }
         vk::PipelineColorBlendStateCreateInfo BlendCI{
             // set to True if we want bitwise op,
             // which will disable blending settings above
@@ -264,16 +283,16 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
              .renderPass          = nullptr},
             RenderingCI};
 
-        auto [PipelineResult, RHIPipeline] =
+        auto [PipelineResult, VkPipeline] =
             Context.GetDevice().createGraphicsPipeline(nullptr, PipelineChain.get<vk::GraphicsPipelineCreateInfo>());
         if (PipelineResult != vk::Result::eSuccess)
             return std::unexpected(
                 ErrorMessage(Format("Failed to create graphics pipeline: {}", vk::to_string(PipelineResult))));
 
-        Context.GetDebugUtils().SetObjectName(*RHIPipeline, Name);
+        Context.GetDebugUtils().SetObjectName(*VkPipeline, Name);
 
         auto Ret        = std::make_unique<VulkanGraphicsPipeline>(String(Name), Desc);
-        Ret->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
+        Ret->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
         Ret->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
         Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
         Ret->m_ColorFormats       = Desc.ColorFormats;
@@ -283,7 +302,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
 
     /// Return the native VkPipeline handle.
     [[nodiscard]] auto Get() const -> vk::Pipeline {
-        return *(*m_Pipeline);
+        return *(*m_VkPipeline);
     }
 
     [[nodiscard]] auto GetBindings() const -> std::span<const VulkanReflectedDescriptorBinding> {
@@ -308,11 +327,79 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     }
 
   private:
-    SPtr<vk::raii::Pipeline>                         m_Pipeline       = nullptr;
+    SPtr<vk::raii::Pipeline>                         m_VkPipeline       = nullptr;
     std::vector<VulkanReflectedDescriptorBinding>    m_Bindings       = {};
     Uint32                                    m_DynamicOffsetCount = 0;
     std::vector<RHIFormat>                    m_ColorFormats       = {};
     RHIFormat                                 m_DepthFormat        = RHIFormat::Unknown;
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VulkanComputePipeline — concrete Vulkan compute pipeline.
+// ═════════════════════════════════════════════════════════════════════════════
+
+class VulkanComputePipeline final : public RHIComputePipeline {
+  public:
+    explicit VulkanComputePipeline(String Name, const RHIComputePipelineDesc& Desc)
+        : RHIComputePipeline(std::move(Name), Desc.BindingSet) {}
+
+    ~VulkanComputePipeline() override = default;
+
+    VulkanComputePipeline(const VulkanComputePipeline&)                    = delete;
+    auto operator=(const VulkanComputePipeline&) -> VulkanComputePipeline& = delete;
+
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     StringView                   Name,
+                                     const RHIComputePipelineDesc& Desc)
+        -> std::expected<UPtr<VulkanComputePipeline>, ErrorMessage> {
+        auto* BindingSet = Desc.BindingSet.TryGet();
+        if (!BindingSet)
+            return std::unexpected(ErrorMessage("Compute pipeline requires a ready shader binding set"));
+        auto* VulkanBindingSet = static_cast<VulkanShaderBindingSet*>(BindingSet);
+
+        vk::raii::ShaderModule ShaderModule = nullptr;
+        {
+            vk::ShaderModuleCreateInfo ModuleCI{
+                .codeSize = Desc.Program.Code.size() * sizeof(Uint32),
+                .pCode    = Desc.Program.Code.data(),
+            };
+            auto [ModuleResult, Module] = Context.GetDevice().createShaderModule(ModuleCI);
+            if (ModuleResult != vk::Result::eSuccess)
+                return std::unexpected(
+                    ErrorMessage(Format("Failed to create compute shader module: {}", vk::to_string(ModuleResult))));
+            ShaderModule = std::move(Module);
+            Context.GetDebugUtils().SetObjectName(*ShaderModule, Name);
+        }
+
+        vk::PipelineShaderStageCreateInfo StageCI{
+            .stage  = vk::ShaderStageFlagBits::eCompute,
+            .module = *ShaderModule,
+            .pName  = Desc.Program.ComputeEntryPointName.c_str(),
+        };
+
+        vk::ComputePipelineCreateInfo PipelineCI{
+            .stage  = StageCI,
+            .layout = VulkanBindingSet->GetPipelineLayout(),
+        };
+
+        auto [PipelineResult, Pipeline] = Context.GetDevice().createComputePipeline(nullptr, PipelineCI);
+        if (PipelineResult != vk::Result::eSuccess)
+            return std::unexpected(
+                ErrorMessage(Format("Failed to create compute pipeline: {}", vk::to_string(PipelineResult))));
+
+        Context.GetDebugUtils().SetObjectName(*Pipeline, Name);
+
+        auto Ret        = std::make_unique<VulkanComputePipeline>(String(Name), Desc);
+        Ret->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
+        return Ret;
+    }
+
+    [[nodiscard]] auto Get() const -> vk::Pipeline {
+        return *(*m_VkPipeline);
+    }
+
+  private:
+    SPtr<vk::raii::Pipeline> m_VkPipeline = nullptr;
 };
 
 } // namespace SoulEngine

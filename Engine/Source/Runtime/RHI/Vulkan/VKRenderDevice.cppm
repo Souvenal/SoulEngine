@@ -159,6 +159,12 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(R.error().Append("BeginFrame: transient constant arena reset failed"));
         if (auto R = m_TransientShaderStorageArena.Reset(m_CurrentFrame); !R)
             return std::unexpected(R.error().Append("BeginFrame: transient shader storage arena reset failed"));
+        // Transient slices recycle per frame; drop last frame's buffer access
+        // states so every range starts untracked (the frame-slot fence already
+        // guarantees the previous occupant's GPU work has completed).
+        // 
+        // TODO: might be a issue when we need barrier for a non-transient buffer.
+        m_ResourceContext->GetBufferTracker().Reset();
 
         return {};
     }
@@ -401,6 +407,19 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         auto                      Resource = RHIRef<RHIGraphicsPipeline>::Create();
         UPtr<RHIGraphicsPipeline> Payload  = std::move(*Result);
+        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
+    }
+
+    [[nodiscard]] auto CreateComputePipeline(StringView Name, const RHIComputePipelineDesc& Desc)
+        -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> override {
+        auto Result = VulkanComputePipeline::Create(*m_ResourceContext, Name, Desc);
+        if (!Result)
+            return std::unexpected(Result.error());
+
+        auto                     Resource = RHIRef<RHIComputePipeline>::Create();
+        UPtr<RHIComputePipeline> Payload  = std::move(*Result);
         if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
             return std::unexpected(Publish.error());
         return Resource;
@@ -696,48 +715,14 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             if (!Pass)
                 return std::unexpected(ErrorMessage(
                     Format("Execute: pass {} is null", PassIndex)));
-            const auto& Pipeline = Pass->GetPipeline();
-            // Compute passes may carry no pipeline when they only record copy
-            // commands; dispatch work requires a compute pipeline (later stage).
-            const bool IsTransfer = Pass->GetType() == RHIPassType::Transfer &&
-                                    std::holds_alternative<std::monostate>(Pipeline);
-            if (!IsTransfer) {
-            const auto  PipelineState = std::visit(
-                [](const auto& PipelineRef) -> RHIRefState {
-                    using PipelineRefType = std::decay_t<decltype(PipelineRef)>;
-                    if constexpr (std::same_as<PipelineRefType, std::monostate>)
-                        return RHIRefState::Unknown;
-                    else
-                        return PipelineRef.GetState();
-                },
-                Pipeline);
-            if (PipelineState == RHIRefState::RhiCommitting || PipelineState == RHIRefState::GpuPending)
-                continue;
-            if (PipelineState == RHIRefState::Failed) {
-                const auto PipelineError = std::visit(
-                    [](const auto& PipelineRef) -> std::optional<ErrorMessage> {
-                        using PipelineRefType = std::decay_t<decltype(PipelineRef)>;
-                        if constexpr (std::same_as<PipelineRefType, std::monostate>)
-                            return std::nullopt;
-                        else
-                            return PipelineRef.GetError();
-                    },
-                    Pipeline);
-                if (PipelineError)
-                    return std::unexpected(PipelineError->Append(
-                        Format("Execute: pass {} pipeline creation failed", PassIndex)));
+            auto* Pipeline = Pass->GetPipeline();
+            // Transfer passes have no pipeline; all other passes must have one.
+            if (Pass->GetType() != RHIPassType::Transfer && !Pipeline)
                 return std::unexpected(ErrorMessage(
-                    Format("Execute: pass {} pipeline failed without an error", PassIndex)));
-            }
-            if (PipelineState != RHIRefState::Ready)
-                return std::unexpected(ErrorMessage(
-                    Format("Execute: pass {} has invalid pipeline state {}",
-                           PassIndex,
-                           magic_enum::enum_name(PipelineState))));
-            }
+                    Format("Execute: pass {} has no pipeline", Pass->GetName())));
             if (auto R = Pass->Record(); !R)
                 return std::unexpected(
-                    R.error().Append(Format("Execute: pass {} recording failed", PassIndex)));
+                    R.error().Append(Format("Execute: pass {} recording failed", Pass->GetName())));
 
             // Allocate one secondary for this ordered rendering or non-rendering scope.
             vk::CommandBufferAllocateInfo Alloc{
@@ -750,7 +735,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 return std::unexpected(ErrorMessage("Execute: failed to allocate secondary CB"));
                 m_ResourceContext->GetDebugUtils().SetObjectName(
                     *AllocResult.value[0],
-                Format("Internal/CommandBuffer/Secondary/Frame{}/Pass{}", m_CurrentFrame, PassIndex));
+                Format("Internal/CommandBuffer/Secondary/Frame{}/{}", m_CurrentFrame, Pass->GetName()));
             auto& SecBuf =
                 m_FrameContext[m_CurrentFrame].ScratchSecondaries.emplace_back(std::move(AllocResult.value[0]));
 
@@ -769,7 +754,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     ErrorMessage(Format("Execute: secondary CB begin failed: {}", vk::to_string(R))));
 
             {
-                auto                 ImageStateCopy = m_ResourceContext->GetImageTracker();
                 const auto RecordCommands = [&](auto& Visitor) -> std::expected<void, ErrorMessage> {
                     if (Visitor.GetError())
                         return std::unexpected(*Visitor.GetError());
@@ -780,43 +764,57 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     }
                     return {};
                 };
-                auto RecordResult = std::visit(
-                    [&](const auto& PipelineRef) -> std::expected<void, ErrorMessage> {
-                        using PipelineRefType = std::decay_t<decltype(PipelineRef)>;
-                        if constexpr (std::same_as<PipelineRefType, RHIRef<RHIGraphicsPipeline>>) {
-                            if (Pass->GetType() != RHIPassType::Graphics)
-                                return std::unexpected(
-                                    ErrorMessage("Execute: pass type does not match graphics pipeline"));
-                            const auto& GraphicsPass =
-                                static_cast<const IRHIGraphicsPass&>(*Pass);
-                            VulkanGraphicsCmdVisitor Visitor{
-                                static_cast<VulkanGraphicsPipeline&>(*PipelineRef.TryGet()),
-                                GraphicsPass.GetAttachments(),
-                                SecBuf,
-                                ImageStateCopy,
-                            };
-                            return RecordCommands(Visitor);
-                        } else if constexpr (std::same_as<PipelineRefType, RHIRef<RHIRayTracingPipeline>>) {
-                            if (Pass->GetType() != RHIPassType::RayTracing)
-                                return std::unexpected(
-                                    ErrorMessage("Execute: pass type does not match ray-tracing pipeline"));
-                            VulkanRayTracingCmdVisitor Visitor{
-                                static_cast<VulkanRayTracingPipeline&>(*PipelineRef.TryGet()),
-                                SecBuf,
-                                ImageStateCopy,
-                            };
-                            return RecordCommands(Visitor);
-                        } else {
-                            if (Pass->GetType() != RHIPassType::Transfer)
-                                return std::unexpected(ErrorMessage("Execute: pass has no pipeline"));
-                            VulkanTransferCmdVisitor Visitor{SecBuf, ImageStateCopy};
-                            return RecordCommands(Visitor);
-                        }
-                    },
-                    Pass->GetPipeline());
+
+                std::expected<void, ErrorMessage> RecordResult;
+                switch (Pass->GetType()) {
+                    case RHIPassType::Graphics: {
+                        const auto& GraphicsPass = static_cast<const IRHIGraphicsPass&>(*Pass);
+                        auto* GfxPipeline = static_cast<VulkanGraphicsPipeline*>(Pipeline);
+                        if (!GfxPipeline)
+                            return std::unexpected(ErrorMessage("Execute: graphics pass has no pipeline"));
+                        VulkanGraphicsCmdVisitor Visitor{
+                            *GfxPipeline,
+                            GraphicsPass.GetAttachments(),
+                            SecBuf,
+                            *m_ResourceContext,
+                        };
+                        RecordResult = RecordCommands(Visitor);
+                        break;
+                    }
+                    case RHIPassType::Compute: {
+                        auto* CompPipeline = static_cast<VulkanComputePipeline*>(Pipeline);
+                        if (!CompPipeline)
+                            return std::unexpected(ErrorMessage("Execute: compute pass has no pipeline"));
+                        VulkanComputeCmdVisitor Visitor{
+                            *CompPipeline,
+                            SecBuf,
+                            *m_ResourceContext,
+                        };
+                        RecordResult = RecordCommands(Visitor);
+                        break;
+                    }
+                    case RHIPassType::RayTracing: {
+                        auto* RtPipeline = static_cast<VulkanRayTracingPipeline*>(Pipeline);
+                        if (!RtPipeline)
+                            return std::unexpected(ErrorMessage("Execute: ray-tracing pass has no pipeline"));
+                        VulkanRayTracingCmdVisitor Visitor{
+                            *RtPipeline,
+                            SecBuf,
+                            *m_ResourceContext,
+                        };
+                        RecordResult = RecordCommands(Visitor);
+                        break;
+                    }
+                    case RHIPassType::Transfer: {
+                        VulkanTransferCmdVisitor Visitor{SecBuf, *m_ResourceContext};
+                        RecordResult = RecordCommands(Visitor);
+                        break;
+                    }
+                    default:
+                        return std::unexpected(ErrorMessage("Execute: unknown pass type"));
+                }
                 if (!RecordResult)
                     return std::unexpected(RecordResult.error());
-                m_ResourceContext->GetImageTracker() = std::move(ImageStateCopy);
             }
             if (auto R = SecBuf.end(); R != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage(Format("Execute: secondary CB end failed: {}", vk::to_string(R))));
@@ -828,11 +826,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     const auto& Attachments = GraphicsPass.GetAttachments();
                     if (Attachments.ColorAttachments.size() != 1)
                         return std::unexpected(ErrorMessage(Format(
-                            "Execute: pass {} present output requires exactly one color attachment", PassIndex)));
+                            "Execute: pass {} present output requires exactly one color attachment", Pass->GetName())));
                     auto* PresentSource = Attachments.ColorAttachments.front().TextureRef.TryGet();
                     if (!PresentSource)
                         return std::unexpected(ErrorMessage(Format(
-                            "Execute: pass {} present output attachment is not ready", PassIndex)));
+                            "Execute: pass {} present output attachment is not ready", Pass->GetName())));
                     RecordPresentBlit(Primary, PresentSource);
                 }
             }

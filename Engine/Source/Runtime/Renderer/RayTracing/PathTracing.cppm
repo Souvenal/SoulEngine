@@ -31,7 +31,7 @@ struct PathTracingPassInput {
 class PathTracingPass final : public IRHIRayTracingPass {
   public:
     explicit PathTracingPass(RHIRef<RHIRayTracingPipeline> Pipeline)
-        : IRHIRayTracingPass(std::move(Pipeline)) {}
+        : IRHIRayTracingPass("PathTracingPass", std::move(Pipeline)) {}
 
     auto SetInput(PathTracingPassInput Input) -> void {
         m_Input = std::move(Input);
@@ -41,16 +41,15 @@ class PathTracingPass final : public IRHIRayTracingPass {
         m_Commands.clear();
         auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet(m_Pipeline) || !Input.Tlas || !Input.Output || !Input.Accumulation || !Input.PrimaryNormal ||
-            !Input.PrimaryEntityId || !Input.LinearSampler || !Input.AnisotropicSampler || !Input.Textures ||
+        if (!GetShaderBindingSet() || !Input.Tlas || !Input.Output || !Input.Accumulation || !Input.PrimaryNormal ||
+            !Input.PrimaryEntityId || !Input.LinearSampler || !Input.Textures ||
             !Input.InstancesBuffer || !Input.GeometryBuffer || !Input.MaterialBuffer || !Input.LightBuffer ||
             !Input.FrameBuffer || !Input.ViewBuffer || Input.AccelerationInstances.empty() || Input.Width == 0 ||
             Input.Height == 0)
             return std::unexpected(ErrorMessage("Path tracing pass resources are not ready"));
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true},
-                RHIShaderBindingRequest{"g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true},
+                RHIShaderBindingRequest{"g_rayTracing.linearSampler", std::move(Input.LinearSampler), true},
             }); !R)
             return std::unexpected(R.error());
         if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
