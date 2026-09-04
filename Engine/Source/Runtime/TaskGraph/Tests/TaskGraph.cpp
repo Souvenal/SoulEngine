@@ -3,9 +3,9 @@
 
 #include <gtest/gtest.h>
 
+import std;
 import TaskGraph;
 import Core;
-import std;
 
 using namespace SoulEngine;
 

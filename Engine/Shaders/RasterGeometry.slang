@@ -66,8 +66,9 @@ uint loadUint32(uint64_t address) {
 }
 
 [shader("vertex")]
-VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceIndex : SV_InstanceID) {
+VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint startInstance : SV_StartInstanceLocation) {
     VSOutput output;
+    uint instanceIndex = instanceID + startInstance;
     InstanceData instanceData = g_rasterDraw.instances[instanceIndex];
     GeometryRecord geometry = g_rasterDraw.geometries[instanceData.geometryId];
     uint localVertexIndex = loadUint32(geometry.indexAddress + uint64_t(vertexID) * uint64_t(4));

@@ -1,14 +1,4 @@
 entities:
-  - name: Main Camera
-    components:
-      transform:
-        translation: [1.25, 1.25, 2.0]
-        rotation: [28.0, -32.0, 0.0]
-        scale: [1.0, 1.0, 1.0]
-      camera:
-        fov_degrees: 60.0
-        near_plane: 0.1
-        far_plane: 100.0
   - name: Teapot Cluster
     components:
       transform:
@@ -74,7 +64,7 @@ entities:
     components:
       transform:
         translation: [0.0, 0.0, 0.0]
-        rotation: [-45.0, 25.0, 0.0]
+        rotation: [-47.81, 17.39, -18.25]
         scale: [1.0, 1.0, 1.0]
       light:
         type: directional

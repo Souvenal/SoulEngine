@@ -234,14 +234,16 @@ struct MaterialRecord {
             hlslpp::float3{1.0f, 1.0f, 1.0f}};
 
         // Texture handles use {descriptor slot, sampler slot}; {0, 0} is the
-        // null handle, and RHIRefArray reserves descriptor slot 0.
-        std::array<Uint32, 2> BaseColorTexture         = {};
-        std::array<Uint32, 2> NormalTexture            = {};
-        std::array<Uint32, 2> MetallicRoughnessTexture = {};
-        std::array<Uint32, 2> MetallicTexture          = {};
-        std::array<Uint32, 2> RoughnessTexture         = {};
-        std::array<Uint32, 2> OcclusionTexture         = {};
-        std::array<Uint32, 2> EmissiveTexture          = {};
+        // null handle, and RHIRefArray reserves descriptor slot 0. std430
+        // aligns uint2 to 8 bytes, so every handle must be 8-aligned to match
+        // the Slang-side MaterialRecord layout.
+        alignas(8) std::array<Uint32, 2> BaseColorTexture         = {};
+        alignas(8) std::array<Uint32, 2> NormalTexture            = {};
+        alignas(8) std::array<Uint32, 2> MetallicRoughnessTexture = {};
+        alignas(8) std::array<Uint32, 2> MetallicTexture          = {};
+        alignas(8) std::array<Uint32, 2> RoughnessTexture         = {};
+        alignas(8) std::array<Uint32, 2> OcclusionTexture         = {};
+        alignas(8) std::array<Uint32, 2> EmissiveTexture          = {};
     };
 
     [[nodiscard]] auto BuildGpuData(const RHIRefArray<RHISampledTexture>& TextureArray) const
@@ -325,7 +327,14 @@ static_assert(offsetof(MaterialRecord::GpuData, Opacity) == 92);
 static_assert(offsetof(MaterialRecord::GpuData, BaseColorFactor) == 144);
 static_assert(offsetof(MaterialRecord::GpuData, SheenColorFactor) == 176);
 static_assert(offsetof(MaterialRecord::GpuData, VolumeAttenuationColor) == 224);
-static_assert(offsetof(MaterialRecord::GpuData, BaseColorTexture) == 236);
-static_assert(offsetof(MaterialRecord::GpuData, EmissiveTexture) == 284);
+// Handle offsets mirror the Slang MaterialRecord std430 layout (uint2 aligns
+// to 8, so the first handle starts at 240, not 236).
+static_assert(offsetof(MaterialRecord::GpuData, BaseColorTexture) == 240);
+static_assert(offsetof(MaterialRecord::GpuData, NormalTexture) == 248);
+static_assert(offsetof(MaterialRecord::GpuData, MetallicRoughnessTexture) == 256);
+static_assert(offsetof(MaterialRecord::GpuData, MetallicTexture) == 264);
+static_assert(offsetof(MaterialRecord::GpuData, RoughnessTexture) == 272);
+static_assert(offsetof(MaterialRecord::GpuData, OcclusionTexture) == 280);
+static_assert(offsetof(MaterialRecord::GpuData, EmissiveTexture) == 288);
 
 } // namespace SoulEngine

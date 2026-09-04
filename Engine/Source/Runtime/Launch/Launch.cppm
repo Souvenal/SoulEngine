@@ -40,7 +40,7 @@ struct FrameSlot {
     EditorSnapshot          EditorData;
     SPtr<IRenderer>         Renderer = nullptr;
     RenderResult            RenderPacket;
-    ImDrawDataSnapshot      ImGuiSnapshot;
+    UPtr<ImDrawDataSnapshot> ImGuiSnapshot = nullptr;
     // Zero means this slot has not submitted GPU work yet, so its first
     // RenderPacket does not need a timeline wait before replacement.
     RHIFrameCompletion      Completion = {};
@@ -262,9 +262,14 @@ class EngineLoop {
             // carry the producer's ordinal and execute when the consumer
             // reaches the same pipeline position.
             TaskGraph::Get().IncreaseThreadFrameIndex();
+
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
-            m_Editor.BeginFrame(Slot.ImGuiSnapshot);
+            //
+            // Every published render packet owns its snapshot until GPU
+            // completion, so the next game tick must render into a fresh one.
+            Slot.ImGuiSnapshot = std::make_unique<ImDrawDataSnapshot>();
+            m_Editor.Tick(Delta, *Slot.ImGuiSnapshot);
 
             auto* CurrentApplication = GetCurrentApplication();
             if (!CurrentApplication) {
@@ -279,7 +284,6 @@ class EngineLoop {
                 break;
             }
             auto& AppScene = CurrentApplication->GetScene();
-            m_Editor.Tick(Delta);
             AppScene.UpdateTime();
             AppScene.Tick(Delta);
             Slot.GameData = AppScene.BuildSnapshot();
@@ -325,8 +329,11 @@ class EngineLoop {
                 break;
             }
 
-            // Editor UI overlays the scene output on the same render thread.
-            m_Editor.AttachPresentationOverlay(RenderResult->CmdList, Slot.ImGuiSnapshot);
+            // Move the UI snapshot into the pending render result before
+            // publishing RenderReady. The shared object remains alive through
+            // GPU completion even if this slot is reused immediately.
+            RenderResult->ImGuiSnapshot = std::move(Slot.ImGuiSnapshot);
+            Slot.ImGuiSnapshot.reset();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
@@ -363,6 +370,11 @@ class EngineLoop {
             {
                 std::lock_guard Lock(Slot.Mutex);
                 Slot.RenderPacket = std::move(*RenderResult);
+                // Attach after the move so the borrowed pointer names the
+                // packet-owned snapshot retained through GPU completion.
+                if (Slot.RenderPacket.ImGuiSnapshot)
+                    m_Editor.AttachPresentationOverlay(Slot.RenderPacket.CmdList,
+                                                        *Slot.RenderPacket.ImGuiSnapshot);
                 // The newly published packet is now pending RHIThread
                 // consumption. RHIThread waits on this false value.
                 Slot.RhiConsumedRenderPacket = false;

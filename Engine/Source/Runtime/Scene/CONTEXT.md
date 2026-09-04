@@ -28,15 +28,16 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **Scene Replacement** | V1 loading constructs a complete temporary Runtime World and atomically replaces the current Scene only after all structural data is valid. It does not merge or patch an existing Scene. |
 | **Runtime State** | Ephemeral state created while a Scene runs. It is not represented in a Scene Document. Component-private Runtime State may live beside that component's Authoring State; only shared or renderer-owned state must live elsewhere. |
 | **World Coordinate System** | The Scene uses a right-handed, Y-up coordinate system. Asset-format coordinate differences are converted at an asset-import boundary. |
-| **Transform** | `Core:ECS.Transform` component containing local translation, rotation, and scale data. Scene Documents express it as `components.transform`, with rotation as Euler angles in degrees applied in local X → Y → Z order; the runtime adds a default TransformComponent when omitted and derives its world matrix through the Scene Hierarchy. |
+| **Transform** | `Core:ECS.Transform` component containing local translation, rotation, and scale data. Scene Documents express it as `components.transform`, with rotation as Euler angles in degrees applied in X → Y → Z order about fixed parent-space axes; the runtime adds a default TransformComponent when omitted and derives its world matrix through the Scene Hierarchy. |
 | **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views, value-semantic geometry/material `InstanceRecord` values, and optional editor selection input. |
 | **RenderPixelCoordinate** | A physical framebuffer pixel coordinate carried as optional editor selection input. The renderer post-process reads the EntityId G-buffer at this coordinate to determine the selected ID. |
 | **GBuffer** | Camera-owned ref-backed render-target set containing albedo, normal, material ID, entity ID, and one shared depth target. The depth target is both the geometry-pass depth attachment and the deferred lighting sampled depth resource. |
 | **CameraRenderTargets** | Camera-owned output bundle containing the GBuffer and the final SceneColorRT render target. Post-process passes load SceneColorRT so they can overlay results without replacing the lighting image. |
 | **CameraViewRecord** | One immutable camera/view record defined with the Camera component family: view-projection data plus ref-backed CameraRenderTargets. Renderers allocate their own transient constant buffers while recording the frame. |
 | **GeometryRecord** | Scene-owned imported geometry record containing CPU vertex metadata, local bounding sphere, ref-backed position, normal, tangent, UV, and index buffers, and a `GpuData` shader-address ABI constructed by `BuildGpuData()`. It has no material identity. Bitangents are not stored; consumers derive them from normal and tangent. |
-| **SubMesh** | One imported submesh name, geometry handle, and default imported `MaterialHandle`. It preserves the material binding at submesh scope rather than in GeometryRecord and is available for editor hierarchy display. |
-| **MeshRecord** | Scene-local cached imported asset. It owns a normalized absolute asset path and SubMesh values shared by every entity that instances that mesh. |
+| **SubMesh** | One imported `aiMesh` name, geometry handle, and default imported `MaterialHandle`. It preserves the material binding at imported-geometry scope rather than in GeometryRecord. |
+| **MeshAssetNode** | One static node from an imported asset hierarchy. It stores its local transform, ordered child nodes, and ordered references to `SubMesh` values; multiple nodes may reference the same SubMesh. |
+| **MeshRecord** | Scene-local cached imported asset. It owns a normalized absolute asset path, deduplicated SubMesh values, and an immutable MeshAssetNode tree shared by every entity that instances that mesh. |
 | **InstanceRecord** | Value-semantic SceneSnapshot record for one geometry/material instance. It carries the entity ID, GeometryRecord handle, selected MaterialHandle, and derived world transform. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
@@ -52,11 +53,11 @@ transforms.
 at the end of the GameLoop. The renderer consumes `SceneSnapshot` each frame
 via `IRenderer::Render()`. MeshSystem owns Scene-local MeshRecord,
 GeometryRecord, and MaterialRecord caches. MeshSystem expands each
-MeshComponent into one InstanceRecord per SubMesh, pairing shared
-GeometryRecord and MaterialHandle values with the entity-derived world
-transform. Scene-authored material-name override resolution remains a later
-migration step. Each renderer resolves the material handle into its own
-draw-instance representation.
+MeshComponent into one InstanceRecord per asset-node SubMesh reference, pairing
+shared GeometryRecord and MaterialHandle values with the accumulated asset-node
+transform followed by the entity-derived world transform. Scene-authored
+material-name override resolution remains a later migration step. Each renderer
+resolves the material handle into its own draw-instance representation.
 When a Scene record is uploadable, it owns the explicit GPU ABI mirror and
 builder beside its RHI resource fields. The renderer selects and deduplicates
 records for a frame, but does not redefine their address layout.

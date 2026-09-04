@@ -378,8 +378,15 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
             return std::unexpected(ErrorMessage("Failed to acquire bindless descriptor set"));
 
         std::vector<vk::WriteDescriptorSet> Writes;
-        for (const auto& [Element, TextureRef] : m_BindlessTextures->GetChangedElements()) {
-            const auto* Texture = TextureRef.TryGet();
+        // Append cycles retain only three frames and textures are still
+        // pending on their append frame, so GetChangedElements() alone loses
+        // late-ready uploads permanently. Re-scan the full array on every
+        // bind; rewriting ready descriptors is idempotent and self-heals once
+        // an upload completes.
+        const auto ElementCount = m_BindlessTextures->GetSize();
+        for (Uint32 Element = RHIRefArray<RHISampledTexture>::FirstResourceSlot; Element < ElementCount;
+             ++Element) {
+            const auto* Texture = m_BindlessTextures->GetElement(Element).TryGet();
             if (!Texture)
                 continue;
             Writes.push_back(static_cast<const VulkanSampledTexture*>(Texture)->GetWriteDescriptorSet(

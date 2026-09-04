@@ -139,7 +139,8 @@ class Editor {
     }
 
     /// @brief Update editor ECS systems for one frame.
-    auto Tick(Float32 DeltaTime) -> void {
+    auto Tick(Float32 DeltaTime, ImDrawDataSnapshot& Snapshot) -> void {
+        BeginFrame(Snapshot);
         m_EditorWorld.Tick(DeltaTime);
     }
 
@@ -159,7 +160,6 @@ class Editor {
         RegisterAllUI();
     }
 
-  public:
     /// @brief Main-thread entry point: build the ImGui frame for this game
     /// tick and publish a draw-data snapshot for the render thread.
     auto BeginFrame(ImDrawDataSnapshot& Snapshot) -> void {
@@ -211,6 +211,7 @@ class Editor {
         Snapshot.SnapUsingSwap(DrawData, ImGui::GetTime());
     }
 
+  public:
     /// @brief Render-thread entry point: consume the latest UI frame snapshot
     /// and append its draw pass to the command list. Skips silently until a
     /// frame has been published.
