@@ -45,6 +45,14 @@ struct GraphicsCompileDesc {
     std::span<const Path> IncludeDirs = {};
 };
 
+/// @brief Descriptor for a compute-pipeline shader compile request.
+struct ComputeCompileDesc {
+    ShaderEntry Compute = {};
+
+    /// Additional include search directories.
+    std::span<const Path> IncludeDirs = {};
+};
+
 /// @brief One logical ray-tracing hit group compile request.
 struct RayTracingHitGroupCompileDesc {
     ShaderRayTracingHitGroupType Type         = ShaderRayTracingHitGroupType::Triangles;
@@ -81,6 +89,10 @@ class IShaderBackend {
     /// @brief Compile and reflect a graphics pipeline shader combination.
     [[nodiscard]] virtual auto CompileGraphics(const GraphicsCompileDesc& Desc)
         -> std::expected<ShaderGraphicsProgram, ErrorMessage> = 0;
+
+    /// @brief Compile and reflect a compute pipeline shader.
+    [[nodiscard]] virtual auto CompileCompute(const ComputeCompileDesc& Desc)
+        -> std::expected<ShaderComputeProgram, ErrorMessage> = 0;
 
     /// @brief Compile and reflect one linked ray-tracing shader program.
     [[nodiscard]] virtual auto CompileRayTracing(const RayTracingCompileDesc& Desc)

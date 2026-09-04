@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:Raster.GeometryPass;
+export module Renderer:RasterPasses.GeometryPass;
 
 import Core;
 import RHI;
@@ -34,7 +34,7 @@ struct GeometryPassInput {
 class GeometryPass final : public IRHIGraphicsPass {
   public:
     explicit GeometryPass(RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(std::move(Pipeline)) {}
+        : IRHIGraphicsPass("GeometryPass", std::move(Pipeline)) {}
 
     auto SetInput(GeometryPassInput Input) -> void {
         m_Input = std::move(Input);
@@ -45,7 +45,7 @@ class GeometryPass final : public IRHIGraphicsPass {
         m_Attachments = {};
         auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet(m_Pipeline) || !Input.Albedo || !Input.Normal || !Input.MaterialId || !Input.EntityId ||
+        if (!GetShaderBindingSet() || !Input.Albedo || !Input.Normal || !Input.MaterialId || !Input.EntityId ||
             !Input.Depth || !Input.LinearSampler || !Input.AnisotropicSampler || !Input.Textures ||
             !Input.LightBuffer || !Input.FrameBuffer || !Input.ViewBuffer || !Input.InstanceBuffer ||
             !Input.GeometryBuffer || !Input.MaterialBuffer || !Input.IndirectBuffer || Input.DrawCount == 0)
@@ -77,18 +77,14 @@ class GeometryPass final : public IRHIGraphicsPass {
                 RHIShaderBindingRequest{"g_rasterFrameView.lights", std::move(Input.LightBuffer), true},
                 RHIShaderBindingRequest{"g_rasterFrameView.frame", std::move(Input.FrameBuffer), true},
                 RHIShaderBindingRequest{"g_rasterFrameView.view", std::move(Input.ViewBuffer), true},
-            }); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_samplers.uSamplerLinear", std::move(Input.LinearSampler), true},
-                RHIShaderBindingRequest{"g_samplers.uSamplerAniso", std::move(Input.AnisotropicSampler), true},
+                RHIShaderBindingRequest{"g_rasterFrameView.linearSampler", std::move(Input.LinearSampler), true},
             }); !R)
             return std::unexpected(R.error());
         if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
             return std::unexpected(R.error());
         if (auto R = BindResources(std::array{
                 RHIShaderBindingRequest{"g_rasterDraw.instances", std::move(Input.InstanceBuffer), true},
-                RHIShaderBindingRequest{"g_rasterDraw.geometries", std::move(Input.GeometryBuffer), true},
+                RHIShaderBindingRequest{"g_rasterDraw.geometryTable.records", std::move(Input.GeometryBuffer), true},
                 RHIShaderBindingRequest{"g_rasterDraw.materials", std::move(Input.MaterialBuffer), true},
             }); !R)
             return std::unexpected(R.error());

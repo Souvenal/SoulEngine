@@ -23,28 +23,39 @@ function test_module(module_name, opt)
     local packages = opt.packages or opt.additional_packages or {}
     table.insert(packages, "gtest")
     local tests_dir = path.absolute(path.join(os.scriptdir(), "Tests"))
+    local exclude_patterns = opt.exclude_tests or {}
     for _, testfile in ipairs(os.files("Tests/**.cpp")) do
-        local test_target_name = "TestsFor" .. module_name .. "_" .. path.basename(testfile)
-        target(test_target_name)
-            set_kind("binary")
-            set_default(false)
-            add_deps(table.unpack(deps))
-            add_packages(table.unpack(packages))
-            -- gtest[main] supplies gmock_main. Xmake places static libraries before
-            -- test objects on MSVC, so force-link that archive instead of adding a project-local main.
-            if is_plat("windows") then
-                add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+        local basename = path.basename(testfile)
+        local excluded = false
+        for _, pattern in ipairs(exclude_patterns) do
+            if basename:match(pattern) then
+                excluded = true
+                break
             end
-            if opt.rpath_packages then
-                add_package_rpath(opt.rpath_packages)
-            end
-            add_files(testfile)
-            add_tests("default", {
-                group = module_name,
-                runenvs = {
-                    SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
-                }
-            })
+        end
+        if not excluded then
+            local test_target_name = "TestsFor" .. module_name .. "_" .. basename
+            target(test_target_name)
+                set_kind("binary")
+                set_default(false)
+                add_deps(table.unpack(deps))
+                add_packages(table.unpack(packages))
+                -- gtest[main] supplies gmock_main. Xmake places static libraries before
+                -- test objects on MSVC, so force-link that archive instead of adding a project-local main.
+                if is_plat("windows") then
+                    add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                end
+                if opt.rpath_packages then
+                    add_package_rpath(opt.rpath_packages)
+                end
+                add_files(testfile)
+                add_tests("default", {
+                    group = module_name,
+                    runenvs = {
+                        SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
+                    }
+                })
+        end
     end
 end
 

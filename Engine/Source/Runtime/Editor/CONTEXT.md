@@ -10,11 +10,13 @@ UI abstraction layer.
 | Term | Definition |
 |------|------------|
 | **Editor** | Directly owned by `EngineLoop`; owns the ImGui context, `EditorWorld`, WIS platform backend, the UI panel registry, and GPU resources for rendering ImGui draw data through the RHI command list. `Initialize()` establishes the ImGui context and UI panels; `EditorWorld` owns editor-only ECS state; `BindPresentation()` installs the platform backend and requests GPU resources. |
-| **EditorWorld** | Editor-owned ECS world containing editor-only entities, systems, dispatcher state, and the viewport camera. It is isolated from the runtime Scene registry. It subscribes to window framebuffer events and translates them to its local camera resize events. |
+| **EditorWorld** | Editor-owned ECS world containing editor-only entities, systems, dispatcher state, and the viewport camera. It is isolated from the runtime Scene registry. It subscribes to window framebuffer events and translates them to `EditorCameraResizeEvent` events handled by `EditorCameraSystem`. |
 | **UIDrawFrame** | Self-owning deep copy of one frame of ImGui draw data. Move-only: `Data.CmdLists` points into its own `Lists` storage. |
 | **SnapshotDrawData** | Deep-copies a live `ImDrawData` into a `UIDrawFrame`. Must run on the ImGui thread before the next `NewFrame()`. |
 | **UIPanel / UIPanelCallback** | One registered debug/editor panel: a name plus an ImGui immediate-mode callback invoked in registration order during `BuildFrame()`. |
-| **Selected render pixel** | The latest editor scene-view pixel chosen by the user. It is copied into the immutable SceneSnapshot and consumed by Renderer post-processing to identify the selected EntityId in the G-buffer. |
+| **EditorCameraComponent** | Editor-only camera component containing camera parameters, editor viewport dimensions, persistent `EditorCameraRenderTargets`, picking readback state, and selected-entity state. |
+| **EditorCameraRenderTargets** | Editor-camera-owned persistent bundle containing generic camera G-buffer/SceneColor outputs plus the R8_UNORM selection mask. The bundle is recreated with the editor camera extent and carried by `EditorViewRecord`. |
+| **Selected render pixel** | The latest editor scene-view pixel chosen by the user. It is copied into the immutable `EditorSnapshot` and consumed by Renderer post-processing to identify the selected EntityId in the G-buffer. |
 
 ## Threading
 

@@ -4,6 +4,7 @@ export module RHI:Pass;
 
 import Core;
 import :Command;
+import :Pipeline;
 
 export import std;
 
@@ -20,7 +21,7 @@ enum class RHIPassType : Uint8 {
 /// @brief Renderer-independent pass builder and final RHI execution packet.
 class IRHIPass {
   public:
-    IRHIPass()                                             = default;
+    explicit IRHIPass(String Name) : m_Name(std::move(Name)) {}
     IRHIPass(const IRHIPass&)                              = delete;
     auto operator=(const IRHIPass&) -> IRHIPass&           = delete;
     IRHIPass(IRHIPass&&)                                   = default;
@@ -30,21 +31,22 @@ class IRHIPass {
     [[nodiscard]] virtual auto Record() -> std::expected<void, ErrorMessage> = 0;
     [[nodiscard]] virtual auto GetType() const noexcept -> RHIPassType       = 0;
 
-    [[nodiscard]] auto GetPipeline() const noexcept -> const RHIPipeline& {
-        return m_Pipeline;
+    [[nodiscard]] auto GetName() const noexcept -> StringView {
+        return m_Name;
     }
+
+    /// Return the pipeline as a base pointer. nullptr for transfer passes.
+    [[nodiscard]] virtual auto GetPipeline() const noexcept -> RHIPipeline* = 0;
 
     [[nodiscard]] auto GetCommands() const noexcept -> std::span<const RHICommand> {
         return m_Commands;
     }
 
   protected:
-    explicit IRHIPass(RHIPipeline Pipeline) : m_Pipeline(std::move(Pipeline)) {}
-
     /// Binds the sampled-image array used by the pass pipeline's bindless space.
     [[nodiscard]] auto BindBindlessResource(RHIRefArray<RHISampledTexture> Resource)
         -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet(m_Pipeline);
+        auto* BindingSet = GetShaderBindingSet();
         if (!BindingSet)
             return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
         return BindingSet->BindBindlessResource(std::move(Resource));
@@ -52,7 +54,7 @@ class IRHIPass {
 
     [[nodiscard]] auto BindResources(std::span<const RHIShaderBindingRequest> Resources)
         -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet(m_Pipeline);
+        auto* BindingSet = GetShaderBindingSet();
         if (!BindingSet)
             return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
         return BindingSet->BindResources(Resources);
@@ -60,23 +62,34 @@ class IRHIPass {
 
     template <typename T>
     [[nodiscard]] auto PushConstants(Uint32 Offset, const T& Data) -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet(m_Pipeline);
+        auto* BindingSet = GetShaderBindingSet();
         if (!BindingSet)
             return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
         return BindingSet->PushConstants(Offset, Data);
     }
 
-    RHIPipeline             m_Pipeline = {};
+    [[nodiscard]] auto GetShaderBindingSet() const -> RHIShaderBindingSet* {
+        auto* Pipeline = GetPipeline();
+        if (!Pipeline)
+            return nullptr;
+        return Pipeline->GetShaderBindingSet().TryGet();
+    }
+
+    String                 m_Name     = {};
     std::vector<RHICommand> m_Commands = {};
 };
 
 class IRHIGraphicsPass : public IRHIPass {
   public:
-    explicit IRHIGraphicsPass(RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIPass(RHIPipeline{std::move(Pipeline)}) {}
+    explicit IRHIGraphicsPass(String Name, RHIRef<RHIGraphicsPipeline> Pipeline)
+        : IRHIPass(std::move(Name)), m_Pipeline(std::move(Pipeline)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Graphics;
+    }
+
+    [[nodiscard]] auto GetPipeline() const noexcept -> RHIPipeline* override {
+        return m_Pipeline.TryGet();
     }
 
     [[nodiscard]] auto GetAttachments() const noexcept -> const RHIGraphicsAttachments& {
@@ -140,26 +153,51 @@ class IRHIGraphicsPass : public IRHIPass {
 
     RHIGraphicsAttachments m_Attachments = {};
     bool                   m_PresentOutput = false;
+
+  private:
+    RHIRef<RHIGraphicsPipeline> m_Pipeline = nullptr;
 };
 
 class IRHIComputePass : public IRHIPass {
   public:
     /// A compute pass may carry an empty pipeline until dispatch commands are
     /// added with the compute pipeline stage.
-    explicit IRHIComputePass(RHIPipeline Pipeline = {}) : IRHIPass(std::move(Pipeline)) {}
+    explicit IRHIComputePass(String Name, RHIRef<RHIComputePipeline> Pipeline = nullptr)
+        : IRHIPass(std::move(Name)), m_Pipeline(std::move(Pipeline)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Compute;
     }
 
+    [[nodiscard]] auto GetPipeline() const noexcept -> RHIPipeline* override {
+        return m_Pipeline.TryGet();
+    }
+
+  protected:
+    auto Dispatch(Uint32 GroupCountX, Uint32 GroupCountY = 1, Uint32 GroupCountZ = 1) -> void {
+        if (GroupCountX == 0)
+            return;
+        m_Commands.emplace_back(RHIDispatchCmd{
+            .GroupCountX = GroupCountX,
+            .GroupCountY = GroupCountY,
+            .GroupCountZ = GroupCountZ,
+        });
+    }
+
+  private:
+    RHIRef<RHIComputePipeline> m_Pipeline = nullptr;
 };
 
 class IRHITransferPass : public IRHIPass {
   public:
-    IRHITransferPass() : IRHIPass(RHIPipeline{}) {}
+    explicit IRHITransferPass(String Name) : IRHIPass(std::move(Name)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Transfer;
+    }
+
+    [[nodiscard]] auto GetPipeline() const noexcept -> RHIPipeline* override {
+        return nullptr;
     }
 
   protected:
@@ -184,11 +222,15 @@ class IRHITransferPass : public IRHIPass {
 
 class IRHIRayTracingPass : public IRHIPass {
   public:
-    explicit IRHIRayTracingPass(RHIRef<RHIRayTracingPipeline> Pipeline)
-        : IRHIPass(RHIPipeline{std::move(Pipeline)}) {}
+    explicit IRHIRayTracingPass(String Name, RHIRef<RHIRayTracingPipeline> Pipeline)
+        : IRHIPass(std::move(Name)), m_Pipeline(std::move(Pipeline)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::RayTracing;
+    }
+
+    [[nodiscard]] auto GetPipeline() const noexcept -> RHIPipeline* override {
+        return m_Pipeline.TryGet();
     }
 
   protected:
@@ -212,6 +254,9 @@ class IRHIRayTracingPass : public IRHIPass {
             .Depth = Depth,
         });
     }
+
+  private:
+    RHIRef<RHIRayTracingPipeline> m_Pipeline = nullptr;
 };
 
 /// @brief Complete frame packet transferred from RenderLoop to the RHI thread.

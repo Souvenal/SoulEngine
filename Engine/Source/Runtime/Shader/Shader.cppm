@@ -139,6 +139,13 @@ struct ShaderGraphicsProgram {
     ShaderReflection    Reflection             = {};
 };
 
+/// @brief Compiled shader artifact for one compute pipeline.
+struct ShaderComputeProgram {
+    std::vector<Uint32> Code                 = {};
+    String              ComputeEntryPointName = {};
+    ShaderReflection    Reflection            = {};
+};
+
 /// @brief Logical category of one ray-tracing hit group.
 enum class ShaderRayTracingHitGroupType : Uint8 {
     Unknown    = 0,

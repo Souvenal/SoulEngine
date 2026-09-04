@@ -13,7 +13,7 @@ target("Editor")
     -- public: consumers (Launch -> SoulEngine.exe) must link the imgui archive.
     add_packages("imgui", "imgui-club", {public = true})
 
-    add_files("Editor.cppm", "EditorWorld.cppm", "MainMenu.cppm", "UIManager.cppm", "UIPanels.cppm")
+    add_files("**.cppm|EditorTypes.cppm")
 
 test_module("Editor", {
     additional_deps = {"Editor"},

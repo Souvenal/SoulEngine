@@ -1,7 +1,8 @@
-import Pbr;
-import Material;
-import GBuffer;
-import Common;
+import Common.All;
+import Common.Material;
+import Common.Pbr;
+
+module RayTracing;
 
 static const float kRayEpsilon = 0.001;
 static const float kRayMaxDistance = 10000.0;
@@ -53,6 +54,7 @@ public struct RayTracingResources {
     public RWTexture2D<uint> primaryEntityId;
     public ConstantBuffer<RayTracingFrameData> frame;
     public ConstantBuffer<ViewData>  view;
+    public SamplerState              linearSampler;
     public StructuredBuffer<MaterialRecord> materials;
     public StructuredBuffer<LightData> lights;
     public StructuredBuffer<RayTracingInstanceData> instances;
@@ -190,7 +192,7 @@ void rayGenMain() {
         if (dot(normal, -ray.Direction) < 0.0)
             normal = -normal;
         MaterialSurface surface = g_rayTracing.materials[payload.materialIndex].resolveSurface(
-            payload.uv, normal, payload.tangent);
+            payload.uv, normal, payload.tangent, g_rayTracing.linearSampler);
         normal = surface.normal;
         float3 viewDirection = -ray.Direction;
         radiance += throughput * surface.emissive;

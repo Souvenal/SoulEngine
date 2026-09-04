@@ -39,6 +39,7 @@ class ReflectionTest : public ::testing::Test {
             "ReflectionPushConstantsAndResources.slang",
             "ReflectionExplicitDescriptorSet.slang",
             "ReflectionRuntimeParameterBlock.slang",
+            "ReflectionStructResourceField.slang",
             "ReflectionNestedParameterBlock.slang",
         };
 
@@ -255,6 +256,43 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     EXPECT_EQ(It->BindingIndex, 0U);
     EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
 	EXPECT_EQ(It->ArrayCount, kShaderReflectionArrayUnboundedSize);
+}
+
+TEST_F(ReflectionTest, StructResourceFieldBindingPaths) {
+    auto Result = CompileGraphicsForReflection(ShaderPath("ReflectionStructResourceField.slang"));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    const auto& R = Result->Reflection;
+    ASSERT_EQ(R.Bindings.size(), 3UL);
+
+    // Direct resource field on the block struct.
+    auto It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
+        return B.ParameterPath == "g_draw.instances";
+    });
+    ASSERT_NE(It, R.Bindings.end());
+    EXPECT_EQ(It->Set, 0U);
+    EXPECT_EQ(It->BindingIndex, 0U);
+    EXPECT_EQ(It->Type, ShaderResourceType::StorageBuffer);
+
+    // Resource wrapped in a plain struct facade: the binding path and
+    // descriptor slot come from the private inner member.
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
+        return B.ParameterPath == "g_draw.geometryTable.records";
+    });
+    ASSERT_NE(It, R.Bindings.end());
+    EXPECT_EQ(It->Set, 0U);
+    EXPECT_EQ(It->BindingIndex, 1U);
+    EXPECT_EQ(It->Type, ShaderResourceType::StorageBuffer);
+    EXPECT_EQ(It->ArrayCount, 1U);
+
+    // A direct resource after a struct facade still gets its own slot.
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
+        return B.ParameterPath == "g_draw.materials";
+    });
+    ASSERT_NE(It, R.Bindings.end());
+    EXPECT_EQ(It->Set, 0U);
+    EXPECT_EQ(It->BindingIndex, 2U);
+    EXPECT_EQ(It->Type, ShaderResourceType::StorageBuffer);
 }
 
 TEST_F(ReflectionTest, NestedParameterBlockIsRejected) {

@@ -197,47 +197,4 @@ enum class RHITopLevelAccelerationStructureBuildMode : Uint8 {
     Update,
 };
 
-/// Logical shader-group category. Native Vulkan group indices remain backend-private.
-enum class RHIRayTracingShaderGroupType : Uint8 {
-    Unknown = 0,
-    General,
-    TrianglesHit,
-    ProceduralHit,
-};
-
-/// Logical shader-group descriptor populated by the later shader-program phase.
-struct RHIRayTracingShaderGroupDesc {
-    RHIRayTracingShaderGroupType Type = RHIRayTracingShaderGroupType::Unknown;
-};
-
-/// Backend-agnostic RT pipeline policy. Shader program ownership is added by Phase 2.
-struct RHIRayTracingPipelineDesc {
-    ShaderRayTracingProgram                   Program           = {};
-    RHIRef<RHIShaderBindingSet>               BindingSet        = nullptr;
-    std::vector<RHIRayTracingShaderGroupDesc> ShaderGroups      = {};
-    Uint32                                    MaxRecursionDepth = 1;
-};
-
-/// Empty polymorphic base for ray-tracing pipeline resources.
-/// Backend concrete classes own native pipeline-layout and shader-binding-table state.
-class RHIRayTracingPipeline : public RHIObject {
-  public:
-    RHIRayTracingPipeline(const RHIRayTracingPipeline&)                    = delete;
-    auto operator=(const RHIRayTracingPipeline&) -> RHIRayTracingPipeline& = delete;
-    RHIRayTracingPipeline(RHIRayTracingPipeline&&)                         = delete;
-    auto operator=(RHIRayTracingPipeline&&) -> RHIRayTracingPipeline&      = delete;
-    virtual ~RHIRayTracingPipeline()                                       = default;
-
-    [[nodiscard]] auto GetShaderBindingSet() const -> const RHIRef<RHIShaderBindingSet>& {
-        return m_ShaderBindingSet;
-    }
-
-  protected:
-    explicit RHIRayTracingPipeline(String Name, RHIRef<RHIShaderBindingSet> BindingSet)
-        : RHIObject(std::move(Name)), m_ShaderBindingSet(std::move(BindingSet)) {}
-
-  private:
-    RHIRef<RHIShaderBindingSet> m_ShaderBindingSet = nullptr;
-};
-
 } // namespace SoulEngine

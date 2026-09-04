@@ -3,11 +3,11 @@ export module Renderer;
 import Core;
 import std;
 
-export import :Common;
 export import :IRenderer;
-export import :RasterRenderer;
-export import :RayTracingRenderer;
-export import :Editor.EntityPicking;
+// Note: :Common and :RasterRenderer are module-internal partitions; nothing here
+// or in consumers of `import Renderer;` references their declarations, and the
+// xmake moduleonly target links every partition object file directly, so the
+// RasterRenderer AutoRegistrar runs without an import from this interface.
 
 namespace SoulEngine {
 

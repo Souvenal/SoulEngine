@@ -1,7 +1,8 @@
-import Pbr;
-import Material;
-import GBuffer;
-import Common;
+import Common.All;
+import Common.Material;
+import Common.Pbr;
+
+module DeferredLighting;
 
 public struct DeferredLightData {
     public float4 colorIntensity;

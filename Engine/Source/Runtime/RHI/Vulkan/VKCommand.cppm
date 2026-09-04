@@ -58,6 +58,27 @@ class VulkanCmdVisitor {
 
         for (const auto& SetBindings : BindingSet.GetBindingsBySet())
             for (const auto& Slot : SetBindings) {
+                if (Slot.Info.Type == ShaderResourceType::StorageBuffer) {
+                    // Descriptor-bound storage buffers are always transient arena
+                    // slices; tracking their access state covers cross-pass
+                    // producer->consumer hazards (e.g. culling -> geometry).
+                    const auto* Buffer = static_cast<const VulkanTransientShaderStorageBuffer*>(Slot.Resource);
+                    if (!Buffer)
+                        continue;
+                    ResourceContext.GetBufferTracker().Transition(Buf,
+                                                 Buffer->GetArenaBuffer(),
+                                                 Buffer->GetOffset(),
+                                                 Buffer->GetSize(),
+                                                 VulkanBufferState{
+                                                     .stage  = TransitionStages,
+                                                     .access = Slot.IsReadOnly
+                                                                   ? vk::AccessFlagBits2::eShaderRead
+                                                                   : vk::AccessFlagBits2::eShaderRead |
+                                                                         vk::AccessFlagBits2::eShaderWrite,
+                                                     .isWrite = !Slot.IsReadOnly,
+                                                 });
+                    continue;
+                }
                 if ((Slot.Info.Type != ShaderResourceType::SampledTexture &&
                      Slot.Info.Type != ShaderResourceType::StorageTexture) ||
                     !Slot.IsRenderTarget)
@@ -66,7 +87,7 @@ class VulkanCmdVisitor {
                 if (!Target)
                     continue;
                 const bool IsSampled = Slot.Info.Type == ShaderResourceType::SampledTexture;
-                LocalStates.Transition(
+                ResourceContext.GetImageTracker().Transition(
                     Buf,
                     Target->GetVkImage(),
                     VulkanImageState{
@@ -100,13 +121,13 @@ class VulkanCmdVisitor {
 
   protected:
     VulkanCmdVisitor(
-        vk::raii::CommandBuffer&                                                        InBuffer,
-        VulkanImageTracker&                                                             InLocalStates)
+        vk::raii::CommandBuffer&  InBuffer,
+        VulkanResourceContext&    InResourceContext)
         : Buf(InBuffer),
-          LocalStates(InLocalStates) {}
+          ResourceContext(InResourceContext) {}
 
     vk::raii::CommandBuffer&                         Buf;
-    VulkanImageTracker&                             LocalStates;
+    VulkanResourceContext&                           ResourceContext;
     std::optional<ErrorMessage>                      Error                         = std::nullopt;
 };
 
@@ -123,14 +144,16 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
         VulkanGraphicsPipeline&                          Pipeline,
         const RHIGraphicsAttachments&                    Attachments,
         vk::raii::CommandBuffer&                         InBuffer,
-        VulkanImageTracker&                             InLocalStates)
+        VulkanResourceContext&                           InResourceContext)
         : VulkanCmdVisitor(InBuffer,
-                           InLocalStates),
+                           InResourceContext),
           m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
-        BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*Pipeline.GetShaderBindingSet().TryGet()),
-                             vk::PipelineBindPoint::eGraphics,
-                             vk::PipelineStageFlagBits2::eAllGraphics);
+        auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
+        if (BindingSet)
+            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
+                                 vk::PipelineBindPoint::eGraphics,
+                                 vk::PipelineStageFlagBits2::eAllGraphics);
         BeginRendering(Attachments);
     }
 
@@ -153,7 +176,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
                 return;
             }
             const auto& ColorRT = static_cast<const VulkanRenderTarget&>(*ColorTarget);
-            LocalStates.Transition(
+            ResourceContext.GetImageTracker().Transition(
                 Buf,
                 ColorRT.GetVkImage(),
                 VulkanImageState{
@@ -193,7 +216,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             }
             auto& VkDepthRT = static_cast<const VulkanRenderTarget&>(*DepthTarget);
             m_CurrentDepthFormat = VkDepthRT.GetFormat();
-            LocalStates.Transition(
+            ResourceContext.GetImageTracker().Transition(
                 Buf,
                 VkDepthRT.GetVkImage(),
                 VulkanImageState{
@@ -307,6 +330,16 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             Error = ErrorMessage("Indirect draw count exceeds Vulkan maxDrawIndirectCount");
             return;
         }
+        // The indirect buffer may be produced by an earlier compute pass
+        // (e.g. GPU culling); transition its consumed range before the draw.
+        ResourceContext.GetBufferTracker().Transition(Buf,
+                                     VulkanBuffer.GetArenaBuffer(),
+                                     VulkanBuffer.GetOffset() + Cmd.Offset,
+                                     static_cast<vk::DeviceSize>(Cmd.DrawCount) * Cmd.Stride,
+                                     VulkanBufferState{
+                                         .stage  = vk::PipelineStageFlagBits2::eDrawIndirect,
+                                         .access = vk::AccessFlagBits2::eIndirectCommandRead,
+                                     });
         Buf.drawIndirect(VulkanBuffer.GetArenaBuffer(),
                          VulkanBuffer.GetOffset() + Cmd.Offset,
                          Cmd.DrawCount,
@@ -321,6 +354,32 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
     RHIFormat                m_CurrentDepthFormat = RHIFormat::Unknown;
 };
 
+class VulkanComputeCmdVisitor final : public VulkanCmdVisitor {
+  public:
+    using VulkanCmdVisitor::operator();
+
+    VulkanComputeCmdVisitor(
+        VulkanComputePipeline&                                                          Pipeline,
+        vk::raii::CommandBuffer&                                                        InBuffer,
+        VulkanResourceContext&                                                          InResourceContext)
+        : VulkanCmdVisitor(InBuffer, InResourceContext),
+          m_Pipeline(Pipeline) {
+        Buf.bindPipeline(vk::PipelineBindPoint::eCompute, Pipeline.Get());
+        auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
+        if (BindingSet)
+            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
+                                 vk::PipelineBindPoint::eCompute,
+                                 vk::PipelineStageFlagBits2::eComputeShader);
+    }
+
+    auto operator()(const RHIDispatchCmd& Cmd) -> void {
+        Buf.dispatch(Cmd.GroupCountX, Cmd.GroupCountY, Cmd.GroupCountZ);
+    }
+
+  private:
+    VulkanComputePipeline& m_Pipeline;
+};
+
 class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
@@ -328,14 +387,16 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
     VulkanRayTracingCmdVisitor(
         VulkanRayTracingPipeline&                                                      Pipeline,
         vk::raii::CommandBuffer&                                                        InBuffer,
-        VulkanImageTracker&                                                             InLocalStates)
+        VulkanResourceContext&                                                          InResourceContext)
         : VulkanCmdVisitor(InBuffer,
-                           InLocalStates),
+                           InResourceContext),
           m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
-        BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*Pipeline.GetShaderBindingSet().TryGet()),
-                             vk::PipelineBindPoint::eRayTracingKHR,
-                             vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
+        auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
+        if (BindingSet)
+            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
+                                 vk::PipelineBindPoint::eRayTracingKHR,
+                                 vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
     }
 
     auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
@@ -385,8 +446,8 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
     using VulkanCmdVisitor::operator();
 
     VulkanTransferCmdVisitor(vk::raii::CommandBuffer&                              InBuffer,
-                             VulkanImageTracker&                                   InLocalStates)
-        : VulkanCmdVisitor(InBuffer, InLocalStates) {}
+                             VulkanResourceContext&                                InResourceContext)
+        : VulkanCmdVisitor(InBuffer, InResourceContext) {}
 
     auto operator()(const RHICopyTextureToBufferCmd& Cmd) -> void {
         const auto* SourcePtr = Cmd.Source.TryGet();
@@ -410,7 +471,7 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
         }
         const auto Offset = Dst.AllocateWriteOffset();
 
-        LocalStates.Transition(Buf,
+        ResourceContext.GetImageTracker().Transition(Buf,
                                Src.GetVkImage(),
                                VulkanImageState{
                                    .stage  = vk::PipelineStageFlagBits2::eTransfer,

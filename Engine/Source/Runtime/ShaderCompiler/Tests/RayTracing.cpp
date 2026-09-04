@@ -37,7 +37,7 @@ class RayTracingCompilerTest : public ::testing::Test {
     static inline Path m_ShaderPath = {};
     static inline Path m_ParameterBlockShaderPath = {};
     static inline Path m_BdaShaderPath = {};
-    static inline Path m_RuntimeBdaShaderPath = {};
+    static inline Path m_RuntimeMirrorShaderPath = {};
 
     static auto SetUpTestSuite() -> void {
         const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
@@ -45,16 +45,17 @@ class RayTracingCompilerTest : public ::testing::Test {
         m_ShaderPath = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
         m_ParameterBlockShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingParameterBlock.slang";
         m_BdaShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingBda.slang";
-        const Path EngineDir = Path(TestSourceDir).parent_path().parent_path().parent_path().parent_path();
-        m_RuntimeBdaShaderPath = EngineDir / "Shaders" / "RayTracing.slang";
+        // Tests must stay inside the fixture directory: this fixture mirrors the
+        // runtime path-tracing shader's program interface without loading it.
+        m_RuntimeMirrorShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingRuntimeMirror.slang";
         auto Source = ReadFile(m_ShaderPath);
         ASSERT_TRUE(Source.has_value()) << Source.error().ToString();
         auto ParameterBlockSource = ReadFile(m_ParameterBlockShaderPath);
         ASSERT_TRUE(ParameterBlockSource.has_value()) << ParameterBlockSource.error().ToString();
         auto BdaSource = ReadFile(m_BdaShaderPath);
         ASSERT_TRUE(BdaSource.has_value()) << BdaSource.error().ToString();
-        auto RuntimeBdaSource = ReadFile(m_RuntimeBdaShaderPath);
-        ASSERT_TRUE(RuntimeBdaSource.has_value()) << RuntimeBdaSource.error().ToString();
+        auto RuntimeMirrorSource = ReadFile(m_RuntimeMirrorShaderPath);
+        ASSERT_TRUE(RuntimeMirrorSource.has_value()) << RuntimeMirrorSource.error().ToString();
     }
 };
 
@@ -116,21 +117,21 @@ TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadat
     EXPECT_EQ(Metadata->ArrayCount, 1U);
 }
 
-TEST_F(RayTracingCompilerTest, CompilesRuntimePathTracingShaderWithFixedBdaMetadata) {
+TEST_F(RayTracingCompilerTest, CompilesRuntimeMirrorShaderWithFixedBdaMetadata) {
     auto Result = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
+        .RayGeneration = ShaderEntry{.SourcePath = m_RuntimeMirrorShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
         .MissEntries = {
-            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang},
-            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowMissMain", .Backend = ShaderBackend::Slang},
+            ShaderEntry{.SourcePath = m_RuntimeMirrorShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang},
+            ShaderEntry{.SourcePath = m_RuntimeMirrorShaderPath, .EntryPoint = "shadowMissMain", .Backend = ShaderBackend::Slang},
         },
         .HitGroups = {
             RayTracingHitGroupCompileDesc{
                 .Type = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
+                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeMirrorShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
             },
             RayTracingHitGroupCompileDesc{
                 .Type = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowClosestHitMain", .Backend = ShaderBackend::Slang},
+                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeMirrorShaderPath, .EntryPoint = "shadowClosestHitMain", .Backend = ShaderBackend::Slang},
             },
         },
     });
@@ -153,7 +154,7 @@ TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
 
     auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
     ASSERT_FALSE(Result.has_value());
-    EXPECT_NE(Result.error().ToString().find("Ray-generation entry point 'doesNotExist' not found"), String::npos)
+    EXPECT_NE(Result.error().ToString().find("Entry point 'doesNotExist' not found"), String::npos)
         << Result.error().ToString();
 }
 

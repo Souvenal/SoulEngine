@@ -80,6 +80,94 @@ class VulkanImageTracker {
     std::unordered_map<vk::Image, VulkanImageState> m_ImageStates = {};
 };
 
+/// @brief Tracked Vulkan buffer range state used for automatic synchronization barriers.
+///
+/// Buffers have no layout; only the pipeline stage, access mask, and write
+/// hazard flag are tracked.
+struct VulkanBufferState {
+    vk::PipelineStageFlags2 stage       = vk::PipelineStageFlagBits2::eNone;
+    vk::AccessFlags2        access      = vk::AccessFlagBits2::eNone;
+    bool                    isWrite     = false;
+};
+
+/// @brief Device-level buffer state tracker shared by Vulkan command recording.
+///
+/// State is keyed by (buffer, offset). Transient arena slices are disjoint
+/// within a frame and every frame slot occupies a distinct arena region, so
+/// keys never collide with another slice's live range; persistent buffers
+/// simply always use offset 0. The tracker is Reset() at every BeginFrame:
+/// the frame-slot fence guarantees the previous occupant's GPU work has
+/// completed, so a range's first use within a frame needs no barrier and is
+/// registered directly.
+class VulkanBufferTracker {
+  public:
+    VulkanBufferTracker() = default;
+
+    /// Drop all tracked range states. Must be called once per frame before
+    /// new transient allocations are recorded.
+    auto Reset() -> void {
+        m_BufferStates.clear();
+    }
+
+    /// Drive the buffer range [Offset, Offset+Size) to DesiredState, emitting
+    /// a buffer memory barrier when the tracked state differs. A WAR hazard
+    /// (read -> write) needs an execution dependency, and any previous write
+    /// (WAW/RAW) forces a barrier just like the image tracker.
+    auto Transition(vk::raii::CommandBuffer& CmdBuf,
+                    vk::Buffer               Buffer,
+                    vk::DeviceSize           Offset,
+                    vk::DeviceSize           Size,
+                    const VulkanBufferState& DesiredState) -> void {
+        const Key             RangeKey{.Buffer = Buffer, .Offset = Offset};
+        const auto            It      = m_BufferStates.find(RangeKey);
+        const VulkanBufferState Current = (It != m_BufferStates.end()) ? It->second : VulkanBufferState{};
+
+        const bool NeedsBarrier =
+            It != m_BufferStates.end() &&
+            ((Current.stage != DesiredState.stage) || (Current.access != DesiredState.access) ||
+             Current.isWrite);
+
+        if (NeedsBarrier) {
+            vk::BufferMemoryBarrier2 Barrier{
+                .srcStageMask        = Current.stage,
+                .srcAccessMask       = Current.access,
+                .dstStageMask        = DesiredState.stage,
+                .dstAccessMask       = DesiredState.access,
+                .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+                .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+                .buffer              = Buffer,
+                .offset              = Offset,
+                .size                = Size,
+            };
+            vk::DependencyInfo Dependency{
+                .dependencyFlags          = {},
+                .bufferMemoryBarrierCount = 1,
+                .pBufferMemoryBarriers    = &Barrier,
+            };
+            CmdBuf.pipelineBarrier2(Dependency);
+        }
+
+        m_BufferStates[RangeKey] = DesiredState;
+    }
+
+  private:
+    struct Key {
+        vk::Buffer     Buffer = nullptr;
+        vk::DeviceSize Offset = 0;
+
+        auto operator==(const Key&) const -> bool = default;
+    };
+
+    struct KeyHash {
+        auto operator()(const Key& K) const noexcept -> std::size_t {
+            const std::size_t BufferHash = std::hash<VkBuffer>{}(static_cast<VkBuffer>(K.Buffer));
+            return BufferHash ^ (std::hash<vk::DeviceSize>{}(K.Offset) + 0x9e3779b9 + (BufferHash << 6) + (BufferHash >> 2));
+        }
+    };
+
+    std::unordered_map<Key, VulkanBufferState, KeyHash> m_BufferStates = {};
+};
+
 /// Owns Vulkan objects and services shared by backend resource factories.
 class VulkanResourceContext final {
   public:
@@ -182,6 +270,9 @@ class VulkanResourceContext final {
     }
     [[nodiscard]] auto GetImageTracker() const -> VulkanImageTracker& {
         return const_cast<VulkanImageTracker&>(m_ImageTracker);
+    }
+    [[nodiscard]] auto GetBufferTracker() const -> VulkanBufferTracker& {
+        return const_cast<VulkanBufferTracker&>(m_BufferTracker);
     }
     [[nodiscard]] auto GetAllocator() const -> VmaAllocator { return m_Allocator; }
     [[nodiscard]] auto GetSurfaceProvider() const -> IVulkanSurfaceProvider& { return *m_SurfaceProvider; }
@@ -535,6 +626,7 @@ class VulkanResourceContext final {
     VulkanImmediateContext           m_ImmediateContext;
     // ── Global descriptor manager ─────────────────────────────────────────
     VulkanImageTracker               m_ImageTracker;
+    VulkanBufferTracker              m_BufferTracker;
     VulkanTimelineSemaphore           m_Timeline;
     Uint32                           m_FramesInFlight = 2;
 };
