@@ -23,13 +23,16 @@ struct TransformComponent {
     hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
 
     /// @brief Get the local transform matrix from translation, rotation, and scale.
+    ///
+    /// Rotation composes as Rx * Ry * Rz (row-vector convention): the X, Y,
+    /// then Z rotations are applied about the fixed parent-space axes.
     [[nodiscard]] auto GetLocalMatrix() const -> hlslpp::float4x4 {
         const auto TranslationMatrix = hlslpp::float4x4::translation(Translation);
 
         const auto RotationX      = hlslpp::float4x4::rotation_x(Rotation.x * std::numbers::pi_v<float> / 180.0f);
         const auto RotationY      = hlslpp::float4x4::rotation_y(Rotation.y * std::numbers::pi_v<float> / 180.0f);
         const auto RotationZ      = hlslpp::float4x4::rotation_z(Rotation.z * std::numbers::pi_v<float> / 180.0f);
-        const auto RotationMatrix = hlslpp::mul(hlslpp::mul(RotationZ, RotationY), RotationX);
+        const auto RotationMatrix = hlslpp::mul(hlslpp::mul(RotationX, RotationY), RotationZ);
 
         const auto ScaleMatrix = hlslpp::float4x4::scale(Scale);
 

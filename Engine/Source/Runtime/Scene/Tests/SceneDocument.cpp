@@ -36,6 +36,83 @@ namespace {
     return Count;
 }
 
+TEST(MeshRecord, TraversesNestedAssetNodesAndRepeatedSubMeshes) {
+    const auto Translate = [](float X, float Y, float Z) -> hlslpp::float4x4 {
+        return hlslpp::float4x4::translation(hlslpp::float3(X, Y, Z));
+    };
+    const MeshRecord Mesh{
+        .SubMeshes = {SubMesh{}, SubMesh{}},
+        .Nodes = {
+            MeshAssetNode{
+                .Name             = "Root",
+                .LocalTransform   = Translate(1.0f, 0.0f, 0.0f),
+                .SubMeshIndices   = {0},
+                .ChildNodeIndices = {1},
+            },
+            MeshAssetNode{
+                .Name             = "Grouping Node",
+                .LocalTransform   = Translate(0.0f, 2.0f, 0.0f),
+                .ChildNodeIndices = {2},
+            },
+            MeshAssetNode{
+                .Name           = "Repeated Geometry",
+                .LocalTransform = Translate(0.0f, 0.0f, 3.0f),
+                .SubMeshIndices = {1, 0},
+            },
+        },
+    };
+
+    struct AssetInstance {
+        Uint32           SubMeshIndex = 0;
+        hlslpp::float4x4 Transform    = hlslpp::float4x4::identity();
+    };
+    std::vector<AssetInstance> Instances;
+    const auto VisitNode = [&Mesh, &Instances](auto&& VisitNode,
+                                                Uint32 NodeIndex,
+                                                const hlslpp::float4x4& ParentTransform) -> void {
+        if (NodeIndex >= Mesh.Nodes.size())
+            return;
+        const auto& Node      = Mesh.Nodes[NodeIndex];
+        const auto  Transform = hlslpp::mul(Node.LocalTransform, ParentTransform);
+        for (const auto SubMeshIndex : Node.SubMeshIndices)
+            Instances.emplace_back(AssetInstance{.SubMeshIndex = SubMeshIndex, .Transform = Transform});
+        for (const auto ChildNodeIndex : Node.ChildNodeIndices)
+            VisitNode(VisitNode, ChildNodeIndex, Transform);
+    };
+    VisitNode(VisitNode, 0, hlslpp::float4x4::identity());
+
+    ASSERT_EQ(Instances.size(), 3u);
+    EXPECT_EQ(Instances[0].SubMeshIndex, 0u);
+    EXPECT_EQ(Instances[1].SubMeshIndex, 1u);
+    EXPECT_EQ(Instances[2].SubMeshIndex, 0u);
+
+    const auto TransformPoint = [](const hlslpp::float4& Point, const hlslpp::float4x4& Transform) -> hlslpp::float4 {
+        return hlslpp::mul(Point, Transform);
+    };
+    const auto Origin         = hlslpp::float4(0.0f, 0.0f, 0.0f, 1.0f);
+    const auto RootOrigin     = TransformPoint(Origin, Instances[0].Transform);
+    const auto RepeatedOrigin = TransformPoint(Origin, Instances[2].Transform);
+    EXPECT_FLOAT_EQ(static_cast<float>(RootOrigin.x), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(RootOrigin.y), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(RootOrigin.z), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(RepeatedOrigin.x), 1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(RepeatedOrigin.y), 2.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(RepeatedOrigin.z), 3.0f);
+
+    const auto EntityTransform = hlslpp::mul(
+        hlslpp::mul(hlslpp::float4x4::scale(hlslpp::float3(2.0f, 3.0f, 1.0f)),
+                     hlslpp::float4x4::rotation_z(std::numbers::pi_v<float> * 0.5f)),
+        Translate(10.0f, 0.0f, 0.0f));
+    const auto Point               = hlslpp::float4(2.0f, -1.0f, 4.0f, 1.0f);
+    const auto ExpectedWorldPoint  = TransformPoint(TransformPoint(Point, Instances[2].Transform), EntityTransform);
+    const auto ActualWorldPoint    = TransformPoint(Point, hlslpp::mul(Instances[2].Transform, EntityTransform));
+    const auto ReversedWorldPoint  = TransformPoint(Point, hlslpp::mul(EntityTransform, Instances[2].Transform));
+    EXPECT_FLOAT_EQ(static_cast<float>(ActualWorldPoint.x), static_cast<float>(ExpectedWorldPoint.x));
+    EXPECT_FLOAT_EQ(static_cast<float>(ActualWorldPoint.y), static_cast<float>(ExpectedWorldPoint.y));
+    EXPECT_FLOAT_EQ(static_cast<float>(ActualWorldPoint.z), static_cast<float>(ExpectedWorldPoint.z));
+    EXPECT_NE(static_cast<float>(ActualWorldPoint.x), static_cast<float>(ReversedWorldPoint.x));
+}
+
 TEST(SceneMeta, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
     const auto Camera = entt::resolve(entt::hashed_string{"camera"}.value());
     ASSERT_TRUE(Camera);

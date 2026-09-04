@@ -168,7 +168,7 @@ class EditorWorld {
         m_Registry.emplace<TransformComponent>(CameraEntity,
                                                TransformComponent{
                                                    .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
-                                                   .Rotation    = hlslpp::float3(28.0f, -32.0f, 0.0f),
+                                                   .Rotation    = hlslpp::float3(23.46f, -35.29f, 0.0f),
                                                });
         m_Registry.emplace<NameComponent>(CameraEntity, NameComponent{.Name = "EditorViewportCamera"});
         m_Registry.emplace<CameraComponent>(CameraEntity);

@@ -38,7 +38,7 @@ retaining that handoff.
   represented by the optional `components.transform` component; runtime entity
   creation always supplies a default `TransformComponent`.
   The world is right-handed and Y-up; document rotations are Euler angles in
-  degrees, applied in local X → Y → Z order.
+  degrees, applied in X → Y → Z order about fixed parent-space axes.
 - ECS types use the `XxxComponent` naming convention and are represented under
   the entity's `components` mapping using their registered EnTT meta names.
   Components may contain both document-loaded authoring fields and

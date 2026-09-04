@@ -1,5 +1,7 @@
 module;
 
+#include <imgui_threaded_rendering.h>
+
 export module Renderer:IRenderer;
 
 import Core;
@@ -15,7 +17,8 @@ export namespace SoulEngine {
 
 /// @brief Render-thread packet retained by its FrameSlot until GPU completion.
 struct RenderResult {
-    RenderPassList CmdList = {};
+    RenderPassList                 CmdList        = {};
+    UPtr<ImDrawDataSnapshot>       ImGuiSnapshot  = nullptr;
 };
 
 /// @brief Abstract base class for all renderers.

@@ -26,7 +26,7 @@ export namespace SoulEngine {
 /// are intentionally not imported or stored; consumers derive them from the
 /// normal and tangent with cross(normal, tangent).
 struct GeometryRecord {
-    String Name = {};
+    String Name     = {};
     // TODO: Delete this after refractoring RayTracingRenderer
     String CacheKey = {};
 
@@ -38,13 +38,12 @@ struct GeometryRecord {
 
     /// @brief Shader ABI for the raster geometry address table.
     struct alignas(16) GpuData {
-        hlslpp::interop::float4 BoundingSphere = hlslpp::interop::float4{
-            hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
-        Uint64 PositionAddress = 0;
-        Uint64 NormalAddress   = 0;
-        Uint64 TangentAddress  = 0;
-        Uint64 TexCoordAddress = 0;
-        Uint64 IndexAddress    = 0;
+        hlslpp::interop::float4 BoundingSphere  = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
+        Uint64                  PositionAddress = 0;
+        Uint64                  NormalAddress   = 0;
+        Uint64                  TangentAddress  = 0;
+        Uint64                  TexCoordAddress = 0;
+        Uint64                  IndexAddress    = 0;
     };
     static_assert(sizeof(GpuData) == 64);
     static_assert(alignof(GpuData) == 16);
@@ -66,11 +65,10 @@ struct GeometryRecord {
         };
     }
 
-    Uint32 IndexCount  = 0;
-    bool   HasUV0      = false;
-    bool   HasTangents = false;
-    hlslpp::interop::float4 LocalBoundingSphere = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
+    Uint32                  IndexCount          = 0;
+    bool                    HasUV0              = false;
+    bool                    HasTangents         = false;
+    hlslpp::interop::float4 LocalBoundingSphere = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 
     std::vector<hlslpp::interop::float3> Positions;
     std::vector<hlslpp::interop::float3> Normals;
@@ -83,15 +81,24 @@ using GeometryHandle = entt::resource<GeometryRecord>;
 
 /// @brief One imported submesh and its default material binding.
 struct SubMesh {
-    String        Name     = {};
+    String         Name     = {};
     GeometryHandle Geometry = {};
     MaterialHandle Material = {};
 };
 
+/// @brief One static node in an imported mesh asset hierarchy.
+struct MeshAssetNode {
+    String                       Name            = {};
+    hlslpp::float4x4             LocalTransform  = hlslpp::float4x4::identity();
+    std::vector<Uint32>          SubMeshIndices  = {};
+    std::vector<Uint32>          ChildNodeIndices = {};
+};
+
 /// @brief Cached imported mesh asset.
 struct MeshRecord {
-    Path             Asset    = {};
-    std::vector<SubMesh> SubMeshes = {};
+    Path                       Asset     = {};
+    std::vector<SubMesh>       SubMeshes = {};
+    std::vector<MeshAssetNode> Nodes     = {};
 };
 
 using MeshHandle = entt::resource<MeshRecord>;
@@ -106,17 +113,17 @@ struct MeshComponent {
 
 /// @brief Immutable render-facing geometry/material instance.
 struct InstanceRecord {
-    Uint32         EntityId       = 0;
-    GeometryHandle Geometry       = {};
-    MaterialHandle Material       = {};
+    Uint32           EntityId       = 0;
+    GeometryHandle   Geometry       = {};
+    MaterialHandle   Material       = {};
     hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
 
     /// @brief GPU instance ABI populated after the renderer assigns geometry/material IDs.
     struct alignas(16) GpuData {
         alignas(16) hlslpp::float4x4 WorldTransform = hlslpp::float4x4::identity();
-        Uint32 MaterialID = 0;
-        Uint32 EntityID   = 0;
-        Uint32 GeometryID = 0;
+        Uint32 MaterialID                           = 0;
+        Uint32 EntityID                             = 0;
+        Uint32 GeometryID                           = 0;
     };
     static_assert(sizeof(GpuData) == 80);
     static_assert(offsetof(GpuData, WorldTransform) == 0);
@@ -127,9 +134,9 @@ struct InstanceRecord {
     [[nodiscard]] auto BuildGpuData(Uint32 GeometryID, Uint32 MaterialID) const -> GpuData {
         return GpuData{
             .WorldTransform = WorldTransform,
-            .MaterialID      = MaterialID,
-            .EntityID        = EntityId,
-            .GeometryID      = GeometryID,
+            .MaterialID     = MaterialID,
+            .EntityID       = EntityId,
+            .GeometryID     = GeometryID,
         };
     }
 };
@@ -137,8 +144,7 @@ struct InstanceRecord {
 struct GeometryLoader {
     using result_type = std::shared_ptr<GeometryRecord>;
 
-    auto operator()(StringView MeshPath, Uint32 MeshIndex, const aiMesh* AiMesh) const
-        -> result_type {
+    auto operator()(StringView MeshPath, Uint32 MeshIndex, const aiMesh* AiMesh) const -> result_type {
         if (!AiMesh || AiMesh->mNumVertices == 0 || !AiMesh->HasFaces()) {
             LogWarning("GeometryLoader: invalid mesh {}[{}]", MeshPath, MeshIndex);
             return nullptr;
@@ -190,8 +196,8 @@ struct GeometryLoader {
             Indices.insert(Indices.end(), Face.mIndices, Face.mIndices + 3);
         }
 
-        const auto ComputeBoundingSphere = [](const std::vector<hlslpp::interop::float3>& Vertices)
-            -> hlslpp::interop::float4 {
+        const auto ComputeBoundingSphere =
+            [](const std::vector<hlslpp::interop::float3>& Vertices) -> hlslpp::interop::float4 {
             if (Vertices.empty())
                 return hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 
@@ -206,15 +212,14 @@ struct GeometryLoader {
                 Max.z = std::max(static_cast<float>(Max.z), static_cast<float>(Vertex.z));
             }
 
-            const auto Center = (Min + Max) * 0.5f;
+            const auto Center        = (Min + Max) * 0.5f;
             float      RadiusSquared = 0.0f;
             for (const auto& Vertex : Vertices) {
                 const auto Offset = hlslpp::float3{Vertex.x, Vertex.y, Vertex.z} - Center;
-                RadiusSquared = std::max(RadiusSquared, static_cast<float>(hlslpp::dot(Offset, Offset)));
+                RadiusSquared     = std::max(RadiusSquared, static_cast<float>(hlslpp::dot(Offset, Offset)));
             }
 
-            return hlslpp::interop::float4{hlslpp::float4{
-                Center.x, Center.y, Center.z, std::sqrt(RadiusSquared)}};
+            return hlslpp::interop::float4{hlslpp::float4{Center.x, Center.y, Center.z, std::sqrt(RadiusSquared)}};
         };
 
         auto&      Device = RHIRenderDevice::Get();
@@ -287,23 +292,33 @@ struct GeometryLoader {
         if (!IndexBuffer)
             return nullptr;
 
+        LogDebug("GeometryLoader: \"{}[{}]\" successfully loaded, with {} positions, {} normals, {} tangents, {} uv "
+                 "coordinates, {} indices",
+                 MeshPath,
+                 AiMesh->mName.C_Str(),
+                 Positions.size(),
+                 Normals.size(),
+                 Tangents.size(),
+                 UVs.size(),
+                 Indices.size());
+
         return std::make_shared<GeometryRecord>(GeometryRecord{
-            .Name           = AiMesh->mName.C_Str(),
-            .CacheKey       = Key,
-            .PositionBuffer = std::move(*PositionBuffer),
-            .NormalBuffer   = std::move(*NormalBuffer),
-            .TangentBuffer  = std::move(TangentBuffer),
-            .TexCoordBuffer = std::move(TexCoordBuffer),
-            .IndexBuffer    = std::move(*IndexBuffer),
-            .IndexCount     = static_cast<Uint32>(Indices.size()),
-            .HasUV0         = HasUV0,
-            .HasTangents    = HasTangents,
+            .Name                = AiMesh->mName.C_Str(),
+            .CacheKey            = Key,
+            .PositionBuffer      = std::move(*PositionBuffer),
+            .NormalBuffer        = std::move(*NormalBuffer),
+            .TangentBuffer       = std::move(TangentBuffer),
+            .TexCoordBuffer      = std::move(TexCoordBuffer),
+            .IndexBuffer         = std::move(*IndexBuffer),
+            .IndexCount          = static_cast<Uint32>(Indices.size()),
+            .HasUV0              = HasUV0,
+            .HasTangents         = HasTangents,
             .LocalBoundingSphere = ComputeBoundingSphere(Positions),
-            .Positions      = std::move(Positions),
-            .Normals        = std::move(Normals),
-            .Tangents       = std::move(Tangents),
-            .UVs            = std::move(UVs),
-            .Indices        = std::move(Indices),
+            .Positions           = std::move(Positions),
+            .Normals             = std::move(Normals),
+            .Tangents            = std::move(Tangents),
+            .UVs                 = std::move(UVs),
+            .Indices             = std::move(Indices),
         });
     }
 };
@@ -321,7 +336,8 @@ struct MeshLoader {
         // reconstruct it from the normal and tangent when needed.
         constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
                                  aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
-                                 aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes;
+                                 aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes |
+                                 aiProcess_ValidateDataStructure;
         const auto*      Scene = Importer.ReadFile(MeshPathString.c_str(), Flags);
         if (!Scene || !Scene->mRootNode || Scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) {
             LogWarning("MeshLoader: Assimp import failed '{}': {}", MeshPathString, Importer.GetErrorString());
@@ -331,14 +347,13 @@ struct MeshLoader {
         std::vector<MaterialHandle> Materials = {};
         Materials.reserve(Scene->mNumMaterials);
         for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex) {
-            const auto* AiMaterial = Scene->mMaterials[MaterialIndex];
-            aiString MaterialName = {};
-            const bool HasName =
-                AiMaterial && AiMaterial->Get(AI_MATKEY_NAME, MaterialName) == AI_SUCCESS &&
-                MaterialName.length != 0;
-            const String Name = HasName ? String(MaterialName.C_Str()) : Format("Material{}", MaterialIndex);
-            const auto ResourceId = MakeMaterialCacheKey(MeshPath, Name, MaterialIndex);
-            auto [It, Loaded] = m_MaterialAssimpCache.load(ResourceId, AiMaterial, MeshPath.parent_path());
+            const auto* AiMaterial   = Scene->mMaterials[MaterialIndex];
+            aiString    MaterialName = {};
+            const bool  HasName =
+                AiMaterial && AiMaterial->Get(AI_MATKEY_NAME, MaterialName) == AI_SUCCESS && MaterialName.length != 0;
+            const String Name       = HasName ? String(MaterialName.C_Str()) : Format("Material{}", MaterialIndex);
+            const auto   ResourceId = MakeMaterialCacheKey(MeshPath, Name, MaterialIndex);
+            auto [It, Loaded]       = m_MaterialAssimpCache.load(ResourceId, AiMaterial, MeshPath.parent_path());
             if (!It->second) {
                 LogWarning("MeshLoader: material load failed '{}#{}'", MeshPathString, MaterialIndex);
                 return nullptr;
@@ -346,18 +361,18 @@ struct MeshLoader {
             Materials.emplace_back(It->second);
         }
 
-        auto       Result      = std::make_shared<MeshRecord>(MeshRecord{
-            .Asset      = MeshPath,
+        auto Result = std::make_shared<MeshRecord>(MeshRecord{
+            .Asset     = MeshPath,
             .SubMeshes = {},
+            .Nodes     = {},
         });
         Result->SubMeshes.reserve(Scene->mNumMeshes);
         for (Uint32 MeshIndex = 0; MeshIndex < Scene->mNumMeshes; ++MeshIndex) {
-            const auto KeyText    = Format("{}#{}", MeshPathString, MeshIndex);
-            const auto ResourceId = entt::hashed_string{KeyText.data(), KeyText.size()};
+            const auto KeyText       = Format("{}#{}", MeshPathString, MeshIndex);
+            const auto ResourceId    = entt::hashed_string{KeyText.data(), KeyText.size()};
             const auto MaterialIndex = Scene->mMeshes[MeshIndex]->mMaterialIndex;
-            const auto Material = MaterialIndex < Materials.size() ? Materials[MaterialIndex] : MaterialHandle{};
-            auto [It, Loaded] =
-                m_GeometryCache.load(ResourceId, MeshPathString, MeshIndex, Scene->mMeshes[MeshIndex]);
+            const auto Material      = MaterialIndex < Materials.size() ? Materials[MaterialIndex] : MaterialHandle{};
+            auto [It, Loaded] = m_GeometryCache.load(ResourceId, MeshPathString, MeshIndex, Scene->mMeshes[MeshIndex]);
             if (!It->second) {
                 LogWarning("MeshLoader: geometry load failed '{}[{}]'", MeshPathString, MeshIndex);
                 return nullptr;
@@ -368,10 +383,81 @@ struct MeshLoader {
                 .Material = Material,
             });
         }
+
+        const auto ConvertTransform = [](const aiMatrix4x4& Transform) -> hlslpp::float4x4 {
+            // Assimp transforms column vectors, while SoulEngine uses row vectors.
+            // Copying Assimp's columns into hlsl++ rows preserves the transform.
+            auto ResultTransform = hlslpp::float4x4::identity();
+            ResultTransform[0]   = hlslpp::float4(Transform.a1, Transform.b1, Transform.c1, Transform.d1);
+            ResultTransform[1]   = hlslpp::float4(Transform.a2, Transform.b2, Transform.c2, Transform.d2);
+            ResultTransform[2]   = hlslpp::float4(Transform.a3, Transform.b3, Transform.c3, Transform.d3);
+            ResultTransform[3]   = hlslpp::float4(Transform.a4, Transform.b4, Transform.c4, Transform.d4);
+            return ResultTransform;
+        };
+        const auto ImportNode = [&Result, &MeshPathString, &ConvertTransform](auto&& ImportNode,
+                                                                                 const aiNode* AiNode) -> bool {
+            if (!AiNode || (AiNode->mNumMeshes != 0 && !AiNode->mMeshes) ||
+                (AiNode->mNumChildren != 0 && !AiNode->mChildren)) {
+                LogWarning("MeshLoader: invalid node in '{}'", MeshPathString);
+                return false;
+            }
+
+            const auto NodeIndex = static_cast<Uint32>(Result->Nodes.size());
+            Result->Nodes.emplace_back(MeshAssetNode{
+                .Name           = AiNode->mName.C_Str(),
+                .LocalTransform = ConvertTransform(AiNode->mTransformation),
+            });
+            for (Uint32 MeshIndex = 0; MeshIndex < AiNode->mNumMeshes; ++MeshIndex) {
+                const auto SubMeshIndex = AiNode->mMeshes[MeshIndex];
+                if (SubMeshIndex >= Result->SubMeshes.size()) {
+                    LogWarning("MeshLoader: node '{}' references invalid mesh {} in '{}'",
+                               AiNode->mName.C_Str(),
+                               SubMeshIndex,
+                               MeshPathString);
+                    return false;
+                }
+                Result->Nodes[NodeIndex].SubMeshIndices.emplace_back(SubMeshIndex);
+            }
+            for (Uint32 ChildIndex = 0; ChildIndex < AiNode->mNumChildren; ++ChildIndex) {
+                const auto ChildNodeIndex = static_cast<Uint32>(Result->Nodes.size());
+                if (!ImportNode(ImportNode, AiNode->mChildren[ChildIndex]))
+                    return false;
+                Result->Nodes[NodeIndex].ChildNodeIndices.emplace_back(ChildNodeIndex);
+            }
+            return true;
+        };
+        if (!ImportNode(ImportNode, Scene->mRootNode))
+            return nullptr;
+
+        const auto DumpNode = [&Result](auto&& DumpNode, Uint32 NodeIndex, Uint32 Depth) -> void {
+            if (NodeIndex >= Result->Nodes.size())
+                return;
+
+            const auto& Node       = Result->Nodes[NodeIndex];
+            const auto  Indent     = String(Depth * 2, ' ');
+            const auto& Translation = Node.LocalTransform[3];
+            LogDebug("MeshLoader: {}node '{}' local translation ({:.3f}, {:.3f}, {:.3f})",
+                     Indent,
+                     Node.Name,
+                     static_cast<float>(Translation.x),
+                     static_cast<float>(Translation.y),
+                     static_cast<float>(Translation.z));
+            for (const auto SubMeshIndex : Node.SubMeshIndices)
+                LogDebug("MeshLoader: {}  submesh[{}]", Indent, SubMeshIndex);
+            for (const auto ChildNodeIndex : Node.ChildNodeIndices)
+                DumpNode(DumpNode, ChildNodeIndex, Depth + 1);
+        };
+        DumpNode(DumpNode, 0, 0);
+
+        LogInfo("MeshLoader: \"{}({} geometries, {} nodes)\" successfully loaded",
+                MeshPathString,
+                Result->SubMeshes.size(),
+                Result->Nodes.size());
+
         return Result;
     }
 
-    GeometryCache m_GeometryCache;
+    GeometryCache       m_GeometryCache;
     MaterialAssimpCache m_MaterialAssimpCache;
 };
 
@@ -394,7 +480,11 @@ class MeshSystem : public ISystem {
                 return;
             for (const auto& TextureSlots : Material->Textures) {
                 for (const auto& TextureSlot : TextureSlots) {
-                    if (!TextureSlot.Texture || !TextureSlot.Texture->Texture)
+                    // Do not require a Ready payload here: mesh-load frames queue
+                    // texture creation on the RHI thread, so refs are still
+                    // RhiCommitting/GpuPending and must be appended regardless.
+                    if (!TextureSlot.Texture ||
+                        TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
                         continue;
                     if (auto R = m_TextureArray.Append(TextureSlot.Texture->Texture); !R)
                         LogWarning("MeshSystem: failed to append texture from material: {}", R.error().ToString());
@@ -428,7 +518,7 @@ class MeshSystem : public ISystem {
 
             Mesh.MaterialOverride = {};
             if (!Mesh.MaterialOverridePath.empty()) {
-                const auto MaterialPath = (m_AssetRoot / Mesh.MaterialOverridePath).lexically_normal();
+                const auto MaterialPath       = (m_AssetRoot / Mesh.MaterialOverridePath).lexically_normal();
                 const auto MaterialPathString = MaterialPath.string();
                 const auto MaterialId = entt::hashed_string{MaterialPathString.data(), MaterialPathString.size()};
                 auto [MaterialIt, MaterialLoaded] = m_MaterialYamlCache.load(MaterialId, MaterialPath, m_AssetRoot);
@@ -444,22 +534,37 @@ class MeshSystem : public ISystem {
 
     [[nodiscard]] auto CollectInstances() const -> std::vector<InstanceRecord> {
         std::vector<InstanceRecord> Result;
-        const auto                      MeshView = m_Registry.view<MeshComponent, TransformComponent>();
+        const auto                  MeshView = m_Registry.view<MeshComponent, TransformComponent>();
         for (const auto Entity : MeshView) {
             const auto& Mesh = MeshView.get<MeshComponent>(Entity);
             if (Mesh.Asset.empty() || !Mesh.Mesh)
                 continue;
-            const auto& Transform          = MeshView.get<TransformComponent>(Entity);
-            for (const auto& MeshSubMesh : Mesh.Mesh->SubMeshes) {
-                if (!MeshSubMesh.Geometry)
-                    continue;
-                Result.emplace_back(InstanceRecord{
-                    .EntityId       = entt::to_integral(Entity),
-                    .Geometry       = MeshSubMesh.Geometry,
-                    .Material       = Mesh.MaterialOverride ? Mesh.MaterialOverride : MeshSubMesh.Material,
-                    .WorldTransform = Transform.WorldTransform,
-                });
-            }
+            const auto& Transform = MeshView.get<TransformComponent>(Entity);
+            const auto VisitNode = [&Mesh, Entity, &Result](auto&& VisitNode,
+                                                              Uint32 NodeIndex,
+                                                              const hlslpp::float4x4& ParentWorldTransform) -> void {
+                if (NodeIndex >= Mesh.Mesh->Nodes.size())
+                    return;
+
+                const auto& Node           = Mesh.Mesh->Nodes[NodeIndex];
+                const auto  WorldTransform = hlslpp::mul(Node.LocalTransform, ParentWorldTransform);
+                for (const Uint32 SubMeshIndex : Node.SubMeshIndices) {
+                    if (SubMeshIndex >= Mesh.Mesh->SubMeshes.size())
+                        continue;
+                    const auto& MeshSubMesh = Mesh.Mesh->SubMeshes[SubMeshIndex];
+                    if (!MeshSubMesh.Geometry)
+                        continue;
+                    Result.emplace_back(InstanceRecord{
+                        .EntityId       = entt::to_integral(Entity),
+                        .Geometry       = MeshSubMesh.Geometry,
+                        .Material       = Mesh.MaterialOverride ? Mesh.MaterialOverride : MeshSubMesh.Material,
+                        .WorldTransform = WorldTransform,
+                    });
+                }
+                for (const Uint32 ChildNodeIndex : Node.ChildNodeIndices)
+                    VisitNode(VisitNode, ChildNodeIndex, WorldTransform);
+            };
+            VisitNode(VisitNode, 0, Transform.WorldTransform);
         }
         return Result;
     }

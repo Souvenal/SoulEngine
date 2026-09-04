@@ -588,8 +588,6 @@ class RHIShaderBindingSet : public RHIObject {
             return std::unexpected(ErrorMessage("Shader binding set has no reflected bindless space"));
         if (!Resource)
             return std::unexpected(ErrorMessage("Bindless sampled-texture array is invalid"));
-        if (m_BindlessTextures && *m_BindlessTextures != Resource)
-            return std::unexpected(ErrorMessage("Shader binding set cannot use multiple bindless texture arrays"));
         m_BindlessTextures = std::move(Resource);
         return OnBindlessResourceBound();
     }
