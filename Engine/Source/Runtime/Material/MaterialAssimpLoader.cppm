@@ -1,5 +1,6 @@
 module;
 
+#include <assimp/GltfMaterial.h>
 #include <assimp/material.h>
 #include <entt/entt.hpp>
 #include <hlsl++.h>
@@ -98,12 +99,54 @@ namespace {
     }
 }
 
+[[nodiscard]] auto ToTextureType(aiTextureType Value) -> TextureType {
+    switch (Value) {
+    case aiTextureType_DIFFUSE:           return TextureType::Diffuse;
+    case aiTextureType_SPECULAR:          return TextureType::Specular;
+    case aiTextureType_AMBIENT:           return TextureType::Ambient;
+    case aiTextureType_EMISSIVE:          return TextureType::Emissive;
+    case aiTextureType_HEIGHT:            return TextureType::Height;
+    case aiTextureType_NORMALS:           return TextureType::Normals;
+    case aiTextureType_SHININESS:         return TextureType::Shininess;
+    case aiTextureType_OPACITY:           return TextureType::Opacity;
+    case aiTextureType_DISPLACEMENT:      return TextureType::Displacement;
+    case aiTextureType_LIGHTMAP:          return TextureType::Lightmap;
+    case aiTextureType_REFLECTION:        return TextureType::Reflection;
+    case aiTextureType_BASE_COLOR:        return TextureType::BaseColor;
+    case aiTextureType_NORMAL_CAMERA:     return TextureType::NormalCamera;
+    case aiTextureType_EMISSION_COLOR:    return TextureType::EmissionColor;
+    case aiTextureType_METALNESS:         return TextureType::Metalness;
+    case aiTextureType_DIFFUSE_ROUGHNESS: return TextureType::DiffuseRoughness;
+    case aiTextureType_AMBIENT_OCCLUSION: return TextureType::AmbientOcclusion;
+    case aiTextureType_SHEEN:             return TextureType::Sheen;
+    case aiTextureType_CLEARCOAT:         return TextureType::Clearcoat;
+    case aiTextureType_TRANSMISSION:      return TextureType::Transmission;
+    case aiTextureType_MAYA_BASE:         return TextureType::MayaBase;
+    case aiTextureType_MAYA_SPECULAR:     return TextureType::MayaSpecular;
+    case aiTextureType_MAYA_SPECULAR_COLOR: return TextureType::MayaSpecularColor;
+    case aiTextureType_MAYA_SPECULAR_ROUGHNESS: return TextureType::MayaSpecularRoughness;
+    case aiTextureType_ANISOTROPY:        return TextureType::Anisotropy;
+    case aiTextureType_GLTF_METALLIC_ROUGHNESS: return TextureType::GltfMetallicRoughness;
+    default:                              return TextureType::Unknown;
+    }
+}
+
 [[nodiscard]] auto ToBlendFunction(aiBlendMode Value) -> MaterialBlendFunction {
     switch (Value) {
     case aiBlendMode_Default:  return MaterialBlendFunction::Default;
     case aiBlendMode_Additive: return MaterialBlendFunction::Additive;
     default:                   return MaterialBlendFunction::Unknown;
     }
+}
+
+[[nodiscard]] auto ToAlphaMode(std::string_view Value) -> MaterialAlphaMode {
+    if (Value == "OPAQUE")
+        return MaterialAlphaMode::Opaque;
+    if (Value == "MASK")
+        return MaterialAlphaMode::Mask;
+    if (Value == "BLEND")
+        return MaterialAlphaMode::Blend;
+    return MaterialAlphaMode::Unknown;
 }
 
 [[nodiscard]] auto ToShadingModel(aiShadingMode Value) -> MaterialShadingModel {
@@ -126,6 +169,7 @@ namespace {
 [[nodiscard]] auto LoadTextureSlot(
     const aiMaterial& Source,
     aiTextureType Type,
+    TextureType TextureTypeValue,
     Uint32 Index,
     const Path& ModelDirectory,
     TextureDataCache& TextureCache) -> std::optional<TextureRecord> {
@@ -165,6 +209,7 @@ namespace {
         return static_cast<Uint32>(ReadInt(Source, Key, Type, Index, static_cast<Int32>(Fallback)));
     };
     return TextureRecord{
+        .Type      = TextureTypeValue,
         .Texture   = It->second,
         .Mapping   = ToTextureMapping(Mapping),
         .UVIndex   = UVIndex,
@@ -191,7 +236,7 @@ struct MaterialAssimpLoader {
 
     auto operator()(
         const aiMaterial* Source,
-        const Path& ModelDirectory) -> result_type {
+        const Path& ModelPath) -> result_type {
         if (!Source) {
             LogWarning("MaterialAssimpLoader: material source is null");
             return nullptr;
@@ -202,7 +247,9 @@ struct MaterialAssimpLoader {
             Source->Get(AI_MATKEY_NAME, MaterialName) == AI_SUCCESS && MaterialName.length != 0;
 
         auto Result = std::make_shared<MaterialRecord>();
-        Result->Name = HasName ? String(MaterialName.C_Str()) : String{"Material"};
+        Result->Source = MaterialSource::Assimp;
+        Result->SourceAsset = ModelPath.lexically_normal();
+        Result->Name = HasName ? String(MaterialName.C_Str()) : String{"<unnamed>"};
         Result->Ambient = ReadColor3(
             *Source, AI_MATKEY_COLOR_AMBIENT, Result->Ambient);
         Result->Diffuse = ReadColor3(
@@ -217,6 +264,10 @@ struct MaterialAssimpLoader {
             *Source, AI_MATKEY_COLOR_REFLECTIVE, Result->Reflective);
 
         Result->Opacity = ReadFloat(*Source, AI_MATKEY_OPACITY, Result->Opacity);
+        aiString AlphaMode = {};
+        if (Source->Get(AI_MATKEY_GLTF_ALPHAMODE, AlphaMode) == AI_SUCCESS)
+            Result->AlphaMode = ToAlphaMode(AlphaMode.C_Str());
+        Result->AlphaCutoff = ReadFloat(*Source, AI_MATKEY_GLTF_ALPHACUTOFF, Result->AlphaCutoff);
         Result->BumpScaling = ReadFloat(*Source, AI_MATKEY_BUMPSCALING, Result->BumpScaling);
         Result->Shininess = ReadFloat(*Source, AI_MATKEY_SHININESS, Result->Shininess);
         Result->ShininessStrength =
@@ -257,16 +308,15 @@ struct MaterialAssimpLoader {
         const Int32 ShadingModel = ReadInt(*Source, AI_MATKEY_SHADING_MODEL, 0);
         Result->ShadingModel = ToShadingModel(static_cast<aiShadingMode>(ShadingModel));
 
-        for (Uint32 TypeValue = aiTextureType_NONE;
+        for (Uint32 TypeValue = aiTextureType_DIFFUSE;
              TypeValue <= AI_TEXTURE_TYPE_MAX;
              ++TypeValue) {
-            const auto Type = static_cast<aiTextureType>(TypeValue);
-            auto& TextureSlots = Result->Textures[TypeValue];
-            TextureSlots.reserve(Source->GetTextureCount(Type));
+            const auto Type             = static_cast<aiTextureType>(TypeValue);
+            const auto TextureTypeValue = ToTextureType(Type);
             for (Uint32 Index = 0; Index < Source->GetTextureCount(Type); ++Index) {
                 if (auto Slot = LoadTextureSlot(
-                        *Source, Type, Index, ModelDirectory, m_TextureCache)) {
-                    TextureSlots.emplace_back(std::move(*Slot));
+                        *Source, Type, TextureTypeValue, Index, ModelPath.parent_path(), m_TextureCache)) {
+                    Result->Textures.emplace_back(std::move(*Slot));
                 }
             }
         }
@@ -279,14 +329,13 @@ struct MaterialAssimpLoader {
 };
 
 using MaterialHandle = entt::resource<MaterialRecord>;
+using ConstMaterialHandle = entt::resource<const MaterialRecord>;
 using MaterialAssimpCache = entt::resource_cache<MaterialRecord, MaterialAssimpLoader>;
 
 [[nodiscard]] auto MakeMaterialCacheKey(
     const Path& ModelPath,
-    StringView MaterialName,
     Uint32 MaterialIndex) -> entt::id_type {
-    const auto KeyText =
-        Format("{}#{}#{}", ModelPath.lexically_normal().string(), MaterialName, MaterialIndex);
+    const auto KeyText = Format("{}#{}", ModelPath.lexically_normal().string(), MaterialIndex);
     return entt::hashed_string{KeyText.data(), KeyText.size()};
 }
 

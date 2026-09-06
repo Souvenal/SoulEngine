@@ -113,11 +113,11 @@ class EditorWorld {
 
     /// @brief Build the editor-owned Scene View render request for this frame.
     [[nodiscard]] auto BuildSnapshot() -> EditorSnapshot {
-        const auto* CameraSys = m_SystemScheduler.Get<EditorCameraSystem>();
+        const auto CameraSys = m_SystemScheduler.Get<EditorCameraSystem>();
         if (!CameraSys)
             return {};
 
-        EditorSnapshot Snapshot{.Views = CameraSys->CollectViews()};
+        EditorSnapshot Snapshot{.Views = CameraSys->get().CollectViews()};
         for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
             const auto& Camera = m_Registry.get<EditorCameraComponent>(CameraEntity);
             Snapshot.SelectedEntity = Camera.SelectedEntity;

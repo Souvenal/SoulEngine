@@ -37,10 +37,12 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **GeometryRecord** | Scene-owned imported geometry record containing CPU vertex metadata, local bounding sphere, ref-backed position, normal, tangent, UV, and index buffers, and a `GpuData` shader-address ABI constructed by `BuildGpuData()`. It has no material identity. Bitangents are not stored; consumers derive them from normal and tangent. |
 | **SubMesh** | One imported `aiMesh` name, geometry handle, and default imported `MaterialHandle`. It preserves the material binding at imported-geometry scope rather than in GeometryRecord. |
 | **MeshAssetNode** | One static node from an imported asset hierarchy. It stores its local transform, ordered child nodes, and ordered references to `SubMesh` values; multiple nodes may reference the same SubMesh. |
-| **MeshRecord** | Scene-local cached imported asset. It owns a normalized absolute asset path, deduplicated SubMesh values, and an immutable MeshAssetNode tree shared by every entity that instances that mesh. |
+| **MeshRecord** | Scene-local cached imported asset. It owns a normalized absolute asset path, the complete imported material table, deduplicated SubMesh values, and an immutable MeshAssetNode tree shared by every entity that instances that mesh. |
+| **Material inspection query** | A transient flat `std::vector<ConstMaterialHandle>` returned by MeshSystem. The Editor groups and displays records by their MaterialRecord provenance during the current draw. |
 | **InstanceRecord** | Value-semantic SceneSnapshot record for one geometry/material instance. It carries the entity ID, GeometryRecord handle, selected MaterialHandle, and derived world transform. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
+| **Scene system query** | A templated lookup of one registered Scene system. It returns an optional borrowed reference wrapper, preserving constness and hiding the Scene's `SystemScheduler` from consumers. |
 
 ## Architecture
 
@@ -61,10 +63,11 @@ resolves the material handle into its own draw-instance representation.
 When a Scene record is uploadable, it owns the explicit GPU ABI mirror and
 builder beside its RHI resource fields. The renderer selects and deduplicates
 records for a frame, but does not redefine their address layout.
-Material instances resolve through `MaterialManager`: scene load publishes
-Mesh import publishes per-slot asset materials, while a valid mesh material YAML
-override replaces the material for every submesh and falls back to the imported
-material when loading fails.
+Material instances resolve through MeshSystem's Scene-local caches: mesh import
+publishes per-slot asset materials, while a valid mesh material YAML override
+replaces the material for every submesh and falls back to the imported material
+when loading fails. MeshSystem's Editor inspection query rebuilds its material
+handle list on demand; callers retain no result handles across frames.
 
 `Scene` owns shared Scene model types. Each component family owns one
 `Scene:<Name>` partition and its internal static EnTT meta registration.

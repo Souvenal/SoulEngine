@@ -206,15 +206,28 @@ class SystemScheduler {
 
     /// @brief Get a registered system by its concrete type.
     /// @tparam T System implementation derived from ISystem.
-    /// @return The system, or nullptr if T is not registered.
+    /// @return A borrowed system reference, or nullopt if T is not registered.
     template <typename T>
         requires std::derived_from<T, ISystem>
-    [[nodiscard]] auto Get() const -> T* {
+    [[nodiscard]] auto Get() -> std::optional<std::reference_wrapper<T>> {
         const auto Type = entt::type_index<T>::value();
         const auto It   = m_TypeToIndex.find(Type);
         if (It == m_TypeToIndex.end())
-            return nullptr;
-        return static_cast<T*>(m_Entries[It->second].System.get());
+            return std::nullopt;
+        return std::ref(*static_cast<T*>(m_Entries[It->second].System.get()));
+    }
+
+    /// @brief Get a registered system by its concrete type for read-only use.
+    /// @tparam T System implementation derived from ISystem.
+    /// @return A borrowed const system reference, or nullopt if T is not registered.
+    template <typename T>
+        requires std::derived_from<T, ISystem>
+    [[nodiscard]] auto Get() const -> std::optional<std::reference_wrapper<const T>> {
+        const auto Type = entt::type_index<T>::value();
+        const auto It   = m_TypeToIndex.find(Type);
+        if (It == m_TypeToIndex.end())
+            return std::nullopt;
+        return std::cref(*static_cast<const T*>(m_Entries[It->second].System.get()));
     }
 
     /// @brief Remove a registered system by its concrete type.

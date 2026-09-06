@@ -21,6 +21,8 @@ Registration and CompileDependency() are only allowed during the
 initialization phase; OnUpdate() requires a successful CompileDependency().
 Dangling name references and dependency cycles are reported as ErrorMessage
 diagnostics (cycles include one concrete name path).
+`Get<T>()` returns an optional borrowed reference wrapper; invoking it on a
+const scheduler preserves a const system reference.
 _Avoid_: relying on registration order for execution semantics, registering
 systems mid-frame
 

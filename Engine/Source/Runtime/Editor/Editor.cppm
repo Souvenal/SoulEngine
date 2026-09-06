@@ -9,15 +9,16 @@ module;
 export module Editor;
 
 import magic_enum;
-import :MainMenu;
 import :UIManager;
 import :UIPanels;
 import :EditorWorld;
 
 import Core;
 import EditorTypes;
+import Application;
 import RHI;
 import Resource;
+import Renderer;
 import Scene;
 import WindowSystem;
 
@@ -67,6 +68,17 @@ class Editor {
 
         InitializeImGui();
         InitializeUI();
+    }
+
+    /// @brief Bind the active runtime Scene for read-only Editor inspection.
+    /// The Editor observes this Scene and never owns it.
+    auto BindScene(const Scene& SceneValue) -> void {
+        m_Scene = &SceneValue;
+    }
+
+    /// @brief Clear the non-owning active Scene binding before Scene teardown.
+    auto UnbindScene() -> void {
+        m_Scene = nullptr;
     }
 
     /// @brief Bind the ImGui platform backend to the main window system.
@@ -157,7 +169,58 @@ class Editor {
     }
 
     auto InitializeUI() -> void {
-        RegisterAllUI();
+        RegisterAllUI([this]() -> const Scene* { return m_Scene; });
+    }
+
+    /// @brief Draw the global main menu before all Scene-dependent panels.
+    auto DrawMainMenu() -> void {
+        if (!ImGui::BeginMainMenuBar())
+            return;
+
+        if (ImGui::BeginMenu("Project")) {
+            if (ImGui::BeginMenu("Open Application")) {
+                const auto* CurrentApplication = GetCurrentApplication();
+                for (const auto& Name : ApplicationFactory::Get().Keys()) {
+                    String Label(Name);
+                    const bool IsCurrent = CurrentApplication && CurrentApplication->GetName() == Name;
+                    if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
+                        if (auto R = OpenApplication(Name); !R) {
+                            LogError("Application opening failed:\n{}", R.error().ToString());
+                        } else {
+                            if (const auto* NewApplication = GetCurrentApplication())
+                                BindScene(NewApplication->GetScene());
+                            else
+                                UnbindScene();
+                        }
+                        break;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Render")) {
+            const auto CurrentRendererName = GetCurrentRendererName();
+            for (const auto& Name : RendererFactory::Get().Keys()) {
+                String Label(Name);
+                const bool IsCurrent = CurrentRendererName == Name;
+                if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
+                    if (auto R = SelectRenderer(Name); !R)
+                        LogError("Renderer selection failed:\n{}", R.error().ToString());
+                    break;
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Debug")) {
+            if (ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials")))
+                UIManager::Get().ToggleUI("Debug.ShowMaterials");
+            ImGui::EndMenu();
+        }
+
+        ImGui::EndMainMenuBar();
     }
 
     /// @brief Main-thread entry point: build the ImGui frame for this game
@@ -234,6 +297,9 @@ class Editor {
     std::mutex     m_TextureQueueMutex;
 
     EditorWorld m_EditorWorld = {};
+    // Non-owning; Launch and DrawMainMenu keep this binding in sync with the
+    // active Application and clear it before the Scene is destroyed.
+    const Scene* m_Scene = nullptr;
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
     IWindowSystem*                       m_BoundWindowSystem = nullptr;
     RHIRenderDevice*                     m_BoundRenderDevice = nullptr;

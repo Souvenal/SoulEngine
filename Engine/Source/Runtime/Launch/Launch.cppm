@@ -149,6 +149,7 @@ class EngineLoop {
             Shutdown();
             return std::unexpected(ErrorMessage("Application was not available after opening"));
         }
+        m_Editor.BindScene(CurrentApplication->GetScene());
         LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
 
         return {};
@@ -193,6 +194,7 @@ class EngineLoop {
 
         TaskGraph::Get().Shutdown();
 
+        m_Editor.UnbindScene();
         CloseApplication();
 
         // Release frame slot snapshots and command observers before
