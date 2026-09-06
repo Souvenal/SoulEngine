@@ -34,6 +34,8 @@ public struct MaterialRecord {
     public uint twoSided;
     public uint blendFunction;
     public uint shadingModel;
+    public uint alphaMode;
+    public float alphaCutoff;
 
     public float4 baseColorFactor;
     public float metallicFactor;
@@ -54,6 +56,18 @@ public struct MaterialRecord {
     public Texture2D<float4>.Handle roughnessTexture;
     public Texture2D<float4>.Handle occlusionTexture;
     public Texture2D<float4>.Handle emissiveTexture;
+
+    public bool passesAlphaTest(float2 uv, SamplerState linearSampler) {
+        // Alpha mode 2 = mask
+        if (alphaMode != 2u)
+            return true;
+
+        // opacity value describes the overall opacity of a meterial
+        float alpha = baseColorFactor.a * opacity;
+        if (hasTexture(baseColorTexture))
+            alpha *= nonuniform(baseColorTexture).SampleLevel(linearSampler, uv, 0.0).a;
+        return alpha >= alphaCutoff;
+    }
 
     public MaterialSurface resolveSurface(float2 uv, float3 geometricNormal, float4 tangent, SamplerState linearSampler) {
         float3 baseColor = baseColorFactor.rgb;

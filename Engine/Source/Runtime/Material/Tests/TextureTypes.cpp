@@ -89,6 +89,23 @@ TEST(MaterialRecord, PreservesFlatTextureTypeOrder) {
     EXPECT_EQ(Material.Textures[3].Type, TextureType::Metalness);
 }
 
+TEST(MaterialRecord, UploadsAlphaMaskParameters) {
+    RHIRefArray<RHISampledTexture> Textures;
+    const MaterialRecord Material{
+        .Opacity = 0.8f,
+        .AlphaMode = MaterialAlphaMode::Mask,
+        .AlphaCutoff = 0.37f,
+        .BaseColorFactor = hlslpp::float4{1.0f, 1.0f, 1.0f, 0.6f},
+    };
+
+    const auto GpuData = Material.BuildGpuData(Textures);
+
+    EXPECT_EQ(GpuData.AlphaMode, static_cast<Uint32>(MaterialAlphaMode::Mask));
+    EXPECT_FLOAT_EQ(GpuData.AlphaCutoff, 0.37f);
+    EXPECT_FLOAT_EQ(GpuData.Opacity, 0.8f);
+    EXPECT_FLOAT_EQ(GpuData.BaseColorFactor.w, 0.6f);
+}
+
 TEST(MaterialAssimpLoader, ImportsGltfAlphaModeAndCutoff) {
     struct AlphaModeCase {
         StringView        SourceValue;

@@ -596,8 +596,11 @@ class RasterRenderer final : public IRenderer {
                 .Mask = MaskRT,
                 .FrameBuffer = *FrameBuffer,
                 .ViewBuffer = *ViewBuffer,
+                .LinearSampler = SamplerLinearRef,
+                .Textures = Scene.Textures,
                 .InstanceBuffer = SelectionInstanceBuffer,
                 .GeometryBuffer = DrawData.GeometryBuffer,
+                .MaterialBuffer = DrawData.MaterialBuffer,
                 .IndirectBuffer = SelectionIndirectBuffer,
                 .DrawCount = static_cast<Uint32>(DrawData.IndirectCommands.size()),
             });

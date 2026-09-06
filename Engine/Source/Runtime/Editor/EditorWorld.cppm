@@ -54,8 +54,8 @@ class EditorWorld {
         m_Registry.emplace<ParentComponent>(CameraEntity, m_EditorRootEntity);
         m_Registry.emplace<TransformComponent>(CameraEntity,
                                                TransformComponent{
-                                                   .Translation = hlslpp::float3(1.25f, 1.25f, 2.0f),
-                                                   .Rotation    = hlslpp::float3(23.46f, -35.29f, 0.0f),
+                                                   .Translation = hlslpp::float3(0.0f, 2.0f, 0.0f),
+                                                   .Rotation    = hlslpp::float3(10.0f, 0.0f, 0.0f),
                                                });
         m_Registry.emplace<NameComponent>(CameraEntity, NameComponent{.Name = "EditorViewportCamera"});
         auto& Camera = m_Registry.emplace<EditorCameraComponent>(CameraEntity);

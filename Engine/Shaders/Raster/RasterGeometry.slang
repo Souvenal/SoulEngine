@@ -51,11 +51,18 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, 
 [shader("fragment")]
 GBufferPixel fragMain(VSOutput input) {
     InstanceRecord instanceData = g_rasterDraw.instances[input.instanceIndex];
-    MaterialSurface surface = g_rasterDraw.materials[instanceData.materialID].resolveSurface(
+    MaterialRecord material = g_rasterDraw.materials[instanceData.materialID];
+
+    // Alpha cutoff
+    if (!material.passesAlphaTest(input.uv, g_rasterFrameView.linearSampler))
+        discard;
+
+    MaterialSurface surface = material.resolveSurface(
         input.uv,
         input.normal,
         input.tangent,
         g_rasterFrameView.linearSampler);
+
     return GBufferPixel(
         float4(surface.baseColor, 1.0),
         surface.normal,
