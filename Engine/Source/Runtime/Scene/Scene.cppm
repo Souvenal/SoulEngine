@@ -56,11 +56,11 @@ class Scene {
     }
 
     [[nodiscard]] auto CollectSnapshotInstances() const -> std::vector<InstanceRecord> {
-        const auto* MeshSys = m_SystemScheduler.Get<MeshSystem>();
+        const auto MeshSys = m_SystemScheduler.Get<MeshSystem>();
         if (!MeshSys)
             return {};
 
-        return MeshSys->CollectInstances();
+        return MeshSys->get().CollectInstances();
     }
 
     [[nodiscard]] auto CreateEntityInternal(String Name, entt::entity Parent) -> entt::entity {
@@ -123,8 +123,13 @@ class Scene {
 
     auto SetAssetRoot(Path AssetRoot) -> void {
         m_AssetRoot = std::move(AssetRoot);
-        if (auto* MeshSys = m_SystemScheduler.Get<MeshSystem>())
-            MeshSys->SetAssetRoot(m_AssetRoot);
+        if (const auto MeshSys = m_SystemScheduler.Get<MeshSystem>())
+            MeshSys->get().SetAssetRoot(m_AssetRoot);
+    }
+
+    /// @brief Return this Scene's Assets root directory.
+    [[nodiscard]] auto GetAssetRoot() const -> const Path& {
+        return m_AssetRoot;
     }
 
     /// @brief Register a texture asset path. Application calls this during setup.
@@ -148,6 +153,15 @@ class Scene {
     /// @brief Access the systems registered for this scene.
     [[nodiscard]] auto GetSystems() const -> const SystemScheduler& {
         return m_SystemScheduler;
+    }
+
+    /// @brief Get a registered Scene system for read-only inspection.
+    /// @tparam T System implementation derived from ISystem.
+    /// @return A borrowed const system reference, or nullopt if T is not registered.
+    template <typename T>
+        requires std::derived_from<T, ISystem>
+    [[nodiscard]] auto GetSystem() const -> std::optional<std::reference_wrapper<const T>> {
+        return m_SystemScheduler.Get<T>();
     }
 
     /// @brief Advance scene systems by one frame.
@@ -176,17 +190,17 @@ class Scene {
     /// @brief Build a complete game snapshot using system collect methods.
     /// @return Complete game snapshot.
     [[nodiscard]] auto BuildSnapshot() -> GameSnapshot {
-        const auto* CameraSys = m_SystemScheduler.Get<CameraSystem>();
-        const auto* MeshSys   = m_SystemScheduler.Get<MeshSystem>();
-        const auto* LightSys  = m_SystemScheduler.Get<LightSystem>();
+        const auto CameraSys = m_SystemScheduler.Get<CameraSystem>();
+        const auto MeshSys   = m_SystemScheduler.Get<MeshSystem>();
+        const auto LightSys  = m_SystemScheduler.Get<LightSystem>();
         if (!CameraSys || !MeshSys || !LightSys)
             return GameSnapshot{.Time = m_Time};
 
         return GameSnapshot{
-            .Views     = CameraSys->CollectViews(),
+            .Views     = CameraSys->get().CollectViews(),
             .Instances = CollectSnapshotInstances(),
-            .Lights    = LightSys->CollectLights(),
-            .Textures  = MeshSys->GetTextureArray(),
+            .Lights    = LightSys->get().CollectLights(),
+            .Textures  = MeshSys->get().GetTextureArray(),
             .Time      = m_Time,
         };
     }

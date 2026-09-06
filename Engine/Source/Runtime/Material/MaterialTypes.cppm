@@ -1,7 +1,6 @@
 module;
 
 #include <cstddef>
-#include <assimp/material.h>
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
@@ -48,10 +47,47 @@ enum class TextureMapMode : Uint8 {
     Decal,
 };
 
+enum class TextureType : Uint8 {
+    Unknown = 0,
+    Diffuse,
+    Specular,
+    Ambient,
+    Emissive,
+    Height,
+    Normals,
+    Shininess,
+    Opacity,
+    Displacement,
+    Lightmap,
+    Reflection,
+    BaseColor,
+    NormalCamera,
+    EmissionColor,
+    Metalness,
+    DiffuseRoughness,
+    AmbientOcclusion,
+    Sheen,
+    Clearcoat,
+    Transmission,
+    MayaBase,
+    MayaSpecular,
+    MayaSpecularColor,
+    MayaSpecularRoughness,
+    Anisotropy,
+    GltfMetallicRoughness,
+};
+
 enum class MaterialBlendFunction : Uint8 {
     Unknown = 0,
     Default,
     Additive,
+};
+
+enum class MaterialAlphaMode : Uint8 {
+    Unknown = 0,
+    Opaque,
+    Mask,
+    Blend,
 };
 
 enum class MaterialShadingModel : Uint8 {
@@ -89,6 +125,8 @@ struct MaterialYamlRecord {
     bool EnableWireframe = false;
     bool TwoSided = false;
     MaterialBlendFunction BlendFunction = MaterialBlendFunction::Default;
+    MaterialAlphaMode AlphaMode = MaterialAlphaMode::Opaque;
+    Float32 AlphaCutoff = 0.5f;
     MaterialShadingModel ShadingModel = MaterialShadingModel::Unknown;
 
     hlslpp::float4 BaseColorFactor = hlslpp::float4{1.0f, 1.0f, 1.0f, 1.0f};
@@ -122,6 +160,15 @@ struct MaterialYamlRecord {
         return String(magic_enum::enum_name(BlendFunction));
     }
 
+    auto SetAlphaMode(String Value) -> void {
+        if (const auto Parsed = magic_enum::enum_cast<MaterialAlphaMode>(Value, magic_enum::case_insensitive))
+            AlphaMode = *Parsed;
+    }
+
+    [[nodiscard]] auto GetAlphaMode() const -> String {
+        return String(magic_enum::enum_name(AlphaMode));
+    }
+
     auto SetShadingModel(String Value) -> void {
         if (const auto Parsed = magic_enum::enum_cast<MaterialShadingModel>(Value, magic_enum::case_insensitive))
             ShadingModel = *Parsed;
@@ -140,8 +187,9 @@ struct TextureData {
 
 using TextureDataHandle = entt::resource<TextureData>;
 
-/// @brief Runtime representation of one Assimp texture slot.
+/// @brief Runtime representation of one material texture slot.
 struct TextureRecord {
+    TextureType       Type      = TextureType::Unknown;
     TextureDataHandle Texture   = {};
     TextureMapping    Mapping   = TextureMapping::UV;
     Uint32            UVIndex   = 0;
@@ -153,9 +201,18 @@ struct TextureRecord {
     Uint32            Flags     = 0;
 };
 
-/// @brief Renderer-neutral material record modeled after Assimp's aiMaterial.
+/// @brief Material loader that created a runtime material record.
+enum class MaterialSource {
+    Unknown = 0,
+    Yaml,
+    Assimp,
+};
+
+/// @brief Renderer-neutral material record with source provenance.
 struct MaterialRecord {
-    String Name = {};
+    MaterialSource Source      = MaterialSource::Unknown;
+    Path           SourceAsset = {};
+    String         Name        = {};
 
     // Common aiMaterial scalar and color properties.
     hlslpp::float3 Ambient     = hlslpp::float3{0.0f, 0.0f, 0.0f};
@@ -174,6 +231,8 @@ struct MaterialRecord {
     bool                 EnableWireframe  = false;
     bool                 TwoSided         = false;
     MaterialBlendFunction BlendFunction   = MaterialBlendFunction::Default;
+    MaterialAlphaMode     AlphaMode       = MaterialAlphaMode::Opaque;
+    Float32               AlphaCutoff     = 0.5f;
     MaterialShadingModel  ShadingModel    = MaterialShadingModel::Unknown;
 
     // PBR extensions commonly emitted by glTF and other modern importers.
@@ -189,8 +248,8 @@ struct MaterialRecord {
     Float32        VolumeAttenuationDistance = 0.0f;
     hlslpp::float3 VolumeAttenuationColor    = hlslpp::float3{1.0f, 1.0f, 1.0f};
 
-    // Texture slots indexed by Assimp's aiTextureType values.
-    std::array<std::vector<TextureRecord>, AI_TEXTURE_TYPE_MAX + 1> Textures = {};
+    // Imported texture slots with Material-owned semantic types.
+    std::vector<TextureRecord> Textures = {};
 
     /// @brief GPU-side material ABI used by renderer transient buffers.
     struct alignas(16) GpuData {
@@ -248,9 +307,11 @@ struct MaterialRecord {
 
     [[nodiscard]] auto BuildGpuData(const RHIRefArray<RHISampledTexture>& TextureArray) const
         -> GpuData {
-        const auto FirstSlot = [this](aiTextureType Type) -> TextureDataHandle {
-            const auto& Slots = Textures[static_cast<std::size_t>(Type)];
-            return Slots.empty() ? TextureDataHandle{} : Slots.front().Texture;
+        const auto FirstSlot = [this](TextureType Type) -> TextureDataHandle {
+            const auto Slot = std::ranges::find_if(Textures, [Type](const TextureRecord& Record) -> bool {
+                return Record.Type == Type;
+            });
+            return Slot == Textures.end() ? TextureDataHandle{} : Slot->Texture;
         };
         const auto ResolveTexture = [&TextureArray](const TextureDataHandle& Texture) -> std::array<Uint32, 2> {
             if (!Texture || !Texture->Texture)
@@ -289,30 +350,35 @@ struct MaterialRecord {
             .VolumeAttenuationColor    = hlslpp::interop::float3{VolumeAttenuationColor},
         };
 
-        auto BaseColor = FirstSlot(aiTextureType_BASE_COLOR);
+        auto BaseColor = FirstSlot(TextureType::BaseColor);
         if (!BaseColor)
-            BaseColor = FirstSlot(aiTextureType_DIFFUSE);
-        auto Normal = FirstSlot(aiTextureType_NORMAL_CAMERA);
+            BaseColor = FirstSlot(TextureType::Diffuse);
+        auto Normal = FirstSlot(TextureType::NormalCamera);
         if (!Normal)
-            Normal = FirstSlot(aiTextureType_NORMALS);
-        auto EmissiveSlot = FirstSlot(aiTextureType_EMISSION_COLOR);
+            Normal = FirstSlot(TextureType::Normals);
+        auto EmissiveSlot = FirstSlot(TextureType::EmissionColor);
         if (!EmissiveSlot)
-            EmissiveSlot = FirstSlot(aiTextureType_EMISSIVE);
+            EmissiveSlot = FirstSlot(TextureType::Emissive);
 
-        const auto Metallic  = FirstSlot(aiTextureType_METALNESS);
-        const auto Roughness = FirstSlot(aiTextureType_DIFFUSE_ROUGHNESS);
-        const bool SharedMetallicRoughness =
-            Metallic && Roughness && Metallic->Texture == Roughness->Texture;
+        const auto GltfMetallicRoughness = FirstSlot(TextureType::GltfMetallicRoughness);
 
         Result.BaseColorTexture = ResolveTexture(BaseColor);
         Result.NormalTexture    = ResolveTexture(Normal);
-        if (SharedMetallicRoughness) {
-            Result.MetallicRoughnessTexture = ResolveTexture(Metallic);
+        if (GltfMetallicRoughness) {
+            Result.MetallicRoughnessTexture = ResolveTexture(GltfMetallicRoughness);
         } else {
-            Result.MetallicTexture = ResolveTexture(Metallic);
-            Result.RoughnessTexture = ResolveTexture(Roughness);
+            const auto Metallic  = FirstSlot(TextureType::Metalness);
+            const auto Roughness = FirstSlot(TextureType::DiffuseRoughness);
+            const bool SharedMetallicRoughness =
+                Metallic && Roughness && Metallic->Texture == Roughness->Texture;
+            if (SharedMetallicRoughness) {
+                Result.MetallicRoughnessTexture = ResolveTexture(Metallic);
+            } else {
+                Result.MetallicTexture = ResolveTexture(Metallic);
+                Result.RoughnessTexture = ResolveTexture(Roughness);
+            }
         }
-        Result.OcclusionTexture = ResolveTexture(FirstSlot(aiTextureType_AMBIENT_OCCLUSION));
+        Result.OcclusionTexture = ResolveTexture(FirstSlot(TextureType::AmbientOcclusion));
         Result.EmissiveTexture   = ResolveTexture(EmissiveSlot);
         return Result;
     }

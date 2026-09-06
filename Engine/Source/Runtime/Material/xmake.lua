@@ -11,3 +11,5 @@ target("Material")
     add_deps("Core", "RHI", "STBImage", {public = true})
 
     add_files("*.cppm")
+
+test_module("Material")

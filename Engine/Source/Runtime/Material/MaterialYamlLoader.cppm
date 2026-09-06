@@ -1,7 +1,6 @@
 module;
 
 #include <entt/entt.hpp>
-#include <assimp/material.h>
 
 export module Material:YamlLoader;
 
@@ -43,6 +42,8 @@ auto RegisterMaterialYamlMeta() -> void {
     Factory.data<&MaterialYamlRecord::TwoSided>("two_sided");
     Factory.data<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function");
     Factory.data<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model");
+    Factory.data<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode");
+    Factory.data<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff");
     Factory.data<&MaterialYamlRecord::BaseColorFactor>("base_color_factor");
     Factory.data<&MaterialYamlRecord::MetallicFactor>("metallic_factor");
     Factory.data<&MaterialYamlRecord::RoughnessFactor>("roughness_factor");
@@ -133,7 +134,9 @@ struct MaterialYamlLoader {
         ResolveTexture(Value.EmissiveTexture);
 
         auto Result = std::make_shared<MaterialRecord>();
-        Result->Name = Value.Name;
+        Result->Source = MaterialSource::Yaml;
+        Result->SourceAsset = MaterialPath.lexically_normal();
+        Result->Name = Value.Name.empty() ? String{"<unnamed>"} : Value.Name;
         Result->Ambient = Value.Ambient;
         Result->Diffuse = Value.Diffuse;
         Result->Specular = Value.Specular;
@@ -161,29 +164,31 @@ struct MaterialYamlLoader {
         Result->TwoSided = Value.TwoSided;
         Result->BlendFunction = Value.BlendFunction;
         Result->ShadingModel = Value.ShadingModel;
+        Result->AlphaMode = Value.AlphaMode;
+        Result->AlphaCutoff = Value.AlphaCutoff;
 
-        LoadTexture(Result->Textures[aiTextureType_BASE_COLOR], Value.BaseColorTexture);
-        LoadTexture(Result->Textures[aiTextureType_NORMALS], Value.NormalTexture);
+        LoadTexture(*Result, TextureType::BaseColor, Value.BaseColorTexture);
+        LoadTexture(*Result, TextureType::Normals, Value.NormalTexture);
         if (!Value.MetallicRoughnessTexture.empty()) {
-            LoadTexture(Result->Textures[aiTextureType_METALNESS], Value.MetallicRoughnessTexture);
-            LoadTexture(Result->Textures[aiTextureType_DIFFUSE_ROUGHNESS], Value.MetallicRoughnessTexture);
+            LoadTexture(*Result, TextureType::Metalness, Value.MetallicRoughnessTexture);
+            LoadTexture(*Result, TextureType::DiffuseRoughness, Value.MetallicRoughnessTexture);
         } else {
-            LoadTexture(Result->Textures[aiTextureType_METALNESS], Value.MetallicTexture);
-            LoadTexture(Result->Textures[aiTextureType_DIFFUSE_ROUGHNESS], Value.RoughnessTexture);
+            LoadTexture(*Result, TextureType::Metalness, Value.MetallicTexture);
+            LoadTexture(*Result, TextureType::DiffuseRoughness, Value.RoughnessTexture);
         }
-        LoadTexture(Result->Textures[aiTextureType_AMBIENT_OCCLUSION], Value.OcclusionTexture);
-        LoadTexture(Result->Textures[aiTextureType_EMISSIVE], Value.EmissiveTexture);
+        LoadTexture(*Result, TextureType::AmbientOcclusion, Value.OcclusionTexture);
+        LoadTexture(*Result, TextureType::Emissive, Value.EmissiveTexture);
         return Result;
     }
 
   private:
     // TODO: Share this cache with MaterialAssimpLoader once material loading performance matters.
     TextureDataCache m_TextureCache = {};
-    auto LoadTexture(std::vector<TextureRecord>& Slots, const String& Path) -> void {
+    auto LoadTexture(MaterialRecord& Material, TextureType Type, const String& Path) -> void {
         if (Path.empty()) return;
         const auto Id = entt::hashed_string{Path.data(), Path.size()};
         auto [It, Loaded] = m_TextureCache.load(Id, SoulEngine::Path(Path));
-        if (It->second) Slots.emplace_back(TextureRecord{.Texture = It->second});
+        if (It->second) Material.Textures.emplace_back(TextureRecord{.Type = Type, .Texture = It->second});
         else LogWarning("MaterialYamlLoader: failed to load texture '{}'", Path);
     }
 };

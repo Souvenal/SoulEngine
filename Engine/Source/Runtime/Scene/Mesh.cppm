@@ -96,9 +96,10 @@ struct MeshAssetNode {
 
 /// @brief Cached imported mesh asset.
 struct MeshRecord {
-    Path                       Asset     = {};
-    std::vector<SubMesh>       SubMeshes = {};
-    std::vector<MeshAssetNode> Nodes     = {};
+    Path                        Asset     = {};
+    std::vector<MaterialHandle> Materials = {};
+    std::vector<SubMesh>        SubMeshes = {};
+    std::vector<MeshAssetNode>  Nodes     = {};
 };
 
 using MeshHandle = entt::resource<MeshRecord>;
@@ -347,13 +348,9 @@ struct MeshLoader {
         std::vector<MaterialHandle> Materials = {};
         Materials.reserve(Scene->mNumMaterials);
         for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex) {
-            const auto* AiMaterial   = Scene->mMaterials[MaterialIndex];
-            aiString    MaterialName = {};
-            const bool  HasName =
-                AiMaterial && AiMaterial->Get(AI_MATKEY_NAME, MaterialName) == AI_SUCCESS && MaterialName.length != 0;
-            const String Name       = HasName ? String(MaterialName.C_Str()) : Format("Material{}", MaterialIndex);
-            const auto   ResourceId = MakeMaterialCacheKey(MeshPath, Name, MaterialIndex);
-            auto [It, Loaded]       = m_MaterialAssimpCache.load(ResourceId, AiMaterial, MeshPath.parent_path());
+            const auto* AiMaterial = Scene->mMaterials[MaterialIndex];
+            const auto ResourceId  = MakeMaterialCacheKey(MeshPath, MaterialIndex);
+            auto [It, Loaded]      = m_MaterialAssimpCache.load(ResourceId, AiMaterial, MeshPath);
             if (!It->second) {
                 LogWarning("MeshLoader: material load failed '{}#{}'", MeshPathString, MaterialIndex);
                 return nullptr;
@@ -363,6 +360,7 @@ struct MeshLoader {
 
         auto Result = std::make_shared<MeshRecord>(MeshRecord{
             .Asset     = MeshPath,
+            .Materials = std::move(Materials),
             .SubMeshes = {},
             .Nodes     = {},
         });
@@ -371,7 +369,7 @@ struct MeshLoader {
             const auto KeyText       = Format("{}#{}", MeshPathString, MeshIndex);
             const auto ResourceId    = entt::hashed_string{KeyText.data(), KeyText.size()};
             const auto MaterialIndex = Scene->mMeshes[MeshIndex]->mMaterialIndex;
-            const auto Material      = MaterialIndex < Materials.size() ? Materials[MaterialIndex] : MaterialHandle{};
+            const auto Material      = MaterialIndex < Result->Materials.size() ? Result->Materials[MaterialIndex] : MaterialHandle{};
             auto [It, Loaded] = m_GeometryCache.load(ResourceId, MeshPathString, MeshIndex, Scene->mMeshes[MeshIndex]);
             if (!It->second) {
                 LogWarning("MeshLoader: geometry load failed '{}[{}]'", MeshPathString, MeshIndex);
@@ -478,17 +476,15 @@ class MeshSystem : public ISystem {
         const auto AppendMaterialTextures = [this](const MaterialHandle& Material) -> void {
             if (!Material)
                 return;
-            for (const auto& TextureSlots : Material->Textures) {
-                for (const auto& TextureSlot : TextureSlots) {
-                    // Do not require a Ready payload here: mesh-load frames queue
-                    // texture creation on the RHI thread, so refs are still
-                    // RhiCommitting/GpuPending and must be appended regardless.
-                    if (!TextureSlot.Texture ||
-                        TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
-                        continue;
-                    if (auto R = m_TextureArray.Append(TextureSlot.Texture->Texture); !R)
-                        LogWarning("MeshSystem: failed to append texture from material: {}", R.error().ToString());
-                }
+            for (const auto& TextureSlot : Material->Textures) {
+                // Do not require a Ready payload here: mesh-load frames queue
+                // texture creation on the RHI thread, so refs are still
+                // RhiCommitting/GpuPending and must be appended regardless.
+                if (!TextureSlot.Texture ||
+                    TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
+                    continue;
+                if (auto R = m_TextureArray.Append(TextureSlot.Texture->Texture); !R)
+                    LogWarning("MeshSystem: failed to append texture from material: {}", R.error().ToString());
             }
         };
         const auto AppendMeshTextures = [&AppendMaterialTextures](const MeshRecord& Mesh) -> void {
@@ -569,13 +565,36 @@ class MeshSystem : public ISystem {
         return Result;
     }
 
+    /// @brief Collect live read-only material handles cached by this Scene.
+    /// @return YAML material handles followed by cached mesh material handles.
+    [[nodiscard]] auto CollectMaterialRecords() const -> std::vector<ConstMaterialHandle> {
+        std::vector<ConstMaterialHandle> Result;
+        for (const auto& Entry : m_MaterialYamlCache) {
+            const auto& Material = Entry.second;
+            if (Material)
+                Result.emplace_back(Material);
+        }
+
+        for (const auto& Entry : m_MeshCache) {
+            const auto& Mesh = Entry.second;
+            if (!Mesh)
+                continue;
+
+            for (const auto& Material : Mesh->Materials) {
+                if (Material)
+                    Result.emplace_back(Material);
+            }
+        }
+        return Result;
+    }
+
     [[nodiscard]] auto GetTextureArray() const -> const RHIRefArray<RHISampledTexture>& {
         return m_TextureArray;
     }
 
   private:
     RHIRefArray<RHISampledTexture> m_TextureArray;
-    Path                           m_AssetRoot = {};
+    Path                           m_AssetRoot         = {};
     MeshCache                      m_MeshCache;
     MaterialYamlCache              m_MaterialYamlCache;
 };

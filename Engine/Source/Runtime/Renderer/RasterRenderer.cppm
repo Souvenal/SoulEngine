@@ -304,6 +304,59 @@ class RasterRenderer final : public IRenderer {
         if (Scene.Views.empty() && Editor.Views.empty())
             return Result;
 
+        const auto CheckPipeline = []<typename T>(const RHIRef<T>& Pipeline, StringView Name)
+            -> std::expected<bool, ErrorMessage> {
+            if (Pipeline.GetState() == RHIRefState::Ready)
+                return true;
+            if (Pipeline.GetState() == RHIRefState::Failed) {
+                if (const auto Error = Pipeline.GetError())
+                    return std::unexpected(Error->Append(Format("Raster pipeline '{}' failed", Name)));
+                return std::unexpected(ErrorMessage(Format("Raster pipeline '{}' failed without an error", Name)));
+            }
+            return false;
+        };
+        const auto RequireReady = [&CheckPipeline](const auto& Pipeline, StringView Name)
+            -> std::expected<bool, ErrorMessage> {
+            return CheckPipeline(Pipeline, Name);
+        };
+        for (const auto& [Pipeline, Name] : std::array{
+                 std::pair{std::cref(m_Pipeline), StringView{"GeometryPass"}},
+                 std::pair{std::cref(m_DeferredPipeline), StringView{"DeferredLightingPass"}},
+             }) {
+            const auto Ready = RequireReady(Pipeline.get(), Name);
+            if (!Ready)
+                return std::unexpected(Ready.error());
+            if (!*Ready)
+                return Result;
+        }
+        if (!Scene.Instances.empty()) {
+            const auto CullingReady = RequireReady(m_CullingPipeline, "CullingPass");
+            if (!CullingReady)
+                return std::unexpected(CullingReady.error());
+            if (!*CullingReady)
+                return Result;
+        }
+        const bool UsesEditorSelection =
+            !Scene.Instances.empty() && Editor.SelectedEntity &&
+            std::ranges::any_of(Editor.Views, [](const EditorViewRecord& View) { return static_cast<bool>(View.SelectionMask); });
+        if (UsesEditorSelection) {
+            const auto SelectionFilterReady = RequireReady(m_SelectionFilterPipeline, "SelectionFilterPass");
+            if (!SelectionFilterReady)
+                return std::unexpected(SelectionFilterReady.error());
+            if (!*SelectionFilterReady)
+                return Result;
+            const auto SelectionMaskReady = RequireReady(m_SelectionMaskPipeline, "SelectionMaskPass");
+            if (!SelectionMaskReady)
+                return std::unexpected(SelectionMaskReady.error());
+            if (!*SelectionMaskReady)
+                return Result;
+            const auto SelectionOutlineReady = RequireReady(m_SelectionOutlinePipeline, "SelectionOutlinePass");
+            if (!SelectionOutlineReady)
+                return std::unexpected(SelectionOutlineReady.error());
+            if (!*SelectionOutlineReady)
+                return Result;
+        }
+
         auto DrawData = RasterFrameDrawData::Create(Scene.Instances, Scene.Textures);
         if (!DrawData)
             return std::unexpected(DrawData.error().Append("Raster frame draw-data construction failed"));
@@ -341,7 +394,10 @@ class RasterRenderer final : public IRenderer {
         const auto& SamplerAnisoRef            = m_SamplerAniso;
         const auto& DeferredPipelineRef        = m_DeferredPipeline;
         if (!AlbedoRTRef || !NormalRTRef || !EntityIdRTRef || !MaterialIdRTRef || !DepthRTRef || !SceneColorRTRef ||
-            !SamplerLinearRef || !SamplerAnisoRef)
+             !PipelineRef || !DeferredPipelineRef || !SamplerLinearRef || !SamplerAnisoRef ||
+             (!DrawData.Instances.empty() && !m_CullingPipeline) ||
+             (EditorView && Editor.SelectedEntity && EditorView->SelectionMask && !DrawData.Instances.empty() &&
+              (!m_SelectionFilterPipeline || !m_SelectionMaskPipeline || !m_SelectionOutlinePipeline)))
             return {};
 
         const auto FrameData =

@@ -17,6 +17,8 @@ UI abstraction layer.
 | **EditorCameraComponent** | Editor-only camera component containing camera parameters, editor viewport dimensions, persistent `EditorCameraRenderTargets`, picking readback state, and selected-entity state. |
 | **EditorCameraRenderTargets** | Editor-camera-owned persistent bundle containing generic camera G-buffer/SceneColor outputs plus the R8_UNORM selection mask. The bundle is recreated with the editor camera extent and carried by `EditorViewRecord`. |
 | **Selected render pixel** | The latest editor scene-view pixel chosen by the user. It is copied into the immutable `EditorSnapshot` and consumed by Renderer post-processing to identify the selected EntityId in the G-buffer. |
+| **Active Scene binding** | A non-owning `const Scene*` held by Editor for the current UI tick. Launch binds it after Application creation and clears it before Application destruction; panels do not retain it across frames. |
+| **Live system query** | A read-only `Scene::GetSystem<T>()` lookup performed by a panel at draw time, followed by immediate consumption of the returned system inspection data. |
 
 ## Threading
 

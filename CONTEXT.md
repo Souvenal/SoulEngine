@@ -20,3 +20,4 @@ These apply to every module. Per-module `CONTEXT.md` files may add module-specif
 Cross-module ADRs live in [`Docs/ADR/`](Docs/ADR/). Module-scoped decisions should be recorded in `Docs/ADR/` within the relevant module directory.
 
 - [ADR 03 — Three-thread pipeline and variant commands](Docs/ADR/03-three-thread-pipeline-variant-commands.md)
+- [ADR 11 — Editor active-Scene system inspection](Docs/ADR/11-editor-active-scene-system-inspection.md)

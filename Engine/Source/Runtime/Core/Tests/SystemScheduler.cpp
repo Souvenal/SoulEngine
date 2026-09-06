@@ -144,6 +144,23 @@ TEST(SystemSchedulerTest, OnUpdateBeforeCompileFails) {
     EXPECT_TRUE(Result.error().ToString().contains("CompileDependency"));
 }
 
+TEST(SystemSchedulerTest, GetReturnsOptionalBorrowedReference) {
+    SchedulerFixture F;
+    ASSERT_TRUE(F.Scheduler.Register<RecordingSystem<0>>("SystemA", {}, {}, F.Log).has_value());
+
+    const auto System = F.Scheduler.Get<RecordingSystem<0>>();
+    ASSERT_TRUE(System.has_value());
+    System->get().OnUpdate(0.0f);
+    EXPECT_EQ(F.Log, (std::vector<int>{0}));
+
+    const SystemScheduler& ConstScheduler = F.Scheduler;
+    const auto             ConstSystem     = ConstScheduler.Get<RecordingSystem<0>>();
+    static_assert(std::same_as<std::remove_cvref_t<decltype(ConstSystem)>,
+                               std::optional<std::reference_wrapper<const RecordingSystem<0>>>>);
+    ASSERT_TRUE(ConstSystem.has_value());
+    EXPECT_EQ(std::addressof(System->get()), std::addressof(ConstSystem->get()));
+}
+
 TEST(SystemSchedulerTest, RemoveAfterCompileErasesFromExecutionOrder) {
     SchedulerFixture F;
     ASSERT_TRUE(F.Scheduler.Register<RecordingSystem<0>>("SystemA", {}, {}, F.Log).has_value());
@@ -152,7 +169,7 @@ TEST(SystemSchedulerTest, RemoveAfterCompileErasesFromExecutionOrder) {
     ASSERT_TRUE(F.Scheduler.CompileDependency().has_value());
 
     ASSERT_TRUE(F.Scheduler.Remove<RecordingSystem<1>>());
-    EXPECT_EQ(F.Scheduler.Get<RecordingSystem<1>>(), nullptr);
+    EXPECT_FALSE(F.Scheduler.Get<RecordingSystem<1>>().has_value());
 
     ASSERT_TRUE(F.Scheduler.OnUpdate(0.0f).has_value());
     EXPECT_EQ(F.Log, (std::vector<int>{0, 2}));
