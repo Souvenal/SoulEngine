@@ -276,6 +276,8 @@ struct MaterialRecord {
         Uint32  TwoSided          = 0;
         Uint32  BlendFunction     = 0;
         Uint32  ShadingModel      = 0;
+        Uint32  AlphaMode         = 0;
+        Float32 AlphaCutoff       = 0.5f;
 
         alignas(16) hlslpp::interop::float4 BaseColorFactor = hlslpp::interop::float4{
             hlslpp::float4{1.0f, 1.0f, 1.0f, 1.0f}};
@@ -337,6 +339,8 @@ struct MaterialRecord {
             .TwoSided                  = TwoSided ? 1U : 0U,
             .BlendFunction             = static_cast<Uint32>(BlendFunction),
             .ShadingModel              = static_cast<Uint32>(ShadingModel),
+            .AlphaMode                 = static_cast<Uint32>(AlphaMode),
+            .AlphaCutoff               = AlphaCutoff,
             .BaseColorFactor           = hlslpp::interop::float4{BaseColorFactor},
             .MetallicFactor            = MetallicFactor,
             .RoughnessFactor           = RoughnessFactor,
@@ -390,6 +394,8 @@ static_assert(offsetof(MaterialRecord::GpuData, Diffuse) == 16);
 static_assert(offsetof(MaterialRecord::GpuData, Specular) == 32);
 static_assert(offsetof(MaterialRecord::GpuData, Emissive) == 48);
 static_assert(offsetof(MaterialRecord::GpuData, Opacity) == 92);
+static_assert(offsetof(MaterialRecord::GpuData, AlphaMode) == 132);
+static_assert(offsetof(MaterialRecord::GpuData, AlphaCutoff) == 136);
 static_assert(offsetof(MaterialRecord::GpuData, BaseColorFactor) == 144);
 static_assert(offsetof(MaterialRecord::GpuData, SheenColorFactor) == 176);
 static_assert(offsetof(MaterialRecord::GpuData, VolumeAttenuationColor) == 224);

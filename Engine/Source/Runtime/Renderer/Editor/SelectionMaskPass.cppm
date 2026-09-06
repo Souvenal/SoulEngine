@@ -5,6 +5,7 @@ module;
 export module Renderer:EditorPasses.SelectionMaskPass;
 
 import Core;
+import Material;
 import RHI;
 import Scene;
 
@@ -16,8 +17,11 @@ struct SelectionMaskPassInput {
     RHIRef<RHIRenderTarget>                 Mask = nullptr;
     RHIRef<RHITransientConstantBuffer>      FrameBuffer = nullptr;
     RHIRef<RHITransientConstantBuffer>      ViewBuffer = nullptr;
+    RHIRef<RHISampler>                      LinearSampler = nullptr;
+    RHIRefArray<RHISampledTexture>          Textures = {};
     RHIRef<RHITransientShaderStorageBuffer> InstanceBuffer = nullptr;
     RHIRef<RHITransientShaderStorageBuffer> GeometryBuffer = nullptr;
+    RHIRef<RHITransientShaderStorageBuffer> MaterialBuffer = nullptr;
     RHIRef<RHITransientShaderStorageBuffer> IndirectBuffer = nullptr;
     Uint32                                   DrawCount = 0;
 };
@@ -37,7 +41,8 @@ class SelectionMaskPass final : public IRHIGraphicsPass {
         auto Input = std::move(m_Input);
 
         if (!GetShaderBindingSet() || !Input.Mask || !Input.FrameBuffer || !Input.ViewBuffer ||
-            !Input.InstanceBuffer || !Input.GeometryBuffer || !Input.IndirectBuffer || Input.DrawCount == 0)
+            !Input.LinearSampler || !Input.Textures || !Input.InstanceBuffer || !Input.GeometryBuffer ||
+            !Input.MaterialBuffer || !Input.IndirectBuffer || Input.DrawCount == 0)
             return std::unexpected(ErrorMessage("Selection mask pass resources are not ready"));
 
         m_Attachments = RHIGraphicsAttachments{
@@ -55,11 +60,15 @@ class SelectionMaskPass final : public IRHIGraphicsPass {
         if (auto R = BindResources(std::array{
                 RHIShaderBindingRequest{"g_selectionMaskFrameView.frame", std::move(Input.FrameBuffer), true},
                 RHIShaderBindingRequest{"g_selectionMaskFrameView.view", std::move(Input.ViewBuffer), true},
+                RHIShaderBindingRequest{"g_selectionMaskFrameView.linearSampler", std::move(Input.LinearSampler), true},
             }); !R)
+            return std::unexpected(R.error());
+        if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
             return std::unexpected(R.error());
         if (auto R = BindResources(std::array{
                 RHIShaderBindingRequest{"g_selectionMaskDraw.instances", std::move(Input.InstanceBuffer), true},
                 RHIShaderBindingRequest{"g_selectionMaskDraw.geometryTable.records", std::move(Input.GeometryBuffer), true},
+                RHIShaderBindingRequest{"g_selectionMaskDraw.materials", std::move(Input.MaterialBuffer), true},
             }); !R)
             return std::unexpected(R.error());
         DrawIndirect(std::move(Input.IndirectBuffer), 0, Input.DrawCount);
