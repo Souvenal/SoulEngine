@@ -1,13 +1,24 @@
 module;
 
-#include <hlsl++.h>
-
 export module Renderer:EditorPasses.SelectionOutlinePass;
 
 import Core;
 import RHI;
 
 export import std;
+
+namespace SoulEngine {
+namespace {
+
+struct SelectionOutlinePushConstants {
+    Float32 ViewportWidth;
+    Float32 ViewportHeight;
+};
+
+static_assert(sizeof(SelectionOutlinePushConstants) == 8);
+
+} // namespace
+} // namespace SoulEngine
 
 export namespace SoulEngine {
 
@@ -54,7 +65,12 @@ class SelectionOutlinePass final : public IRHIGraphicsPass {
                 RHIShaderBindingRequest{"g_outline.sampler", std::move(Input.LinearSampler), true},
             }); !R)
             return std::unexpected(R.error());
-        if (auto R = PushConstants(0, hlslpp::float2{Input.ViewportWidth, Input.ViewportHeight}); !R)
+        if (auto R = PushConstants(0,
+                                   SelectionOutlinePushConstants{
+                                       .ViewportWidth = Input.ViewportWidth,
+                                       .ViewportHeight = Input.ViewportHeight,
+                                   });
+            !R)
             return std::unexpected(R.error());
         Draw();
         return {};

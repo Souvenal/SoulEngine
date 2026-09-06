@@ -218,9 +218,6 @@ class EditorCameraSystem final : public ISystem {
                 continue;
             if (!IO.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 Camera.SelectedEntity = Camera.ReadbackEntity;
-                if (Camera.SelectedEntity)
-                    LogInfo("Editor viewport selected entity: {}",
-                            static_cast<Uint32>(*Camera.SelectedEntity));
             }
         }
     }
