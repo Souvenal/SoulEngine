@@ -5,6 +5,7 @@ module;
 
 export module Scene;
 
+import std;
 export import Material;
 export import RHI;
 export import :Camera;
