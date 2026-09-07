@@ -152,8 +152,11 @@ struct MaterialYamlRecord {
     // Enum fields bridge to the YAML string vocabulary so generic meta assignment works.
     // Unknown strings keep the current value.
     auto SetBlendFunction(String Value) -> void {
-        if (const auto Parsed = magic_enum::enum_cast<MaterialBlendFunction>(Value, magic_enum::case_insensitive))
+        if (const auto Parsed = magic_enum::enum_cast<MaterialBlendFunction>(Value, magic_enum::case_insensitive)) {
             BlendFunction = *Parsed;
+            return;
+        }
+        LogWarning("MaterialYamlRecord: unknown blend function '{}'; keeping current value", Value);
     }
 
     [[nodiscard]] auto GetBlendFunction() const -> String {
@@ -161,8 +164,11 @@ struct MaterialYamlRecord {
     }
 
     auto SetAlphaMode(String Value) -> void {
-        if (const auto Parsed = magic_enum::enum_cast<MaterialAlphaMode>(Value, magic_enum::case_insensitive))
+        if (const auto Parsed = magic_enum::enum_cast<MaterialAlphaMode>(Value, magic_enum::case_insensitive)) {
             AlphaMode = *Parsed;
+            return;
+        }
+        LogWarning("MaterialYamlRecord: unknown alpha mode '{}'; keeping current value", Value);
     }
 
     [[nodiscard]] auto GetAlphaMode() const -> String {
@@ -170,8 +176,11 @@ struct MaterialYamlRecord {
     }
 
     auto SetShadingModel(String Value) -> void {
-        if (const auto Parsed = magic_enum::enum_cast<MaterialShadingModel>(Value, magic_enum::case_insensitive))
+        if (const auto Parsed = magic_enum::enum_cast<MaterialShadingModel>(Value, magic_enum::case_insensitive)) {
             ShadingModel = *Parsed;
+            return;
+        }
+        LogWarning("MaterialYamlRecord: unknown shading model '{}'; keeping current value", Value);
     }
 
     [[nodiscard]] auto GetShadingModel() const -> String {

@@ -21,7 +21,6 @@ struct GeometryPassInput {
     RHIRef<RHISampler>                         LinearSampler = nullptr;
     RHIRef<RHISampler>                         AnisotropicSampler = nullptr;
     RHIRefArray<RHISampledTexture>             Textures = {};
-    RHIRef<RHITransientShaderStorageBuffer>    LightBuffer = nullptr;
     RHIRef<RHITransientConstantBuffer>         FrameBuffer = nullptr;
     RHIRef<RHITransientConstantBuffer>         ViewBuffer = nullptr;
     RHIRef<RHITransientShaderStorageBuffer>    InstanceBuffer = nullptr;
@@ -47,7 +46,7 @@ class GeometryPass final : public IRHIGraphicsPass {
 
         if (!GetShaderBindingSet() || !Input.Albedo || !Input.Normal || !Input.MaterialId || !Input.EntityId ||
             !Input.Depth || !Input.LinearSampler || !Input.AnisotropicSampler || !Input.Textures ||
-            !Input.LightBuffer || !Input.FrameBuffer || !Input.ViewBuffer || !Input.InstanceBuffer ||
+            !Input.FrameBuffer || !Input.ViewBuffer || !Input.InstanceBuffer ||
             !Input.GeometryBuffer || !Input.MaterialBuffer || !Input.IndirectBuffer || Input.DrawCount == 0)
             return std::unexpected(ErrorMessage("Geometry pass resources are not ready"));
 
@@ -74,7 +73,6 @@ class GeometryPass final : public IRHIGraphicsPass {
         SetScissorRect(0, 0, Input.Albedo->GetWidth(), Input.Albedo->GetHeight());
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_rasterFrameView.lights", std::move(Input.LightBuffer), true},
                 RHIShaderBindingRequest{"g_rasterFrameView.frame", std::move(Input.FrameBuffer), true},
                 RHIShaderBindingRequest{"g_rasterFrameView.view", std::move(Input.ViewBuffer), true},
                 RHIShaderBindingRequest{"g_rasterFrameView.linearSampler", std::move(Input.LinearSampler), true},

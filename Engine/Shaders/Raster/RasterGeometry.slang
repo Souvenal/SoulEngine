@@ -6,7 +6,6 @@ module RasterGeometry;
 public struct RasterFrameViewResources {
     public ConstantBuffer<FrameData>       frame;
     public ConstantBuffer<ViewData>        view;
-    public StructuredBuffer<float4>        lights;
     public SamplerState                    linearSampler;
 };
 

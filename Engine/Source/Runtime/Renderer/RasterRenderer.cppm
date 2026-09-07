@@ -24,16 +24,6 @@ export import std;
 
 export namespace SoulEngine {
 
-/// @brief Storage-buffer layout matching RasterGeometry.slang LightData.
-struct alignas(16) LightGpuData {
-    alignas(16) hlslpp::interop::float4 ColorIntensity = hlslpp::interop::float4{
-        hlslpp::float4{1.0f, 1.0f, 1.0f, 0.0f}};
-    alignas(16) hlslpp::interop::float4 PositionRange = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
-    alignas(16) hlslpp::interop::float4 DirectionType = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, 0.0f, -1.0f, 0.0f}};
-    alignas(16) hlslpp::interop::float4 SpotCone = hlslpp::interop::float4{hlslpp::float4{1.0f, 1.0f, 0.0f, 0.0f}};
-};
-static_assert(sizeof(LightGpuData) == 64, "LightGpuData must match RasterGeometry.slang storage-buffer layout");
 struct alignas(16) RasterIndirectCommand {
     Uint32 VertexCount   = 0;
     Uint32 InstanceCount = 1;
@@ -402,7 +392,7 @@ class RasterRenderer final : public IRenderer {
 
         const auto FrameData =
             BuildFrameConstants(Scene.Time, View.ExposureEV100, static_cast<Uint32>(Scene.Lights.size()));
-        const auto Lights      = BuildLightData(Scene.Lights);
+        const auto Lights      = BuildLightGpuData(Scene.Lights);
         const auto LightBytes  = std::as_bytes(std::span{Lights});
         auto LightBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
@@ -410,7 +400,7 @@ class RasterRenderer final : public IRenderer {
             });
         if (!LightBuffer)
             return std::unexpected(
-                LightBuffer.error().Append("Raster geometry light transient storage allocation failed"));
+                LightBuffer.error().Append("Raster light-table transient storage allocation failed"));
         auto FrameBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
             .Data = std::as_bytes(std::span{&FrameData, 1}),
         });
@@ -534,7 +524,6 @@ class RasterRenderer final : public IRenderer {
                 .LinearSampler = SamplerLinearRef,
                 .AnisotropicSampler = SamplerAnisoRef,
                 .Textures = Scene.Textures,
-                .LightBuffer = *LightBuffer,
                 .FrameBuffer = *FrameBuffer,
                 .ViewBuffer = *ViewBuffer,
                 .InstanceBuffer = *ViewInstanceBuffer,
@@ -626,25 +615,6 @@ class RasterRenderer final : public IRenderer {
         return RendererFrameConstants{.Time = Time, .ExposureEV100 = ExposureEV100, .LightCount = LightCount};
     }
 
-    [[nodiscard]] static auto BuildLightData(std::span<const LightRecord> Lights) -> std::vector<LightGpuData> {
-        std::vector<LightGpuData> Result = {};
-        Result.reserve(std::max<std::size_t>(Lights.size(), 1));
-        for (const auto& Light : Lights) {
-            Result.emplace_back(LightGpuData{
-                .ColorIntensity = hlslpp::interop::float4{hlslpp::float4{
-                    Light.Color.x, Light.Color.y, Light.Color.z, Light.Intensity}},
-                .PositionRange  = hlslpp::interop::float4{hlslpp::float4{
-                    Light.Position.x, Light.Position.y, Light.Position.z, Light.RangeMeters}},
-                .DirectionType  = hlslpp::interop::float4{hlslpp::float4{
-                    Light.Direction.x, Light.Direction.y, Light.Direction.z, static_cast<Float32>(Light.Type)}},
-                .SpotCone       = hlslpp::interop::float4{hlslpp::float4{
-                    Light.InnerConeCosine, Light.OuterConeCosine, Light.CastsShadows ? 1.0f : 0.0f, 0.0f}},
-            });
-        }
-        if (Result.empty())
-            Result.emplace_back();
-        return Result;
-    }
     RHIRef<RHIGraphicsPipeline>           m_Pipeline                 = nullptr;
     RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline         = nullptr;
     RHIRef<RHIGraphicsPipeline>           m_SelectionMaskPipeline    = nullptr;

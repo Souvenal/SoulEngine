@@ -46,4 +46,16 @@ static_assert(offsetof(RendererViewConstants, ViewProjectionInverse) == 64);
 static_assert(offsetof(RendererViewConstants, CameraPosition) == 128);
 static_assert(offsetof(RendererViewConstants, ViewportSize) == 144);
 
+/// @brief Build the shared transient GPU light table from scene records.
+[[nodiscard]] auto BuildLightGpuData(std::span<const LightRecord> Lights)
+    -> std::vector<LightRecord::GpuData> {
+    std::vector<LightRecord::GpuData> Result = {};
+    Result.reserve(std::max<std::size_t>(Lights.size(), 1));
+    for (const auto& Light : Lights)
+        Result.emplace_back(Light.BuildGpuData());
+    if (Result.empty())
+        Result.emplace_back();
+    return Result;
+}
+
 } // namespace SoulEngine

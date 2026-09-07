@@ -3,8 +3,8 @@ struct Record
     float4 bounds;
 };
 
-// Resource facade mirroring the runtime GeometryRecordTable pattern: the
-// descriptor lives on a private struct member, callers use accessor methods.
+// Resource facade: the descriptor lives on a private struct member, while
+// callers use accessor methods.
 struct RecordTable
 {
     private StructuredBuffer<Record> records;

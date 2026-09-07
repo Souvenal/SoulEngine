@@ -134,7 +134,6 @@ TEST(SceneMeta, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
     const auto Light = entt::resolve(entt::hashed_string{"light"}.value());
     ASSERT_TRUE(Light);
     EXPECT_TRUE(Light.data(entt::hashed_string{"type"}.value()));
-    EXPECT_TRUE(Light.data(entt::hashed_string{"casts_shadows"}.value()));
 }
 
 TEST(SceneDocument, BuildsOrderedHierarchyAndSkipsUnknownComponent) {
@@ -416,7 +415,6 @@ entities:
         color_g: 1.0
         color_b: 1.0
         intensity: 1.0e5
-        casts_shadows: TRUE
 )");
     const auto ValidLoaded = Scene::LoadFromFile(ValidPath);
     ASSERT_TRUE(ValidLoaded.has_value()) << ValidLoaded.error().ToString();
@@ -424,7 +422,7 @@ entities:
     const auto  Lights     = ValidScene.GetRegistry().view<LightComponent>();
     std::size_t LightCount = 0;
     for (const auto Entity : Lights) {
-        EXPECT_TRUE(Lights.get<LightComponent>(Entity).CastsShadows);
+        static_cast<void>(Entity);
         ++LightCount;
     }
     EXPECT_EQ(LightCount, 1u);
@@ -540,17 +538,6 @@ entities:
         color_b: 1.0
         intensity: 600.0
         range_meters: 8.0
-  - name: Spot
-    components:
-      light:
-        type: spot
-        color_r: 1.0
-        color_g: 1.0
-        color_b: 1.0
-        intensity: 400.0
-        range_meters: 12.0
-        inner_cone_angle_degrees: 15.0
-        outer_cone_angle_degrees: 25.0
 )");
 
     const auto Loaded = Scene::LoadFromFile(FilePath);
@@ -559,21 +546,39 @@ entities:
     Scene.Tick(0.0f);
     const auto Snapshot = Scene.BuildSnapshot();
 
-    ASSERT_EQ(Snapshot.Lights.size(), 3u);
+    ASSERT_EQ(Snapshot.Lights.size(), 2u);
     const auto Directional = std::ranges::find_if(
         Snapshot.Lights, [](const LightRecord& Light) -> bool { return Light.Type == LightType::Directional; });
     const auto Point = std::ranges::find_if(
         Snapshot.Lights, [](const LightRecord& Light) -> bool { return Light.Type == LightType::Point; });
-    const auto Spot = std::ranges::find_if(
-        Snapshot.Lights, [](const LightRecord& Light) -> bool { return Light.Type == LightType::Spot; });
     ASSERT_NE(Directional, Snapshot.Lights.end());
     ASSERT_NE(Point, Snapshot.Lights.end());
-    ASSERT_NE(Spot, Snapshot.Lights.end());
     EXPECT_FLOAT_EQ(Directional->Intensity, 100000.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(Point->Position.x), 2.0f);
     EXPECT_FLOAT_EQ(Point->RangeMeters, 8.0f);
-    EXPECT_GT(Spot->InnerConeCosine, Spot->OuterConeCosine);
+    EXPECT_NE(Directional->EntityId, entt::null);
+    EXPECT_EQ(Directional->BuildGpuData().DirectionType.w, static_cast<float>(LightType::Directional));
 
+    std::filesystem::remove(FilePath);
+}
+
+TEST(SceneDocument, OmitsUnsupportedLightTypeFromSnapshot) {
+    const auto FilePath = WriteSceneFile(R"(
+entities:
+  - components:
+      light:
+        type: spot
+        intensity: 400.0
+)");
+
+    const auto Loaded = Scene::LoadFromFile(FilePath);
+    ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
+    ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
+    EXPECT_EQ(Loaded->second.Warnings.front().Message, "unsupported light type; component was omitted");
+    EXPECT_TRUE(Loaded->first->GetRegistry().view<LightComponent>().empty());
+    const auto Snapshot = Loaded->first->BuildSnapshot();
+
+    EXPECT_TRUE(Snapshot.Lights.empty());
     std::filesystem::remove(FilePath);
 }
 } // namespace

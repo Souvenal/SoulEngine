@@ -57,7 +57,7 @@ into each FrameSlot.
 - Uploadable records own their `GpuData` ABI mirror and `BuildGpuData()`
   method. Renderer passes the resulting byte snapshot to a transient RHI
   creation descriptor and never queries a native Vulkan buffer object.
-- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and assigns SceneColorRT as the present source.
+- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and assigns SceneColorRT as the present source. LightRecord::GpuData is the shared 48-byte light ABI uploaded by Raster and RayTracing; light resources are bound only by lighting passes.
   RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
   and transient geometry/material/view buffers; Renderer never observes a
   Vulkan device address or descriptor index.
