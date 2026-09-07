@@ -1,5 +1,7 @@
 module;
 
+#include <cstddef>
+
 export module Vulkan:Pipeline;
 
 import vulkan;
