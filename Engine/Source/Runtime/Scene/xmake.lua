@@ -1,7 +1,7 @@
 target("Scene")
     set_kind("moduleonly")
 
-    add_packages("hlslpp", "yaml-cpp", "entt", {public = true})
+    add_packages("hlslpp", "entt", "assimp", "magic_enum", {public = true})
     add_deps("Core", "Material", "Resource", {public = true})
 
     add_files("*.cppm")

@@ -30,7 +30,7 @@ relevant diagnostics are retained while routine output is suppressed. When
 5. Run tests through Xmake so target `runenvs` are applied:
 
    ```powershell
-   rtk err xmake test -v
+   rtk err xmake test
    ```
 
    Use `rtk err xmake run` only when the executable does not require test-specific environment setup.
@@ -40,7 +40,9 @@ relevant diagnostics are retained while routine output is suppressed. When
 - Load the matching reference before applying a platform-specific fix.
 - Current references:
   - Windows MSVC, Xmake, named modules, `import std`, CRT/linker, and test-entry diagnostics: `references/windows-msvc-modules.md`
+  - Windows Clang-cl P1689 module dependency scans, including private package headers missing from consumer scan contexts: `references/windows-clang-modules.md`
   - Windows Xmake package fetch/build/resolution failures (xmake-repo and souvenal-repo recipes, ccache launcher interactions, pinned-version resolution): `references/windows-xmake-packages.md`
+  - macOS Homebrew Clang named modules, including clang 23 silently dropping unreferenced anonymous-namespace static initializers (EnTT meta registration loss): `references/macos-clang-modules.md`
 - Add a new one-level-deep reference when a resolved issue is platform-, compiler-, package-, or subsystem-specific. Link it in this list and keep `SKILL.md` limited to cross-platform workflow.
 
 ## Knowledge-capture rule

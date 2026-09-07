@@ -29,7 +29,6 @@ enum class SlotState {
     Empty,
     GameReady,
     RenderReady,
-    RHIDone,
 };
 
 /// @brief One element of the triple buffer.
@@ -37,9 +36,17 @@ struct FrameSlot {
     std::mutex              Mutex;
     std::condition_variable Cv;
     SlotState               State = SlotState::Empty;
-    SceneSnapshot    SceneData;
-    RenderResult  RenderPacket;
-    ImDrawDataSnapshot ImGuiSnapshot;
+    GameSnapshot            GameData;
+    EditorSnapshot          EditorData;
+    SPtr<IRenderer>         Renderer = nullptr;
+    RenderResult            RenderPacket;
+    UPtr<ImDrawDataSnapshot> ImGuiSnapshot = nullptr;
+    // Zero means this slot has not submitted GPU work yet, so its first
+    // RenderPacket does not need a timeline wait before replacement.
+    RHIFrameCompletion      Completion = {};
+    // RHIThread flips this false only while it may still read RenderPacket.
+    // RenderThread must observe true before replacing that packet.
+    bool                    RhiConsumedRenderPacket = true;
 };
 
 constexpr Uint32 kSlotCount = 3;
@@ -99,10 +106,7 @@ class EngineLoop {
     [[nodiscard]] auto Init() -> std::expected<void, ErrorMessage> {
         LogInfo("Soul Engine Initializing...");
 
-        if (auto R = m_Editor.Create(); !R) {
-            Shutdown();
-            return std::unexpected(R.error().Append("Editor creation failed"));
-        }
+        m_Editor.Initialize();
 
         auto WinResult = CreateWindowSystem();
         if (!WinResult)
@@ -116,23 +120,36 @@ class EngineLoop {
         }
         LogInfo("RHI context created successfully");
 
-        // 3 reserved threads for Game/Render/RHI
+        // TaskGraph must be running before Editor binds its presentation: the
+        // editor world creates RHI resources through the queued RHI path.
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
         TaskGraph::Get().Init(WorkerCount);
-
-        ResourceManager::Get().Init();
 
         if (auto R = m_Editor.BindPresentation(m_WindowSystem.get(), &RHIRenderDevice::Get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
 
-        // ── Create application from config ───────────────────────────────
-        auto& Cfg = ConfigManager::Get().GetConfig();
-        if (auto R = SwitchApplication(Cfg.Application.Name.value_or("Test")); !R) {
+        ResourceManager::Get().Init();
+
+        auto&      Cfg             = ConfigManager::Get().GetConfig();
+        const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Raster");
+        if (auto R = SelectRenderer(InitialRenderer); !R) {
             Shutdown();
-            return std::unexpected(R.error().Append("SwitchApplication failed"));
+            return std::unexpected(R.error().Append("Default renderer selection failed"));
         }
+        LogInfo("Renderer '{}' initialized successfully", InitialRenderer);
+        // ── Create application from config ───────────────────────────────
+        if (auto R = OpenApplication(Cfg.Application.Name.value_or("Test")); !R) {
+            Shutdown();
+            return std::unexpected(R.error().Append("Application opening failed"));
+        }
+        auto* CurrentApplication = GetCurrentApplication();
+        if (!CurrentApplication) {
+            Shutdown();
+            return std::unexpected(ErrorMessage("Application was not available after opening"));
+        }
+        m_Editor.BindScene(CurrentApplication->GetScene());
         LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
 
         return {};
@@ -163,30 +180,37 @@ class EngineLoop {
             m_RHIThread.request_stop();
 
         ResourceManager::Get().BeginShutdown();
-        TaskGraph::Get().Shutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
+        // Join the workers before stopping TaskGraph: a worker caught
+        // mid-frame finishes its in-flight slot against live task services
+        // instead of failing with spurious "TaskGraph is not running"
+        // errors during an otherwise clean shutdown.
         if (m_RenderThread.joinable())
             m_RenderThread.join();
         if (m_RHIThread.joinable())
             m_RHIThread.join();
 
-        if (m_Application) {
-            m_Application->OnDetach();
-            m_Application.reset();
-        }
+        TaskGraph::Get().Shutdown();
+
+        m_Editor.UnbindScene();
+        CloseApplication();
 
         // Release frame slot snapshots and command observers before
         // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
         for (auto& Slot : m_Slots) {
-            Slot.SceneData = {};
+            Slot.GameData     = {};
+            Slot.EditorData   = {};
+            Slot.Renderer     = nullptr;
             Slot.RenderPacket = {};
         }
 
         // Release editor GPU resources before ResourceManager::Clear() and
         // RenderDevice::Destroy() tear down the backend.
         m_Editor.ReleaseRHIResources();
+
+        CloseRenderers();
 
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();
@@ -197,25 +221,6 @@ class EngineLoop {
             m_WindowSystem.reset();
         }
         m_Editor.Shutdown();
-    }
-
-    [[nodiscard]] auto SwitchApplication(StringView Name) -> std::expected<void, ErrorMessage> {
-        // Detach previous application (renderer shut down along with it)
-        if (m_Application) {
-            m_Application->OnDetach();
-            m_Application.reset();
-        }
-
-        // Create and attach new application
-        auto NewApp = Application::Create(Name);
-        if (!NewApp)
-            return std::unexpected(NewApp.error().Append("SwitchApplication failed"));
-
-        if (auto R = (*NewApp)->OnAttach(); !R)
-            return std::unexpected(R.error().Append("Application OnAttach failed"));
-
-        m_Application = std::move(*NewApp);
-        return {};
     }
 
   private:
@@ -233,10 +238,8 @@ class EngineLoop {
         tracy::SetThreadName("GameLoop");
         SetLogThreadRole(LogThreadRole::Game);
         while (!m_FatalError.load(std::memory_order_acquire)) {
-            if (m_WindowSystem->PollEvents())
+            if (m_WindowSystem->Tick())
                 break;
-
-            auto Resize = m_WindowSystem->ConsumeFramebufferResize();
 
             auto  Now      = std::chrono::steady_clock::now();
             float Delta    = std::chrono::duration<float>(Now - m_LastTickTime).count();
@@ -247,27 +250,46 @@ class EngineLoop {
             {
                 std::unique_lock Lock(Slot.Mutex);
                 Slot.Cv.wait(Lock, [this, &Slot] {
-                    return Slot.State == SlotState::Empty || Slot.State == SlotState::RHIDone ||
+                    // RenderReady means RenderThread consumed the previous
+                    // SceneData; GameThread may prepare the next snapshot even
+                    // while the old RenderPacket remains GPU-owned.
+                    return Slot.State == SlotState::Empty || Slot.State == SlotState::RenderReady ||
                            m_FatalError.load(std::memory_order_relaxed);
                 });
             }
             if (m_FatalError.load(std::memory_order_acquire))
                 break;
 
-            if (Resize) {
-                auto& Scene = m_Application->GetScene();
-                const auto Width  = static_cast<Uint32>(std::max(0, Resize->Width));
-                const auto Height = static_cast<Uint32>(std::max(0, Resize->Height));
-                Scene.AllocateCameraRenderTargets(Width, Height);
-            }
+            // Each engine loop owns an independent ordinal. Render/RHI tasks
+            // carry the producer's ordinal and execute when the consumer
+            // reaches the same pipeline position.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
 
-            m_Application->OnTick(Delta, *m_WindowSystem);
             // UI builds on the main thread so ImGui input stays on the same
             // thread as event polling; the render thread consumes snapshots.
-            m_Editor.BeginFrame(Slot.ImGuiSnapshot);
-            auto& AppScene = m_Application->GetScene();
+            //
+            // Every published render packet owns its snapshot until GPU
+            // completion, so the next game tick must render into a fresh one.
+            Slot.ImGuiSnapshot = std::make_unique<ImDrawDataSnapshot>();
+            m_Editor.Tick(Delta, *Slot.ImGuiSnapshot);
+
+            auto* CurrentApplication = GetCurrentApplication();
+            if (!CurrentApplication) {
+                LogError("Game loop has no active application");
+                SignalFatalError();
+                break;
+            }
+            Slot.Renderer = GetCurrentRenderer();
+            if (!Slot.Renderer) {
+                LogError("Game loop has no active renderer");
+                SignalFatalError();
+                break;
+            }
+            auto& AppScene = CurrentApplication->GetScene();
             AppScene.UpdateTime();
-            Slot.SceneData = AppScene.BuildSnapshot();
+            AppScene.Tick(Delta);
+            Slot.GameData = AppScene.BuildSnapshot();
+            Slot.EditorData = m_Editor.BuildSnapshot();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
@@ -292,29 +314,75 @@ class EngineLoop {
             if (Stop.stop_requested())
                 break;
 
-            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::Render);
-                if (!Task)
-                    break;
-                (*Task)();
-            }
+            // Advance RenderThread's local frame ordinal before draining or
+            // publishing tasks for this frame.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
+            TaskGraph::Get().DrainTasks(ThreadQueue::Render);
 
-            auto RenderResult = m_Application->GetRenderer().Render(Slot.SceneData);
+            if (!Slot.Renderer) {
+                LogError("Render loop received a frame without a renderer");
+                SignalFatalError();
+                break;
+            }
+            auto RenderResult = Slot.Renderer->Render(Slot.GameData, Slot.EditorData);
             if (!RenderResult) {
                 LogError("Render fatal error:\n{}", RenderResult.error().ToString());
                 SignalFatalError();
                 break;
             }
 
-            // Editor UI overlays the scene output on the same render thread.
-            m_Editor.AttachPresentationOverlay(RenderResult->CmdList, Slot.ImGuiSnapshot);
-
-            Slot.RenderPacket = std::move(*RenderResult);
+            // Move the UI snapshot into the pending render result before
+            // publishing RenderReady. The shared object remains alive through
+            // GPU completion even if this slot is reused immediately.
+            RenderResult->ImGuiSnapshot = std::move(Slot.ImGuiSnapshot);
+            Slot.ImGuiSnapshot.reset();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
+                // RenderThread has finished reading SceneData. Publish this
+                // handoff before waiting on the old packet so GameThread can
+                // prepare the next SceneData independently.
                 Slot.State = SlotState::RenderReady;
             }
+            Slot.Cv.notify_all();
+
+            RHIFrameCompletion PreviousCompletion = {};
+            {
+                std::unique_lock Lock(Slot.Mutex);
+                Slot.Cv.wait(Lock, [this, &Slot, &Stop] {
+                    // RHIThread must finish its CPU-side read before this
+                    // thread overwrites the slot-owned RenderPacket.
+                    return Slot.RhiConsumedRenderPacket || Stop.stop_requested() ||
+                           m_FatalError.load(std::memory_order_relaxed);
+                });
+                if (Stop.stop_requested() || m_FatalError.load(std::memory_order_acquire))
+                    break;
+                PreviousCompletion = Slot.Completion;
+            }
+
+            // This is the exact replacement boundary: CPU-side RHI access has
+            // ended above, and this wait proves the GPU no longer executes the
+            // old packet before its RHIRefs are released by replacement.
+            if (auto R = RHIRenderDevice::Get().WaitFinish(PreviousCompletion); !R) {
+                LogError("Render loop GPU completion wait failed:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
+
+            {
+                std::lock_guard Lock(Slot.Mutex);
+                Slot.RenderPacket = std::move(*RenderResult);
+                // Attach after the move so the borrowed pointer names the
+                // packet-owned snapshot retained through GPU completion.
+                if (Slot.RenderPacket.ImGuiSnapshot)
+                    m_Editor.AttachPresentationOverlay(Slot.RenderPacket.CmdList,
+                                                        *Slot.RenderPacket.ImGuiSnapshot);
+                // The newly published packet is now pending RHIThread
+                // consumption. RHIThread waits on this false value.
+                Slot.RhiConsumedRenderPacket = false;
+            }
+            // Wake RHIThread after the complete packet and its RHIRefs are
+            // visible under the slot mutex.
             Slot.Cv.notify_all();
 
             m_RenderSlotIndex = (m_RenderSlotIndex + 1) % kSlotCount;
@@ -330,22 +398,40 @@ class EngineLoop {
 
             {
                 std::unique_lock Lock(Slot.Mutex);
-                Slot.Cv.wait(Lock, [&] { return Slot.State == SlotState::RenderReady || Stop.stop_requested(); });
+                Slot.Cv.wait(Lock, [&] {
+                    // RenderThread clears this flag only after waiting for the
+                    // old GPU work and publishing a complete new packet.
+                    // RHIThread can therefore consume the packet without
+                    // racing RenderThread's replacement.
+                    return !Slot.RhiConsumedRenderPacket || Stop.stop_requested() ||
+                           m_FatalError.load(std::memory_order_relaxed);
+                });
             }
-            if (Stop.stop_requested())
+            if (Stop.stop_requested() || m_FatalError.load(std::memory_order_acquire))
                 break;
 
-            for (std::size_t i = 0; i < TaskGraph::kMaxTasksPerPoll; ++i) {
-                auto Task = TaskGraph::Get().TryDequeue(ThreadQueue::RHI);
-                if (!Task)
-                    break;
-                (*Task)();
+            if (auto R = RHIRenderDevice::Get().BeginFrame(); !R) {
+                LogError("RHI BeginFrame fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
             }
+
+            // Advance RHIThread's local frame ordinal before matching its
+            // frame-affined tasks. This intentionally does not read another
+            // thread's TLS value.
+            TaskGraph::Get().IncreaseThreadFrameIndex();
+            TaskGraph::Get().DrainTasks(ThreadQueue::RHI);
+            TaskGraph::Get().DrainFrameTasks(ThreadQueue::RHI);
 
             // Resource handles are passive state reads; publish completed sampled-texture uploads here
             // on the RHI thread before the next command list can observe them.
-            ResourceManager::Get().TickGpuPending();
+            RHIRenderDevice::Get().Tick();
+            // Retire native resources whose last RHIRef was released since the previous frame.
+            DrainRHIDeferredDeletions();
+            ResourceManager::Get().TickRhiDependencies();
 
+            // Execute borrows the slot-owned packet. RhiConsumedRenderPacket
+            // remains false while this call and EndFrame() read it.
             if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
@@ -354,17 +440,26 @@ class EngineLoop {
 
             // Tracy docs: "put the FrameMark macro after you have completed
             // rendering the frame. Ideally, that would be right after the
-            // swap buffers command." — Execute() does submit + present.
+            // swap buffers command." — EndFrame() does submit + present.
+            auto CompletionResult = RHIRenderDevice::Get().EndFrame();
+            if (!CompletionResult) {
+                LogError("RHI EndFrame fatal error:\n{}", CompletionResult.error().ToString());
+                SignalFatalError();
+                break;
+            }
             FrameMark;
-
-            Slot.RenderPacket = {};
-            ResourceManager::Get().CollectReleasedResources();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
-                Slot.State = SlotState::RHIDone;
+                Slot.Completion = *CompletionResult;
+                // RHIThread is done with all CPU-side packet reads. GPU
+                // completion is tracked separately by the immutable token.
+                Slot.RhiConsumedRenderPacket = true;
             }
+            // RenderThread may be waiting to replace this packet; notify it
+            // even when the GPU timeline has already completed the work.
             Slot.Cv.notify_all();
+            ResourceManager::Get().CollectReleasedResources();
 
             m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
         }
@@ -378,13 +473,11 @@ class EngineLoop {
 
     // ── State ───────────────────────────────────────────────────────────────
 
-    Editor                   m_Editor;
-    UPtr<IWindowSystem>      m_WindowSystem;
-    UPtr<Application>        m_Application;
+    Editor                                m_Editor;
+    UPtr<IWindowSystem>                   m_WindowSystem;
     std::chrono::steady_clock::time_point m_LastTickTime;
 
     std::array<FrameSlot, kSlotCount> m_Slots = {};
-
     Uint32 m_GameSlotIndex   = 0;
     Uint32 m_RenderSlotIndex = 0;
     Uint32 m_RHISlotIndex    = 0;

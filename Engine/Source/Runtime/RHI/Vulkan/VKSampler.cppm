@@ -8,7 +8,8 @@ import vulkan;
 import std;
 
 import :Capability;
-import :DeletionQueue;
+import :Context;
+import :Debug;
 
 namespace SoulEngine {
 namespace {
@@ -34,23 +35,19 @@ struct VulkanSamplerProfileInfo {
 
 class VulkanSampler final : public RHISampler {
   public:
-    VulkanSampler(const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler, VulkanDeletionQueue& Queue)
-        : RHISampler(Desc) {
-        m_Sampler       = std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler));
-        m_DeletionQueue = &Queue;
-    }
+    VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
+        : RHISampler(std::move(Name), Desc),
+          m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))),
+          m_DescriptorInfo{.sampler = **m_Sampler} {}
 
-    ~VulkanSampler() override {
-        if (m_DeletionQueue)
-            m_DeletionQueue->Enqueue(GetLastUsageToken(), [VulkanSampler = m_Sampler]() {});
-    }
+    ~VulkanSampler() override = default;
 
     VulkanSampler(const VulkanSampler&)                    = delete;
     auto operator=(const VulkanSampler&) -> VulkanSampler& = delete;
     VulkanSampler(VulkanSampler&&)                         = delete;
     auto operator=(VulkanSampler&&) -> VulkanSampler&      = delete;
 
-    [[nodiscard]] static auto Create(const RHISamplerDesc& Desc, vk::raii::Device& Device, VulkanDeletionQueue& Queue)
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, StringView Name, const RHISamplerDesc& Desc)
         -> std::expected<UPtr<RHISampler>, ErrorMessage> {
         auto ProfileInfo = GetSamplerProfileInfo(Desc.Profile);
         if (!ProfileInfo)
@@ -78,20 +75,36 @@ class VulkanSampler final : public RHISampler {
             .borderColor             = vk::BorderColor::eIntOpaqueBlack,
             .unnormalizedCoordinates = vk::False,
         };
-        auto Result = Device.createSampler(SamplerCI);
+        auto Result = Context.GetDevice().createSampler(SamplerCI);
         if (Result.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanSampler::Create: failed to create VkSampler"));
 
-        return std::make_unique<VulkanSampler>(Desc, std::move(Result.value), Queue);
+        Context.GetDebugUtils().SetObjectName(*Result.value, Name);
+        return std::make_unique<VulkanSampler>(String(Name), Desc, std::move(Result.value));
     }
 
     [[nodiscard]] auto GetVkSampler() const -> vk::Sampler {
         return **m_Sampler;
     }
 
+    /// Build a sampler descriptor write for this sampler.
+    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
+                                             Uint32            BindingIndex,
+                                             bool              /*IsReadOnly*/) const
+        -> vk::WriteDescriptorSet {
+        return vk::WriteDescriptorSet{
+            .dstSet          = Set,
+            .dstBinding      = BindingIndex,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType  = vk::DescriptorType::eSampler,
+            .pImageInfo      = &m_DescriptorInfo,
+        };
+    }
+
   private:
-    SPtr<vk::raii::Sampler> m_Sampler       = nullptr;
-    VulkanDeletionQueue*          m_DeletionQueue = nullptr;
+    SPtr<vk::raii::Sampler>         m_Sampler        = nullptr;
+    vk::DescriptorImageInfo m_DescriptorInfo = {};
 };
 
 } // namespace SoulEngine

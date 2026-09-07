@@ -80,8 +80,10 @@ add_requires("glfw")
 
 add_requires("hlslpp")
 
+add_requires("stb")
+
 -- Scene Document authoring format and runtime ECS.
-add_requires("yaml-cpp")
+add_requires("libyaml 0.2.5")
 add_requires("entt")
 
 local imgui_config = {

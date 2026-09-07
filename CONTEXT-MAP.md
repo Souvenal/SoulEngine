@@ -10,6 +10,7 @@ Each module has its own `CONTEXT.md` with module-specific terms, architecture, a
 | Editor | `Engine/Source/Runtime/Editor/` | [Editor](Engine/Source/Runtime/Editor/CONTEXT.md) |
 | Launch | `Engine/Source/Runtime/Launch/` | [Launch](Engine/Source/Runtime/Launch/CONTEXT.md) |
 | RHI | `Engine/Source/Runtime/RHI/` | [RHI](Engine/Source/Runtime/RHI/CONTEXT.md) |
+| Vulkan | `Engine/Source/Runtime/RHI/Vulkan/` | [Vulkan](Engine/Source/Runtime/RHI/Vulkan/CONTEXT.md) |
 | Shader | `Engine/Source/Runtime/Shader/` | [Shader](Engine/Source/Runtime/Shader/CONTEXT.md) |
 | ShaderCompiler | `Engine/Source/Runtime/ShaderCompiler/` | [ShaderCompiler](Engine/Source/Runtime/ShaderCompiler/CONTEXT.md) |
 | Resource | `Engine/Source/Runtime/Resource/` | [Resource](Engine/Source/Runtime/Resource/CONTEXT.md) |

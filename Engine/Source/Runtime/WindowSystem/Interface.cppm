@@ -1,3 +1,7 @@
+module;
+
+#include <entt/entt.hpp>
+
 export module WindowSystem:Interface;
 
 import :Types;
@@ -6,11 +10,11 @@ export import std;
 export namespace SoulEngine {
 
 /// @brief Window-system (WIS) abstraction: window lifecycle, event polling,
-/// and consume-style input queries.
+/// and per-frame input event publication.
 ///
 /// All methods must be called from the engine main thread. Input state
-/// (scroll / cursor deltas) is accumulated by platform callbacks and consumed
-/// once per game tick.
+/// is updated by platform callbacks and published through the window event
+/// dispatcher once per frame.
 ///
 /// Implementations are concrete window backends (GLFW today; Cocoa, WinUI,
 /// etc. later). Backend adapters that need native objects and the ImGui GLFW
@@ -32,28 +36,26 @@ class IWindowSystem {
 
     virtual auto Shutdown() -> void = 0;
 
-    /// @brief Pump platform events. Returns true when a close was requested.
-    [[nodiscard]] virtual auto PollEvents() -> bool = 0;
+    /// @brief Advance one window-system frame and publish input events.
+    ///
+    /// Implementations pump their platform events, update backend-specific
+    /// input state, publish the frame snapshots through the dispatcher, and
+    /// return true when a close was requested.
+    [[nodiscard]] virtual auto Tick() -> bool = 0;
 
-    [[nodiscard]] virtual auto ConsumeFramebufferResize() -> std::optional<FramebufferExtent> = 0;
+    /// @brief Return the dispatcher for window-system events.
+    [[nodiscard]] virtual auto GetEventDispatcher() -> entt::dispatcher& = 0;
 
     /// @brief Return the current drawable framebuffer size in physical pixels.
     [[nodiscard]] virtual auto GetFramebufferExtent() const -> FramebufferExtent = 0;
 
-    /// @brief Return whether a supported keyboard key is currently pressed.
-    [[nodiscard]] virtual auto IsKeyPressed(WindowKey Key) const -> bool = 0;
+    /// @brief Set the cursor presentation and confinement mode.
+    virtual auto SetCursorMode(CursorMode Mode) -> void = 0;
 
-    /// @brief Return whether a supported mouse button is currently pressed.
-    [[nodiscard]] virtual auto IsMouseButtonPressed(WindowMouseButton Button) const -> bool = 0;
-
-    /// @brief Show or lock the cursor for direct camera-style input.
-    virtual auto SetCursorCaptured(bool Captured) -> void = 0;
-
-    /// @brief Return and clear the vertical scroll amount received since the last call.
-    virtual auto ConsumeScrollDelta() -> float = 0;
-
-    /// @brief Return and clear the relative cursor movement received since the last call.
-    virtual auto ConsumeCursorDelta() -> CursorDelta = 0;
+  protected:
+    KeyboardFrameEvent m_KeyboardFrameEvent = {};
+    MouseFrameEvent    m_MouseFrameEvent    = {};
+    entt::dispatcher   m_EventDispatcher    = {};
 };
 
 } // namespace SoulEngine

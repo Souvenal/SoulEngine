@@ -3,67 +3,77 @@ module;
 export module Vulkan:Descriptor;
 
 import Core;
+import RHI;
+import Shader;
 import vulkan;
 import std;
 
 import :Capability;
+import :Debug;
+import :AccelerationStructure;
 import :Buffer;
+import :Sampler;
+import :Texture;
 
 namespace SoulEngine {
 
-auto VulkanWriteConstantArenaDescriptor(vk::raii::Device& Device,
-                                  vk::Buffer Buffer,
-                                  vk::DescriptorSet Set,
-                                  Uint32 Binding,
-                                  Uint64 Range) -> void {
-    vk::DescriptorBufferInfo BufInfo{
-        .buffer = Buffer,
-        .offset = 0,
-        .range  = Range,
-    };
-    vk::WriteDescriptorSet Write{
-        .dstSet          = Set,
-        .dstBinding      = Binding,
-        .dstArrayElement = 0,
-        .descriptorCount = 1,
-        .descriptorType  = vk::DescriptorType::eUniformBufferDynamic,
-        .pBufferInfo     = &BufInfo,
-    };
-    Device.updateDescriptorSets(Write, {});
-}
+struct DescriptorSetCacheKey {
+    vk::DescriptorSetLayout Layout = nullptr;
+    std::vector<Uint64> ResourceIds = {};
+    auto operator==(const DescriptorSetCacheKey&) const -> bool = default;
+};
+
+struct DescriptorSetCacheKeyHash {
+    auto operator()(const DescriptorSetCacheKey& Key) const -> std::size_t {
+        std::size_t Hash = std::hash<vk::DescriptorSetLayout>{}(Key.Layout);
+        for (const auto ResourceId : Key.ResourceIds)
+            Hash ^= std::hash<Uint64>{}(ResourceId) + 0x9e3779b9U + (Hash << 6U) + (Hash >> 2U);
+        return Hash;
+    }
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // VulkanDescriptorManager
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Owns descriptor allocation and draw-scope descriptor writes.
-/// RHIPipeline-specific descriptor set layouts and pipeline layouts are created
-/// from shader reflection by VulkanGraphicsPipeline.
+/// Owns the global descriptor pool, persistent descriptor set allocation, and
+/// descriptor write primitives. Descriptor set layouts and pipeline layouts are
+/// created from shader reflection by VulkanShaderBindingSet.
 class VulkanDescriptorManager {
   public:
     VulkanDescriptorManager() = default;
 
-    VulkanDescriptorManager(VulkanDescriptorManager&&) noexcept                    = default;
-    auto operator=(VulkanDescriptorManager&&) noexcept -> VulkanDescriptorManager& = default;
+    // Custom moves: m_PoolMutex is not movable.
+    VulkanDescriptorManager(VulkanDescriptorManager&& Other) noexcept
+        : m_Device(Other.m_Device),
+          m_DebugUtils(Other.m_DebugUtils),
+          m_NextPersistentSet(Other.m_NextPersistentSet),
+          m_Pool(std::move(Other.m_Pool)) {}
+    auto operator=(VulkanDescriptorManager&& Other) noexcept -> VulkanDescriptorManager& {
+        m_Device             = Other.m_Device;
+        m_DebugUtils         = Other.m_DebugUtils;
+        m_NextPersistentSet  = Other.m_NextPersistentSet;
+        m_Pool               = std::move(Other.m_Pool);
+        return *this;
+    }
 
     VulkanDescriptorManager(const VulkanDescriptorManager&)                    = delete;
     auto operator=(const VulkanDescriptorManager&) -> VulkanDescriptorManager& = delete;
 
     /// @param Device           Vulkan device handle.
-    /// @param FramesInFlight   Number of frame slots.
-    [[nodiscard]] static auto Create(vk::raii::Device& Device, Uint32 FramesInFlight)
+    [[nodiscard]] static auto Create(vk::raii::Device& Device, VulkanDebugUtils& DebugUtils)
         -> std::expected<VulkanDescriptorManager, ErrorMessage> {
         // ── Verify descriptor indexing features are supported ───────────
         const auto& V12 = VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
         if (!V12.descriptorIndexing || !V12.descriptorBindingPartiallyBound ||
-            !V12.descriptorBindingVariableDescriptorCount || !V12.runtimeDescriptorArray ||
+            !V12.runtimeDescriptorArray ||
             !V12.descriptorBindingSampledImageUpdateAfterBind)
             return std::unexpected(
                 ErrorMessage("VulkanDescriptorManager: required Vulkan 1.2 descriptor indexing features not supported by device"));
 
         VulkanDescriptorManager Mgr;
         Mgr.m_Device         = &Device;
-        Mgr.m_FramesInFlight = FramesInFlight;
+        Mgr.m_DebugUtils     = &DebugUtils;
 
         // ── Descriptor pool ─────────────────────────────────────────────
         constexpr Uint32 ScratchDescriptorCount           = 4096;
@@ -85,11 +95,11 @@ class VulkanDescriptorManager {
             vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, ImGuiDescriptorCount},
             vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, ImGuiDescriptorCount},
         };
-        if (VulkanCapability::Get().GetRayTracingSupport().Available)
+        if (VulkanCapability::Get().IsRayTracingAvailable())
             PoolSizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, ScratchDescriptorCount);
         Uint32 MaxSets = SharedDescriptorCount + 1;
         vk::DescriptorPoolCreateInfo PoolCI{
-            // eFreeDescriptorSet is required because scratch sets are
+            // eFreeDescriptorSet is required because allocated sets are
             // vk::raii::DescriptorSet, whose destructors call vkFreeDescriptorSets.
             .flags         = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                              vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
@@ -100,201 +110,156 @@ class VulkanDescriptorManager {
         auto PoolRes = Device.createDescriptorPool(PoolCI);
         if (PoolRes.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to create descriptor pool"));
+        DebugUtils.SetObjectName(*PoolRes.value, "Internal/DescriptorPool/Global");
         Mgr.m_Pool = std::move(PoolRes.value);
-
-        Mgr.m_ScratchSets.resize(FramesInFlight);
         return Mgr;
     }
 
     // ── Binding ─────────────────────────────────────────────────────────
 
-    auto BeginFrame(Uint32 FrameIndex) -> void {
-        if (FrameIndex < m_ScratchSets.size())
-            m_ScratchSets[FrameIndex].clear();
-    }
-
     [[nodiscard]] auto GetDescriptorPool() const -> vk::DescriptorPool {
         return *m_Pool;
     }
 
-    [[nodiscard]] auto AllocateDescriptorSets(Uint32 FrameIndex, std::span<const vk::DescriptorSetLayout> SetLayouts)
-        -> std::expected<std::vector<vk::DescriptorSet>, ErrorMessage> {
-        std::vector<Uint32> VariableCounts(SetLayouts.size(), 1);
-        return AllocateDescriptorSets(FrameIndex, SetLayouts, VariableCounts);
+    /// Releases cached descriptor sets before the owning Vulkan device is destroyed.
+    auto Shutdown() -> void {
+        m_SetCache.clear();
+        m_Pool = nullptr;
+        m_Device = nullptr;
+        m_DebugUtils = nullptr;
     }
 
-    [[nodiscard]] auto AllocateDescriptorSets(Uint32 FrameIndex,
-                                              std::span<const vk::DescriptorSetLayout> SetLayouts,
-                                              std::span<const Uint32> VariableCounts)
-        -> std::expected<std::vector<vk::DescriptorSet>, ErrorMessage> {
-        if (SetLayouts.empty())
-            return std::vector<vk::DescriptorSet>{};
-        if (FrameIndex >= m_ScratchSets.size())
-            return std::unexpected(ErrorMessage("VulkanDescriptorManager: invalid frame index for scratch descriptor sets"));
-        if (VariableCounts.size() != SetLayouts.size())
-            return std::unexpected(ErrorMessage("VulkanDescriptorManager: variable descriptor counts do not match set layouts"));
+  private:
+    [[nodiscard]] auto AllocateDescriptorSets(std::span<const vk::DescriptorSetLayout> Layouts)
+        -> std::expected<std::vector<vk::raii::DescriptorSet>, ErrorMessage> {
+        if (Layouts.empty())
+            return std::unexpected(ErrorMessage("VulkanDescriptorManager: descriptor set layout list is empty"));
 
-        vk::DescriptorSetVariableDescriptorCountAllocateInfo VariableInfo{
-            .descriptorSetCount = static_cast<Uint32>(VariableCounts.size()),
-            .pDescriptorCounts  = VariableCounts.data(),
+        // Pool allocation requires external synchronization; binding sets may be
+        // created on the render thread (per-view sets) while the RHI thread
+        // allocates for pipeline binding sets.
+        std::scoped_lock Lock(m_PoolMutex);
+        vk::DescriptorSetAllocateInfo AllocateInfo{
+            .descriptorPool     = *m_Pool,
+            .descriptorSetCount = static_cast<Uint32>(Layouts.size()),
+            .pSetLayouts        = Layouts.data(),
         };
-        vk::StructureChain<vk::DescriptorSetAllocateInfo, vk::DescriptorSetVariableDescriptorCountAllocateInfo>
-             AllocChain = {
-                 {.descriptorPool     = *m_Pool,
-                  .descriptorSetCount = static_cast<Uint32>(SetLayouts.size()),
-                  .pSetLayouts        = SetLayouts.data()},
-                 VariableInfo,
-             };
-        auto Res = m_Device->allocateDescriptorSets(AllocChain.get<vk::DescriptorSetAllocateInfo>());
-        if (Res.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate draw descriptor sets"));
+        auto Res = m_Device->allocateDescriptorSets(AllocateInfo);
+        if (Res.result != vk::Result::eSuccess || Res.value.size() != Layouts.size())
+            return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate descriptor sets"));
 
-        std::vector<vk::DescriptorSet> RawSets;
-        RawSets.reserve(Res.value.size());
-        auto& Scratch = m_ScratchSets[FrameIndex];
-        Scratch.reserve(Scratch.size() + Res.value.size());
+        std::vector<vk::raii::DescriptorSet> Sets;
+        Sets.reserve(Res.value.size());
         for (auto& Set : Res.value) {
-            RawSets.push_back(*Set);
-            Scratch.push_back(std::move(Set));
+            if (m_DebugUtils)
+                m_DebugUtils->SetObjectName(
+                    *Set, Format("Internal/DescriptorSet/Persistent/Set{}", m_NextPersistentSet++));
+            Sets.push_back(std::move(Set));
         }
-        return RawSets;
+        return Sets;
     }
 
-    [[nodiscard]] auto AllocateDescriptorSet(Uint32 FrameIndex,
-                                             vk::DescriptorSetLayout SetLayout,
-                                             Uint32 VariableDescriptorCount)
-        -> std::expected<vk::DescriptorSet, ErrorMessage>;
-
-    [[nodiscard]] auto AllocatePersistentDescriptorSet(vk::DescriptorSetLayout SetLayout,
-                                                        Uint32                  VariableDescriptorCount)
-        -> std::expected<vk::raii::DescriptorSet, ErrorMessage>;
-
-    auto WriteConstantDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
-        VulkanWriteConstantArenaDescriptor(*m_Device, Buffer, Set, Binding, Range);
+  public:
+    /// Applies descriptor writes to already allocated descriptor sets.
+    auto WriteDescriptorSets(std::span<const vk::WriteDescriptorSet> Writes) -> void {
+        if (!Writes.empty())
+            m_Device->updateDescriptorSets(Writes, {});
     }
 
-    auto WriteStorageBufferDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Buffer Buffer, Uint64 Range) -> void {
-        vk::DescriptorBufferInfo BufferInfo{.buffer = Buffer, .offset = 0, .range = Range};
-        vk::WriteDescriptorSet Write{
-            .dstSet = Set, .dstBinding = Binding, .dstArrayElement = 0, .descriptorCount = 1,
-            .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &BufferInfo};
-        m_Device->updateDescriptorSets(Write, {});
+    /// Returns the cached descriptor set for `Key`, allocating it on a miss.
+    /// The returned handle is owned by the descriptor cache and remains valid
+    /// until the entry is removed by `Tick()`.
+    [[nodiscard]] auto AcquireDescriptorSet(const DescriptorSetCacheKey& Key,
+                                             std::span<const RHIShaderBindingSet::Slot> Bindings) -> vk::DescriptorSet {
+        // Step 1: Check cache for existing set. Refresh LRU and return if found
+        if (const auto It = m_SetCache.find(Key); It != m_SetCache.end()) {
+            It->second.LruAge = 0;
+            return *It->second.Set;
+        }
+
+        // Step 2: Cache miss, so allocate a new descriptor set and write all bindings
+        const auto Layout = Key.Layout;
+        auto Allocated = AllocateDescriptorSets(std::span{&Layout, 1});
+        if (!Allocated) {
+            LogError("{}", Allocated.error().ToString());
+            return nullptr;
+        }
+
+        // Step 3: Write the new descriptor sets
+        auto Set = std::move((*Allocated)[0]);
+        const auto Handle = *Set;
+        std::vector<vk::WriteDescriptorSet> Writes;
+        Writes.reserve(Bindings.size());
+        for (Uint32 Index = 0; Index < Bindings.size(); ++Index) {
+            const auto& Binding = Bindings[Index];
+            switch (Binding.Info.Type) {
+            case ShaderResourceType::ConstantBuffer:
+                if (const auto* Buffer = static_cast<const VulkanTransientConstantBuffer*>(Binding.Resource))
+                    Writes.push_back(Buffer->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, Binding.IsReadOnly));
+                break;
+            case ShaderResourceType::StorageBuffer:
+                if (const auto* Buffer = static_cast<const VulkanTransientShaderStorageBuffer*>(Binding.Resource))
+                    Writes.push_back(Buffer->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, Binding.IsReadOnly));
+                break;
+            case ShaderResourceType::SampledTexture:
+                if (Binding.IsRenderTarget) {
+                    const auto* Target = static_cast<const VulkanRenderTarget*>(Binding.Resource);
+                    Writes.push_back(Target->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, 0, Binding.IsReadOnly));
+                } else {
+                    const auto* Texture = static_cast<const VulkanSampledTexture*>(Binding.Resource);
+                    Writes.push_back(Texture->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, 0, Binding.IsReadOnly));
+                }
+                break;
+            case ShaderResourceType::StorageTexture:
+                if (const auto* Target = static_cast<const VulkanRenderTarget*>(Binding.Resource))
+                    Writes.push_back(Target->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, 0, Binding.IsReadOnly));
+                break;
+            case ShaderResourceType::Sampler:
+                if (const auto* Sampler = static_cast<const VulkanSampler*>(Binding.Resource))
+                    Writes.push_back(Sampler->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, Binding.IsReadOnly));
+                break;
+            case ShaderResourceType::AccelerationStructure:
+                if (const auto* Tlas = static_cast<const VulkanTopLevelAccelerationStructure*>(Binding.Resource))
+                    Writes.push_back(Tlas->GetWriteDescriptorSet(Handle, Binding.Info.BindingIndex, Binding.IsReadOnly));
+                break;
+            case ShaderResourceType::Unknown:
+                break;
+            }
+        }
+        if (!Writes.empty())
+            m_Device->updateDescriptorSets(Writes, {});
+        m_SetCache.emplace(Key, CacheEntry{
+                                     .Set = std::move(Set),
+                                     .LruAge = 0,
+                                 });
+        return Handle;
     }
 
-    auto WriteSampledTextureDescriptor(vk::DescriptorSet Set,
-                                       Uint32            Binding,
-                                       Uint32            ArrayElement,
-                                       vk::ImageView     ImageView,
-                                       vk::ImageLayout   Layout) -> void {
-        vk::DescriptorImageInfo ImageInfo{
-            .sampler     = nullptr,
-            .imageView   = ImageView,
-            .imageLayout = Layout,
-        };
-        vk::WriteDescriptorSet Write{
-            .dstSet          = Set,
-            .dstBinding      = Binding,
-            .dstArrayElement = ArrayElement,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eSampledImage,
-            .pImageInfo      = &ImageInfo,
-        };
-        m_Device->updateDescriptorSets(Write, {});
-    }
-
-    auto WriteStorageImageDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::ImageView ImageView) -> void {
-        vk::DescriptorImageInfo ImageInfo{
-            .sampler     = nullptr,
-            .imageView   = ImageView,
-            .imageLayout = vk::ImageLayout::eGeneral,
-        };
-        vk::WriteDescriptorSet Write{
-            .dstSet          = Set,
-            .dstBinding      = Binding,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eStorageImage,
-            .pImageInfo      = &ImageInfo,
-        };
-        m_Device->updateDescriptorSets(Write, {});
-    }
-
-    auto WriteAccelerationStructureDescriptor(vk::DescriptorSet Set,
-                                              Uint32            Binding,
-                                              vk::AccelerationStructureKHR RHIAccelerationStructure) -> void {
-        vk::StructureChain<vk::WriteDescriptorSet, vk::WriteDescriptorSetAccelerationStructureKHR> WriteChain = {
-            {.dstSet          = Set,
-             .dstBinding      = Binding,
-             .dstArrayElement = 0,
-             .descriptorCount = 1,
-             .descriptorType  = vk::DescriptorType::eAccelerationStructureKHR},
-            {.accelerationStructureCount = 1, .pAccelerationStructures = &RHIAccelerationStructure},
-        };
-        m_Device->updateDescriptorSets(WriteChain.get<vk::WriteDescriptorSet>(), {});
-    }
-
-    auto WriteSamplerDescriptor(vk::DescriptorSet Set, Uint32 Binding, vk::Sampler VulkanSampler) -> void {
-        vk::DescriptorImageInfo ImageInfo{
-            .sampler     = VulkanSampler,
-            .imageView   = nullptr,
-            .imageLayout = vk::ImageLayout::eUndefined,
-        };
-        vk::WriteDescriptorSet Write{
-            .dstSet          = Set,
-            .dstBinding      = Binding,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eSampler,
-            .pImageInfo      = &ImageInfo,
-        };
-        m_Device->updateDescriptorSets(Write, {});
+    auto Tick() -> void {
+        for (auto It = m_SetCache.begin(); It != m_SetCache.end();) {
+            ++It->second.LruAge;
+            if (It->second.LruAge >= s_CacheLifetimeTicks)
+                It = m_SetCache.erase(It);
+            else
+                ++It;
+        }
     }
 
     // ── Members ─────────────────────────────────────────────────────────
 
-    vk::raii::Device* m_Device         = nullptr;
-    Uint32            m_FramesInFlight = 2;
+    vk::raii::Device* m_Device              = nullptr;
+    VulkanDebugUtils* m_DebugUtils          = nullptr;
+    Uint32            m_NextPersistentSet   = 0;
 
-    vk::raii::DescriptorPool                          m_Pool = nullptr;
-    std::vector<std::vector<vk::raii::DescriptorSet>> m_ScratchSets;
-};
-
-auto VulkanDescriptorManager::AllocateDescriptorSet(Uint32                  FrameIndex,
-                                              vk::DescriptorSetLayout SetLayout,
-                                              Uint32                  VariableDescriptorCount)
-    -> std::expected<vk::DescriptorSet, ErrorMessage> {
-    std::array Layouts{SetLayout};
-    std::array Counts{VariableDescriptorCount};
-    auto Sets = AllocateDescriptorSets(FrameIndex,
-                                       std::span<const vk::DescriptorSetLayout>(Layouts),
-                                       std::span<const Uint32>(Counts));
-    if (!Sets)
-        return std::unexpected(Sets.error());
-    if (Sets->empty())
-        return std::unexpected(ErrorMessage("VulkanDescriptorManager: single descriptor set allocation returned no sets"));
-    return (*Sets)[0];
-}
-
-auto VulkanDescriptorManager::AllocatePersistentDescriptorSet(vk::DescriptorSetLayout SetLayout,
-                                                         Uint32                  VariableDescriptorCount)
-    -> std::expected<vk::raii::DescriptorSet, ErrorMessage> {
-    std::array Layouts{SetLayout};
-    std::array Counts{VariableDescriptorCount};
-    vk::DescriptorSetVariableDescriptorCountAllocateInfo VariableInfo{
-        .descriptorSetCount = static_cast<Uint32>(Counts.size()),
-        .pDescriptorCounts  = Counts.data(),
+    struct CacheEntry {
+        vk::raii::DescriptorSet Set = nullptr;
+        Uint64 LruAge = 0;
     };
-    vk::StructureChain<vk::DescriptorSetAllocateInfo, vk::DescriptorSetVariableDescriptorCountAllocateInfo>
-         AllocChain = {
-             {.descriptorPool     = *m_Pool,
-              .descriptorSetCount = static_cast<Uint32>(Layouts.size()),
-              .pSetLayouts        = Layouts.data()},
-             VariableInfo,
-         };
-    auto Res = m_Device->allocateDescriptorSets(AllocChain.get<vk::DescriptorSetAllocateInfo>());
-    if (Res.result != vk::Result::eSuccess || Res.value.empty())
-        return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate persistent descriptor set"));
-    return std::move(Res.value.front());
-}
+
+    vk::raii::DescriptorPool m_Pool = nullptr;
+    std::mutex               m_PoolMutex = {};
+    std::unordered_map<DescriptorSetCacheKey, CacheEntry, DescriptorSetCacheKeyHash> m_SetCache = {};
+    static constexpr Uint64 s_CacheLifetimeTicks = 10;
+};
 
 } // namespace SoulEngine

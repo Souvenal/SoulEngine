@@ -1,11 +1,12 @@
 /// @file   IO.cppm
 /// @brief  File-system IO utilities.
+module;
 
 export module Core:Util.IO;
 
+export import std;
 export import :Util.Types;
 export import :Util.Error;
-export import std;
 
 export namespace SoulEngine {
 
@@ -16,7 +17,12 @@ export namespace SoulEngine {
 ///
 /// @returns File content on success, or an error message on failure
 ///          (file not found, permission denied, read error, etc.).
-[[nodiscard]] inline auto ReadFile(const Path& FileName) -> std::expected<String, ErrorMessage> {
+///
+/// Note: deliberately non-inline. MSVC 14.51 fails to materialize this
+/// body in classic translation units that import Core (the nested
+/// basic_istream<char>::sentry is incomplete when tellg() is instantiated
+/// there), so the body is compiled only in this module unit.
+[[nodiscard]] auto ReadFile(const Path& FileName) -> std::expected<String, ErrorMessage> {
     std::ifstream File(FileName, std::ios::binary | std::ios::ate);
     if (!File)
         return std::unexpected(ErrorMessage(Format("Cannot open file '{}'", FileName.string())));

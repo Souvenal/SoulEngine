@@ -1,3 +1,7 @@
+> **August 1, 2026 implementation note:** `RHIUsageVisitor` and source-buffer
+> usage stamping were removed by the submission-owned refactor. The command
+> structures now retain the required `RHIRef<T>` values, and Vulkan retains the
+> submitted command list through its graphics timeline as documented by ADR 03 and the RHI context.
 # ADR 10: BDA Geometry Metadata for Ray-Tracing Attributes
 
 **Status:** Accepted  

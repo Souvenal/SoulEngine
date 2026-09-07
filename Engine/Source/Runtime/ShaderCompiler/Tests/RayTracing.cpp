@@ -37,7 +37,7 @@ class RayTracingCompilerTest : public ::testing::Test {
     static inline Path m_ShaderPath = {};
     static inline Path m_ParameterBlockShaderPath = {};
     static inline Path m_BdaShaderPath = {};
-    static inline Path m_RuntimeBdaShaderPath = {};
+    static inline Path m_MultipleHitGroupsShaderPath = {};
 
     static auto SetUpTestSuite() -> void {
         const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
@@ -45,16 +45,15 @@ class RayTracingCompilerTest : public ::testing::Test {
         m_ShaderPath = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
         m_ParameterBlockShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingParameterBlock.slang";
         m_BdaShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingBda.slang";
-        const Path EngineDir = Path(TestSourceDir).parent_path().parent_path().parent_path().parent_path();
-        m_RuntimeBdaShaderPath = EngineDir / "Shaders" / "RayTracing.slang";
+        m_MultipleHitGroupsShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingMultipleHitGroups.slang";
         auto Source = ReadFile(m_ShaderPath);
         ASSERT_TRUE(Source.has_value()) << Source.error().ToString();
         auto ParameterBlockSource = ReadFile(m_ParameterBlockShaderPath);
         ASSERT_TRUE(ParameterBlockSource.has_value()) << ParameterBlockSource.error().ToString();
         auto BdaSource = ReadFile(m_BdaShaderPath);
         ASSERT_TRUE(BdaSource.has_value()) << BdaSource.error().ToString();
-        auto RuntimeBdaSource = ReadFile(m_RuntimeBdaShaderPath);
-        ASSERT_TRUE(RuntimeBdaSource.has_value()) << RuntimeBdaSource.error().ToString();
+        auto MultipleHitGroupsSource = ReadFile(m_MultipleHitGroupsShaderPath);
+        ASSERT_TRUE(MultipleHitGroupsSource.has_value()) << MultipleHitGroupsSource.error().ToString();
     }
 };
 
@@ -116,33 +115,33 @@ TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadat
     EXPECT_EQ(Metadata->ArrayCount, 1U);
 }
 
-TEST_F(RayTracingCompilerTest, CompilesRuntimePathTracingShaderWithFixedBdaMetadata) {
+TEST_F(RayTracingCompilerTest, CompilesMultipleMissEntriesAndHitGroups) {
     auto Result = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
+        .RayGeneration = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
         .MissEntries = {
-            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang},
-            ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowMissMain", .Backend = ShaderBackend::Slang},
+            ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang},
+            ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "secondaryMissMain", .Backend = ShaderBackend::Slang},
         },
         .HitGroups = {
             RayTracingHitGroupCompileDesc{
                 .Type = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
+                .ClosestHit = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
             },
             RayTracingHitGroupCompileDesc{
                 .Type = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_RuntimeBdaShaderPath, .EntryPoint = "shadowClosestHitMain", .Backend = ShaderBackend::Slang},
+                .ClosestHit = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "secondaryClosestHitMain", .Backend = ShaderBackend::Slang},
             },
         },
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
-
-    const auto* Metadata = FindBinding(Result->Reflection, "g_rayTracingGeometryMetadata.metadata");
-    ASSERT_NE(Metadata, nullptr);
-    EXPECT_EQ(Metadata->Type, ShaderResourceType::StorageBuffer);
-    EXPECT_EQ(Metadata->ArrayCount, 1U);
-    EXPECT_EQ(FindBinding(Result->Reflection, "g_rayTracing.geometry"), nullptr);
-    EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.materials"), nullptr);
-    EXPECT_NE(FindBinding(Result->Reflection, "g_rayTracing.accumulation"), nullptr);
+    EXPECT_EQ(Result->MissEntryPointNames.size(), 2U);
+    EXPECT_EQ(Result->MissEntryPointNames[0], "missMain");
+    EXPECT_EQ(Result->MissEntryPointNames[1], "secondaryMissMain");
+    EXPECT_EQ(Result->HitGroups.size(), 2U);
+    EXPECT_EQ(Result->HitGroups[0].Type, ShaderRayTracingHitGroupType::Triangles);
+    EXPECT_EQ(Result->HitGroups[0].ClosestHitEntryPointName, "closestHitMain");
+    EXPECT_EQ(Result->HitGroups[1].Type, ShaderRayTracingHitGroupType::Triangles);
+    EXPECT_EQ(Result->HitGroups[1].ClosestHitEntryPointName, "secondaryClosestHitMain");
 }
 TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
     auto Desc = MakeCompileDesc(m_ShaderPath);
@@ -150,7 +149,7 @@ TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
 
     auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
     ASSERT_FALSE(Result.has_value());
-    EXPECT_NE(Result.error().ToString().find("Ray-generation entry point 'doesNotExist' not found"), String::npos)
+    EXPECT_NE(Result.error().ToString().find("Entry point 'doesNotExist' not found"), String::npos)
         << Result.error().ToString();
 }
 

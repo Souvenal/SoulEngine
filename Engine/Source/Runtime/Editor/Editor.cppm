@@ -1,15 +1,25 @@
 module;
-
+#include <entt/entt.hpp>
+#include <hlsl++.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui_threaded_rendering.h>
-#include <magic_enum/magic_enum.hpp>
 
 export module Editor;
 
+import magic_enum;
+import :UIManager;
+import :UIPanels;
+import :EditorWorld;
+
 import Core;
+import EditorTypes;
+import Application;
 import RHI;
+import Resource;
+import Renderer;
+import Scene;
 import WindowSystem;
 
 export import std;
@@ -49,23 +59,31 @@ class Editor {
     Editor(Editor&&)                         = delete;
     auto operator=(Editor&&) -> Editor&      = delete;
 
-    /// @brief Create the owned Dear ImGui context.
-    [[nodiscard]] auto Create() -> std::expected<void, ErrorMessage> {
-        if (m_ImGuiContext)
-            return std::unexpected(ErrorMessage("Editor ImGui context is already created"));
+    /// @brief Initialize the Editor subsystems.
+    auto Initialize() -> void {
+        if (m_ImGuiContext) {
+            LogWarning("Editor ImGui context is already created");
+            return;
+        }
 
-        IMGUI_CHECKVERSION();
-        m_ImGuiContext = ImGui::CreateContext();
-        if (!m_ImGuiContext)
-            return std::unexpected(ErrorMessage("Editor ImGui::CreateContext failed"));
+        InitializeImGui();
+        InitializeUI();
+    }
 
-        ImGui::SetCurrentContext(m_ImGuiContext);
-        ImGui::StyleColorsDark();
-        return {};
+    /// @brief Bind the active runtime Scene for read-only Editor inspection.
+    /// The Editor observes this Scene and never owns it.
+    auto BindScene(const Scene& SceneValue) -> void {
+        m_Scene = &SceneValue;
+    }
+
+    /// @brief Clear the non-owning active Scene binding before Scene teardown.
+    auto UnbindScene() -> void {
+        m_Scene = nullptr;
     }
 
     /// @brief Bind the ImGui platform backend to the main window system.
-    /// Must be called after Create() and ResourceManager::Init().
+    /// Must be called after Initialize(), window-system creation, and
+    /// RHI device creation.
     /// Also selects the complete window-system and RHI backend combination.
     [[nodiscard]] auto BindPresentation(IWindowSystem* WindowSys, RHIRenderDevice* RenderDevice)
         -> std::expected<void, ErrorMessage> {
@@ -96,6 +114,7 @@ class Editor {
 
         m_BoundWindowSystem = WindowSys;
         m_BoundRenderDevice = RenderDevice;
+        m_EditorWorld.Initialize(*WindowSys);
         return {};
     }
 
@@ -108,6 +127,7 @@ class Editor {
             m_TextureQueue.Shutdown();
             m_TextureQueue.UpdateTexFunc = nullptr;
         }
+        m_EditorWorld.Shutdown();
         m_BoundRenderDevice = nullptr;
     }
 
@@ -128,6 +148,79 @@ class Editor {
     /// BuildFrame(). Main-thread only; not synchronized.
     auto RegisterPanel(String Name, UIPanelCallback Callback) -> void {
         m_Panels.push_back({.Name = std::move(Name), .Callback = std::move(Callback)});
+    }
+
+    /// @brief Update editor ECS systems for one frame.
+    auto Tick(Float32 DeltaTime, ImDrawDataSnapshot& Snapshot) -> void {
+        BeginFrame(Snapshot);
+        m_EditorWorld.Tick(DeltaTime);
+    }
+
+    [[nodiscard]] auto BuildSnapshot() -> EditorSnapshot {
+        return m_EditorWorld.BuildSnapshot();
+    }
+
+  private:
+    auto InitializeImGui() -> void {
+        IMGUI_CHECKVERSION();
+        m_ImGuiContext = ImGui::CreateContext();
+        ImGui::SetCurrentContext(m_ImGuiContext);
+        ImGui::StyleColorsDark();
+    }
+
+    auto InitializeUI() -> void {
+        RegisterAllUI([this]() -> const Scene* { return m_Scene; });
+    }
+
+    /// @brief Draw the global main menu before all Scene-dependent panels.
+    auto DrawMainMenu() -> void {
+        if (!ImGui::BeginMainMenuBar())
+            return;
+
+        if (ImGui::BeginMenu("Project")) {
+            if (ImGui::BeginMenu("Open Application")) {
+                const auto* CurrentApplication = GetCurrentApplication();
+                for (const auto& Name : ApplicationFactory::Get().Keys()) {
+                    String Label(Name);
+                    const bool IsCurrent = CurrentApplication && CurrentApplication->GetName() == Name;
+                    if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
+                        if (auto R = OpenApplication(Name); !R) {
+                            LogError("Application opening failed:\n{}", R.error().ToString());
+                        } else {
+                            if (const auto* NewApplication = GetCurrentApplication())
+                                BindScene(NewApplication->GetScene());
+                            else
+                                UnbindScene();
+                        }
+                        break;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Render")) {
+            const auto CurrentRendererName = GetCurrentRendererName();
+            for (const auto& Name : RendererFactory::Get().Keys()) {
+                String Label(Name);
+                const bool IsCurrent = CurrentRendererName == Name;
+                if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
+                    if (auto R = SelectRenderer(Name); !R)
+                        LogError("Renderer selection failed:\n{}", R.error().ToString());
+                    break;
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Debug")) {
+            if (ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials")))
+                UIManager::Get().ToggleUI("Debug.ShowMaterials");
+            ImGui::EndMenu();
+        }
+
+        ImGui::EndMainMenuBar();
     }
 
     /// @brief Main-thread entry point: build the ImGui frame for this game
@@ -159,9 +252,16 @@ class Editor {
             }
         }
         ImGui::NewFrame();
+        DrawMainMenu();
+
+        // 绘制所有显示的 UI
+        for (auto& [name, entry] : UIManager::Get().GetAll()) {
+            if (entry.Show) {
+                entry.Callback();
+            }
+        }
         for (auto& Panel : m_Panels)
             Panel.Callback();
-        ImGui::ShowDemoWindow();
         ImGui::Render();
         ImDrawData* DrawData = ImGui::GetDrawData();
         if (!DrawData || !DrawData->Valid)
@@ -174,14 +274,11 @@ class Editor {
         Snapshot.SnapUsingSwap(DrawData, ImGui::GetTime());
     }
 
+  public:
     /// @brief Render-thread entry point: consume the latest UI frame snapshot
     /// and append its draw pass to the command list. Skips silently until a
-    /// frame has been published and the pipeline, font texture, and dynamic
-    /// buffers are all ready.
-    auto AttachPresentationOverlay(RHICommandList& CmdList, ImDrawDataSnapshot& Snapshot) -> void {
-        if (!CmdList.PresentSource)
-            return;
-
+    /// frame has been published.
+    auto AttachPresentationOverlay(RenderPassList& CmdList, ImDrawDataSnapshot& Snapshot) -> void {
         if (!Snapshot.DrawData.Valid)
             return;
 
@@ -193,15 +290,19 @@ class Editor {
     }
 
   private:
-    ImGuiContext*          m_ImGuiContext = nullptr;
-    std::vector<UIPanel>   m_Panels;
+    ImGuiContext*        m_ImGuiContext = nullptr;
+    std::vector<UIPanel> m_Panels;
 
     ImTextureQueue m_TextureQueue;
-    std::mutex      m_TextureQueueMutex;
+    std::mutex     m_TextureQueueMutex;
 
+    EditorWorld m_EditorWorld = {};
+    // Non-owning; Launch and DrawMainMenu keep this binding in sync with the
+    // active Application and clear it before the Scene is destroyed.
+    const Scene* m_Scene = nullptr;
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
-    IWindowSystem* m_BoundWindowSystem = nullptr;
-    RHIRenderDevice* m_BoundRenderDevice = nullptr;
+    IWindowSystem*                       m_BoundWindowSystem = nullptr;
+    RHIRenderDevice*                     m_BoundRenderDevice = nullptr;
 };
 
 } // namespace SoulEngine

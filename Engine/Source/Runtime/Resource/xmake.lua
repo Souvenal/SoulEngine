@@ -1,18 +1,7 @@
-add_requires("stb")
-
-target("STBImage")
-    set_kind("static")
-
-    add_packages("stb")
-    add_files("STBImage.cpp")
-
 target("Resource")
     set_kind("moduleonly")
 
-    add_packages("stb")
-    add_packages("hlslpp")
-    add_packages("assimp", { public = true })
-    add_deps("Core", "RHI", "ShaderCompiler", "TaskGraph", "STBImage")
+    add_deps("Core", "RHI", "ShaderCompiler", "TaskGraph")
     add_files("*.cppm")
 
 test_module("Resource", {

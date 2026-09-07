@@ -3,10 +3,9 @@ module;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include <magic_enum/magic_enum.hpp>
-
 export module Vulkan:SurfaceProvider;
 
+import magic_enum;
 export import WindowSystem;
 import RHI;
 import vulkan;

@@ -19,7 +19,10 @@
 
 module;
 
-#include <magic_enum/magic_enum.hpp>
+// MSVC bug, fstream is needed here
+// TODO: remove this guard
+#include <fstream>
+
 #include <slang.h>
 // Slang follows the COM ABI convention (vtable layout, addRef/release lifecycle).
 // Its COM-style interfaces require a dedicated smart pointer instead of
@@ -28,6 +31,7 @@ module;
 
 export module Slang;
 
+import magic_enum;
 import :Types;
 import :Utils;
 import :Reflection;
@@ -158,13 +162,13 @@ namespace {
     return Module;
 }
 
-[[nodiscard]] auto FindEntryPoint(slang::IModule* Module, const ShaderEntry& Entry, StringView StageName)
+[[nodiscard]] auto FindEntryPoint(slang::IModule* Module, const ShaderEntry& Entry)
     -> std::expected<Slang::ComPtr<slang::IEntryPoint>, ErrorMessage> {
     Slang::ComPtr<slang::IEntryPoint> EntryPoint;
     if (auto Rc = Module->findEntryPointByName(Entry.EntryPoint.c_str(), EntryPoint.writeRef());
         SLANG_FAILED(Rc) || !EntryPoint) {
         return std::unexpected(ErrorMessage(
-            Format("{} entry point '{}' not found in '{}'", StageName, Entry.EntryPoint, Entry.SourcePath.string())));
+            Format("Entry point '{}' not found in '{}'", Entry.EntryPoint, Entry.SourcePath.string())));
     }
     return EntryPoint;
 }
@@ -176,7 +180,6 @@ namespace {
 // code generation and reflection see the final pipeline interface instead of isolated stages.
 [[nodiscard]] auto ComposeAndLink(slang::ISession*                   Session,
                                   std::span<slang::IComponentType*> Components,
-                                  StringView                         Description,
                                   Slang::ComPtr<slang::IBlob>&       DiagBlob)
     -> std::expected<Slang::ComPtr<slang::IComponentType>, ErrorMessage> {
     // Compose into a unified GPU program.
@@ -187,25 +190,24 @@ namespace {
                                                         DiagBlob.writeRef());
         SLANG_FAILED(Rc) || !Composite) {
         return std::unexpected(
-            ErrorMessage(Format("Failed to compose {}: {}", Description, DiagView(DiagBlob))));
+            ErrorMessage(Format("Failed to compose shader program: {}", DiagView(DiagBlob))));
     }
 
     // Ensure that there are no missing dependencies in the composed program.
     Slang::ComPtr<slang::IComponentType> Linked;
     if (auto Rc = Composite->link(Linked.writeRef(), DiagBlob.writeRef()); SLANG_FAILED(Rc) || !Linked) {
-        return std::unexpected(ErrorMessage(Format("Failed to link {}: {}", Description, DiagView(DiagBlob))));
+        return std::unexpected(ErrorMessage(Format("Failed to link shader program: {}", DiagView(DiagBlob))));
     }
     return Linked;
 }
 
 [[nodiscard]] auto GetTargetCode(slang::IComponentType* Linked,
-                                 StringView             Description,
                                  Slang::ComPtr<slang::IBlob>& DiagBlob)
     -> std::expected<std::vector<Uint32>, ErrorMessage> {
     Slang::ComPtr<slang::IBlob> CodeBlob;
     if (auto Rc = Linked->getTargetCode(0, CodeBlob.writeRef(), DiagBlob.writeRef());
         SLANG_FAILED(Rc) || !CodeBlob) {
-        return std::unexpected(ErrorMessage(Format("Failed to generate {}: {}", Description, DiagView(DiagBlob))));
+        return std::unexpected(ErrorMessage(Format("Failed to generate target code: {}", DiagView(DiagBlob))));
     }
 
     auto* Begin = static_cast<const Uint32*>(CodeBlob->getBufferPointer());
@@ -267,11 +269,11 @@ class SlangBackend final : public IShaderBackend {
             FragmentModule = *LoadedFragmentModule;
         }
 
-        auto VertexEntryPoint = FindEntryPoint(*VertexModule, Desc.Vertex, "Vertex");
+        auto VertexEntryPoint = FindEntryPoint(*VertexModule, Desc.Vertex);
         if (!VertexEntryPoint)
             return std::unexpected(std::move(VertexEntryPoint.error()));
 
-        auto FragmentEntryPoint = FindEntryPoint(FragmentModule, Desc.Fragment, "Fragment");
+        auto FragmentEntryPoint = FindEntryPoint(FragmentModule, Desc.Fragment);
         if (!FragmentEntryPoint)
             return std::unexpected(std::move(FragmentEntryPoint.error()));
 
@@ -283,11 +285,11 @@ class SlangBackend final : public IShaderBackend {
         Components.push_back(VertexEntryPoint->get());
         Components.push_back(FragmentEntryPoint->get());
 
-        auto Linked = ComposeAndLink(Session->get(), Components, "graphics shader program", DiagBlob);
+        auto Linked = ComposeAndLink(Session->get(), Components, DiagBlob);
         if (!Linked)
             return std::unexpected(std::move(Linked.error()));
 
-        auto Code = GetTargetCode(Linked->get(), "graphics SPIR-V", DiagBlob);
+        auto Code = GetTargetCode(Linked->get(), DiagBlob);
         if (!Code)
             return std::unexpected(std::move(Code.error()));
 
@@ -305,7 +307,7 @@ class SlangBackend final : public IShaderBackend {
             return std::unexpected(ErrorMessage(
                 Format("Linked graphics reflection is missing fragment entry point '{}'", Desc.Fragment.EntryPoint)));
 
-        auto PipelineReflection = BuildShaderReflection(Layout, VertexInfo, FragmentInfo);
+        auto PipelineReflection = BuildGraphicsShaderReflection(Layout, VertexInfo, FragmentInfo);
         if (!PipelineReflection) {
             return std::unexpected(PipelineReflection.error().Append("Failed to build graphics pipeline reflection"));
         }
@@ -326,6 +328,67 @@ class SlangBackend final : public IShaderBackend {
             .VertexEntryPointName   = std::move(VertexEntryPointName),
             .FragmentEntryPointName = std::move(FragmentEntryPointName),
             .Reflection             = std::move(*PipelineReflection),
+        };
+    }
+
+    [[nodiscard]] auto CompileCompute(const ComputeCompileDesc& Desc)
+        -> std::expected<ShaderComputeProgram, ErrorMessage> override {
+        if (!m_bInitialized)
+            if (auto R = Init(); !R)
+                return std::unexpected(std::move(R.error()));
+
+        if (Desc.Compute.EntryPoint.empty())
+            return std::unexpected(ErrorMessage("Compute shader compile requires a non-empty entry point"));
+
+        auto Session = CreateSession(m_GlobalSession.get(), m_CompilerOptions, Desc.IncludeDirs, false);
+        if (!Session)
+            return std::unexpected(std::move(Session.error()));
+
+        Slang::ComPtr<slang::IBlob> DiagBlob;
+        std::vector<String>         SourceStorage;
+
+        auto Module = LoadModuleFromSource(Session->get(), Desc.Compute, SourceStorage, DiagBlob);
+        if (!Module)
+            return std::unexpected(Module.error().Append(
+                Format("Compute shader '{}'/'{}'", Desc.Compute.SourcePath.string(), Desc.Compute.EntryPoint)));
+
+        auto EntryPoint = FindEntryPoint(*Module, Desc.Compute);
+        if (!EntryPoint)
+            return std::unexpected(std::move(EntryPoint.error()));
+
+        std::vector<slang::IComponentType*> Components;
+        Components.push_back(*Module);
+        Components.push_back(EntryPoint->get());
+
+        auto Linked = ComposeAndLink(Session->get(), Components, DiagBlob);
+        if (!Linked)
+            return std::unexpected(std::move(Linked.error()));
+
+        auto Code = GetTargetCode(Linked->get(), DiagBlob);
+        if (!Code)
+            return std::unexpected(std::move(Code.error()));
+
+        auto* Layout = (*Linked)->getLayout(0);
+        if (!Layout)
+            return std::unexpected(ErrorMessage("Compiled compute shader is missing linked reflection layout"));
+
+        auto* EntryInfo = Layout->findEntryPointByName(Desc.Compute.EntryPoint.c_str());
+        if (!EntryInfo)
+            return std::unexpected(ErrorMessage(
+                Format("Linked compute reflection is missing entry point '{}'", Desc.Compute.EntryPoint)));
+
+        if (ToShaderStage(EntryInfo->getStage()) != ShaderStage::Compute)
+            return std::unexpected(ErrorMessage(
+                Format("Entry point '{}' is not a compute shader", EntryInfo->getName())));
+
+        auto PipelineReflection = BuildComputeShaderReflection(Layout, EntryInfo);
+        if (!PipelineReflection)
+            return std::unexpected(PipelineReflection.error().Append("Failed to build compute pipeline reflection"));
+
+        return ShaderComputeProgram{
+            .Code                 = std::move(*Code),
+            .ComputeEntryPointName = String(EntryInfo->getName()),
+            .Reflection            = std::move(*PipelineReflection),
         };
     }
 
@@ -403,7 +466,7 @@ class SlangBackend final : public IShaderBackend {
                 Modules.emplace_back(LoadedModule{.SourcePath = NormalizedPath, .Module = Module});
             }
 
-            auto EntryPoint = FindEntryPoint(Module, Entry, StageName);
+            auto EntryPoint = FindEntryPoint(Module, Entry);
             if (!EntryPoint)
                 return std::unexpected(std::move(EntryPoint.error()));
 
@@ -469,11 +532,11 @@ class SlangBackend final : public IShaderBackend {
         for (const auto& Entry : Entries)
             Components.push_back(Entry.EntryPoint.get());
 
-        auto Linked = ComposeAndLink(Session->get(), Components, "ray-tracing shader program", DiagBlob);
+        auto Linked = ComposeAndLink(Session->get(), Components, DiagBlob);
         if (!Linked)
             return std::unexpected(std::move(Linked.error()));
 
-        auto Code = GetTargetCode(Linked->get(), "ray-tracing SPIR-V", DiagBlob);
+        auto Code = GetTargetCode(Linked->get(), DiagBlob);
         if (!Code)
             return std::unexpected(std::move(Code.error()));
 

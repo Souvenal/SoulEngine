@@ -1,0 +1,32 @@
+entities:
+  - name: Main Camera
+    components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [0.0, 0.0, 0.0]
+        scale: [1.0, 1.0, 1.0]
+      camera:
+        fov_degrees: 60.0
+        near_plane: 0.1
+        far_plane: 1000.0
+        exposure_ev100: 15.0
+  - name: Zero-Day Measure Seven
+    components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [0.0, 0.0, 0.0]
+        scale: [1.0, 1.0, 1.0]
+      mesh:
+        asset: ZeroDay_v1/MEASURE_SEVEN/MEASURE_SEVEN.fbx
+  - name: Sun
+    components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [-47.81, 17.39, -18.25]
+        scale: [1.0, 1.0, 1.0]
+      light:
+        type: directional
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 100000.0

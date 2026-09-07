@@ -1,85 +1,74 @@
-material_instances:
-  copper:
-    base_color: [0.62, 0.28, 0.10]
-    metallic: 0.0
-    roughness: 0.42
-  brushed_gold:
-    base_color: [1.0, 0.71, 0.22]
-    metallic: 1.0
-    roughness: 0.28
-  matte_red:
-    base_color: [0.78, 0.04, 0.03]
-    metallic: 0.0
-    roughness: 0.75
-
 entities:
-  - name: Main Camera
-    transform:
-      translation: [1.25, 1.25, 2.0]
-      rotation_degrees: [28.0, -32.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
-    components:
-      camera:
-        fov_degrees: 60.0
-        near_plane: 0.1
-        far_plane: 100.0
   - name: Teapot Cluster
-    transform:
-      translation: [0.0, 0.0, 0.0]
-      rotation_degrees: [0.0, 0.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
+    components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [0.0, 0.0, 0.0]
+        scale: [1.0, 1.0, 1.0]
     children:
       - name: Teapot Center
-        transform:
-          translation: [0.0, 0.0, 0.0]
-          rotation_degrees: [0.0, 0.0, 0.0]
-          scale: [0.25, 0.25, 0.25]
         components:
+          transform:
+            translation: [0.0, 0.0, 0.0]
+            rotation: [0.0, 0.0, 0.0]
+            scale: [0.25, 0.25, 0.25]
           mesh:
             asset: teapot.obj
-            material: copper
+            material_override: materials/copper.yaml
       - name: Teapot Left
-        transform:
-          translation: [-1.25, 0.0, 0.0]
-          rotation_degrees: [0.0, 25.0, 0.0]
-          scale: [0.25, 0.25, 0.25]
         components:
+          transform:
+            translation: [-1.25, 0.0, 0.0]
+            rotation: [0.0, 25.0, 0.0]
+            scale: [0.25, 0.25, 0.25]
           mesh:
             asset: teapot.obj
-            material: brushed_gold
+            material_override: materials/brushed_gold.yaml
       - name: Teapot Right
-        transform:
-          translation: [1.25, 0.0, 0.0]
-          rotation_degrees: [0.0, -25.0, 0.0]
-          scale: [0.25, 0.25, 0.25]
         components:
+          transform:
+            translation: [1.25, 0.0, 0.0]
+            rotation: [0.0, -25.0, 0.0]
+            scale: [0.25, 0.25, 0.25]
           mesh:
             asset: teapot.obj
-            material: matte_red
+            material_override: materials/matte_red.yaml
       - name: Teapot Back Left
-        transform:
-          translation: [-1.25, 0.0, -1.25]
-          rotation_degrees: [0.0, 45.0, 0.0]
-          scale: [0.25, 0.25, 0.25]
         components:
+          transform:
+            translation: [-1.25, 0.0, -1.25]
+            rotation: [0.0, 45.0, 0.0]
+            scale: [0.25, 0.25, 0.25]
           mesh:
             asset: teapot.obj
-            material: copper
+            material_override: materials/copper.yaml
       - name: Teapot Back Center
-        transform:
-          translation: [0.0, 0.0, -1.25]
-          rotation_degrees: [0.0, 90.0, 0.0]
-          scale: [0.25, 0.25, 0.25]
         components:
+          transform:
+            translation: [0.0, 0.0, -1.25]
+            rotation: [0.0, 90.0, 0.0]
+            scale: [0.25, 0.25, 0.25]
           mesh:
             asset: teapot.obj
-            material: brushed_gold
+            material_override: materials/brushed_gold.yaml
       - name: Teapot Back Right
-        transform:
-          translation: [1.25, 0.0, -1.25]
-          rotation_degrees: [0.0, -45.0, 0.0]
-          scale: [0.25, 0.25, 0.25]
         components:
+          transform:
+            translation: [1.25, 0.0, -1.25]
+            rotation: [0.0, -45.0, 0.0]
+            scale: [0.25, 0.25, 0.25]
           mesh:
             asset: teapot.obj
-            material: matte_red
+            material_override: materials/matte_red.yaml
+  - name: Sun
+    components:
+      transform:
+        translation: [0.0, 0.0, 0.0]
+        rotation: [-47.81, 17.39, -18.25]
+        scale: [1.0, 1.0, 1.0]
+      light:
+        type: directional
+        color_r: 1.0
+        color_g: 1.0
+        color_b: 1.0
+        intensity: 100000.0

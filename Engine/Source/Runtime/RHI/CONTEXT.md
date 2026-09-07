@@ -1,137 +1,121 @@
 # Context: RHI
 
-**Namespace:** `SoulEngine`
+**Namespace:** SoulEngine
 
-Render Hardware Interface — abstract GPU abstraction layer with backends registered via a
-self-registering factory pattern.
+Render Hardware Interface — abstract GPU layer. Backends register through the
+self-registering factory. The RHI boundary owns native-resource construction,
+submission lifetime, and native destruction; higher layers carry RHIRef<T>
+handles and record declarative commands.
 
 ## Terms
 
 | Term | Definition |
 |------|------------|
-| **CommandList** | Data struct containing `std::vector<Pass>` and an optional `PresentSource` render target. Produced by `Renderer::Render()`, consumed by `RenderDevice::Execute()`. Pipeline binding is explicit, while draw commands repeat the expected pipeline pointer for backend validation and draw-parameter lowering that needs pipeline layout information. |
-| **Pass** | One rendering scope with `RenderingDesc` and commands inside. Backend auto-wraps in begin/end rendering. A pass may contain multiple pipelines because the pass models attachment/rendering scope, not pipeline scope. |
-| **Shader parameter layout** | Immutable pipeline reflection grouped into descriptor-set layouts. It maps shader parameter paths to typed binding requirements without exposing Vulkan binding numbers to Renderer. |
-| **Shader parameters** | Copyable CPU-side snapshot of values assigned by shader parameter path. It is automatically partitioned into reflected shader parameter sets and recorded through `BindShaderParametersCmd`. |
-| **Shader parameter set** | One partition of shader parameters matching exactly one reflected descriptor-set layout. Backend realization may associate it with a native descriptor set. |
-| **Resource usage tracking** | RHI-command-level enumeration of GPU resources referenced by a command list submission. |
-| **RenderDevice** | Abstract interface for device management, resource creation (Create) and GPU lifecycle. `BindWindowSystem(IWindowSystem&)` is pure virtual — it binds the main presentation window after backend construction. Process-wide singleton: `RHIRenderDevice::Create()` constructs the backend, `RHIRenderDevice::Get().BindWindowSystem(WindowSys)` prepares presentation, `RHIRenderDevice::Get()` accesses, and `RHIRenderDevice::Destroy()` tears down. Frame submission via `Execute(CommandList)`. |
-| **VertexBuffer** | Runtime polymorphic base in `SoulEngine`. Immutable after creation. `CreateVertexBuffer` returns a `VertexBufferCreateResult` struct (`UPtr` buffer + upload completion token) so the Resource layer can own the payload and track when staging → device copies complete. |
-| **IndexBuffer** | Same role as VertexBuffer, for index data. `CreateIndexBuffer` returns `IndexBufferCreateResult`. |
-| **SampledTexture** | Shader-readable texture created from CPU pixel data through the dedicated transfer upload path. Its creation returns a unique `SampledTexture` payload plus a transfer upload completion token. Public RHI sampled-texture APIs use this name instead of the generic `Texture` name. |
-| **Resource array** | Mutable non-global `ResourceArray<T>` shader value representing one ordered array of resource observers. Resource-layer arrays retain matching `ResourceRef<T>` owners; RHI snapshots contain only resolved observers. It is distinct from a process-wide bindless registry. |
-| **Sampler** | Shader-readable sampling state object. It is a Resource-managed RHI payload bound by shader binding name, not a Vulkan set/binding handle and not immutable pipeline-layout policy. |
-| **Render target** | GPU-owned attachment image used as a color/depth rendering destination. It is created through render-target-specific APIs as a unique payload, not through sampled texture asset loading. |
-| **Swapchain image** | Backend-private presentation image acquired from the window surface. It is not exposed as a Resource-managed texture; final presentation copies, blits, resolves, or renders engine-owned output into it through RHI/RenderGraph presentation flow. Current Vulkan presentation blits `CommandList::PresentSource` into the acquired swapchain image. |
-| **GraphicsPipeline** | Empty polymorphic base class for graphics pipeline resources. Same pattern as VertexBuffer/IndexBuffer — backend casts down. |
-| **BufferUsage** | Bitmask enum for buffer creation hints. Not a type — backend uses it to decide VkBufferUsageFlags at allocation time. |
-| **Format, BufferUsage etc.** | Enums and trivial descriptor structs in `SoulEngine`. |
-| **ResourceState** | Per-resource GPU state for barrier tracking. Backend maintains implicit last-known state per handle. |
-| **GraphicsProgram** | Shader artifact consumed directly by graphics pipeline descriptors. It owns the selected stage programs plus pipeline-level reflection for the linked shader combination. Refers to `ShaderGraphicsProgram`. |
-| **Pipeline reflection** | Backend-agnostic shader-visible resource interface for one linked graphics pipeline shader combination. It records shader binding names plus set/binding/type metadata in `ShaderReflection` and derives the public shader parameter layout. Backend-native pipeline-layout objects remain backend-private. |
-| **Shader binding name** | Reflected host-side lookup name for a shader resource binding inside one pipeline layout. Public RHI callers may use it to bind or update resources by shader intent, never by Vulkan set/binding. It is distinct from Resource names and Resource keys. |
-| **Draw shader binding** | Draw-scope association from a shader binding name to a typed RHI resource observer, such as a sampled texture, sampler, or constant buffer. Backends resolve it through the draw command's expected graphics pipeline reflection. |
-| **Push constant command** | Explicit command-list write of ordinary shader data into the currently bound graphics pipeline's reflected push-constant range. Renderer code uses it for tiny high-frequency values such as texture/material indices; it is not a resource binding and does not name Vulkan set/binding numbers. |
-| **Vertex input layout** | Explicit CPU/feed-side description of how up to four vertex-buffer bindings map onto the shader's reflected vertex input interface. Each binding supplies a slot and stride; each attribute supplies a location, source binding, format, and offset. Reflection is used only for validation warnings. |
-| **GPU completion token** | Public opaque RHI type representing the completion condition for submitted GPU work. Resource code may hold the token and query completion through RHI, but must not define the token or interpret backend-specific timeline, fence, or sync-object details. |
-| **Transfer upload completion** | GPU completion token produced by backend upload work submitted through the dedicated transfer path. Async Resource v1 uses this for sampled texture and buffer upload readiness; graphics pipelines normally do not produce one. |
-| **BackendFactory** | `Core::Factory<RenderDevice>` — singleton-backed registry defined in `RHI:RenderDevice`. Backends self-register via `AutoRegistrar`. |
+| **RHIRef<T>** | Copyable handle to a shared RHIRefPayload<T>. It represents a particular backend-native resource without exposing ownership of the native T. States are RhiCommitting, GpuPending, Ready, and Failed. Its explicit `operator bool()` is true only when the payload exists and is Ready; `operator->`/`operator*` provide access after that guard. `TryGet()` remains the explicit nullable access path for backend lowering. |
+| **RHIRef payload** | Shared state containing the atomic availability state, optional error, and the native UPtr<T>. Its final destruction moves the native object into the deferred-deletion queue rather than destroying it on the releasing thread. |
+| **Deferred deletion queue** | Thread-safe queue of move-only destruction callbacks owned by the RHI module itself (module-level storage behind GDeferredDeletionQueue). Last-ref release may enqueue from any thread; RHILoop drains it on the RHI thread once per frame via DrainRHIDeferredDeletions(), and backend Shutdown() performs the final flush. It is valid only between RHIRenderDevice::Create() and Destroy(). |
+| **CommandList** | Move-only frame packet containing ordered rendering/non-rendering scopes, a final PresentSourceRef, and optionally an ImGui presentation overlay. Every resource-bearing command field uses RHIRef<T> rather than an owning or observer pointer. |
+| **Pass / scope** | A rendering RHIPass or a RHINonRenderingPass containing declarative RHICommand work. One RHIPass owns an ordered color-attachment list plus an optional depth attachment and may bind multiple compatible graphics pipelines. Attachments, pipelines, draw buffers, shader-parameter resources, TLAS/BLAS instances, and presentation source are ref-backed. Color and depth attachments can explicitly load instead of clear when a post-process overlays an existing target. |
+| **Frame completion** | Backend-independent token returned by EndFrame(). The owning FrameSlot retains its RenderResult until WaitFinish() confirms GPU completion. |
+| **Shader parameters** | Copyable CPU-side values partitioned by reflected descriptor-set layout. RHIShaderParameterResources carries ref-backed sampled textures, samplers, and render targets used by that snapshot. |
+| **Transient buffers and arenas** | RenderDevice creates typed, immediately-ready `RHIRef` transient uniform/storage-buffer resources from data descriptors. The RHI frame task copies data into the current backend frame arena after resetting that frame's region and resolves the backend slice used by shader binding. A transient ref is valid only for the logical frame in which it was created. |
+| **RenderDevice** | Process-wide RHI singleton. Its create APIs return RHIRef<T> immediately and queue backend-native construction to ThreadQueue::RHI; Execute() consumes a command list; the pure-virtual Tick() retires backend-native completions. Deferred destruction is drained separately by RHILoop through DrainRHIDeferredDeletions(). |
+| **Ready resource** | A ref for which `operator bool()` is true and whose payload can be read through `operator->`, `operator*`, or `TryGet()`. GPU-uploaded buffers/textures become ready only when their immediate-context completion callback retires. |
+| **Render target / present source** | Engine-owned ref-backed attachment image. PresentSourceRef is the final color output; the backend copies/blits/renders it into a backend-private swapchain image. |
+| **Swapchain image** | Backend-private presentation image; never a Resource-managed sampled texture or an RHIRef exposed to Renderer. |
+| **Graphics / ray-tracing pipeline** | Backend-polymorphic pipeline payload retained by bind, draw, push-constant, parameter-binding, or trace commands. |
+| **Frame-affined task** | A TaskGraph callback tagged with the producer thread's frame ordinal. The RHI queue executes only callbacks matching the current RHI thread ordinal. |
+| **Transient data upload** | A transient RHI resource creation task owns a byte snapshot, allocates the current Vulkan arena after frame reset, writes the data, and publishes a Ready `RHIRef` before command recording. |
+| **Buffer device address** | `RHIVertexBuffer::GetDeviceAddress()` and `RHIIndexBuffer::GetDeviceAddress()` expose the address value used by current shader ABI records. Vulkan implements these values with BDA. |
 
-## Architecture
+## Submission and destruction contract
 
-The module defines abstract interfaces (`RenderDevice`, `CommandList`) and a process-wide singleton
-accessed via `RHIRenderDevice::Get()`. `RHIRenderDevice::Create()` selects a
-backend via `BackendFactory::Get().Create(name)` and stores the result;
-`BindWindowSystem(IWindowSystem&)` subsequently prepares the main presentation target.
+1. A caller asks RHIRenderDevice to create a resource and receives an RHIRef.
+   The Vulkan backend queues the native creation closure on ThreadQueue::RHI.
+2. Render code records ready refs. Transient refs are immediately ready logical
+   frame resources; their RHI frame task resolves the arena slice before Vulkan
+   command recording. The command list takes copies/moves of the refs, so
+   command recording does not depend on raw RHI observers.
+3. Vulkan records and submits the borrowed list, then returns an
+   RHIFrameCompletion token containing the graphics timeline value signalled by
+   that submission. The owning FrameSlot retains the list until WaitFinish()
+   reports completion.
+4. Releasing the last RHIRef moves the native object into the module-level
+   deferred deletion queue. RHILoop drains the queue on the RHI thread after
+   Tick() each frame. For a submission-held ref, this cannot happen until the
+   submission is complete.
 
-Backends are standalone modules (`export module Vulkan;`) compiled into the same `.dylib`.
-Each backend registers itself at static-init time via a namespace-scope
-`BackendFactory::AutoRegistrar<ConcreteBackend>` — the factory facade never imports backends.
-Adding a new backend requires zero changes to `RHI.cppm`.
+The command-list lifetime is therefore **FrameSlot-owned**. Execute() borrows
+the slot's list for recording; EndFrame() returns a completion token without
+moving the list. RenderThread waits for both RHI's CPU-side packet consumption
+and the token's GPU completion before replacing the slot's RenderResult.
 
-Consumers of the RHI module never see backend types directly. All interaction goes through
-`RenderDevice::Get()`.
+RHIImGuiPresentationOverlayCmd is the current exception to ref-backed command
+payloads: it contains non-owning ImGui snapshot/texture-queue/mutex pointers
+that need to remain valid only through Execute(). Its backend texture objects
+are managed by Dear ImGui rather than by RHIRef; do not extend this exception
+to ordinary RHI resources.
 
-## Singleton Lifecycle
+## Thread model
 
-```
-EngineLoop::Init()
-  ├── CreateWindowSystem()
-  ├── RenderDevice::Create()          // backend factory + singleton store
-  ├── RenderDevice::BindWindowSystem(WindowSys)
-  └── SwitchApplication()
-        └── App->OnAttach()           // renderer creates resources via RenderDevice::Get()
-
-EngineLoop::Shutdown()
-  ├── SignalFatalError()             // wake all threads
-  ├── join RenderLoop / RHILoop
-  ├── App->OnDetach()                // renderer releases SPtrs
-  ├── clear FrameSlot.RenderPacket   // release command observer pointers
-  ├── ResourceManager::Clear()       // release Manager-owned payloads
-  ├── RenderDevice::Destroy()        // teardown singleton (VMA)
-  └── IWindowSystem::Shutdown()
-```
+| Operation | Required thread / current behavior |
+|-----------|------------------------------------|
+| CPU request preparation and RHIRef state reads | Any producer/consumer thread. `operator bool()` is the Ready guard; `TryGet()` and `operator->` are state-gated reads, not permission to mutate native state. |
+| Native resource creation, upload submission, completion publication, Execute(), Tick(), and the RHILoop-driven deferred deletion drain | RHI thread during normal runtime. |
+| `WaitFinish()` | RenderThread; read-only host wait on an immutable completion token. |
+| RHIRef last-release | Any thread; it only enqueues the native destructor. |
+| Device initialization and final shutdown | Main thread today: RHIRenderDevice::Create() runs during EngineLoop::Init(), and Destroy()/backend Shutdown() run after the RHI thread joins. These are explicit lifecycle exceptions, so the code does **not** yet enforce a strict all-RHI-context-calls-on-RHI-thread rule. |
 
 ## Relationships
 
-- `GraphicsPipelineDesc` accepts `ShaderGraphicsProgram` directly; stage-combination validation is deferred and should be defined at the RHI contract level before backend pipeline creation.
-- Pipeline reflection is produced by ShaderCompiler for the linked graphics shader combination. `GraphicsPipeline` exposes only its derived shader parameter layout; public RHI callers bind values by shader parameter path, never by Vulkan set/binding.
-- Reflected binding paths identify shader parameters within one pipeline layout. They must not be conflated with Resource cache keys or debug names: a shader parameter snapshot connects a path to an RHI resource observer for command recording.
-- Sampled textures, samplers, and constant buffers are assigned through **Shader parameters**. Resource arrays are assigned through `SetResourceArray`; runtime sampled texture arrays currently use `ResourceArray<SampledTexture>`, while individual slot selection belongs to material/object data.
-- Missing draw shader bindings are development warnings, not automatic draw skips. Renderers remain responsible for dependency readiness and fallback policy before emitting a draw.
-- A shader's reflected vertex input interface is a different concept from **Vertex input layout**; the former states what attributes are required, the latter states how application-side vertex buffers feed them.
-- Vertex input binding descriptions (stride and binding slot) are not derived from shader reflection. `GraphicsPipelineDesc::VertexInputLayout` provides the explicit CPU layout, while the Vulkan backend uses reflection only to warn about missing locations or format mismatches. The current command and Vulkan lowering support up to four vertex bindings; per-instance input rate remains deferred.
-- Bindless texture selection belongs to **Draw material data**. The public RHI command surface binds `ResourceArray<SampledTexture>` by shader binding name and expresses the selected slot through small draw/material data, not Vulkan set/binding numbers.
-- Push constants are explicit command-list writes scoped by the currently bound graphics pipeline. Renderers decide when to push small material/object indices; backends only validate the write against reflected push-constant ranges and issue the native command.
-- **Resource usage tracking** belongs to the RHI command model. Backends consume the tracked resource set after successful submission to publish completion tokens, but the question "which resources does this command reference?" is not a backend-private concept.
-- `CommandList` does not own GPU resources. Any RHI resource pointer in a command or attachment descriptor is an observer pointer.
-- `CommandList::PresentSource` is the engine-owned final color output for the frame. It is not a pass command and it must not be confused with a swapchain image.
-- `RHI` must not import `Resource` or use `ResourceHandle`. The producer side is responsible for keeping observer pointers valid through owning `ResourceRef<T>` values that outlive command execution.
-- `RHI` does not import any backend module — the factory creates backends via registered creator lambdas.
-- GPU completion tokens are RHI-owned completion points. Resource state remains owned by the Resource layer; RHI only creates and checks completion tokens.
-- `GpuCompletionToken` belongs to the public RHI type surface. Resource code may store it while a resource is GPU-pending, but token identity and interpretation remain owned by RHI.
-- ResourceManager polls GPU completion tokens explicitly from the RHI thread; RHI resource handles do not lazily transition Resource state on read.
-- Async Resource v1 uses transfer upload completion for sampled texture and vertex/index buffer readiness. The token is produced by backend transfer upload submission and queried non-blockingly before a resource moves from GPU-pending to ready.
-- `SampledTexture`, render targets, and swapchain images are distinct RHI concepts. `SampledTexture` creation is upload-backed; render targets use separate attachment creation APIs; swapchain images remain backend-private presentation targets.
-- `Sampler` is distinct from sampled texture image data. Texture resources provide shader-readable image storage; sampler resources provide a small named sampling profile.
+- RHI does not import Resource and does not use ResourceHandle<T>.
+- Resource, Scene, and Renderer may own/ref-count higher-level request objects;
+  a recorded command owns the RHI-lifetime portion through RHIRef<T>.
+- A caller that owns a borrowed command list must retain every ref-backed
+  command resource until that submission is no longer GPU-visible. The
+  backend returns an RHIFrameCompletion token so the caller can wait at the
+  packet replacement boundary.
+- Resource readiness is separate from submission lifetime: GpuPending means
+  a newly created payload is not recordable; an in-flight submitted Ready
+  payload remains alive through command-list retention.
+- Frame-affined transient creation tasks retain byte snapshots until the RHI
+  thread resets the current arena and allocates/writes the payload. The transient
+  ref is created Ready, but it cannot be retained or rebound after its creation
+  frame. The command list retains the ref while the backend records and submits
+  that frame.
 
-## Vulkan Backend Constraints
+## Transient data upload
 
-| Constraint | Detail |
-|------------|--------|
-| **Module layout** | Standalone `Vulkan` module in `Vulkan/` — self-registers with `RHIBackendFactory`. Internal partitions: `Vulkan:Types`, `Vulkan:RenderDevice`, `Vulkan:Command`, `Vulkan:Swapchain` |
-| **Rendering** | Dynamic rendering (VK_KHR_dynamic_rendering / Vulkan 1.3) — no RenderPass objects |
-| **vulkan-hpp** | With exceptions disabled (`VULKAN_HPP_NO_EXCEPTIONS`) |
-| **Memory** | VMA (VulkanMemoryAllocator) for GPU memory management |
+Uploadable records define a nested `GpuData` ABI and a `BuildGpuData()` member
+that constructs it directly from their RHI buffer members and scalar fields.
+Renderer code creates a transient buffer from the resulting byte snapshot and
+stores the immediately-ready `RHIRef` in shader parameters or commands. The RHI
+frame task allocates and writes the current backend arena after its frame region
+has been reset, then fills the backend transient object's arena offset. Vulkan
+binds that offset directly and emits one
+aggregated host-write visibility barrier for UniformRead, ShaderRead, and
+IndirectCommandRead consumers.
 
-## Thread Model
+## Current gaps / guardrails
 
-RHI resources are not thread-safe by default. Callers must serialize access:
-
-| Resource | Thread safety |
-|----------|---------------|
-| `RenderDevice::Get()` | Safe from any thread (singleton) |
-| `RenderDevice::Execute()` | Called from `RHILoop` only |
-| `CreateVertexBuffer` / `CreateIndexBuffer` / `CreateSampler` etc. | RHI-thread owned for backend-native object creation; historical `OnAttach` synchronous calls migrated to async ResourceManager requests |
-| `DrawParameter::WriteConstantBuffer` | Called by render code before `Execute()`; backend consumes the copied draw-scope writes on `RHILoop` through dynamic uniform-buffer descriptor binding. |
-| `ImmediateContext` | Not thread-safe (caller must serialize). Its completion queue and timeline must be owned by the same Vulkan queue on which it submits. The transfer immediate context uses the transfer completion queue; one-shot graphics work such as BLAS builds uses a separate graphics completion queue and signals completion at `eAccelerationStructureBuildKHR`. |
-
-Backend-native RHI object creation, descriptor writes, GPU upload submission, and GPU completion publication belong to the RHI thread. Game, Render, and background worker threads may prepare CPU-side request data or observe published handles/status, but must not directly mutate backend-native RHI state.
-
-The frame pipeline (GameLoop / RenderLoop / RHILoop) is managed by `SoulEngine::EngineLoop` — see [`Launch/CONTEXT.md`](../Launch/CONTEXT.md).
+- GDeferredDeletionQueue is a process-wide raw pointer. A payload whose last
+  ref is released after RHIRenderDevice::Destroy() would dereference a null
+  queue; shutdown order must release all refs first.
+- Tick() retains a documented RHI-thread precondition without a runtime
+  thread-affinity assertion; deletion draining is now driven structurally by
+  RHILoop (plus backend Shutdown() for the final flush).
+- The FrameSlot reset point and the backend submission-retention point are
+  deliberately different today. Do not claim slot reuse itself proves GPU
+  completion.
+- The generic RHI interface does not yet expose a backend-independent submission
+  retirement contract; a new backend must provide one before using RHIRef.
+- Current-frame CPU-to-GPU uploads belong in frame-affined transient creation
+  tasks, not individual RHICommand upload variants or scopes. New uploadable
+  data must provide a GPU ABI record and materialize its bytes before calling
+  CreateTransientXXXBuffer().
 
 ## Dependencies
 
-- `Core` — logging, config, `Singleton`, `Factory`
-- `Shader` — `ShaderGraphicsProgram` and compiled shader artifact types (consumes)
-- `WindowSystem` — main-window binding and framebuffer extent
-- Third-party: vulkansdk, VMA
-
-## BDA ray-tracing geometry
-
-`RayTracingGeometryTable` is a RenderDevice-owned logical metadata table for
-ray-tracing source attributes. Renderer records `RayTracingGeometryDesc`
-observers and instance-relative geometry ranges through
-`UpdateRayTracingGeometryTableCmd`; it must not resolve device addresses.
-`UsageVisitor` stamps the table and every referenced source buffer so the
-normal GPU-completion deletion contract covers BDA reads.
+- Core — common types, errors, logging, factory, task graph access
+- WindowSystem — backend presentation-surface bootstrap
+- Backend modules — self-register through RHIBackendFactory; RHI itself never imports a concrete backend

@@ -1,53 +1,64 @@
 # Context: Launch
 
-**Namespace:** `SoulEngine` (exposes `EngineLoop`)
+**Namespace:** SoulEngine (exposes EngineLoop)
 
-Engine startup and main loop. The entry point binary loads this module and calls its initialization sequence.
+Engine startup and the three-thread Game → Render → RHI pipeline.
 
 ## Terms
 
 | Term | Definition |
 |------|------------|
-| **EngineLoop** | Main engine loop class. Lifecycle: `PreInit` (cmd args + config) -> `Init` (Window -> RHI singleton -> Application) -> `Run` (spawns workers + blocked main-thread loop) -> `Shutdown` (joins workers, tears down). |
-| **PreInit** | Processes command-line arguments (`CmdLineArgs`), loads config file (`ConfigManager::LoadFile`), applies log-level config. Currently only uses `CmdLineArgs[0]` (binary path) for config file resolution; argument parsing is extensible for future CLI flags. |
-| **Init** | Bootstraps subsystems in order: `CreateWindowSystem` -> `RHIRenderDevice::Create()` -> `RHIRenderDevice::Get().BindWindowSystem(WindowSys)` -> `TaskGraph::Get().Init()` -> `ResourceManager::Init()` -> `Editor::Create()` -> `Editor::BindWindowSystem(WindowSys)` -> `SwitchApplication`. Any failure tears down prior work and returns `std::unexpected`. Does NOT spawn threads. |
-| **Run** | Spawns Render and RHI `std::jthread`s, then calls `GameLoop()` on the calling (main) thread. Blocks until exit. After `GameLoop` returns, calls `Shutdown()`. |
-| **GameLoop** | Main-thread loop: `PollEvents` -> compute delta -> wait for slot -> `OnTick(dt, IWindowSystem)` -> `Editor::BuildFrame(dt)` (ImGui frame + draw-data snapshot) -> build `SceneSnapshot` -> `GameReady`. Breaks when `PollEvents()` reports a close request or `m_FatalError` is set by another loop. |
-| **RenderLoop** | Worker `std::jthread`. Waits for `GameReady` on its slot, drains render task queue, calls `IRenderer::Render(SceneSnapshot)`, stores the returned render packet, and sets `RenderReady`. On `Render` failure: broadcasts `FatalError` and exits. |
-| **RHILoop** | Worker `std::jthread`. Waits for `RenderReady` on its slot, drains RHI task queue, executes the slot render packet, releases command observers, then sets `RHIDone`. On exit: calls `RHIRenderDevice::WaitIdle()` before returning. |
-| **FrameSlot** | Triple-buffered slot (3 fixed). Contains `mutex`, `condition_variable`, `SlotState`, a `SceneSnapshot` copy for Game→Render handoff, and a `RenderResult` packet for Render→RHI handoff. |
-| **Render packet** | `RenderResult`, containing the `RHICommandList` held in `FrameSlot` until RHILoop has completed `RHIRenderDevice::Execute()`. |
-| **SlotState** | State machine: `Empty -> GameReady -> RenderReady -> RHIDone -> Empty`. |
-| **FatalError** | `std::atomic<bool>` set by any loop on unrecoverable error. Wakes all waiting threads via `notify_all`. Causes `GameLoop` to break and `Run` to fall through to `Shutdown`. |
-| **SwitchApplication** | Replaces the current application. Calls `OnDetach()` on the old app, then `Application::Create(Name)` + `OnAttach()` for the new one. |
+| **EngineLoop** | Lifecycle: PreInit → Init → Run → Shutdown. Run starts Render/RHI workers and runs GameLoop on the main thread. |
+| **GameLoop** | Main-thread loop: poll events, update application/editor state, wait for a slot in Empty or RenderReady, build the SceneSnapshot, then publish GameReady. |
+| **RenderLoop** | Worker loop: wait for GameReady, drain Render tasks, consume SceneData, publish RenderReady, wait for the prior packet's RHI/GPU completion, then replace RenderResult and wake RHILoop. |
+| **RHILoop** | Worker loop: wait for a slot packet marked not consumed, drain RHI tasks, call RHIRenderDevice::Tick(), drain deferred deletions, borrow the packet for Execute(), submit it through EndFrame(), store RHIFrameCompletion, mark the packet consumed, and notify RenderLoop. It calls WaitIdle() before exiting. |
+| **FrameSlot** | One of three synchronized handoff records containing SceneSnapshot, Renderer, ImGui snapshot, RenderResult, and its RHIFrameCompletion. The slot remains the RenderResult owner until RenderThread waits for GPU completion. |
+| **Render packet** | RenderResult produced by RenderLoop and borrowed by RHILoop for Execute(). The packet is not moved into backend storage; its RHIRefs remain in the FrameSlot until the next replacement. |
+| **SlotState** | Empty -> GameReady -> RenderReady -> GameReady; Empty is only the initial bootstrap state, while RenderReady lets GameThread prepare the next SceneData. RHI packet handoff uses a separate consumed flag. |
+| **FatalError** | Atomic fatal flag set by any loop; wakes waiting slots and causes coordinated shutdown. |
+
+## RHI reference lifetime across slots
+
+A normal command list carries RHIRef<T> values rather than raw RHI observers.
+RHILoop borrows Slot.RenderPacket.CmdList for Execute() and leaves the packet
+in the FrameSlot after EndFrame() returns an RHIFrameCompletion. RenderLoop
+waits for the RHI-consumed flag and that completion token immediately before
+replacing the packet, so slot ownership itself proves the RHIRef lifetime.
+
+The ImGui overlay remains a borrowed Execute-time payload: its snapshot and
+texture queue are valid through Execute() and are cleared with the slot only
+after that call returns.
+
+## Shutdown order
+
+1. Request worker stop, start ResourceManager shutdown, and wake slots.
+2. Join RenderLoop and RHILoop while TaskGraph is still running, so a worker
+   caught mid-frame finishes its in-flight slot against live task services
+   instead of failing with spurious "TaskGraph is not running" errors; RHILoop
+   waits for GPU idle on exit. TaskGraph stops only after both workers join.
+3. Close the application; clear slot snapshots/render packets; release Editor and renderer GPU owners.
+4. Clear ResourceManager so ordinary RHIRef owners release while the render device/deletion queue still exists.
+5. Destroy the RHI device, then the window system and Editor.
+
+No RHI ref that may own a native payload may outlive step 5.
 
 ## Dependencies
 
-- `Core` — logging, config (`ConfigManager`, `LogManager`)
-- `WindowSystem` — window system creation (`CreateWindowSystem`, borrowed `IWindowSystem`)
-- `Application` — factory + lifecycle (`Application::Create`, `OnAttach`, `OnDetach`, `OnTick`)
-- `RHI` — RHI singleton lifecycle (`RHIRenderDevice::Create`, `Get`, `Destroy`)
-- `Scene` — `Scene` mutable world state + `SceneSnapshot` frame slot data
-- `Renderer` — `IRenderer::Render()` called from `RenderLoop`
-- `TaskGraph` — cross-thread task dispatch (`TaskGraph`)
-- `Editor` — `Editor` UI frame building (main thread) and UI pass emission (render thread)
-
-## Resource Observer Lifetime
-
-`IRenderer::Render()` resolves command-list resources through
-`ResourceManager::TryGetReady()`. The command list stores only RHI observer
-pointers, so owning `ResourceRef<T>` values in the live scene/application or
-renderer are responsible for keeping logical resource demand alive until the
-frame packet is consumed by RHILoop. `SceneSnapshot` carries passive handles
-only.
-
-Shutdown releases slots in this order: stop and join threads, detach/reset the
-application, clear frame snapshots/render packets, call `ResourceManager::Clear()`,
-then destroy `RHIRenderDevice`.
+- Core — config, logging, thread roles
+- WindowSystem — window creation and events
+- Application — application lifecycle and mutable Scene
+- RHI — singleton lifecycle and RHI-thread execute/tick
+- Resource — request shutdown, dependency polling, resource cleanup
+- Scene — per-frame snapshot
+- Renderer — renderer selection and RenderLoop frame recording
+- TaskGraph — Game/Render/RHI task queues
+- Editor — main-thread UI and Render-thread overlay packet
 
 ## Known gaps
 
 | Gap | Status |
 |-----|--------|
-| **CLI argument parsing** — `PreInit` takes `CmdLineArgs` but only uses `args[0]`. No flags, no `--help`, no project path override. | Open |
-| **Application abstraction** — `Application` base class + factory pattern is nascent. Only `TestApplication` exists. | Open |
+| FrameSlot is not the submission-retention owner; RHILoop clears the moved-from packet before GameLoop reacquires the slot. | Documented divergence from the requested slot-reset policy; Vulkan backend retention is the current safeguard. |
+| RHI initialization and final device shutdown happen on the main thread, not the RHI worker. | Lifecycle exception; strict RHI-thread-only context ownership is not yet enforced. |
+| CLI argument parsing | Open |
+| Application abstraction | Open |

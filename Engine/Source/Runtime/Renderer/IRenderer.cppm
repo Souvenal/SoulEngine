@@ -1,19 +1,24 @@
 module;
 
+#include <imgui_threaded_rendering.h>
+
 export module Renderer:IRenderer;
 
 import Core;
+export import EditorTypes;
 import RHI;
 import Resource;
 import Scene;
+import TaskGraph;
 
 export import std;
 
 export namespace SoulEngine {
 
-/// @brief Render-thread packet kept alive until RHILoop finishes Execute().
+/// @brief Render-thread packet retained by its FrameSlot until GPU completion.
 struct RenderResult {
-    RHICommandList CmdList = {};
+    RenderPassList                 CmdList        = {};
+    UPtr<ImDrawDataSnapshot>       ImGuiSnapshot  = nullptr;
 };
 
 /// @brief Abstract base class for all renderers.
@@ -22,7 +27,7 @@ struct RenderResult {
 /// that it resolves before emitting commands each frame.
 ///
 /// Deriving from IRenderer lets you define different pipeline types
-/// (ForwardRenderer, DeferredRenderer, RayTracingRenderer, etc.) while
+/// (RasterRenderer, RayTracingRenderer, etc.) while
 /// sharing the per-frame execution loop and pass management.
 class IRenderer {
   public:
@@ -44,7 +49,8 @@ class IRenderer {
 
     /// @brief Render the scene snapshot and return commands for RHIThread.
     /// Called by RenderLoop.  Must not call BeginFrame/EndFrame.
-    [[nodiscard]] virtual auto Render(const SceneSnapshot& Scene) -> std::expected<RenderResult, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Render(const GameSnapshot& Scene, const EditorSnapshot& Editor)
+        -> std::expected<RenderResult, ErrorMessage> = 0;
 };
 
 /// @brief Factory type for renderer creation.

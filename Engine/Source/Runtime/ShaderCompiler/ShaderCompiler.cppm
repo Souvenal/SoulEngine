@@ -18,12 +18,11 @@
 
 module;
 
-#include <magic_enum/magic_enum.hpp>
-
 export module ShaderCompiler;
 
 export import :Types;
 
+import magic_enum;
 import std;
 import Core;
 import Shader;
@@ -77,6 +76,23 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
         }
 
         return Slot.Instance->CompileGraphics(Desc);
+    }
+
+    [[nodiscard]] auto CompileCompute(const ComputeCompileDesc& Desc)
+        -> std::expected<ShaderComputeProgram, ErrorMessage> {
+        if (Desc.Compute.EntryPoint.empty())
+            return std::unexpected(ErrorMessage("Compute shader compile requires a non-empty entry point"));
+
+        ValidateEntryBackendConsistency(Desc.Compute);
+        auto&           Slot = m_Backends[static_cast<std::size_t>(Desc.Compute.Backend)];
+        std::lock_guard Lock(Slot.Mutex);
+        if (!Slot.Instance) {
+            auto Inst = CreateBackend(Desc.Compute.Backend);
+            if (!Inst)
+                return std::unexpected(std::move(Inst.error()));
+            Slot.Instance = std::move(*Inst);
+        }
+        return Slot.Instance->CompileCompute(Desc);
     }
 
     [[nodiscard]] auto CompileRayTracing(const RayTracingCompileDesc& Desc)

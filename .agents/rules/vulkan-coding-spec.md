@@ -44,6 +44,56 @@ auto                       VertexInputCI = ShaderStates->GetPipelineVertexInputS
 
 The suffix keeps variable names compact while making it immediately obvious that the variable is a CreateInfo struct, not the resulting object.
 
+## Object naming
+
+Every Vulkan handle created or allocated by SoulEngine and retained by the
+backend must receive a deterministic `VK_EXT_debug_utils` name immediately
+after successful creation, before ownership is moved. This requirement applies
+to public RHI resources, native backing objects, and internal objects such as
+frame resources, swapchain resources, shader modules, descriptor resources,
+and immediate-context resources.
+
+Use `VulkanDebugUtils::SetObjectName` for all object naming. Do not call
+`setDebugUtilsObjectNameEXT` directly outside `VKDebug.cppm`. The helper
+already handles disabled or unavailable debug utils, empty names, null handles,
+and reports naming failures.
+
+Use the following grammar for deterministic object names:
+
+```text
+Internal/<Type>/<Role>/<Instance>
+<Usage>/<Type>/<LogicalPath>
+<Base>#<NativeRole>
+<Base>::<RelatedRole>
+```
+
+RHI-internal objects use the `Internal/` namespace. The Vulkan object type is
+the first path component after `Internal/`; roles and instance identifiers
+follow it. Use compact stable instance identifiers such as `Frame0` and
+`Swapchain0`, not bracketed or nested index syntax.
+
+Examples:
+
+```text
+Internal/Instance
+Internal/Surface
+Internal/PhysicalDevice
+Internal/Device
+Internal/Queue/Graphics
+Internal/CommandBuffer/Primary/Frame0
+Internal/CommandPool/Secondary/Frame0
+Internal/ImageView/Swapchain0
+```
+
+RHI resources visible outside the Vulkan backend use an ownership-oriented
+usage path, for example `Camera/RenderTarget/EditorViewport/SceneColor` or
+`Renderer/GraphicsPipeline/GeometryPass`.
+
+Native backing objects append `#<NativeRole>` to the owning RHI resource
+name. Related Vulkan state objects append `::<RelatedRole>`. Names must be
+stable, non-empty, and role-specific. Handles borrowed from an external owner
+are not renamed by this rule.
+
 ## No C-style Vulkan (except VMA)
 
 Prefer `vk::raii::*` types and C++ Vulkan-Hpp wrappers. Raw C Vulkan types (`VkBuffer`, `VkDevice`, `VkCommandBuffer`, etc.) and raw C API calls (`vkFreeCommandBuffers`, `vkDestroy*`, etc.) are banned.

@@ -1,9 +1,14 @@
 /// @file   RHIRayTracing.cppm
 /// @brief  Backend-agnostic hardware ray-tracing resource and command descriptors.
 
+module;
+
+#include <cstddef>
+
 export module RHI:RayTracing;
 
 export import :Types;
+import :Ref;
 
 import Shader;
 
@@ -11,59 +16,20 @@ export import std;
 
 export namespace SoulEngine {
 
-/// Build preferences for acceleration structures.
-enum class RHIAccelerationStructureBuildFlags : Uint32 {
-    None            = 0,
-    PreferFastTrace = 1u << 0,
-    PreferFastBuild = 1u << 1,
-    AllowUpdate     = 1u << 2,
-};
-
-[[nodiscard]] inline auto operator|(RHIAccelerationStructureBuildFlags Left, RHIAccelerationStructureBuildFlags Right)
-    -> RHIAccelerationStructureBuildFlags {
-    return static_cast<RHIAccelerationStructureBuildFlags>(static_cast<Uint32>(Left) | static_cast<Uint32>(Right));
-}
-
-/// Geometry policy used while building a triangle BLAS entry.
-enum class RHIAccelerationStructureGeometryFlags : Uint32 {
-    None   = 0,
-    Opaque = 1u << 0,
-};
-
-[[nodiscard]] inline auto operator|(RHIAccelerationStructureGeometryFlags Left, RHIAccelerationStructureGeometryFlags Right)
-    -> RHIAccelerationStructureGeometryFlags {
-    return static_cast<RHIAccelerationStructureGeometryFlags>(static_cast<Uint32>(Left) | static_cast<Uint32>(Right));
-}
-
-/// Index encoding understood by the first triangle BLAS implementation.
-enum class RHIAccelerationStructureIndexType : Uint8 {
-    Unknown = 0,
-    Uint32,
-};
-
-/// One triangle geometry entry in a bottom-level acceleration structure.
+/// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
 struct RHITriangleAccelerationStructureGeometryDesc {
-    RHIVertexBuffer*                      VertexBufferPtr = nullptr;
-    Uint64                             VertexCount     = 0;
-    Uint32                             VertexStride    = 0;
-    RHIFormat                             VertexFormat    = RHIFormat::R32G32B32_SFLOAT;
-    RHIIndexBuffer*                       IndexBufferPtr  = nullptr;
-    Uint64                             IndexCount      = 0;
-    RHIAccelerationStructureIndexType     IndexType       = RHIAccelerationStructureIndexType::Uint32;
-    RHIAccelerationStructureGeometryFlags Flags           = RHIAccelerationStructureGeometryFlags::Opaque;
+    RHIRef<RHIVertexBuffer> VertexBufferRef = nullptr;
+    RHIRef<RHIIndexBuffer>  IndexBufferRef  = nullptr;
 };
 
 /// Descriptor for immutable triangle geometry used to construct a BLAS.
 struct RHIBottomLevelAccelerationStructureDesc {
     std::vector<RHITriangleAccelerationStructureGeometryDesc> Geometries = {};
-    RHIAccelerationStructureBuildFlags BuildFlags = RHIAccelerationStructureBuildFlags::PreferFastTrace;
 };
 
 /// Descriptor for a persistent, renderer-scoped TLAS allocation.
 struct RHITopLevelAccelerationStructureDesc {
-    Uint32                          InitialInstanceCapacity = 0;
-    RHIAccelerationStructureBuildFlags BuildFlags =
-        RHIAccelerationStructureBuildFlags::PreferFastTrace | RHIAccelerationStructureBuildFlags::AllowUpdate;
+    Uint32 InitialInstanceCapacity = 0;
 };
 
 /// Explicit row-major affine transform passed from Renderer to RHI.
@@ -83,36 +49,46 @@ struct RHIRowMajorTransform3x4 {
 };
 
 /// Common GPU resource base for BLAS and TLAS payloads.
-class RHIAccelerationStructure : public RHIGpuResource {
+class RHIAccelerationStructure : public RHIObject {
   public:
-    RHIAccelerationStructure()                                                = default;
     RHIAccelerationStructure(const RHIAccelerationStructure&)                    = delete;
     auto operator=(const RHIAccelerationStructure&) -> RHIAccelerationStructure& = delete;
     RHIAccelerationStructure(RHIAccelerationStructure&&)                         = delete;
     auto operator=(RHIAccelerationStructure&&) -> RHIAccelerationStructure&      = delete;
-    virtual ~RHIAccelerationStructure()                                       = default;
+    virtual ~RHIAccelerationStructure()                                          = default;
+
+  protected:
+    explicit RHIAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
 };
 
 /// GPU payload containing reusable object-space triangle geometry.
 class RHIBottomLevelAccelerationStructure : public RHIAccelerationStructure {
   public:
-    RHIBottomLevelAccelerationStructure()                                                           = default;
     RHIBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructure&)                    = delete;
     auto operator=(const RHIBottomLevelAccelerationStructure&) -> RHIBottomLevelAccelerationStructure& = delete;
     RHIBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructure&&)                         = delete;
     auto operator=(RHIBottomLevelAccelerationStructure&&) -> RHIBottomLevelAccelerationStructure&      = delete;
-    virtual ~RHIBottomLevelAccelerationStructure()                                                  = default;
+    virtual ~RHIBottomLevelAccelerationStructure()                                                     = default;
+
+  protected:
+    explicit RHIBottomLevelAccelerationStructure(String Name) : RHIAccelerationStructure(std::move(Name)) {}
 };
 
 /// Persistent GPU payload containing the current render-scene instance hierarchy.
 class RHITopLevelAccelerationStructure : public RHIAccelerationStructure {
   public:
-    RHITopLevelAccelerationStructure()                                                        = default;
     RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
     auto operator=(const RHITopLevelAccelerationStructure&) -> RHITopLevelAccelerationStructure& = delete;
     RHITopLevelAccelerationStructure(RHITopLevelAccelerationStructure&&)                         = delete;
     auto operator=(RHITopLevelAccelerationStructure&&) -> RHITopLevelAccelerationStructure&      = delete;
-    virtual ~RHITopLevelAccelerationStructure()                                               = default;
+    virtual ~RHITopLevelAccelerationStructure()                                                  = default;
+
+    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
+        return ShaderResourceType::AccelerationStructure;
+    }
+
+  protected:
+    explicit RHITopLevelAccelerationStructure(String Name) : RHIAccelerationStructure(std::move(Name)) {}
 };
 
 /// One logical source geometry consumed by the device-owned BDA metadata table.
@@ -120,45 +96,82 @@ class RHITopLevelAccelerationStructure : public RHIAccelerationStructure {
 /// This record intentionally contains RHI resource observers and layout intent only.
 /// The backend resolves native device addresses while recording the command list.
 struct RHIRayTracingGeometryDesc {
-    RHIVertexBuffer* PositionBuffer    = nullptr;
-    RHIVertexBuffer* NormalBuffer      = nullptr;
-    RHIIndexBuffer*  IndexBuffer          = nullptr;
-    Uint32        PositionByteOffset = 0;
-    Uint32        NormalByteOffset   = 0;
-    Uint32        IndexByteOffset    = 0;
-    Uint32        PositionStride     = sizeof(Float32) * 3;
-    Uint32        NormalStride       = sizeof(Float32) * 3;
-    Uint32        IndexStride        = sizeof(Uint32);
-    Uint32        VertexCount        = 0;
-    Uint32        IndexCount         = 0;
+    RHIRef<RHIVertexBuffer> PositionBufferRef  = nullptr;
+    RHIRef<RHIVertexBuffer> NormalBufferRef    = nullptr;
+    RHIRef<RHIVertexBuffer> TangentBufferRef   = nullptr;
+    RHIRef<RHIVertexBuffer> TexCoordBufferRef  = nullptr;
+    RHIRef<RHIIndexBuffer>  IndexBufferRef     = nullptr;
+    Uint32                  PositionByteOffset = 0;
+    Uint32                  NormalByteOffset   = 0;
+    Uint32                  TangentByteOffset  = 0;
+    Uint32                  TexCoordByteOffset = 0;
+    Uint32                  IndexByteOffset    = 0;
+    Uint32                  PositionStride     = sizeof(Float32) * 3;
+    Uint32                  NormalStride       = sizeof(Float32) * 3;
+    Uint32                  TangentStride      = sizeof(Float32) * 4;
+    Uint32                  TexCoordStride     = sizeof(Float32) * 2;
+    Uint32                  IndexStride        = sizeof(Uint32);
+    Uint32                  VertexCount        = 0;
+    Uint32                  IndexCount         = 0;
+    Uint32                  MaterialIndex      = 0;
+
+    /// @brief Shader-visible BDA and layout data for one BLAS geometry.
+    struct alignas(8) GpuData {
+        Uint64 PositionAddress    = 0;
+        Uint64 NormalAddress      = 0;
+        Uint64 TangentAddress     = 0;
+        Uint64 TexCoordAddress    = 0;
+        Uint64 IndexAddress       = 0;
+        Uint32 PositionByteOffset = 0;
+        Uint32 NormalByteOffset   = 0;
+        Uint32 TangentByteOffset  = 0;
+        Uint32 TexCoordByteOffset = 0;
+        Uint32 IndexByteOffset    = 0;
+        Uint32 PositionStride     = 0;
+        Uint32 NormalStride       = 0;
+        Uint32 TangentStride      = 0;
+        Uint32 TexCoordStride     = 0;
+        Uint32 IndexStride        = 0;
+        Uint32 MaterialIndex      = 0;
+    };
+
+    [[nodiscard]] auto BuildGpuData() const -> GpuData {
+        return GpuData{
+            .PositionAddress    = PositionBufferRef ? PositionBufferRef->GetDeviceAddress() : 0,
+            .NormalAddress      = NormalBufferRef ? NormalBufferRef->GetDeviceAddress() : 0,
+            .TangentAddress     = TangentBufferRef ? TangentBufferRef->GetDeviceAddress() : 0,
+            .TexCoordAddress    = TexCoordBufferRef ? TexCoordBufferRef->GetDeviceAddress() : 0,
+            .IndexAddress       = IndexBufferRef ? IndexBufferRef->GetDeviceAddress() : 0,
+            .PositionByteOffset = PositionByteOffset,
+            .NormalByteOffset   = NormalByteOffset,
+            .TangentByteOffset  = TangentByteOffset,
+            .TexCoordByteOffset = TexCoordByteOffset,
+            .IndexByteOffset    = IndexByteOffset,
+            .PositionStride     = PositionStride,
+            .NormalStride       = NormalStride,
+            .TangentStride      = TangentStride,
+            .TexCoordStride     = TexCoordStride,
+            .IndexStride        = IndexStride,
+            .MaterialIndex      = MaterialIndex,
+        };
+    }
 };
 
-/// Logical per-instance lookup range into a RHIRayTracingGeometryTableUpdate.
-struct RHIRayTracingGeometryInstanceDesc {
+/// Shader-visible per-instance range into ray-tracing geometry data.
+struct RHIRayTracingInstanceData {
     Uint32 FirstGeometry = 0;
     Uint32 GeometryCount = 0;
-    Uint32 MaterialIndex = 0;
+    Uint32 EntityId      = 0;
 };
 
-/// Complete metadata snapshot consumed by one trace dispatch.
-struct RHIRayTracingGeometryTableUpdate {
-    std::vector<RHIRayTracingGeometryInstanceDesc> Instances = {};
-    std::vector<RHIRayTracingGeometryDesc>         Geometries = {};
-};
-
-/// Device-owned shader-visible metadata table for BDA ray-tracing geometry lookup.
-///
-/// Renderer only records logical source-buffer observers and table layout through
-/// RHIUpdateRayTracingGeometryTableCmd. Vulkan resolves and owns device addresses.
-class RHIRayTracingGeometryTable : public RHIGpuResource {
-  public:
-    RHIRayTracingGeometryTable()                                                  = default;
-    RHIRayTracingGeometryTable(const RHIRayTracingGeometryTable&)                    = delete;
-    auto operator=(const RHIRayTracingGeometryTable&) -> RHIRayTracingGeometryTable& = delete;
-    RHIRayTracingGeometryTable(RHIRayTracingGeometryTable&&)                         = delete;
-    auto operator=(RHIRayTracingGeometryTable&&) -> RHIRayTracingGeometryTable&      = delete;
-    virtual ~RHIRayTracingGeometryTable()                                         = default;
-};
+using RHIRayTracingGeometryData = RHIRayTracingGeometryDesc::GpuData;
+static_assert(sizeof(RHIRayTracingInstanceData) == 12);
+static_assert(sizeof(RHIRayTracingGeometryData) == 88);
+static_assert(alignof(RHIRayTracingGeometryData) == 8);
+static_assert(offsetof(RHIRayTracingGeometryData, PositionAddress) == 0);
+static_assert(offsetof(RHIRayTracingGeometryData, PositionByteOffset) == 40);
+static_assert(offsetof(RHIRayTracingGeometryData, PositionStride) == 60);
+static_assert(offsetof(RHIRayTracingGeometryData, MaterialIndex) == 80);
 
 /// Backend-neutral instance flags for TLAS population.
 enum class RHIAccelerationStructureInstanceFlags : Uint8 {
@@ -168,12 +181,12 @@ enum class RHIAccelerationStructureInstanceFlags : Uint8 {
 
 /// One TLAS instance referencing a reusable BLAS.
 struct RHIAccelerationStructureInstance {
-    RHIBottomLevelAccelerationStructure*  BottomLevelPtr = nullptr;
-    RHIRowMajorTransform3x4               Transform      = {};
-    Uint32                             CustomIndex    = 0;
-    Uint32                             HitGroupIndex  = 0;
-    Uint8                              Mask           = 0xFF;
-    RHIAccelerationStructureInstanceFlags Flags          = RHIAccelerationStructureInstanceFlags::None;
+    RHIRef<RHIBottomLevelAccelerationStructure> BottomLevelRef = nullptr;
+    RHIRowMajorTransform3x4                     Transform      = {};
+    Uint32                                      CustomIndex    = 0;
+    Uint32                                      HitGroupIndex  = 0;
+    Uint8                                       Mask           = 0xFF;
+    RHIAccelerationStructureInstanceFlags       Flags          = RHIAccelerationStructureInstanceFlags::None;
 };
 
 /// Requested TLAS population operation. Backends select rebuild only when update is invalid.
@@ -182,38 +195,6 @@ enum class RHITopLevelAccelerationStructureBuildMode : Uint8 {
     Auto,
     Build,
     Update,
-};
-
-/// Logical shader-group category. Native Vulkan group indices remain backend-private.
-enum class RHIRayTracingShaderGroupType : Uint8 {
-    Unknown = 0,
-    General,
-    TrianglesHit,
-    ProceduralHit,
-};
-
-/// Logical shader-group descriptor populated by the later shader-program phase.
-struct RHIRayTracingShaderGroupDesc {
-    RHIRayTracingShaderGroupType Type = RHIRayTracingShaderGroupType::Unknown;
-};
-
-/// Backend-agnostic RT pipeline policy. Shader program ownership is added by Phase 2.
-struct RHIRayTracingPipelineDesc {
-    ShaderRayTracingProgram              Program           = {};
-    std::vector<RHIRayTracingShaderGroupDesc> ShaderGroups      = {};
-    Uint32                                 MaxRecursionDepth = 1;
-};
-
-/// Empty polymorphic base for ray-tracing pipeline resources.
-/// Backend concrete classes own native pipeline-layout and shader-binding-table state.
-class RHIRayTracingPipeline : public RHIPipeline {
-  public:
-    RHIRayTracingPipeline()                                             = default;
-    RHIRayTracingPipeline(const RHIRayTracingPipeline&)                    = delete;
-    auto operator=(const RHIRayTracingPipeline&) -> RHIRayTracingPipeline& = delete;
-    RHIRayTracingPipeline(RHIRayTracingPipeline&&)                         = delete;
-    auto operator=(RHIRayTracingPipeline&&) -> RHIRayTracingPipeline&      = delete;
-    virtual ~RHIRayTracingPipeline()                                    = default;
 };
 
 } // namespace SoulEngine

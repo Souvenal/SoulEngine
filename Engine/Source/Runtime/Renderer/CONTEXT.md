@@ -1,46 +1,76 @@
 # Context: Renderer
 
-**Namespace:** SoulEngine::Renderer
+**Namespace:** SoulEngine
 
-Render pipeline orchestration layer — drives RHI command execution and pass composition.
+Renderer implementations convert renderer-neutral SceneSnapshot input into a
+move-only RHICommandList. Current renderers are RasterRenderer and
+RayTracingRenderer; the selected renderer is cached by the engine and recorded
+into each FrameSlot.
 
 ## Terms
 
 | Term | Definition |
 |------|------------|
-| **IRenderer** | Abstract base class for all renderers. Defines OnAttach(), OnDetach(), Render(const Scene::SceneSnapshot&) -> expected<CommandList, ErrorMessage>. Returns a command list — does NOT touch BeginFrame/EndFrame. |
-| **ForwardRenderer** | Current forward PBR renderer. Owns asynchronous pipeline, sampler, texture, and logical frame/view/material constant-buffer refs, resolves ready Mesh submeshes into forward draw instances, and renders direct directional light with the shared metallic-roughness BRDF and each draw scene-authored material values. Draws may bind an optional scene-authored base-color texture through the bindless `g_textures`/`g_samplers` sampling blocks. |
-| **Constant-buffer ABI mirror** | Renderer-side C++ mirror for a Slang constant-buffer struct. It contains semantic fields only, uses lignas(16) for required members, and proves the reflected std140 offsets with sizeof and offsetof assertions. |
-| **Pass dependency** | Resource dependency whose absence makes an entire pass incoherent for the current frame. |
-| **Draw dependency** | Resource dependency whose absence affects one draw instance or material use, not necessarily the entire pass. |
-| **Draw material data** | Per-draw or per-material shader data that selects resources or parameters for one draw instance. It names shader bindings by reflected parameter path, never by backend set or binding number. |
-| **RayTracingRenderer** | Progressive hardware path tracer. It uses TLAS custom indices and a fixed BDA geometry metadata table to select original mesh position, normal, and index buffers, traces direct-light shadow rays and BSDF bounces, and accumulates one sample per pixel per frame until the scene or view changes. |
+| **IRenderer** | Renderer interface invoked by RenderLoop with one SceneSnapshot; returns a RenderResult containing a command list. |
+| **RenderResult** | Per-frame RHI packet. It owns the command list only until RHILoop moves it into RHIRenderDevice::Execute(). |
+| **Renderer cache** | Engine-global cache of attached renderers. Renderer-local request/resource wrappers may survive renderer switching until engine shutdown. |
+| **Recorded resource ref** | An RHIRef<T> whose `operator bool()` confirms a Ready payload before recording. The command copies the ref as the GPU-use lifetime carrier. |
+| **GBuffer** | Camera-owned collection of four color render targets plus one shared depth render target: albedo, normal, material ID, entity ID, and depth. |
+| **CameraRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
+| **Geometry pass** | Raster RHIPass that writes the four G-buffer color attachments and the shared depth attachment. |
+| **Lighting pass** | Separate raster RHIPass that samples the G-buffer, including shared depth, and writes SceneColorRT. |
+| **Post-process pass** | A raster RHIPass appended after scene lighting. Post-process builders live under `Renderer/PostProcess/` and operate on the current view's ref-backed targets. |
+| **EditorViewRecord** | Editor-only view snapshot carrying one editor camera pose, its persistent camera render targets, and the R8_UNORM selection mask used by editor post-processing. |
+| **Editor selection outline** | Editor post-process that reads the EntityId G-buffer at the selected pixel, then marks pixels adjacent to the selected ID with the orange outline color while preserving SceneColorRT for non-outline pixels. RasterRenderer consumes the editor-camera mask; it does not create one per frame. |
+| **Present source** | Ref-backed final engine-owned SceneColorRT assigned to RHICommandList::PresentSourceRef; it is presented by the backend, not rendered directly into the swapchain by Renderer. |
+| **GeometryRecordTable** | Slang facade (Common/Geometry.slang) over the per-pass geometry record table. Shader parameter blocks embed it instead of a raw `StructuredBuffer<GeometryRecord>`; it exposes `pullVertex(recordIndex, vertexIndex)` and `pullBoundingSphere(recordIndex)` and fully encapsulates the GPU-address ABI of GeometryRecord. Reflection recurses into such resource-facade structs, so host code binds the inner member path (e.g. `g_rasterDraw.geometryTable.records`), not the facade itself. |
+| **VertexInfo** | Decoded vertex attributes (position, normal, tangent, uv) returned by `GeometryRecordTable::pullVertex`. Null tangent/texCoord addresses pull silent defaults ((1,0,0,1) and (0,0)). |
 
-## Architecture
+## Relationships
 
-`
-IRenderer
- ├── ForwardRenderer  (current — direct-light PBR)
- ├── RayTracingRenderer (current — progressive metallic-roughness path tracer)
- └── DeferredRenderer (future)
-`
+- Application owns mutable Scene state. GameLoop makes snapshots and captures
+  the selected shared renderer into a FrameSlot.
+- RenderLoop calls IRenderer::Render(), stores the result, and publishes
+  RenderReady; it does not make Vulkan calls.
+- Renderer requests textures, pipelines, samplers, BLAS, and TLAS through
+  ResourceManager. MeshSystem owns MeshRecord and GeometryRecord loading.
+  Native creation is queued to the RHI thread.
+- RayTracingRenderer converts Scene-owned GeometryRecord values into RHI
+  triangle geometry descriptions before requesting a BLAS; Resource does not
+  depend on Scene mesh types.
+- Renderer resolves each draw's material through MaterialManager (scene instance
+  -> mesh-imported asset instance -> built-in default) and PbrMaterialResolver
+  deduplicates GPU entries by (instance ID, HasUV0, HasTangents).
+- A renderer records only ready persistent refs. Transient refs may remain
+  pending until the RHI frame task completes; the command visitor owns the
+  Ready/Failed validation. The command list copies refs for pass attachments,
+  pipelines, vertex/index buffers, shader parameter resources, transient
+  buffers, TLAS/BLAS instances, and the present source. Do not store a raw
+  pointer obtained from TryGet() in a command.
+- Vulkan retains the submitted command list through its graphics timeline. A
+  renderer cache release or Resource transient collection after submission
+  cannot destroy an ordinary ref-backed resource still visible to the GPU.
+- Renderer creates current-frame transient data through typed
+  `CreateTransientXXXBuffer` calls. The descriptors contain byte spans that are
+  copied by the RHI creation path; renderer code never captures borrowed Scene
+  records or stores upload work on individual scopes.
+- Uploadable records own their `GpuData` ABI mirror and `BuildGpuData()`
+  method. Renderer passes the resulting byte snapshot to a transient RHI
+  creation descriptor and never queries a native Vulkan buffer object.
+- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and assigns SceneColorRT as the present source. LightRecord::GpuData is the shared 48-byte light ABI uploaded by Raster and RayTracing; light resources are bound only by lighting passes.
+  RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
+  and transient geometry/material/view buffers; Renderer never observes a
+  Vulkan device address or descriptor index.
+  RasterRenderer consumes Geometry-granularity InstanceRecord values and
+  resolves them into GPU-ABI geometry and instance tables plus indirect commands for vertex pulling. Geometry/instance
+  data is published as frame-affined transient resource creation tasks before
+  scope recording and publishes the required shader-read and
+  indirect-command-read visibility.
 
 ## Dependencies
 
 - Core — logging, config
-- RHI — RenderDevice::Get(), CommandList, pipeline types
-- Scene — SceneSnapshot read-only per-frame render input
-- Resource — async texture, buffer, and pipeline requests
-
-## Relationships
-
-- **Application** owns UPtr<IRenderer>, creates it in OnAttach(), and provides mutable scene state. GameLoop builds SceneSnapshot for RenderLoop. Application no longer calls BeginFrame/EndFrame — those moved to RenderDevice::Execute() on RHIThread.
-- **EngineLoop** owns the frame pipeline: GameLoop calls OnTick(), RenderLoop calls Renderer::Render() -> gets back CommandList, RHILoop calls RenderDevice::Execute(CommandList).
-- Pipeline, texture, and buffer lifetime flow through ResourceManager refs; sync resource creation is not done in renderer attach or render-frame code.
-- Resource readiness is resolved before emitting coherent RHI commands. Pass dependencies decide whether a pass is emitted; draw dependencies decide whether an individual draw is emitted, skipped, or substituted with fallback resources.
-- Renderers must render normal color output into explicit render targets and set CommandList::PresentSource for window presentation. They must not rely on null color attachments as an implicit swapchain target.
-- Renderer creates RHIShaderParameters from a ready pipeline reflection-derived layout, assigns values by shader parameter path, and binds the resulting snapshot. Each simultaneous render view needs a stable parameter snapshot identity so Vulkan gives it a distinct descriptor-set instance. Renderer code must not know Vulkan set or binding numbers.
-- Bindless texture selection is **Draw material data**, not a shader entry-point identity or pipeline compile-time interface. Texture tables are assigned as shader parameter values; material/object data selects entries by integer texture indices.
-- SceneSnapshot carries renderer-neutral RenderableInstance values, not Resource-level draw representations. Each renderer owns a mesh-resource cache keyed by mesh asset identity, requests meshes incrementally, expands ready mesh submeshes into renderer-local draw instances, and skips work whose dependencies are not yet ready.
-- ForwardRenderer binds position, generated normal, and UV vertex streams (meshes without UVs reuse the position stream as a placeholder binding). It uses an explicit directional-light frame block, per-view camera block, and a shared per-draw object/material constant block. Scene-authored base-color textures are requested through a renderer-owned texture cache and assigned per draw via `g_textures.uTextures` element 0 with the draw material's integer texture index; the view-level parameter snapshot binds both `g_samplers` samplers and a null texture slot so every reflected binding always carries a value. Its shader and C++ constant-buffer mirrors follow the project runtime std140 ABI: no named padding fields, lignas(16) only where the shader type requires it, and sizeof/offsetof assertions for every reflected field offset.
-- RayTracingRenderer keeps material ownership in Scene/Material and uses a renderer-local material table. For each dispatch it builds a logical geometry-table update from ready Resource Mesh submeshes, binds only g_rayTracingGeometryMetadata.metadata, and never handles Vulkan device addresses or descriptor indices. RHI resolves the original source-buffer addresses and ensures their lifetime and visibility for BDA ray-hit shading.
+- RHI — command list, ref-backed payload types, transient handles
+- Scene — immutable per-frame input
+- Resource — logical resource requests and ready wrappers
+- Shader / Material — reflection-derived parameter layouts and values

@@ -1,3 +1,7 @@
+module;
+
+#include <cstdint>
+
 export module Vulkan:Swapchain;
 
 import RHI;
@@ -5,6 +9,8 @@ import RHI;
 import std;
 import vulkan;
 
+import :Debug;
+import :Context;
 import :SurfaceProvider;
 
 namespace SoulEngine {
@@ -41,7 +47,8 @@ namespace SoulEngine {
     return vk::PresentModeKHR::eFifo;
 }
 
-[[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps) -> vk::Extent2D {
+[[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps)
+    -> vk::Extent2D {
     // currentExtent is the window size in pixels, clamped to surface limits.
     // When it equals UINT32_MAX the surface doesn't dictate a size (e.g. some
     // compositors) — we must query the framebuffer dimensions.
@@ -61,8 +68,9 @@ namespace SoulEngine {
     const auto Extent = Provider.GetFramebufferExtent();
 
     return vk::Extent2D{
-        .width  = std::clamp(static_cast<uint32_t>(Extent.Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
-        .height = std::clamp(static_cast<uint32_t>(Extent.Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
+        .width = std::clamp(static_cast<uint32_t>(Extent.Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
+        .height =
+            std::clamp(static_cast<uint32_t>(Extent.Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
     };
 }
 
@@ -93,18 +101,17 @@ class VulkanSwapchain {
   public:
     VulkanSwapchain() = default;
 
-    /// Create a fully initialized VulkanSwapchain. Stores non-owning references to
-    /// Vulkan objects owned by VulkanRenderDevice.
-    [[nodiscard]] static auto Create(vk::raii::Device&         Device,
-                                     vk::raii::PhysicalDevice& PhysDevice,
-                                     vk::raii::SurfaceKHR&     Surface,
-                                     IVulkanSurfaceProvider&   SurfaceProvider)
+    /// Create a fully initialized VulkanSwapchain. Stores a non-owning reference
+    /// to Vulkan objects owned by VulkanResourceContext.
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context)
         -> std::expected<VulkanSwapchain, ErrorMessage> {
         VulkanSwapchain Result;
-        Result.m_Device          = &Device;
-        Result.m_PhysDevice      = &PhysDevice;
-        Result.m_Surface         = &Surface;
-        Result.m_SurfaceProvider = &SurfaceProvider;
+        Result.m_Context      = &Context;
+        Result.m_Device       = &Context.GetDevice();
+        Result.m_PhysDevice   = &Context.GetPhysicalDevice();
+        Result.m_Surface      = &Context.GetSurface();
+        Result.m_DebugUtils   = &Context.GetDebugUtils();
+        Result.m_ImageTracker = &Context.GetImageTracker();
 
         // ── Query surface capabilities ──────────────────────────────────
         auto CapsResult = Result.m_PhysDevice->getSurfaceCapabilitiesKHR(*Result.m_Surface);
@@ -127,9 +134,10 @@ class VulkanSwapchain {
         vk::SurfaceFormatKHR ChosenFormat = ResolveSurfaceFormat(Formats);
         Result.m_Format                   = ChosenFormat;
         vk::PresentModeKHR PresentMode    = ResolvePresentMode(PresentModes);
+        LogInfo("Swapchain PresentMode: {}", vk::to_string(PresentMode));
 
         // ── Resolve extent ────────────────────────────────────────────
-        Result.m_Extent = ResolveExtent(*Result.m_SurfaceProvider, Caps);
+        Result.m_Extent = ResolveExtent(Context.GetSurfaceProvider(), Caps);
 
         // ── Resolve image count ────────────────────────────────────────
         uint32_t ImageCount = ResolveSwapImageCount(Caps);
@@ -144,7 +152,8 @@ class VulkanSwapchain {
 
         const auto RequiredUsage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eColorAttachment;
         if ((Caps.supportedUsageFlags & RequiredUsage) != RequiredUsage)
-            return std::unexpected(ErrorMessage("VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
+            return std::unexpected(ErrorMessage(
+                "VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
 
         // ── Create swapchain ────────────────────────────────────────────
         vk::SwapchainCreateInfoKHR SwapchainCI{
@@ -188,41 +197,57 @@ class VulkanSwapchain {
         if (Res != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Format("Failed to create swapchain: {}", vk::to_string(Res))));
         Result.m_Swapchain = std::move(SC);
+        Context.GetDebugUtils().SetObjectName(*Result.m_Swapchain, "Internal/Swapchain");
 
         // ── Retrieve swapchain images ───────────────────────────────────
         auto ImagesResult = Result.m_Swapchain.getImages();
         if (ImagesResult.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage(
-                Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
+            return std::unexpected(
+                ErrorMessage(Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
         Result.m_Images = std::move(ImagesResult.value);
+        for (Uint32 Index = 0; Index < Result.m_Images.size(); ++Index) {
+            Context.GetDebugUtils().SetObjectName(Result.m_Images[Index], Format("Internal/Image/Swapchain{}", Index));
+            Result.m_ImageTracker->Register(Result.m_Images[Index],
+                VulkanImageState{
+                    // The first time a swapchain image is used in a frame,
+                    // is when the scene color blits to the swapchain.
+                    // So we declare swapchain images as in tranfer stage.
+                    .stage  = vk::PipelineStageFlagBits2::eTransfer,
+                });
+        }
 
         Result.m_ImageViews.reserve(Result.m_Images.size());
         for (const auto Image : Result.m_Images) {
             vk::ImageViewCreateInfo ImageViewCI{
-                .image            = Image,
-                .viewType         = vk::ImageViewType::e2D,
-                .format           = Result.m_Format.format,
-                .subresourceRange = {
-                    .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                    .baseMipLevel   = 0,
-                    .levelCount     = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount     = 1,
-                },
+                .image    = Image,
+                .viewType = vk::ImageViewType::e2D,
+                .format   = Result.m_Format.format,
+                .subresourceRange =
+                    {
+                        .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                        .baseMipLevel   = 0,
+                        .levelCount     = 1,
+                        .baseArrayLayer = 0,
+                        .layerCount     = 1,
+                    },
             };
             auto ViewResult = Result.m_Device->createImageView(ImageViewCI);
             if (ViewResult.result != vk::Result::eSuccess)
-                return std::unexpected(
-                    ErrorMessage(Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
+                return std::unexpected(ErrorMessage(
+                    Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
+            Context.GetDebugUtils().SetObjectName(
+                *ViewResult.value, Format("Internal/ImageView/Swapchain{}", Result.m_ImageViews.size()));
             Result.m_ImageViews.emplace_back(std::move(ViewResult.value));
         }
 
         // ── Create render-complete binary semaphores (one per swapchain image) ──
         Result.m_RenderComplete.reserve(Result.m_Images.size());
-        for (size_t i = 0; i < Result.m_Images.size(); ++i) {
+        for (std::size_t i = 0; i < Result.m_Images.size(); ++i) {
             auto SemRes = Result.m_Device->createSemaphore({});
             if (SemRes.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Failed to create render-complete semaphore"));
+            Context.GetDebugUtils().SetObjectName(
+                *SemRes.value, Format("Internal/Semaphore/RenderComplete/Swapchain{}", i));
             Result.m_RenderComplete.emplace_back(std::move(SemRes.value));
         }
 
@@ -247,7 +272,7 @@ class VulkanSwapchain {
     [[nodiscard]] auto Recreate() -> std::expected<void, ErrorMessage> {
         m_Device->waitIdle();
         Cleanup();
-        auto NewSc = Create(*m_Device, *m_PhysDevice, *m_Surface, *m_SurfaceProvider);
+        auto NewSc = Create(*m_Context);
         if (!NewSc)
             return std::unexpected(NewSc.error());
         *this = std::move(*NewSc);
@@ -318,10 +343,12 @@ class VulkanSwapchain {
   private:
     // ── Non-owning pointers (set in Create) ─────────────────────────────
 
-    vk::raii::Device*         m_Device     = nullptr;
-    vk::raii::PhysicalDevice* m_PhysDevice = nullptr;
-    vk::raii::SurfaceKHR*     m_Surface    = nullptr;
-    IVulkanSurfaceProvider*   m_SurfaceProvider = nullptr;
+    const VulkanResourceContext* m_Context       = nullptr;
+    vk::raii::Device*            m_Device        = nullptr;
+    vk::raii::PhysicalDevice*    m_PhysDevice    = nullptr;
+    vk::raii::SurfaceKHR*        m_Surface       = nullptr;
+    VulkanDebugUtils*            m_DebugUtils    = nullptr;
+    VulkanImageTracker*          m_ImageTracker  = nullptr;
 
     // ── Owned resources ──────────────────────────────────────────────────
 

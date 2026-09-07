@@ -1,3 +1,6 @@
+> **August 1, 2026 implementation note:** RHI payload ownership described here
+> now uses `RHIRef<T>` under the RHI submission-retention contract. A submitted ray-tracing command
+> retains pipeline, TLAS, and BLAS refs through Vulkan timeline retirement.
 # ADR 09 — Hardware Ray-Tracing Resource and Pipeline Ownership
 
 ## Status
@@ -41,7 +44,7 @@ geometry policy. For the first implementation, one Mesh produces one
 multi-geometry BLAS composed from all of its eligible submeshes.
 
 The BLAS is therefore shared by instances, renderer instances, and views. It is
-not a Scene component and is not duplicated for every `RenderableInstance`.
+not a Scene component and is not duplicated for every `MeshInfo`.
 
 `Resource::TopLevelAccelerationStructure` is also an independent Resource type.
 It owns an `RHI::TopLevelAccelerationStructure` payload and is scoped to one

@@ -1,0 +1,7 @@
+material:
+  name: matte_red
+  diffuse: [0.78, 0.04, 0.03]
+  base_color_factor: [1.0, 1.0, 1.0, 1.0]
+  metallic_factor: 0.0
+  roughness_factor: 0.75
+  shading_model: pbr

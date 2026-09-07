@@ -11,8 +11,10 @@ import std;
 
 import :Buffer;
 import :Capability;
-import :DeletionQueue;
 import :Pipeline;
+import :ShaderBindingSet;
+import :Context;
+import :Debug;
 
 export namespace SoulEngine {
 
@@ -138,7 +140,9 @@ struct VulkanRayTracingShaderStates {
     VulkanRayTracingShaderGroupIndices                             GroupIndices = {};
 };
 
-[[nodiscard]] auto CreateRayTracingShaderStates(vk::raii::Device& Device, const RHIRayTracingPipelineDesc& Desc)
+[[nodiscard]] auto CreateRayTracingShaderStates(vk::raii::Device&  Device,
+                                                VulkanDebugUtils&  DebugUtils,
+                                                const RHIRayTracingPipelineDesc& Desc)
     -> std::expected<VulkanRayTracingShaderStates, ErrorMessage> {
     const auto& Program = Desc.Program;
     if (Program.Code.empty())
@@ -157,6 +161,8 @@ struct VulkanRayTracingShaderStates {
                          Program.RayGenerationEntryPointName,
                          vk::to_string(ModuleResult))));
     }
+    DebugUtils.SetObjectName(
+        *Module, Format("Internal/ShaderModule/RayTracing/{}", Program.RayGenerationEntryPointName));
 
     VulkanRayTracingShaderStates Result{.Module = std::move(Module)};
     const auto AppendStage = [&](vk::ShaderStageFlagBits Stage, const String& EntryPoint) -> Uint32 {
@@ -354,32 +360,20 @@ export auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
 /// Vulkan realization of a ray-tracing pipeline and its immutable shader-binding table.
 class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
-    VulkanRayTracingPipeline() = default;
+    explicit VulkanRayTracingPipeline(String Name, const RHIRayTracingPipelineDesc& Desc)
+        : RHIRayTracingPipeline(std::move(Name), Desc.BindingSet) {}
 
-    ~VulkanRayTracingPipeline() override {
-        if (m_DeletionQueue) {
-            m_DeletionQueue->Enqueue(GetLastUsageToken(),
-                                     [RHIPipeline = m_Pipeline,
-                                      PipelineLayout = m_PipelineLayout,
-                                      SetLayouts = m_SetLayouts,
-                                      ShaderBindingTable = m_ShaderBindingTable,
-                                      ParameterSets = m_ParameterSets]() {});
-        }
-    }
+    ~VulkanRayTracingPipeline() override = default;
 
     VulkanRayTracingPipeline(const VulkanRayTracingPipeline&)                    = delete;
     auto operator=(const VulkanRayTracingPipeline&) -> VulkanRayTracingPipeline& = delete;
 
-    [[nodiscard]] static auto Create(vk::raii::Device&                   Device,
-                                     VmaAllocator                         Allocator,
-                                     const RHIRayTracingPipelineDesc&   Desc,
-                                     Uint32                               MaxTextures,
-                                     VulkanDeletionQueue&                       Queue)
+    [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
+                                     StringView                      Name,
+                                     const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanRayTracingPipeline>, ErrorMessage> {
-        const auto& Support = VulkanCapability::Get().GetRayTracingSupport();
-        if (!Support.Available)
-            return std::unexpected(ErrorMessage(Format(
-                "Hardware ray tracing is unavailable: {}", Support.UnavailableReason)));
+        if (!VulkanCapability::Get().IsRayTracingAvailable())
+            return std::unexpected(ErrorMessage("Hardware ray tracing is unavailable"));
 
         const auto& Properties = VulkanCapability::Get().GetProperties<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
         if (Desc.MaxRecursionDepth == 0 || Desc.MaxRecursionDepth > Properties.maxRayRecursionDepth) {
@@ -389,11 +383,13 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
                 Properties.maxRayRecursionDepth)));
         }
 
-        auto LayoutObjects = CreatePipelineLayout(Device, Desc.Program.Reflection, MaxTextures, GetRayTracingShaderStageFlags());
-        if (!LayoutObjects)
-            return std::unexpected(LayoutObjects.error().Append("Failed to create ray-tracing pipeline layout"));
-
-        auto ShaderStates = CreateRayTracingShaderStates(Device, Desc);
+        // Descriptor set layouts always come from the shader binding set, which
+        // ResourcePipeline creates before the pipeline.
+        auto* BindingSet = Desc.BindingSet.TryGet();
+        if (!BindingSet)
+            return std::unexpected(ErrorMessage("Ray-tracing pipeline requires a ready shader binding set"));
+        auto* VulkanBindingSet = static_cast<VulkanShaderBindingSet*>(BindingSet);
+        auto ShaderStates = CreateRayTracingShaderStates(Context.GetDevice(), Context.GetDebugUtils(), Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error().Append("Failed to lower ray-tracing shader stages and groups"));
 
@@ -403,20 +399,22 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
             .groupCount                  = static_cast<Uint32>(ShaderStates->Groups.size()),
             .pGroups                     = ShaderStates->Groups.data(),
             .maxPipelineRayRecursionDepth = Desc.MaxRecursionDepth,
-            .layout                      = *LayoutObjects->second,
+            .layout                      = VulkanBindingSet->GetPipelineLayout(),
         };
-        auto [PipelineResult, RHIPipeline] = Device.createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
+        auto [PipelineResult, VkPipeline] =
+            Context.GetDevice().createRayTracingPipelineKHR(nullptr, nullptr, PipelineCI, nullptr);
         if (PipelineResult != vk::Result::eSuccess) {
             return std::unexpected(ErrorMessage(Format(
                 "Failed to create ray-tracing pipeline: {}", vk::to_string(PipelineResult))));
         }
+        Context.GetDebugUtils().SetObjectName(*VkPipeline, Name);
 
         const Uint32 GroupCount = static_cast<Uint32>(ShaderStates->Groups.size());
         const Uint64 HandleDataSize = static_cast<Uint64>(GroupCount) * Properties.shaderGroupHandleSize;
-        if (HandleDataSize > std::numeric_limits<size_t>::max())
+        if (HandleDataSize > std::numeric_limits<std::size_t>::max())
             return std::unexpected(ErrorMessage("Ray-tracing shader group handle query size exceeds host address space"));
         std::vector<Uint8> Handles(HandleDataSize);
-        const auto HandleResult = RHIPipeline.getRayTracingShaderGroupHandlesKHR(
+        const auto HandleResult = VkPipeline.getRayTracingShaderGroupHandlesKHR(
             0, GroupCount, Handles.size(), Handles.data());
         if (HandleResult != vk::Result::eSuccess) {
             return std::unexpected(ErrorMessage(Format(
@@ -441,18 +439,18 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         if (!SbtData)
             return std::unexpected(SbtData.error().Append("Failed to populate shader-binding-table records"));
 
-        auto SbtBuffer = VulkanHostBuffer::Create(SbtLayout->TotalSize,
-                                            vk::BufferUsageFlagBits::eShaderBindingTableKHR |
-                                                vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                            Device,
-                                            Allocator);
+        auto SbtBuffer = VulkanHostBuffer::Create(
+            Context,
+            Format("{}#ShaderBindingTable", Name),
+            SbtLayout->TotalSize,
+            vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress);
         if (!SbtBuffer)
             return std::unexpected(SbtBuffer.error().Append("Failed to allocate shader-binding-table buffer"));
         if (auto R = SbtBuffer->Upload(SbtData->data(), SbtData->size()); !R)
             return std::unexpected(R.error().Append("Failed to upload shader-binding-table records"));
 
         const vk::DeviceAddress SbtAddress =
-            Device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = SbtBuffer->Get()});
+            SbtBuffer->GetDeviceAddress();
         if (SbtAddress == 0 || SbtAddress % Properties.shaderGroupBaseAlignment != 0) {
             return std::unexpected(ErrorMessage(Format(
                 "Shader-binding-table buffer address {} is not aligned to required base alignment {}",
@@ -460,71 +458,20 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
                 Properties.shaderGroupBaseAlignment)));
         }
 
-        auto Result = std::make_unique<VulkanRayTracingPipeline>();
-        Result->m_Pipeline = std::make_shared<vk::raii::Pipeline>(std::move(RHIPipeline));
-        Result->m_SetLayouts =
-            std::make_shared<std::vector<vk::raii::DescriptorSetLayout>>(std::move(LayoutObjects->first));
-        Result->m_PipelineLayout = std::make_shared<vk::raii::PipelineLayout>(std::move(LayoutObjects->second));
-        Result->m_RawSetLayouts.reserve(Result->m_SetLayouts->size());
-        for (const auto& SetLayout : *Result->m_SetLayouts)
-            Result->m_RawSetLayouts.push_back(*SetLayout);
-        Result->m_DescriptorSetCount = static_cast<Uint32>(Result->m_RawSetLayouts.size());
+        auto Result = std::make_unique<VulkanRayTracingPipeline>(String(Name), Desc);
+        Result->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
         Result->m_Bindings = BuildReflectedBindings(Desc.Program.Reflection);
         Result->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
-        Result->m_PushConstantSize = MaxPushConstantSize(Desc.Program.Reflection);
         Result->m_ShaderBindingTable = std::make_shared<VulkanHostBuffer>(std::move(*SbtBuffer));
         Result->m_RayGenerationRegion = MakeRegion(SbtAddress, SbtLayout->RayGeneration);
         Result->m_MissRegion = MakeRegion(SbtAddress, SbtLayout->Miss);
         Result->m_HitRegion = MakeRegion(SbtAddress, SbtLayout->Hit);
         Result->m_CallableRegion = MakeRegion(SbtAddress, SbtLayout->Callable);
-        Result->m_DeletionQueue = &Queue;
-        Result->SetShaderParameterLayout(RHIShaderParameterLayout::Create(Desc.Program.Reflection));
         return Result;
     }
 
     [[nodiscard]] auto Get() const -> vk::Pipeline {
-        return *(*m_Pipeline);
-    }
-
-    [[nodiscard]] auto GetPipelineLayout() const -> vk::PipelineLayout {
-        return *(*m_PipelineLayout);
-    }
-
-    [[nodiscard]] auto GetPushConstantSize() const -> Uint32 {
-        return m_PushConstantSize;
-    }
-
-    [[nodiscard]] auto GetPushConstantStages() const -> vk::ShaderStageFlags {
-        return GetRayTracingShaderStageFlags();
-    }
-
-    [[nodiscard]] auto GetOrCreateDescriptorSetInstance(Uint64             ParameterId,
-                                                         Uint32             SetIndex,
-                                                         Uint32             VariableDescriptorCount,
-                                                         VulkanDescriptorManager& Descriptors)
-        -> std::expected<VulkanDescriptorSetInstance*, ErrorMessage> {
-        if (SetIndex >= m_RawSetLayouts.size())
-            return std::unexpected(ErrorMessage(Format("Parameter set uses missing descriptor set {}", SetIndex)));
-
-        auto& Instances = m_ParameterSets->ByParameterId[ParameterId];
-        if (Instances.size() < m_RawSetLayouts.size())
-            Instances.resize(m_RawSetLayouts.size());
-
-        auto& Versions = Instances[SetIndex];
-        for (auto& Instance : Versions) {
-            if (Instance.VariableDescriptorCount == VariableDescriptorCount)
-                return &Instance;
-        }
-
-        auto Set = Descriptors.AllocatePersistentDescriptorSet(m_RawSetLayouts[SetIndex], VariableDescriptorCount);
-        if (!Set)
-            return std::unexpected(Set.error());
-
-        Versions.push_back(VulkanDescriptorSetInstance{
-            .Set                     = std::move(*Set),
-            .VariableDescriptorCount = VariableDescriptorCount,
-        });
-        return &Versions.back();
+        return *(*m_VkPipeline);
     }
 
     [[nodiscard]] auto GetRayGenerationRegion() const -> const vk::StridedDeviceAddressRegionKHR& {
@@ -544,21 +491,14 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     }
 
   private:
-    SPtr<vk::raii::Pipeline>                         m_Pipeline = nullptr;
-    SPtr<vk::raii::PipelineLayout>                   m_PipelineLayout = nullptr;
-    SPtr<std::vector<vk::raii::DescriptorSetLayout>> m_SetLayouts = nullptr;
-    std::vector<vk::DescriptorSetLayout>             m_RawSetLayouts = {};
+    SPtr<vk::raii::Pipeline>                         m_VkPipeline = nullptr;
     std::vector<VulkanReflectedDescriptorBinding>          m_Bindings = {};
     SPtr<VulkanHostBuffer>                                 m_ShaderBindingTable = nullptr;
     vk::StridedDeviceAddressRegionKHR                m_RayGenerationRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_MissRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_HitRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_CallableRegion = {};
-    SPtr<VulkanPipelineParameterSetInstances>              m_ParameterSets = std::make_shared<VulkanPipelineParameterSetInstances>();
-    Uint32                                           m_DescriptorSetCount = 0;
     Uint32                                           m_DynamicOffsetCount = 0;
-    Uint32                                           m_PushConstantSize = 0;
-    VulkanDeletionQueue*                                   m_DeletionQueue = nullptr;
 };
 
 } // namespace SoulEngine

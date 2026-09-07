@@ -9,10 +9,10 @@ export import std;
 export namespace SoulEngine {
 
 template <ManagedResource T>
-auto PublishResourceReady(ResourceContext& Context,
+auto PublishResourceReady(ResourceContext&   Context,
                           ResourceGeneration Generation,
-                          const String& Key,
-                          Resource<T> Resource) -> void {
+                          const String&      Key,
+                          Resource<T>        Resource) -> void {
     if (Context.IsShutdownRequested()) {
         LogDebug("Async {} ready discarded after shutdown '{}'", ResourceTraits<T>::Info.Label, Key);
         return;
@@ -23,14 +23,14 @@ auto PublishResourceReady(ResourceContext& Context,
         return;
     }
 
-    LogInfo("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Key);
+    LogDebug("Async {} ready '{}'", ResourceTraits<T>::Info.Label, Key);
 }
 
 template <ManagedResource T>
-auto PublishResourceFailed(ResourceContext& Context,
+auto PublishResourceFailed(ResourceContext&   Context,
                            ResourceGeneration Generation,
-                           const String& Key,
-                           ErrorMessage Error) -> void {
+                           const String&      Key,
+                           ErrorMessage       Error) -> void {
     if (Context.IsShutdownRequested()) {
         LogDebug("Async {} failure discarded after shutdown '{}'", ResourceTraits<T>::Info.Label, Key);
         return;
@@ -73,20 +73,9 @@ template <ManagedResource T>
     };
 }
 
-template <GpuPendingManagedRHIResource T>
-auto PublishResourceGpuPending(ResourceContext& Context,
-                               ResourceGeneration Generation,
-                               const String& Key,
-                               Resource<T> Resource,
-                               RHIGpuCompletionToken UploadCompletion) -> void {
-    if (Context.PublishGpuPending<T>(Key, Generation, std::move(Resource), UploadCompletion))
-        LogDebug("Async {} GPU pending '{}'", ResourceTraits<T>::Info.Label, Key);
-}
-
 template <ManagedResource T>
-[[nodiscard]] auto MarkResourceRhiCommitting(ResourceContext& Context,
-                                             const String& Key,
-                                             ResourceGeneration Generation) -> bool {
+[[nodiscard]] auto MarkResourceRhiCommitting(ResourceContext& Context, const String& Key, ResourceGeneration Generation)
+    -> bool {
     if (Context.MarkRhiCommitting<T>(Key, Generation))
         return true;
 

@@ -36,8 +36,10 @@ class ShaderCompilerTest : public ::testing::Test {
 
 TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
+        .Vertex =
+            ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "VertexMain", .Backend = ShaderBackend::Slang},
+        .Fragment =
+            ShaderEntry{.SourcePath = m_TestShaderPath, .EntryPoint = "FragmentMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
@@ -46,32 +48,4 @@ TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     EXPECT_EQ(Result->VertexEntryPointName, "VertexMain");
     EXPECT_EQ(Result->FragmentEntryPointName, "FragmentMain");
     EXPECT_FALSE(Result->Reflection.Bindings.empty());
-}
-
-[[nodiscard]] static auto HasBinding(const ShaderReflection& InReflection, StringView BindingPath, ShaderResourceType Type) -> bool {
-    return std::ranges::any_of(InReflection.Bindings, [&](const ShaderBinding& InBinding) {
-        return InBinding.ParameterPath == BindingPath && InBinding.Type == Type;
-    });
-}
-
-TEST_F(ShaderCompilerTest, CompileForwardPbrProgramWithExpectedBindings) {
-    auto ProjectDir = m_TestShaderPath;
-    for (Uint32 Index = 0; Index < 7; ++Index)
-        ProjectDir = ProjectDir.parent_path();
-
-    const auto ShaderDir  = ProjectDir / "Engine" / "Shaders";
-    const auto ShaderPath = ShaderDir / "ForwardPbr.slang";
-    auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
-        .Vertex   = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "vertMain", .Backend = ShaderBackend::Slang},
-        .Fragment = ShaderEntry{.SourcePath = ShaderPath, .EntryPoint = "fragMain", .Backend = ShaderBackend::Slang},
-    });
-    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
-
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.frame", ShaderResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardFrameView.view", ShaderResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardMaterial.material", ShaderResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_forwardObject.object", ShaderResourceType::ConstantBuffer));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_textures.uTextures", ShaderResourceType::SampledTexture));
-    EXPECT_TRUE(HasBinding(Result->Reflection, "g_samplers.uSamplerLinear", ShaderResourceType::Sampler));
-    EXPECT_EQ(Result->Reflection.Bindings.size(), 7);
 }
