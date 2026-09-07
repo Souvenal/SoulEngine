@@ -7,13 +7,6 @@ module RayTracing;
 static const float kRayEpsilon = 0.001;
 static const float kRayMaxDistance = 10000.0;
 
-public struct LightData {
-    public float4 colorIntensity;
-    public float4 positionRange;
-    public float4 directionType;
-    public float4 spotCone;
-};
-
 public struct RayTracingInstanceData {
     public uint firstGeometry;
     public uint geometryCount;
@@ -56,7 +49,7 @@ public struct RayTracingResources {
     public ConstantBuffer<ViewData>  view;
     public SamplerState              linearSampler;
     public StructuredBuffer<MaterialRecord> materials;
-    public StructuredBuffer<LightData> lights;
+    public StructuredBuffer<LightRecord> lights;
     public StructuredBuffer<RayTracingInstanceData> instances;
     public StructuredBuffer<RayTracingGeometryData> geometries;
 };
@@ -197,15 +190,15 @@ void rayGenMain() {
         float3 viewDirection = -ray.Direction;
         radiance += throughput * surface.emissive;
         for (uint lightIndex = 0u; lightIndex < g_rayTracing.frame.lightCount; ++lightIndex) {
-            LightData light = g_rayTracing.lights[lightIndex];
+            LightRecord light = g_rayTracing.lights[lightIndex];
             uint lightType = uint(light.directionType.w);
             float3 lightDirection = float3(0.0);
             float3 illuminance = float3(0.0);
             float shadowDistance = kRayMaxDistance;
-            if (lightType == 1u) {
+            if (lightType == kLightTypeDirectional) {
                 lightDirection = normalize(-light.directionType.xyz);
                 illuminance = light.colorIntensity.rgb * light.colorIntensity.w;
-            } else {
+            } else if (lightType == kLightTypePoint) {
                 float3 toLight = light.positionRange.xyz - payload.position;
                 float distanceToLight = length(toLight);
                 if (distanceToLight <= kRayEpsilon || distanceToLight >= light.positionRange.w)
@@ -215,10 +208,8 @@ void rayGenMain() {
                 illuminance = light.colorIntensity.rgb * light.colorIntensity.w * rangeFade * rangeFade /
                               (distanceToLight * distanceToLight);
                 shadowDistance = distanceToLight - kRayEpsilon;
-                if (lightType == 3u) {
-                    float coneCosine = dot(normalize(payload.position - light.positionRange.xyz), normalize(light.directionType.xyz));
-                    illuminance *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
-                }
+            } else {
+                continue;
             }
             float nDotL = saturate(dot(normal, lightDirection));
             if (nDotL > 0.0 && !traceShadow(payload.position + normal * kRayEpsilon, lightDirection, shadowDistance))

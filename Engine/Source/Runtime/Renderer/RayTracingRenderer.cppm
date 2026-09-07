@@ -35,17 +35,6 @@ static_assert(sizeof(RayTracingFrameConstants) == 32);
 static_assert(offsetof(RayTracingFrameConstants, Common) == 0);
 static_assert(offsetof(RayTracingFrameConstants, PathSettings) == 16);
 
-struct alignas(16) RayTracingLightGpuData {
-    alignas(16) hlslpp::interop::float4 ColorIntensity = hlslpp::interop::float4{
-        hlslpp::float4{1.0f, 1.0f, 1.0f, 0.0f}};
-    alignas(16) hlslpp::interop::float4 PositionRange = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
-    alignas(16) hlslpp::interop::float4 DirectionType = hlslpp::interop::float4{
-        hlslpp::float4{0.0f, 0.0f, -1.0f, 0.0f}};
-    alignas(16) hlslpp::interop::float4 SpotCone = hlslpp::interop::float4{hlslpp::float4{1.0f, 1.0f, 0.0f, 0.0f}};
-};
-static_assert(sizeof(RayTracingLightGpuData) == 64,
-              "RayTracingLightGpuData must match RayTracing.slang storage-buffer layout");
-
 /// @brief Convert a Scene row-vector transform to an RHI TLAS instance transform.
 ///
 /// RHI TLAS transforms are row-major 3x4 matrices with translation in the
@@ -299,7 +288,7 @@ class RayTracingRenderer final : public IRenderer {
         if (!MaterialBuffer)
             return std::unexpected(
                 MaterialBuffer.error().Append("RayTracingRenderer material transient storage allocation failed"));
-        const auto Lights      = BuildLightData(Scene.Lights);
+        const auto Lights      = BuildLightGpuData(Scene.Lights);
         const auto LightBytes  = std::as_bytes(std::span{Lights});
         auto LightBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
@@ -454,8 +443,7 @@ class RayTracingRenderer final : public IRenderer {
             Signature = HashCombine(Signature, HashFloat(Light.Direction.x));
             Signature = HashCombine(Signature, HashFloat(Light.Direction.y));
             Signature = HashCombine(Signature, HashFloat(Light.Direction.z));
-            Signature = HashCombine(Signature, HashFloat(Light.InnerConeCosine));
-            Signature = HashCombine(Signature, HashFloat(Light.OuterConeCosine));
+            Signature = HashCombine(Signature, entt::to_integral(Light.EntityId));
         }
         for (const auto& Material : MaterialData) {
             Signature = HashCombine(Signature, HashFloat(Material.BaseColorFactor.x));
@@ -468,26 +456,6 @@ class RayTracingRenderer final : public IRenderer {
         return Signature;
     }
 
-    [[nodiscard]] static auto BuildLightData(std::span<const LightRecord> Lights)
-        -> std::vector<RayTracingLightGpuData> {
-        std::vector<RayTracingLightGpuData> Result = {};
-        Result.reserve(std::max<std::size_t>(Lights.size(), 1));
-        for (const auto& Light : Lights) {
-            Result.emplace_back(RayTracingLightGpuData{
-                .ColorIntensity = hlslpp::interop::float4{hlslpp::float4{
-                    Light.Color.x, Light.Color.y, Light.Color.z, Light.Intensity}},
-                .PositionRange  = hlslpp::interop::float4{hlslpp::float4{
-                    Light.Position.x, Light.Position.y, Light.Position.z, Light.RangeMeters}},
-                .DirectionType  = hlslpp::interop::float4{hlslpp::float4{
-                    Light.Direction.x, Light.Direction.y, Light.Direction.z, static_cast<Float32>(Light.Type)}},
-                .SpotCone       = hlslpp::interop::float4{hlslpp::float4{
-                    Light.InnerConeCosine, Light.OuterConeCosine, Light.CastsShadows ? 1.0f : 0.0f, 0.0f}},
-            });
-        }
-        if (Result.empty())
-            Result.emplace_back();
-        return Result;
-    }
     RHIRef<RHIRayTracingPipeline>                      m_Pipeline           = nullptr;
     ResourceRef<ResourceTopLevelAccelerationStructure> m_Tlas               = {};
     RHIRef<RHISampler>                                 m_SamplerLinear      = nullptr;

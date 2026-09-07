@@ -41,7 +41,8 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **Material inspection query** | A transient flat `std::vector<ConstMaterialHandle>` returned by MeshSystem. The Editor groups and displays records by their MaterialRecord provenance during the current draw. |
 | **InstanceRecord** | Value-semantic SceneSnapshot record for one geometry/material instance. It carries the entity ID, GeometryRecord handle, selected MaterialHandle, and derived world transform. |
 | **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
-| **LightComponent** | Optional authoring component describing a light attached to a Scene Entity. |
+| **LightComponent** | Optional authoring component describing a Directional or Point light attached to a Scene Entity. Spot lights and shadow flags are not part of the current contract. |
+| **LightRecord** | Immutable world-space light record in a GameSnapshot. It carries the source entity ID, physical light values, and the shared 48-byte `GpuData` ABI consumed by Raster and RayTracing renderers. |
 | **Scene system query** | A templated lookup of one registered Scene system. It returns an optional borrowed reference wrapper, preserving constness and hiding the Scene's `SystemScheduler` from consumers. |
 
 ## Architecture

@@ -4,18 +4,11 @@ import Common.Pbr;
 
 module DeferredLighting;
 
-public struct DeferredLightData {
-    public float4 colorIntensity;
-    public float4 positionRange;
-    public float4 directionType;
-    public float4 spotCone;
-};
-
 public struct DeferredResources {
     public ConstantBuffer<FrameData>         frame;
     public ConstantBuffer<ViewData>          view;
     public StructuredBuffer<MaterialRecord> materials;
-    public StructuredBuffer<DeferredLightData> lights;
+    public StructuredBuffer<LightRecord> lights;
 };
 
 public ParameterBlock<DeferredResources> g_deferred;
@@ -38,7 +31,7 @@ VSOutput vertMain(uint vertexId : SV_VertexID) {
 }
 
 float3 evaluateDeferredLight(
-    DeferredLightData light,
+    LightRecord light,
     MaterialSurface material,
     float3 worldPosition,
     float3 normal,
@@ -47,10 +40,10 @@ float3 evaluateDeferredLight(
     uint lightType = uint(light.directionType.w);
     float3 lightDirection = float3(0.0);
     float3 illuminance = float3(0.0);
-    if (lightType == 1u) {
+    if (lightType == kLightTypeDirectional) {
         lightDirection = normalize(-light.directionType.xyz);
         illuminance = light.colorIntensity.rgb * light.colorIntensity.w;
-    } else {
+    } else if (lightType == kLightTypePoint) {
         float3 toLight = light.positionRange.xyz - worldPosition;
         float distanceToLight = length(toLight);
         if (distanceToLight <= 0.0001 || distanceToLight >= light.positionRange.w)
@@ -59,11 +52,8 @@ float3 evaluateDeferredLight(
         float rangeFade = saturate(1.0 - pow(distanceToLight / light.positionRange.w, 4.0));
         illuminance = light.colorIntensity.rgb * light.colorIntensity.w * rangeFade * rangeFade /
                       (distanceToLight * distanceToLight);
-        if (lightType == 3u) {
-            float coneCosine = dot(normalize(worldPosition - light.positionRange.xyz),
-                                   normalize(light.directionType.xyz));
-            illuminance *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
-        }
+    } else {
+        return float3(0.0);
     }
     float nDotL = saturate(dot(normal, lightDirection));
     if (nDotL <= 0.0)

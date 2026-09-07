@@ -175,6 +175,11 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock graphics-pipeline creation is not implemented"));
     }
 
+    [[nodiscard]] auto CreateComputePipeline(StringView, const RHIComputePipelineDesc&)
+        -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock compute-pipeline creation is not implemented"));
+    }
+
     [[nodiscard]] auto CreateRayTracingPipeline(StringView, const RHIRayTracingPipelineDesc&)
         -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> override {
         return std::unexpected(ErrorMessage("mock ray-tracing-pipeline creation is not implemented"));

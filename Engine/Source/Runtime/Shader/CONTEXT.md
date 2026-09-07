@@ -44,6 +44,10 @@ mirrors use `alignas(16)` for members whose shader types require it and enforce
 reflected offsets through `sizeof` and `offsetof` assertions. Reflection or
 RenderDoc is authoritative if an assumed layout disagrees with observed SPIR-V.
 
+**LightRecord**:
+Shared 3x`float4` storage-buffer ABI for Directional and Point lights. The
+`directionType.w` value uses the explicit Common shader light-type constants.
+
 **VertexInputAttribute**:
 Reflected vertex attribute requirement (semantic name/index, location, value type). Describes what the shader consumes, not how CPU-side vertex buffers feed it.
 

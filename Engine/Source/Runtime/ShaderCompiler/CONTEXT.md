@@ -42,9 +42,8 @@ Shader-compiler tests must only compile self-contained fixtures under
 `Tests/Slang/`. They must never load runtime engine or application shaders
 (`Engine/Shaders/`, `Applications/`): runtime shaders move, split into
 modules, and change with renderer work, which breaks tests for unrelated
-reasons. When a runtime program interface needs coverage, mirror its resource
-surface and entry-point set in a dedicated fixture (see
-`Tests/Slang/RayTracingRuntimeMirror.slang`).
+reasons. Fixtures model one compiler capability at a time and must not mirror
+the resource surface or entry-point set of a runtime program.
 
 ## Ray-tracing BDA target capability
 

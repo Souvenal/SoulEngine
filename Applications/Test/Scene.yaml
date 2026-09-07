@@ -72,4 +72,3 @@ entities:
         color_g: 1.0
         color_b: 1.0
         intensity: 100000.0
-        casts_shadows: true
