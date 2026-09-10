@@ -116,10 +116,12 @@ class MockRenderDevice final : public RHIRenderDevice {
 
     [[nodiscard]] auto CreateTransientConstantBuffer(StringView Name, const RHITransientConstantBufferDesc& Desc)
         -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> override {
-        if (Desc.Data.empty())
-            return std::unexpected(ErrorMessage("mock transient constant-buffer data is empty"));
+        if (Desc.SizeBytes == 0)
+            return std::unexpected(ErrorMessage("mock transient constant-buffer size must be greater than zero"));
+        if (Desc.InitialData && Desc.InitialData->size_bytes() != Desc.SizeBytes)
+            return std::unexpected(ErrorMessage("mock transient constant-buffer InitialData size mismatch"));
         auto Resource = RHIRef<RHITransientConstantBuffer>::Create();
-        auto Payload = std::make_unique<MockTransientConstantBuffer>(String(Name), Desc.Data.size_bytes());
+        auto Payload = std::make_unique<MockTransientConstantBuffer>(String(Name), Desc.SizeBytes);
         if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
             return std::unexpected(Publish.error());
         return Resource;
@@ -129,11 +131,15 @@ class MockRenderDevice final : public RHIRenderDevice {
         StringView Name,
         const RHITransientShaderStorageBufferDesc& Desc)
         -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> override {
-        if (Desc.Data.empty())
-            return std::unexpected(ErrorMessage("mock transient shader-storage data is empty"));
+        if (Desc.SizeBytes == 0)
+            return std::unexpected(ErrorMessage("mock transient shader-storage size must be greater than zero"));
+        if (Desc.Usage == RHITransientBufferUsage::Unknown)
+            return std::unexpected(ErrorMessage("mock transient shader-storage usage must not be unknown"));
+        if (Desc.InitialData && Desc.InitialData->size_bytes() != Desc.SizeBytes)
+            return std::unexpected(ErrorMessage("mock transient shader-storage InitialData size mismatch"));
         auto Resource = RHIRef<RHITransientShaderStorageBuffer>::Create();
         auto Payload = std::make_unique<MockTransientShaderStorageBuffer>(
-            String(Name), Desc.Data.size_bytes(), Desc.Usage);
+            String(Name), Desc.SizeBytes, Desc.Usage);
         if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
             return std::unexpected(Publish.error());
         return Resource;
@@ -302,7 +308,11 @@ TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
     const std::array<std::byte, 16> Data = {};
 
     auto Constant = Device.CreateTransientConstantBuffer(
-        "Test/TransientConstant", RHITransientConstantBufferDesc{.Data = Data});
+        "Test/TransientConstant",
+        RHITransientConstantBufferDesc{
+            .SizeBytes   = Data.size(),
+            .InitialData = std::span<const std::byte>{Data},
+        });
     ASSERT_TRUE(Constant.has_value());
     ASSERT_TRUE(*Constant);
     EXPECT_EQ((*Constant)->GetSize(), Data.size());
@@ -310,8 +320,9 @@ TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
     auto Storage = Device.CreateTransientShaderStorageBuffer(
         "Test/TransientStorage",
         RHITransientShaderStorageBufferDesc{
-            .Data       = Data,
-            .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
+            .SizeBytes   = Data.size(),
+            .Usage       = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
+            .InitialData = std::span<const std::byte>{Data},
         });
     ASSERT_TRUE(Storage.has_value());
     ASSERT_TRUE(*Storage);
@@ -319,8 +330,19 @@ TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
     EXPECT_EQ((*Storage)->GetUsage(),
               RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead);
 
+    auto Scratch = Device.CreateTransientShaderStorageBuffer(
+        "Test/TransientScratch",
+        RHITransientShaderStorageBufferDesc{
+            .SizeBytes = 64,
+            .Usage     = RHITransientBufferUsage::ShaderRead,
+        });
+    ASSERT_TRUE(Scratch.has_value());
+    ASSERT_TRUE(*Scratch);
+    EXPECT_EQ((*Scratch)->GetSize(), 64u);
+
     Constant = nullptr;
     Storage = nullptr;
+    Scratch = nullptr;
     DrainRHIDeferredDeletions();
 }
 

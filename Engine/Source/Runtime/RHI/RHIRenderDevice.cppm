@@ -1,5 +1,6 @@
 export module RHI:RenderDevice;
 
+export import Core;
 export import WindowSystem;
 export import std;
 import :Types;
@@ -7,6 +8,22 @@ import :Ref;
 import :Pipeline;
 import :RayTracing;
 import :Pass;
+
+namespace SoulEngine {
+namespace {
+
+/// Error for backend methods a concrete device leaves unimplemented. Tests
+/// run a base RHIRenderDevice (or a small override) to keep RenderGraph's
+/// realize step off the real GPU; reaching this default there is expected,
+/// in production it means a backend missed an override.
+[[nodiscard]] auto NotImplemented(StringView Method) -> ErrorMessage {
+    auto Message = ErrorMessage(Format("RHIRenderDevice: '{}' is not implemented by this device", Method));
+    LogError("{}", Message.ToString());
+    return Message;
+}
+
+} // namespace
+} // namespace SoulEngine
 
 export namespace SoulEngine {
 
@@ -35,59 +52,59 @@ class RHIRenderDevice {
     virtual ~RHIRenderDevice() = default;
 
     /// @brief Initialize backend-native GPU device and presentation state.
-    [[nodiscard]] virtual auto Initialize(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Initialize(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Initialize")); }
 
     /// @brief Return the concrete RHI backend tag for integration dispatch.
-    [[nodiscard]] virtual auto GetBackendType() const -> RHIBackendType = 0;
+    [[nodiscard]] virtual auto GetBackendType() const -> RHIBackendType { return RHIBackendType::Unknown; }
 
     // ── Resource creation ────────────────────────────────────────────────────
 
     [[nodiscard]] virtual auto CreateVertexBuffer(StringView Name, const RHIVertexBufferDesc& Desc)
-        -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateVertexBuffer")); }
 
     [[nodiscard]] virtual auto CreateIndexBuffer(StringView Name, const RHIIndexBufferDesc& Desc)
-        -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateIndexBuffer")); }
 
     [[nodiscard]] virtual auto CreateSampledTexture(StringView Name, const RHISampledTextureDesc& Desc)
-        -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> { return std::unexpected(NotImplemented("CreateSampledTexture")); }
 
     [[nodiscard]] virtual auto CreateSampler(StringView Name, const RHISamplerDesc& Desc)
-        -> std::expected<RHIRef<RHISampler>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHISampler>, ErrorMessage> { return std::unexpected(NotImplemented("CreateSampler")); }
 
     [[nodiscard]] virtual auto CreateRenderTarget(StringView Name, const RHIRenderTargetDesc& Desc)
-        -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> { return std::unexpected(NotImplemented("CreateRenderTarget")); }
 
     /// @brief Create a persistent host-visible GPU-to-CPU readback buffer.
     [[nodiscard]] virtual auto CreateReadbackBuffer(StringView Name, const RHIReadbackBufferDesc& Desc)
-        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateReadbackBuffer")); }
 
     [[nodiscard]] virtual auto CreateShaderBindingSet(StringView Name, const RHIShaderBindingSetDesc& Desc)
-        -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> { return std::unexpected(NotImplemented("CreateShaderBindingSet")); }
 
     [[nodiscard]] virtual auto CreateGraphicsPipeline(StringView Name, const RHIGraphicsPipelineDesc& Desc)
-        -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIGraphicsPipeline>, ErrorMessage> { return std::unexpected(NotImplemented("CreateGraphicsPipeline")); }
 
     [[nodiscard]] virtual auto CreateComputePipeline(StringView Name, const RHIComputePipelineDesc& Desc)
-        -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> { return std::unexpected(NotImplemented("CreateComputePipeline")); }
 
     [[nodiscard]] virtual auto CreateRayTracingPipeline(StringView Name, const RHIRayTracingPipelineDesc& Desc)
-        -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIRayTracingPipeline>, ErrorMessage> { return std::unexpected(NotImplemented("CreateRayTracingPipeline")); }
 
     [[nodiscard]] virtual auto
     CreateBottomLevelAccelerationStructure(StringView Name, const RHIBottomLevelAccelerationStructureDesc& Desc)
-        -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> { return std::unexpected(NotImplemented("CreateBottomLevelAccelerationStructure")); }
 
     [[nodiscard]] virtual auto CreateTopLevelAccelerationStructure(StringView                                  Name,
                                                                    const RHITopLevelAccelerationStructureDesc& Desc)
-        -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTopLevelAccelerationStructure")); }
 
     /// @brief Retire backend-native completion callbacks. Called once per frame on the RHI thread.
-    virtual auto Tick() -> void = 0;
+    virtual auto Tick() -> void { NotImplemented("Tick"); }
 
     /// @brief Create a frame-affined transient constant buffer from a data snapshot.
     [[nodiscard]] virtual auto CreateTransientConstantBuffer(StringView                         Name,
                                                              const RHITransientConstantBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTransientConstantBuffer")); }
 
     [[nodiscard]] auto CreateTransientConstantBuffer(const RHITransientConstantBufferDesc& Desc)
         -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> {
@@ -98,7 +115,7 @@ class RHIRenderDevice {
     [[nodiscard]] virtual auto CreateTransientShaderStorageBuffer(
         StringView                              Name,
         const RHITransientShaderStorageBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> = 0;
+        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTransientShaderStorageBuffer")); }
 
     [[nodiscard]] auto CreateTransientShaderStorageBuffer(const RHITransientShaderStorageBufferDesc& Desc)
         -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> {
@@ -108,7 +125,7 @@ class RHIRenderDevice {
     // ── RHI frame lifecycle and command execution ─────────────────────────
 
     /// @brief Prepare the current backend frame slot before frame-affined tasks run.
-    [[nodiscard]] virtual auto BeginFrame() -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto BeginFrame() -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("BeginFrame")); }
 
     /// @brief Execute a frame's worth of RHI commands borrowed from the caller.
     ///
@@ -116,37 +133,37 @@ class RHIRenderDevice {
     /// but does not take ownership of PassList.  The caller keeps the packet
     /// alive until WaitFinish() confirms that its submission is no longer GPU
     /// visible.
-    [[nodiscard]] virtual auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Execute")); }
 
     /// @brief Finish and submit the current backend frame slot.
     ///
     /// Returns the backend-independent completion point that identifies this
     /// submission.  The caller must retain the associated command packet until
     /// WaitFinish() succeeds for the returned token.
-    [[nodiscard]] virtual auto EndFrame() -> std::expected<RHIFrameCompletion, ErrorMessage> = 0;
+    [[nodiscard]] virtual auto EndFrame() -> std::expected<RHIFrameCompletion, ErrorMessage> { return std::unexpected(NotImplemented("EndFrame")); }
 
     /// @brief Block until the GPU has completed the identified submission.
     ///
     /// This host wait is safe for the render thread and does not submit work or
     /// mutate the command packet.  A zero-valued token returns immediately.
     [[nodiscard]] virtual auto WaitFinish(const RHIFrameCompletion& Completion)
-        -> std::expected<void, ErrorMessage> = 0;
+        -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("WaitFinish")); }
 
     // ── RHICommand context access ──────────────────────────────────────────
 
     /// @brief Return the current frame-in-flight index.
-    [[nodiscard]] virtual auto GetCurrentFrameIndex() const -> Uint32 = 0;
+    [[nodiscard]] virtual auto GetCurrentFrameIndex() const -> Uint32 { return 0; }
 
     /// @brief Block the CPU until all GPU work completes.
     /// Safe to call at any point after Init(); required before destroying
     /// GPU resources that may still be referenced by in-flight commands.
-    virtual auto WaitIdle() -> void = 0;
+    virtual auto WaitIdle() -> void { NotImplemented("WaitIdle"); }
 
     // ── Shutdown ─────────────────────────────────────────────────────────
 
     /// @brief Graceful teardown before destruction.
     /// Must be called before the object is destroyed.
-    virtual auto Shutdown() -> void = 0;
+    virtual auto Shutdown() -> void { NotImplemented("Shutdown"); }
 
     // ── Singleton lifecycle ──────────────────────────────────────────────────
 
@@ -157,7 +174,8 @@ class RHIRenderDevice {
     /// engine initialization, before any other RHI access.
     ///
     /// @return Error on failure (e.g., backend not found).
-    [[nodiscard]] static auto Create(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage>;
+    [[nodiscard]] static auto Create(StringView Backend, IWindowSystem* WindowSys)
+        -> std::expected<void, ErrorMessage>;
 
     /// @brief Destroy the process-wide RHI singleton.
     ///
@@ -197,13 +215,8 @@ using RHIBackendFactory = Factory<RHIRenderDevice>;
 
 inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
 
-[[nodiscard]] inline auto RHIRenderDevice::Create(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> {
-    const auto& Cfg = ConfigManager::Get().GetConfig();
-
-    if (!Cfg.Render.RHI.has_value())
-        return std::unexpected(ErrorMessage("RHI backend not configured – set [Render].RHI in the config file"));
-
-    String Backend = Cfg.Render.RHI.value_or("Vulkan");
+[[nodiscard]] inline auto RHIRenderDevice::Create(StringView Backend, IWindowSystem* WindowSys)
+    -> std::expected<void, ErrorMessage> {
     LogInfo("Configured RHI backend: '{}'", Backend);
 
     // Verify the backend is registered before attempting creation.

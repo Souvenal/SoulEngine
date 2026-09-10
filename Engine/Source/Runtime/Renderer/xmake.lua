@@ -3,7 +3,7 @@ target("Renderer")
 
     add_packages("magic_enum", {public = true})
     add_packages("glfw", "hlslpp")
-    add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "Resource")
+    add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "Resource", "RenderGraph")
 
     add_files("Common.cppm", "IRenderer.cppm", "RasterRenderer.cppm", "Renderer.cppm")
     add_files("Editor/*.cppm")

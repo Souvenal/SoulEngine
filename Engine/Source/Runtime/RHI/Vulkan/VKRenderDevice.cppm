@@ -223,25 +223,44 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> override {
         using magic_enum::bitwise_operators::operator|;
 
-        if (Desc.Data.empty())
-            return std::unexpected(ErrorMessage("Transient constant buffer data must not be empty"));
+        if (Desc.SizeBytes == 0)
+            return std::unexpected(ErrorMessage("Transient constant buffer SizeBytes must be greater than zero"));
+        if (Desc.InitialData && Desc.InitialData->size_bytes() != Desc.SizeBytes)
+            return std::unexpected(ErrorMessage("Transient constant buffer InitialData size must equal SizeBytes"));
 
         auto Resource = RHIRef<RHITransientConstantBuffer>::Create();
-        auto Data = std::vector<std::byte>{Desc.Data.begin(), Desc.Data.end()};
+        std::optional<std::vector<std::byte>> Data;
+        if (Desc.InitialData)
+            Data = std::vector<std::byte>{Desc.InitialData->begin(), Desc.InitialData->end()};
 
         auto TaskRef = Resource;
         auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
             ThreadQueue::RHI,
-            [this, TaskRef = std::move(TaskRef), Data = std::move(Data), Name = String(Name)] mutable {
-                auto Offset = m_TransientUniformArena.Upload(std::span<const std::byte>{Data});
-                if (!Offset) {
-                    auto Error = Offset.error().Append("Transient constant buffer upload failed");
-                    TaskRef.MarkFailed(Error);
-                    m_TransientUploadError = std::move(Error);
-                    return;
+            [this,
+             TaskRef = std::move(TaskRef),
+             Data = std::move(Data),
+             SizeBytes = Desc.SizeBytes,
+             Name = String(Name)] mutable {
+                std::expected<Uint32, ErrorMessage> Offset;
+                if (Data) {
+                    Offset = m_TransientUniformArena.Upload(std::span<const std::byte>{*Data});
+                    if (!Offset) {
+                        auto Error = Offset.error().Append("Transient constant buffer upload failed");
+                        TaskRef.MarkFailed(Error);
+                        m_TransientUploadError = std::move(Error);
+                        return;
+                    }
+                } else {
+                    Offset = m_TransientUniformArena.Allocate(SizeBytes);
+                    if (!Offset) {
+                        auto Error = Offset.error().Append("Transient constant buffer allocate failed");
+                        TaskRef.MarkFailed(Error);
+                        m_TransientUploadError = std::move(Error);
+                        return;
+                    }
                 }
                 auto Payload = std::make_unique<VulkanTransientConstantBuffer>(
-                    std::move(Name), Data.size(), *Offset, m_TransientUniformArena);
+                    std::move(Name), SizeBytes, *Offset, m_TransientUniformArena);
                 if (auto Publish = TaskRef.Publish(std::move(Payload), RHIRefState::Ready); !Publish) {
                     auto Error = Publish.error().Append("Transient constant buffer publication failed");
                     TaskRef.MarkFailed(Error);
@@ -265,13 +284,18 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> override {
         using magic_enum::bitwise_operators::operator|;
 
-        if (Desc.Data.empty())
-            return std::unexpected(ErrorMessage("Transient shader storage buffer data must not be empty"));
+        if (Desc.SizeBytes == 0)
+            return std::unexpected(ErrorMessage("Transient shader storage buffer SizeBytes must be greater than zero"));
         if (Desc.Usage == RHITransientBufferUsage::Unknown)
             return std::unexpected(ErrorMessage("Transient shader storage buffer usage must not be unknown"));
+        if (Desc.InitialData && Desc.InitialData->size_bytes() != Desc.SizeBytes)
+            return std::unexpected(
+                ErrorMessage("Transient shader storage buffer InitialData size must equal SizeBytes"));
 
         auto Resource = RHIRef<RHITransientShaderStorageBuffer>::Create();
-        auto Data = std::vector<std::byte>{Desc.Data.begin(), Desc.Data.end()};
+        std::optional<std::vector<std::byte>> Data;
+        if (Desc.InitialData)
+            Data = std::vector<std::byte>{Desc.InitialData->begin(), Desc.InitialData->end()};
 
         auto TaskRef = Resource;
         auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
@@ -279,17 +303,29 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             [this,
              TaskRef = std::move(TaskRef),
              Data = std::move(Data),
+             SizeBytes = Desc.SizeBytes,
              Name = String(Name),
              Usage = Desc.Usage] mutable {
-                auto Offset = m_TransientShaderStorageArena.Upload(std::span<const std::byte>{Data});
-                if (!Offset) {
-                    auto Error = Offset.error().Append("Transient shader storage buffer upload failed");
-                    TaskRef.MarkFailed(Error);
-                    m_TransientUploadError = std::move(Error);
-                    return;
+                std::expected<Uint32, ErrorMessage> Offset;
+                if (Data) {
+                    Offset = m_TransientShaderStorageArena.Upload(std::span<const std::byte>{*Data});
+                    if (!Offset) {
+                        auto Error = Offset.error().Append("Transient shader storage buffer upload failed");
+                        TaskRef.MarkFailed(Error);
+                        m_TransientUploadError = std::move(Error);
+                        return;
+                    }
+                } else {
+                    Offset = m_TransientShaderStorageArena.Allocate(SizeBytes);
+                    if (!Offset) {
+                        auto Error = Offset.error().Append("Transient shader storage buffer allocate failed");
+                        TaskRef.MarkFailed(Error);
+                        m_TransientUploadError = std::move(Error);
+                        return;
+                    }
                 }
                 auto Payload = std::make_unique<VulkanTransientShaderStorageBuffer>(
-                    std::move(Name), Data.size(), Usage, *Offset, m_TransientShaderStorageArena);
+                    std::move(Name), SizeBytes, Usage, *Offset, m_TransientShaderStorageArena);
                 if (auto Publish = TaskRef.Publish(std::move(Payload), RHIRefState::Ready); !Publish) {
                     auto Error = Publish.error().Append("Transient shader storage buffer publication failed");
                     TaskRef.MarkFailed(Error);

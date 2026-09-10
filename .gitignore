@@ -32,5 +32,8 @@ Engine/Logs/
 # imgui Configs
 imgui.ini
 
-# Local ray-tracing phase acceptance plans (intentionally not versioned)
-Docs/Phase/
+Docs/Phase
+Docs/Research
+
+# dsh
+.agent-teams

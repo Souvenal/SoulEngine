@@ -14,7 +14,7 @@ ConsoleLevel = "Info"
 FileLevel    = "Debug"
 
 [Application]
-Name = "Test"
+Name = "Sponza"
 
 [Shader]
 # Emit SPIR-V debug info (OpLine/OpString) for RenderDoc support.

@@ -526,11 +526,11 @@ class VulkanTransientUniformArena final {
         return {};
     }
 
-    [[nodiscard]] auto Upload(std::span<const std::byte> Data) -> std::expected<Uint32, ErrorMessage> {
-        const auto Size = static_cast<Uint64>(Data.size());
+    /// Reserve `Size` bytes in the current frame slab without writing host memory.
+    [[nodiscard]] auto Allocate(Uint64 Size) -> std::expected<Uint32, ErrorMessage> {
         if (Size == 0)
             return std::unexpected(
-                ErrorMessage("VulkanTransientUniformArena::Upload: data must not be empty"));
+                ErrorMessage("VulkanTransientUniformArena::Allocate: size must be greater than zero"));
 
         const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxUniformBufferRange);
         if (Size > MaxRange) {
@@ -545,7 +545,7 @@ class VulkanTransientUniformArena final {
         auto RelativeOffset = AlignUp(m_Used, Alignment);
         if (!RelativeOffset)
             return std::unexpected(
-                RelativeOffset.error().Append("VulkanTransientUniformArena::Upload: offset alignment failed"));
+                RelativeOffset.error().Append("VulkanTransientUniformArena::Allocate: offset alignment failed"));
         if (*RelativeOffset > m_FrameCapacity || Size > m_FrameCapacity - *RelativeOffset)
             return std::unexpected(ErrorMessage(Format(
                 "VulkanTransientUniformArena allocation exceeds frame capacity (offset {} + size {} > capacity {})",
@@ -561,10 +561,18 @@ class VulkanTransientUniformArena final {
         if (Offset > std::numeric_limits<Uint32>::max())
             return std::unexpected(ErrorMessage("VulkanTransientUniformArena offset exceeds dynamic offset range"));
 
-        if (auto R = m_Buffer.Upload(Data.data(), Size, static_cast<Uint32>(Offset)); !R)
-            return std::unexpected(R.error().Append("VulkanTransientUniformArena::Upload failed"));
         m_Used = *RelativeOffset + Size;
         return static_cast<Uint32>(Offset);
+    }
+
+    [[nodiscard]] auto Upload(std::span<const std::byte> Data) -> std::expected<Uint32, ErrorMessage> {
+        const auto Size = static_cast<Uint64>(Data.size());
+        auto Offset = Allocate(Size);
+        if (!Offset)
+            return std::unexpected(Offset.error().Append("VulkanTransientUniformArena::Upload: allocate failed"));
+        if (auto R = m_Buffer.Upload(Data.data(), Size, *Offset); !R)
+            return std::unexpected(R.error().Append("VulkanTransientUniformArena::Upload failed"));
+        return *Offset;
     }
 
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
@@ -660,11 +668,11 @@ class VulkanTransientShaderStorageArena final {
         return {};
     }
 
-    [[nodiscard]] auto Upload(std::span<const std::byte> Data) -> std::expected<Uint32, ErrorMessage> {
-        const auto Size = static_cast<Uint64>(Data.size());
+    /// Reserve `Size` bytes in the current frame slab without writing host memory.
+    [[nodiscard]] auto Allocate(Uint64 Size) -> std::expected<Uint32, ErrorMessage> {
         if (Size == 0)
             return std::unexpected(
-                ErrorMessage("VulkanTransientShaderStorageArena::Upload: data must not be empty"));
+                ErrorMessage("VulkanTransientShaderStorageArena::Allocate: size must be greater than zero"));
 
         const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxStorageBufferRange);
         if (Size > MaxRange) {
@@ -679,7 +687,7 @@ class VulkanTransientShaderStorageArena final {
         auto RelativeOffset = AlignUp(m_Used, Alignment);
         if (!RelativeOffset) {
             return std::unexpected(
-                RelativeOffset.error().Append("VulkanTransientShaderStorageArena::Upload: offset alignment failed"));
+                RelativeOffset.error().Append("VulkanTransientShaderStorageArena::Allocate: offset alignment failed"));
         }
         if (*RelativeOffset > m_FrameCapacity || Size > m_FrameCapacity - *RelativeOffset)
             return std::unexpected(ErrorMessage(Format(
@@ -696,10 +704,19 @@ class VulkanTransientShaderStorageArena final {
         if (Offset > std::numeric_limits<Uint32>::max())
             return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena offset exceeds dynamic offset range"));
 
-        if (auto R = m_Buffer.Upload(Data.data(), Size, static_cast<Uint32>(Offset)); !R)
-            return std::unexpected(R.error().Append("VulkanTransientShaderStorageArena::Upload failed"));
         m_Used = *RelativeOffset + Size;
         return static_cast<Uint32>(Offset);
+    }
+
+    [[nodiscard]] auto Upload(std::span<const std::byte> Data) -> std::expected<Uint32, ErrorMessage> {
+        const auto Size = static_cast<Uint64>(Data.size());
+        auto Offset = Allocate(Size);
+        if (!Offset)
+            return std::unexpected(
+                Offset.error().Append("VulkanTransientShaderStorageArena::Upload: allocate failed"));
+        if (auto R = m_Buffer.Upload(Data.data(), Size, *Offset); !R)
+            return std::unexpected(R.error().Append("VulkanTransientShaderStorageArena::Upload failed"));
+        return *Offset;
     }
 
     [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {

@@ -2,7 +2,7 @@ module;
 
 // needed for offsetof
 #include <cstddef>
-#include <entt/entity/entity.hpp>
+#include <entt/entt.hpp>
 #include <hlsl++.h>
 
 export module Renderer:RasterRenderer;
@@ -10,10 +10,9 @@ export module Renderer:RasterRenderer;
 import Core;
 import EditorTypes;
 import Material;
-import Resource;
 import RHI;
+import RenderGraph;
 import Scene;
-import TaskGraph;
 
 import :IRenderer;
 import :Common;
@@ -32,17 +31,13 @@ struct alignas(16) RasterIndirectCommand {
 };
 static_assert(sizeof(RasterIndirectCommand) == sizeof(Uint32) * 4);
 
-/// @brief Current-frame data shared by every camera geometry pass.
+/// @brief Current-frame CPU tables shared by every camera view.
+/// GPU buffers are graph-created per ViewGraph via Create*Buffer + InitialData.
 struct RasterFrameDrawData {
-    std::vector<InstanceRecord::GpuData>  Instances           = {};
-    std::vector<GeometryRecord::GpuData> GeometryRecords     = {};
-    std::vector<MaterialRecord::GpuData>  MaterialRecords     = {};
-    std::vector<RasterIndirectCommand>   IndirectCommands    = {};
-
-    RHIRef<RHITransientShaderStorageBuffer> InstanceBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> GeometryBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> IndirectBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> MaterialBuffer = nullptr;
+    std::vector<InstanceRecord::GpuData> Instances        = {};
+    std::vector<GeometryRecord::GpuData> GeometryRecords  = {};
+    std::vector<MaterialRecord::GpuData> MaterialRecords  = {};
+    std::vector<RasterIndirectCommand>   IndirectCommands = {};
 
     [[nodiscard]] static auto Create(std::span<const InstanceRecord> SourceInstances,
                                      const RHIRefArray<RHISampledTexture>& Textures)
@@ -55,6 +50,7 @@ struct RasterFrameDrawData {
         MaterialIDs.reserve(SourceInstances.size());
         IndexCounts.reserve(SourceInstances.size());
         Result.Instances.reserve(SourceInstances.size());
+        // Deferred lighting samples material index 0 even for an empty scene.
         Result.MaterialRecords.emplace_back(MaterialRecord::GpuData{});
 
         for (const auto& SourceInstance : SourceInstances) {
@@ -87,18 +83,6 @@ struct RasterFrameDrawData {
             Result.Instances.emplace_back(SourceInstance.BuildGpuData(GeometryID, MaterialID));
         }
 
-        // The deferred pass samples material index 0 even for an empty scene,
-        // so the material table buffer always exists.
-        auto MaterialBuffer =
-            RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = std::as_bytes(std::span{Result.MaterialRecords}),
-            });
-        if (!MaterialBuffer)
-            return std::unexpected(
-                MaterialBuffer.error().Append("Raster frame material-data transient allocation failed"));
-        Result.MaterialBuffer = *MaterialBuffer;
-
-
         std::ranges::sort(Result.Instances, [](const auto& Lhs, const auto& Rhs) {
             return Lhs.GeometryID < Rhs.GeometryID;
         });
@@ -121,41 +105,6 @@ struct RasterFrameDrawData {
             });
         }
 
-        if (Result.Instances.empty())
-            return Result;
-
-        using magic_enum::bitwise_operators::operator|;
-
-        const auto InstanceBytes = std::as_bytes(std::span{Result.Instances});
-        auto InstanceBuffer =
-            RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = InstanceBytes,
-            });
-        if (!InstanceBuffer)
-            return std::unexpected(
-                InstanceBuffer.error().Append("Raster geometry instance-data transient allocation failed"));
-        Result.InstanceBuffer = *InstanceBuffer;
-
-        auto GeometryBuffer =
-            RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = std::as_bytes(std::span{Result.GeometryRecords}),
-            });
-        if (!GeometryBuffer)
-            return std::unexpected(
-                GeometryBuffer.error().Append("Raster geometry table transient allocation failed"));
-        Result.GeometryBuffer = *GeometryBuffer;
-
-        const auto IndirectBytes = std::as_bytes(std::span{Result.IndirectCommands});
-        auto IndirectBuffer =
-            RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = IndirectBytes,
-                .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
-            });
-        if (!IndirectBuffer)
-            return std::unexpected(
-                IndirectBuffer.error().Append("Raster indirect command transient allocation failed"));
-        Result.IndirectBuffer = *IndirectBuffer;
-
         return Result;
     }
 };
@@ -169,39 +118,18 @@ class RasterRenderer final : public IRenderer {
     }
 
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "RasterGeometry.slang";
-
-        auto PipelineRequest = RequestGraphicsPipeline(
-            "GeometryPass",
-            GraphicsPipelineRequest{
-                .VertEntry =
-                    {
-                        .SourcePath = ShaderPath,
-                        .EntryPoint = "vertMain",
-                    },
-                .FragEntry =
-                    {
-                        .SourcePath = ShaderPath,
-                        .EntryPoint = "fragMain",
-                    },
-                .ColorFormats = std::vector<RHIFormat>(GBuffer::ColorFormats.begin(), GBuffer::ColorFormats.end()),
-                .DepthFormat  = GBuffer::DepthFormat,
-            });
-        if (!PipelineRequest)
-            return std::unexpected(PipelineRequest.error().Append("Raster geometry graphics pipeline request failed"));
-        m_Pipeline = std::move(*PipelineRequest);
-
-        const auto DeferredShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "DeferredLighting.slang";
-        auto       DeferredPipelineRequest =
-            RequestGraphicsPipeline("DeferredLightingPass",
-                                    GraphicsPipelineRequest{
-                                        .VertEntry    = {.SourcePath = DeferredShaderPath, .EntryPoint = "vertMain"},
-                                        .FragEntry    = {.SourcePath = DeferredShaderPath, .EntryPoint = "fragMain"},
-                                        .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
-                                    });
-        if (!DeferredPipelineRequest)
-            return std::unexpected(DeferredPipelineRequest.error().Append("Deferred lighting pipeline request failed"));
-        m_DeferredPipeline = std::move(*DeferredPipelineRequest);
+        // Typed registration: descriptors live on each graph pass type via
+        // BuildPipelineRequest(); registry keys are entt::type_hash<TPass>.
+        // The deferred lighting pass has two runtime forms (direct-present
+        // and outline color-write); only the form present in a frame's graph is
+        // Ensured by that frame's Compile().
+        auto& Registry = PipelineRegistry::Get();
+        Registry.Register<CullingPass>();
+        Registry.Register<SelectionFilterPass>();
+        Registry.Register<GeometryPass>();
+        Registry.Register<DeferredLightingPass>();
+        Registry.Register<SelectionMaskPass>();
+        Registry.Register<SelectionOutlinePass>();
 
         auto SamplerLinear = RHIRenderDevice::Get().CreateSampler("Renderer/Raster/Sampler/Linear",
                                                                   {.Profile = RHISamplerProfile::LinearRepeat});
@@ -215,77 +143,12 @@ class RasterRenderer final : public IRenderer {
             return std::unexpected(SamplerAniso.error().Append("Raster anisotropic sampler creation failed"));
         m_SamplerAniso = std::move(*SamplerAniso);
 
-        const auto SelectionMaskShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Editor" / "SelectionMask.slang";
-        auto       SelectionMaskPipelineRequest = RequestGraphicsPipeline(
-            "SelectionMaskPass",
-            GraphicsPipelineRequest{
-                .VertEntry = {.SourcePath = SelectionMaskShaderPath, .EntryPoint = "vertMain"},
-                .FragEntry = {.SourcePath = SelectionMaskShaderPath, .EntryPoint = "fragMain"},
-                .ColorFormats = {RHIFormat::R8_UNORM},
-            });
-        if (!SelectionMaskPipelineRequest)
-            return std::unexpected(
-                SelectionMaskPipelineRequest.error().Append("Selection mask pipeline request failed"));
-        m_SelectionMaskPipeline = std::move(*SelectionMaskPipelineRequest);
-
-        const auto SelectionOutlineShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Editor" / "SelectionOutline.slang";
-        auto       SelectionOutlinePipelineRequest = RequestGraphicsPipeline(
-            "SelectionOutlinePass",
-            GraphicsPipelineRequest{
-                .VertEntry    = {.SourcePath = SelectionOutlineShaderPath, .EntryPoint = "vertMain"},
-                .FragEntry    = {.SourcePath = SelectionOutlineShaderPath, .EntryPoint = "fragMain"},
-                .Blend        =
-                    RHIBlendState{.Attachments = {RHIBlendAttachment{
-                        .BlendEnable         = true,
-                        .SrcColorBlendFactor = RHIBlendFactor::SrcAlpha,
-                        .DstColorBlendFactor = RHIBlendFactor::OneMinusSrcAlpha,
-                        .ColorBlendOp        = RHIBlendOp::Add,
-                        .SrcAlphaBlendFactor = RHIBlendFactor::One,
-                        .DstAlphaBlendFactor = RHIBlendFactor::Zero,
-                        .AlphaBlendOp        = RHIBlendOp::Add,
-                    }}},
-                .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
-            });
-        if (!SelectionOutlinePipelineRequest)
-            return std::unexpected(
-                SelectionOutlinePipelineRequest.error().Append("Selection outline pipeline request failed"));
-        m_SelectionOutlinePipeline = std::move(*SelectionOutlinePipelineRequest);
-
-        const auto CullingShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "CullingCompute.slang";
-        auto       CullingPipelineRequest = RequestComputePipeline(
-            "CullingPass",
-            ComputePipelineRequest{
-                .ComputeEntry = {.SourcePath = CullingShaderPath, .EntryPoint = "cullMain"},
-            });
-        if (!CullingPipelineRequest)
-            return std::unexpected(
-                CullingPipelineRequest.error().Append("Culling compute pipeline request failed"));
-        m_CullingPipeline = std::move(*CullingPipelineRequest);
-
-        const auto SelectionFilterShaderPath =
-            ConfigManager::Get().EngineShadersDirPath() / "Editor" / "SelectionFilter.slang";
-        auto SelectionFilterPipelineRequest = RequestComputePipeline(
-            "SelectionFilterPass",
-            ComputePipelineRequest{
-                .ComputeEntry = {.SourcePath = SelectionFilterShaderPath, .EntryPoint = "filterMain"},
-            });
-        if (!SelectionFilterPipelineRequest)
-            return std::unexpected(
-                SelectionFilterPipelineRequest.error().Append("Selection filter compute pipeline request failed"));
-        m_SelectionFilterPipeline = std::move(*SelectionFilterPipelineRequest);
-
         return {};
     }
 
     auto OnDetach() -> void override {
-        m_Pipeline                 = {};
-        m_DeferredPipeline         = {};
-        m_SelectionMaskPipeline    = {};
-        m_SelectionOutlinePipeline = {};
-        m_SelectionFilterPipeline  = {};
-        m_CullingPipeline          = {};
-        m_SamplerLinear            = {};
-        m_SamplerAniso             = {};
+        m_SamplerLinear = {};
+        m_SamplerAniso  = {};
     }
 
     [[nodiscard]] auto Render(const GameSnapshot& Scene, const EditorSnapshot& Editor)
@@ -293,59 +156,6 @@ class RasterRenderer final : public IRenderer {
         RenderResult Result = {};
         if (Scene.Views.empty() && Editor.Views.empty())
             return Result;
-
-        const auto CheckPipeline = []<typename T>(const RHIRef<T>& Pipeline, StringView Name)
-            -> std::expected<bool, ErrorMessage> {
-            if (Pipeline.GetState() == RHIRefState::Ready)
-                return true;
-            if (Pipeline.GetState() == RHIRefState::Failed) {
-                if (const auto Error = Pipeline.GetError())
-                    return std::unexpected(Error->Append(Format("Raster pipeline '{}' failed", Name)));
-                return std::unexpected(ErrorMessage(Format("Raster pipeline '{}' failed without an error", Name)));
-            }
-            return false;
-        };
-        const auto RequireReady = [&CheckPipeline](const auto& Pipeline, StringView Name)
-            -> std::expected<bool, ErrorMessage> {
-            return CheckPipeline(Pipeline, Name);
-        };
-        for (const auto& [Pipeline, Name] : std::array{
-                 std::pair{std::cref(m_Pipeline), StringView{"GeometryPass"}},
-                 std::pair{std::cref(m_DeferredPipeline), StringView{"DeferredLightingPass"}},
-             }) {
-            const auto Ready = RequireReady(Pipeline.get(), Name);
-            if (!Ready)
-                return std::unexpected(Ready.error());
-            if (!*Ready)
-                return Result;
-        }
-        if (!Scene.Instances.empty()) {
-            const auto CullingReady = RequireReady(m_CullingPipeline, "CullingPass");
-            if (!CullingReady)
-                return std::unexpected(CullingReady.error());
-            if (!*CullingReady)
-                return Result;
-        }
-        const bool UsesEditorSelection =
-            !Scene.Instances.empty() && Editor.SelectedEntity &&
-            std::ranges::any_of(Editor.Views, [](const EditorViewRecord& View) { return static_cast<bool>(View.SelectionMask); });
-        if (UsesEditorSelection) {
-            const auto SelectionFilterReady = RequireReady(m_SelectionFilterPipeline, "SelectionFilterPass");
-            if (!SelectionFilterReady)
-                return std::unexpected(SelectionFilterReady.error());
-            if (!*SelectionFilterReady)
-                return Result;
-            const auto SelectionMaskReady = RequireReady(m_SelectionMaskPipeline, "SelectionMaskPass");
-            if (!SelectionMaskReady)
-                return std::unexpected(SelectionMaskReady.error());
-            if (!*SelectionMaskReady)
-                return Result;
-            const auto SelectionOutlineReady = RequireReady(m_SelectionOutlinePipeline, "SelectionOutlinePass");
-            if (!SelectionOutlineReady)
-                return std::unexpected(SelectionOutlineReady.error());
-            if (!*SelectionOutlineReady)
-                return Result;
-        }
 
         auto DrawData = RasterFrameDrawData::Create(Scene.Instances, Scene.Textures);
         if (!DrawData)
@@ -373,240 +183,288 @@ class RasterRenderer final : public IRenderer {
                                   const EditorViewRecord*     EditorView) -> std::expected<void, ErrorMessage> {
         using magic_enum::bitwise_operators::operator|;
 
-        const auto& AlbedoRTRef                = View.Targets.GBuffer.AlbedoRT;
-        const auto& NormalRTRef                = View.Targets.GBuffer.NormalRT;
-        const auto& EntityIdRTRef              = View.Targets.GBuffer.EntityIdRT;
-        const auto& MaterialIdRTRef            = View.Targets.GBuffer.MaterialIdRT;
-        const auto& DepthRTRef                 = View.Targets.GBuffer.DepthRT;
-        const auto& SceneColorRTRef            = View.Targets.SceneColorRT;
-        const auto& PipelineRef                = m_Pipeline;
-        const auto& SamplerLinearRef           = m_SamplerLinear;
-        const auto& SamplerAnisoRef            = m_SamplerAniso;
-        const auto& DeferredPipelineRef        = m_DeferredPipeline;
+        const auto& AlbedoRTRef     = View.Targets.GBuffer.AlbedoRT;
+        const auto& NormalRTRef     = View.Targets.GBuffer.NormalRT;
+        const auto& EntityIdRTRef   = View.Targets.GBuffer.EntityIdRT;
+        const auto& MaterialIdRTRef = View.Targets.GBuffer.MaterialIdRT;
+        const auto& DepthRTRef      = View.Targets.GBuffer.DepthRT;
+        const auto& SceneColorRTRef = View.Targets.SceneColorRT;
+        const auto& SamplerLinearRef = m_SamplerLinear;
+        const auto& SamplerAnisoRef  = m_SamplerAniso;
         if (!AlbedoRTRef || !NormalRTRef || !EntityIdRTRef || !MaterialIdRTRef || !DepthRTRef || !SceneColorRTRef ||
-             !PipelineRef || !DeferredPipelineRef || !SamplerLinearRef || !SamplerAnisoRef ||
-             (!DrawData.Instances.empty() && !m_CullingPipeline) ||
-             (EditorView && Editor.SelectedEntity && EditorView->SelectionMask && !DrawData.Instances.empty() &&
-              (!m_SelectionFilterPipeline || !m_SelectionMaskPipeline || !m_SelectionOutlinePipeline)))
+            !SamplerLinearRef || !SamplerAnisoRef)
             return {};
+
+        // Feature gates only — pipeline readiness is Compile's job (Ensure +
+        // Pending prune + Ready ref stash). Do not snapshot GetState here.
+        const bool HasInstances = !DrawData.Instances.empty();
+        const bool EditorSel    = EditorView && Editor.SelectedEntity && HasInstances &&
+                               static_cast<bool>(EditorView->SelectionMask);
+        // Outline Present policy follows the feature gate (not readiness). If
+        // the outline pipeline is still Pending at Compile, its side-effect
+        // chain cannot be built and the frame compiles to an empty pass list
+        // — the graph's soft-degrade contract.
+        const bool WantOutline  = EditorSel;
+
+        // ── RenderGraph wiring ───────────────────────────────────────────
+        RenderGraph ViewGraph{};
 
         const auto FrameData =
             BuildFrameConstants(Scene.Time, View.ExposureEV100, static_cast<Uint32>(Scene.Lights.size()));
-        const auto Lights      = BuildLightGpuData(Scene.Lights);
-        const auto LightBytes  = std::as_bytes(std::span{Lights});
-        auto LightBuffer =
-            RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = LightBytes,
-            });
-        if (!LightBuffer)
-            return std::unexpected(
-                LightBuffer.error().Append("Raster light-table transient storage allocation failed"));
-        auto FrameBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
-            .Data = std::as_bytes(std::span{&FrameData, 1}),
-        });
-        if (!FrameBuffer)
-            return std::unexpected(
-                FrameBuffer.error().Append("Raster geometry frame transient constant allocation failed"));
-
+        const auto Lights = BuildLightGpuData(Scene.Lights);
         const auto ViewData = RendererViewConstants{View};
-        auto ViewBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
-            .Data = std::as_bytes(std::span{&ViewData, 1}),
-        });
-        if (!ViewBuffer)
-            return std::unexpected(
-                ViewBuffer.error().Append("Raster geometry view transient constant allocation failed"));
 
+        const auto MaterialBytes = std::as_bytes(std::span{DrawData.MaterialRecords});
+        const auto MaterialTable = ViewGraph.CreateShaderStorageBuffer(
+            "FrameMaterials",
+            RGShaderStorageBufferDesc{
+                .SizeBytes = static_cast<Uint64>(MaterialBytes.size()),
+                .Stride = static_cast<Uint32>(sizeof(MaterialRecord::GpuData)),
+                .Usage = RHITransientBufferUsage::ShaderRead,
+                .InitialData = MaterialBytes,
+            });
 
-        RHIRef<RHITransientShaderStorageBuffer> SelectionInstanceBuffer = nullptr;
-        RHIRef<RHITransientShaderStorageBuffer> SelectionIndirectBuffer = nullptr;
-        RHIRef<RHITransientShaderStorageBuffer> SelectionCounterBuffer = nullptr;
+        const auto FrameCB = ViewGraph.CreateConstantBuffer(
+            "FrameConstants",
+            RGConstantBufferDesc{
+                .SizeBytes = static_cast<Uint64>(sizeof(FrameData)),
+                .InitialData = std::as_bytes(std::span{&FrameData, 1}),
+            });
+        const auto ViewCB = ViewGraph.CreateConstantBuffer(
+            "ViewConstants",
+            RGConstantBufferDesc{
+                .SizeBytes = static_cast<Uint64>(sizeof(ViewData)),
+                .InitialData = std::as_bytes(std::span{&ViewData, 1}),
+            });
+        const auto DeferredFrameCB = ViewGraph.CreateConstantBuffer(
+            "DeferredFrameConstants",
+            RGConstantBufferDesc{
+                .SizeBytes = static_cast<Uint64>(sizeof(FrameData)),
+                .InitialData = std::as_bytes(std::span{&FrameData, 1}),
+            });
+        const auto DeferredViewCB = ViewGraph.CreateConstantBuffer(
+            "DeferredViewConstants",
+            RGConstantBufferDesc{
+                .SizeBytes = static_cast<Uint64>(sizeof(ViewData)),
+                .InitialData = std::as_bytes(std::span{&ViewData, 1}),
+            });
 
-        if (!DrawData.Instances.empty()) {
-            // ── Per-view culling (placeholder: copies scene data) ──────
+        RGStorageBufferHandle SceneInstances = {};
+        RGStorageBufferHandle SceneIndirect  = {};
+        RGStorageBufferHandle GeometryTable  = {};
+        if (HasInstances) {
+            const auto InstanceBytes = std::as_bytes(std::span{DrawData.Instances});
+            const auto GeometryBytes = std::as_bytes(std::span{DrawData.GeometryRecords});
+            const auto IndirectBytes = std::as_bytes(std::span{DrawData.IndirectCommands});
+            SceneInstances = ViewGraph.CreateShaderStorageBuffer(
+                "SceneInstances",
+                RGShaderStorageBufferDesc{
+                    .SizeBytes = static_cast<Uint64>(InstanceBytes.size()),
+                    .Stride = static_cast<Uint32>(sizeof(InstanceRecord::GpuData)),
+                    .Usage = RHITransientBufferUsage::ShaderRead,
+                    .InitialData = InstanceBytes,
+                });
+            GeometryTable = ViewGraph.CreateShaderStorageBuffer(
+                "SceneGeometry",
+                RGShaderStorageBufferDesc{
+                    .SizeBytes = static_cast<Uint64>(GeometryBytes.size()),
+                    .Stride = static_cast<Uint32>(sizeof(GeometryRecord::GpuData)),
+                    .Usage = RHITransientBufferUsage::ShaderRead,
+                    .InitialData = GeometryBytes,
+                });
+            SceneIndirect = ViewGraph.CreateShaderStorageBuffer(
+                "SceneIndirect",
+                RGShaderStorageBufferDesc{
+                    .SizeBytes = static_cast<Uint64>(IndirectBytes.size()),
+                    .Stride = static_cast<Uint32>(sizeof(RasterIndirectCommand)),
+                    .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
+                    .InitialData = IndirectBytes,
+                });
+        }
+
+        // Empty light list still needs a live SSBO binding for deferred lighting;
+        // a zeroed 4-byte InitialData keeps the resource contentful.
+        static constexpr std::array<std::byte, sizeof(Uint32)> ZeroLightSlot{};
+        const auto LightBytes = std::as_bytes(std::span{Lights});
+        const auto LightTable = ViewGraph.CreateShaderStorageBuffer(
+            "FrameLights",
+            RGShaderStorageBufferDesc{
+                .SizeBytes = LightBytes.empty() ? sizeof(Uint32) : static_cast<Uint64>(LightBytes.size()),
+                .Usage = RHITransientBufferUsage::ShaderRead,
+                .InitialData = LightBytes.empty()
+                                   ? std::optional<std::span<const std::byte>>{ZeroLightSlot}
+                                   : std::optional<std::span<const std::byte>>{LightBytes},
+            });
+
+        // The GBuffer render targets are shared between Geometry (the writer,
+        // inside the instance block below) and Lighting/EntityPicking/Outline
+        // (the readers, registered after it), so they are imported once here.
+        const auto Albedo     = ViewGraph.Import(AlbedoRTRef);
+        const auto Normal     = ViewGraph.Import(NormalRTRef);
+        const auto MaterialId = ViewGraph.Import(MaterialIdRTRef);
+        const auto EntityId   = ViewGraph.Import(EntityIdRTRef);
+        const auto Depth      = ViewGraph.Import(DepthRTRef);
+
+        // Selection filter outputs live at view scope: the mask pass consumes
+        // them and is registered outside the instance block.
+        RGStorageBufferHandle SelectedInstances = {};
+        RGStorageBufferHandle SelectedIndirect  = {};
+
+        if (HasInstances) {
             const auto InstanceDataSize = DrawData.Instances.size() * sizeof(InstanceRecord::GpuData);
             const auto IndirectDataSize = DrawData.IndirectCommands.size() * sizeof(RasterIndirectCommand);
-            const auto ZeroedInstances = std::vector<std::byte>(InstanceDataSize, std::byte{0});
-            const auto ZeroedIndirect  = std::vector<std::byte>(IndirectDataSize, std::byte{0});
-            const auto ZeroedCounter   = std::vector<std::byte>(sizeof(Uint32), std::byte{0});
 
-            auto ViewInstanceBuffer =
-                RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                    .Data = ZeroedInstances,
+            const auto ViewInstances = ViewGraph.CreateShaderStorageBuffer(
+                "ViewInstances",
+                RGShaderStorageBufferDesc{
+                    .SizeBytes = InstanceDataSize,
+                    .Stride = static_cast<Uint32>(sizeof(InstanceRecord::GpuData)),
+                    .Usage = RHITransientBufferUsage::ShaderRead,
                 });
-            if (!ViewInstanceBuffer)
-                return std::unexpected(
-                    ViewInstanceBuffer.error().Append("View instance buffer transient allocation failed"));
-
-            auto ViewIndirectBuffer =
-                RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                    .Data = ZeroedIndirect,
+            const auto ViewIndirect = ViewGraph.CreateShaderStorageBuffer(
+                "ViewIndirect",
+                RGShaderStorageBufferDesc{
+                    .SizeBytes = IndirectDataSize,
+                    .Stride = static_cast<Uint32>(sizeof(RasterIndirectCommand)),
                     .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
                 });
-            if (!ViewIndirectBuffer)
-                return std::unexpected(
-                    ViewIndirectBuffer.error().Append("View indirect buffer transient allocation failed"));
-
-            auto ViewCounterBuffer =
-                RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                    .Data = ZeroedCounter,
+            const auto ViewCounter = ViewGraph.CreateShaderStorageBuffer(
+                "ViewCounter",
+                RGShaderStorageBufferDesc{
+                    .SizeBytes = sizeof(Uint32),
+                    .Usage = RHITransientBufferUsage::ShaderRead,
                 });
-            if (!ViewCounterBuffer)
-                return std::unexpected(
-                    ViewCounterBuffer.error().Append("View counter buffer transient allocation failed"));
 
-            auto CullPass = std::make_unique<CullingPass>(m_CullingPipeline);
-            CullPass->SetInput(CullingPassInput{
-                .SceneInstanceBuffer  = DrawData.InstanceBuffer,
-                .SceneIndirectBuffer  = DrawData.IndirectBuffer,
-                .GeometryBuffer       = DrawData.GeometryBuffer,
-                .ViewInstanceBuffer   = *ViewInstanceBuffer,
-                .ViewIndirectBuffer   = *ViewIndirectBuffer,
-                .ViewCounterBuffer    = *ViewCounterBuffer,
-                .InstanceCount        = static_cast<Uint32>(DrawData.Instances.size()),
-                .CommandCount         = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+            ViewGraph.AddPass<CullingPass>(CullingPass::Parameter{
+                .ViewInstances  = RGStorageBufferUAV{.Buffer = ViewInstances},
+                .ViewIndirect   = RGStorageBufferUAV{.Buffer = ViewIndirect},
+                .ViewCounter    = RGStorageBufferUAV{.Buffer = ViewCounter},
+                .SceneInstances = RGStorageBufferSRV{.Buffer = SceneInstances},
+                .SceneIndirect  = RGStorageBufferSRV{.Buffer = SceneIndirect},
+                .GeometryTable  = RGStorageBufferSRV{.Buffer = GeometryTable},
+                .InstanceCount  = static_cast<Uint32>(DrawData.Instances.size()),
+                .CommandCount   = static_cast<Uint32>(DrawData.IndirectCommands.size()),
             });
-            CmdList.Passes.push_back(std::move(CullPass));
 
             if (EditorView && Editor.SelectedEntity) {
-                const auto SelectionInstanceBytes = std::vector<std::byte>(InstanceDataSize, std::byte{0});
-                const auto SelectionIndirectBytes = std::vector<std::byte>(IndirectDataSize, std::byte{0});
-                const auto SelectionCounterBytes =
-                    std::vector<std::byte>(DrawData.IndirectCommands.size() * sizeof(Uint32), std::byte{0});
-
-                auto FilterInstances =
-                    RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                        .Data = SelectionInstanceBytes,
+                SelectedInstances = ViewGraph.CreateShaderStorageBuffer(
+                    "SelectedInstances",
+                    RGShaderStorageBufferDesc{
+                        .SizeBytes = InstanceDataSize,
+                        .Stride = static_cast<Uint32>(sizeof(InstanceRecord::GpuData)),
+                        .Usage = RHITransientBufferUsage::ShaderRead,
                     });
-                if (!FilterInstances)
-                    return std::unexpected(
-                        FilterInstances.error().Append("Selection filter instance buffer allocation failed"));
-                SelectionInstanceBuffer = *FilterInstances;
-
-                auto FilterIndirect =
-                    RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                        .Data = SelectionIndirectBytes,
+                SelectedIndirect = ViewGraph.CreateShaderStorageBuffer(
+                    "SelectedIndirect",
+                    RGShaderStorageBufferDesc{
+                        .SizeBytes = IndirectDataSize,
+                        .Stride = static_cast<Uint32>(sizeof(RasterIndirectCommand)),
                         .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
                     });
-                if (!FilterIndirect)
-                    return std::unexpected(
-                        FilterIndirect.error().Append("Selection filter indirect buffer allocation failed"));
-                SelectionIndirectBuffer = *FilterIndirect;
-
-                auto FilterCounters =
-                    RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                        .Data = SelectionCounterBytes,
+                // The filter shader accumulates per-command instance counts via
+                // InterlockedAdd, so the counters must start at zero every frame.
+                const std::vector<std::byte> ZeroCounters(
+                    DrawData.IndirectCommands.size() * sizeof(Uint32), std::byte{0});
+                const auto SelectedCounters = ViewGraph.CreateShaderStorageBuffer(
+                    "SelectedCounters",
+                    RGShaderStorageBufferDesc{
+                        .SizeBytes   = ZeroCounters.size(),
+                        .Usage       = RHITransientBufferUsage::ShaderRead,
+                        .InitialData = ZeroCounters,
                     });
-                if (!FilterCounters)
-                    return std::unexpected(
-                        FilterCounters.error().Append("Selection filter counter buffer allocation failed"));
-                SelectionCounterBuffer = *FilterCounters;
 
-                auto FilterPass = std::make_unique<SelectionFilterPass>(m_SelectionFilterPipeline);
-                FilterPass->SetInput(SelectionFilterPassInput{
-                    .SceneInstanceBuffer = *ViewInstanceBuffer,
-                    .SceneIndirectBuffer = *ViewIndirectBuffer,
-                    .SelectedInstanceBuffer = SelectionInstanceBuffer,
-                    .SelectedIndirectBuffer = SelectionIndirectBuffer,
-                    .CommandCounterBuffer = SelectionCounterBuffer,
-                    .CommandCount = static_cast<Uint32>(DrawData.IndirectCommands.size()),
-                    .SelectedEntityId = static_cast<Uint32>(entt::to_integral(*Editor.SelectedEntity)),
+                ViewGraph.AddPass<SelectionFilterPass>(SelectionFilterPass::Parameter{
+                    .ViewInstances     = RGStorageBufferSRV{.Buffer = ViewInstances},
+                    .ViewIndirect      = RGStorageBufferSRV{.Buffer = ViewIndirect},
+                    .SelectedInstances = RGStorageBufferUAV{.Buffer = SelectedInstances},
+                    .SelectedIndirect  = RGStorageBufferUAV{.Buffer = SelectedIndirect},
+                    .SelectedCounters  = RGStorageBufferUAV{.Buffer = SelectedCounters},
+                    .CommandCount      = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+                    .SelectedEntityId  = static_cast<Uint32>(entt::to_integral(*Editor.SelectedEntity)),
                 });
-                CmdList.Passes.push_back(std::move(FilterPass));
             }
 
-            auto Pass = std::make_unique<GeometryPass>(PipelineRef);
-            Pass->SetInput(GeometryPassInput{
-                .Albedo = AlbedoRTRef,
-                .Normal = NormalRTRef,
-                .MaterialId = MaterialIdRTRef,
-                .EntityId = EntityIdRTRef,
-                .Depth = DepthRTRef,
-                .LinearSampler = SamplerLinearRef,
+            ViewGraph.AddPass<GeometryPass>(GeometryPass::Parameter{
+                .Albedo         = RGColorRT{.Texture = Albedo},
+                .Normal         = RGColorRT{.Texture = Normal},
+                .MaterialId     = RGColorRT{.Texture = MaterialId},
+                .EntityId       = RGColorRT{.Texture = EntityId},
+                .Depth          = RGDepthRT{.Texture = Depth},
+                .InstanceBuffer = RGStorageBufferSRV{.Buffer = ViewInstances},
+                .IndirectBuffer = RGIndirectBuffer{.Buffer = ViewIndirect},
+                .GeometryBuffer = RGStorageBufferSRV{.Buffer = GeometryTable},
+                .MaterialBuffer = RGStorageBufferSRV{.Buffer = MaterialTable},
+                .FrameBuffer    = {.Buffer = FrameCB},
+                .ViewBuffer     = {.Buffer = ViewCB},
+                .LinearSampler      = SamplerLinearRef,
                 .AnisotropicSampler = SamplerAnisoRef,
-                .Textures = Scene.Textures,
-                .FrameBuffer = *FrameBuffer,
-                .ViewBuffer = *ViewBuffer,
-                .InstanceBuffer = *ViewInstanceBuffer,
-                .GeometryBuffer = DrawData.GeometryBuffer,
-                .MaterialBuffer = DrawData.MaterialBuffer,
-                .IndirectBuffer = *ViewIndirectBuffer,
-                .DrawCount = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+                .Textures           = Scene.Textures,
+                .DrawCount          = static_cast<Uint32>(DrawData.IndirectCommands.size()),
             });
-            CmdList.Passes.push_back(std::move(Pass));
         }
 
-        // Read back the EntityId texel under the cursor after the geometry
-        // pass has written the GBuffer.
         if (Editor.IsHovering && Editor.ReadbackTarget) {
-            auto PickingPass = BuildEntityPickingPass(EntityIdRTRef, Editor.HoverPixel, Editor.ReadbackTarget);
-            if (!PickingPass)
-                return std::unexpected(PickingPass.error().Append("Entity picking pass construction failed"));
-            CmdList.Passes.push_back(std::move(*PickingPass));
+            const auto Readback = ViewGraph.Import(Editor.ReadbackTarget);
+            ViewGraph.AddPass<EntityPickingPass>(EntityPickingPass::Parameter{
+                .EntityId = RGCopySrc{.Texture = EntityId},
+                .Readback = RGCopyDst{.Buffer = Readback},
+                .Pixel    = Editor.HoverPixel,
+            });
         }
 
-        auto DeferredFrameBuffer =
-            RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
-                .Data = std::as_bytes(std::span{&FrameData, 1}),
-            });
-        if (!DeferredFrameBuffer)
-            return std::unexpected(
-                DeferredFrameBuffer.error().Append("Deferred lighting frame buffer allocation failed"));
-        auto DeferredViewBuffer =
-            RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
-                .Data = std::as_bytes(std::span{&ViewData, 1}),
-            });
-        if (!DeferredViewBuffer)
-            return std::unexpected(
-                DeferredViewBuffer.error().Append("Deferred lighting view buffer allocation failed"));
-        auto LightingPass = std::make_unique<DeferredLightingPass>(m_DeferredPipeline);
-        LightingPass->SetInput(DeferredLightingPassInput{
-                .SceneColor = SceneColorRTRef,
-                .Albedo = AlbedoRTRef,
-                .Normal = NormalRTRef,
-                .MaterialId = MaterialIdRTRef,
-                .EntityId = EntityIdRTRef,
-                .Depth = DepthRTRef,
-                .Textures = Scene.Textures,
-                .FrameBuffer = *DeferredFrameBuffer,
-                .ViewBuffer = *DeferredViewBuffer,
-                .MaterialBuffer = DrawData.MaterialBuffer,
-                .LightBuffer = *LightBuffer,
-            });
-        CmdList.Passes.push_back(std::move(LightingPass));
+        const auto SceneColor = ViewGraph.Import(SceneColorRTRef);
+        // One pass, runtime frame config: the write is the terminal present
+        // write without the outline overblend, or a plain color write that
+        // SelectionOutline's load RMW blends over and presents.
+        ViewGraph.AddPass<DeferredLightingPass>(DeferredLightingPass::Parameter{
+            .SceneColor     = RGColorRT{.Texture = SceneColor, .Present = !WantOutline},
+            .Albedo         = RGTextureSRV{.Texture = Albedo},
+            .Normal         = RGTextureSRV{.Texture = Normal},
+            .MaterialId     = RGTextureSRV{.Texture = MaterialId},
+            .EntityId       = RGTextureSRV{.Texture = EntityId},
+            .Depth          = RGTextureSRV{.Texture = Depth},
+            .MaterialBuffer = RGStorageBufferSRV{.Buffer = MaterialTable},
+            .FrameBuffer    = {.Buffer = DeferredFrameCB},
+            .ViewBuffer     = {.Buffer = DeferredViewCB},
+            .LightBuffer    = RGStorageBufferSRV{.Buffer = LightTable},
+            .LinearSampler      = SamplerLinearRef,
+            .AnisotropicSampler = SamplerAnisoRef,
+            .Textures           = Scene.Textures,
+        });
 
-        // Selection outline: render selected entity mask (no depth test) then detect edges.
-        if (EditorView && Editor.SelectedEntity && !DrawData.Instances.empty() &&
-            EditorView->SelectionMask) {
-            const auto SelectedEntityId = static_cast<Uint32>(entt::to_integral(*Editor.SelectedEntity));
+        if (WantOutline) {
             const auto& MaskRT = EditorView->SelectionMask;
-
-            auto MaskPass = std::make_unique<SelectionMaskPass>(m_SelectionMaskPipeline);
-            MaskPass->SetInput(SelectionMaskPassInput{
-                .Mask = MaskRT,
-                .FrameBuffer = *FrameBuffer,
-                .ViewBuffer = *ViewBuffer,
-                .LinearSampler = SamplerLinearRef,
-                .Textures = Scene.Textures,
-                .InstanceBuffer = SelectionInstanceBuffer,
-                .GeometryBuffer = DrawData.GeometryBuffer,
-                .MaterialBuffer = DrawData.MaterialBuffer,
-                .IndirectBuffer = SelectionIndirectBuffer,
-                .DrawCount = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+            const auto Mask = ViewGraph.Import(MaskRT);
+            ViewGraph.AddPass<SelectionMaskPass>(SelectionMaskPass::Parameter{
+                .Mask              = RGColorRT{.Texture = Mask},
+                .SelectedInstances = RGStorageBufferSRV{.Buffer = SelectedInstances},
+                .SelectedIndirect  = RGIndirectBuffer{.Buffer = SelectedIndirect},
+                .GeometryTable     = RGStorageBufferSRV{.Buffer = GeometryTable},
+                .MaterialTable     = RGStorageBufferSRV{.Buffer = MaterialTable},
+                .FrameBuffer       = {.Buffer = FrameCB},
+                .ViewBuffer        = {.Buffer = ViewCB},
+                .LinearSampler     = SamplerLinearRef,
+                .Textures          = Scene.Textures,
+                .DrawCount         = static_cast<Uint32>(DrawData.IndirectCommands.size()),
             });
-            CmdList.Passes.push_back(std::move(MaskPass));
-
-            auto OutlinePass = std::make_unique<SelectionOutlinePass>(m_SelectionOutlinePipeline);
-            OutlinePass->SetInput(SelectionOutlinePassInput{
-                .SceneColor = SceneColorRTRef,
-                .Mask = MaskRT,
+            ViewGraph.AddPass<SelectionOutlinePass>(SelectionOutlinePass::Parameter{
+                .SceneColor    = RGColorRT{.Texture = SceneColor, .Load = true},
+                .Mask          = RGTextureSRV{.Texture = Mask},
                 .LinearSampler = SamplerLinearRef,
-                .ViewportWidth = static_cast<float>(View.GetWidth()),
-                .ViewportHeight = static_cast<float>(View.GetHeight()),
+                .ViewportWidth  = static_cast<Float32>(View.GetWidth()),
+                .ViewportHeight = static_cast<Float32>(View.GetHeight()),
             });
-            CmdList.Passes.push_back(std::move(OutlinePass));
         }
 
-        static_cast<IRHIGraphicsPass&>(*CmdList.Passes.back()).SetPresentOutput();
+        // Compile/splice anchor: the per-view graph orders, prunes, realizes,
+        // and constructs the feature-gated chain in one call. Present rides
+        // RGColorRT{.Present} or the outline RMW + PresentOutput carrier.
+        auto ViewGraphPasses = ViewGraph.Compile();
+        if (!ViewGraphPasses)
+            return std::unexpected(ViewGraphPasses.error().Append("Raster view render-graph compile failed"));
+        CmdList.Passes.insert(CmdList.Passes.end(),
+                              std::make_move_iterator(ViewGraphPasses->Passes.begin()),
+                              std::make_move_iterator(ViewGraphPasses->Passes.end()));
         return {};
     }
 
@@ -615,12 +473,6 @@ class RasterRenderer final : public IRenderer {
         return RendererFrameConstants{.Time = Time, .ExposureEV100 = ExposureEV100, .LightCount = LightCount};
     }
 
-    RHIRef<RHIGraphicsPipeline>           m_Pipeline                 = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_DeferredPipeline         = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_SelectionMaskPipeline    = nullptr;
-    RHIRef<RHIGraphicsPipeline>           m_SelectionOutlinePipeline = nullptr;
-    RHIRef<RHIComputePipeline>            m_SelectionFilterPipeline  = nullptr;
-    RHIRef<RHIComputePipeline>            m_CullingPipeline          = nullptr;
     RHIRef<RHISampler>                    m_SamplerLinear            = nullptr;
     RHIRef<RHISampler>                    m_SamplerAniso             = nullptr;
 };

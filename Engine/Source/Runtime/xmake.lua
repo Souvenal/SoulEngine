@@ -70,6 +70,9 @@ includes("Material")
 includes("Scene")
 includes("TaskGraph")
 includes("Application")
+-- RenderGraph is a Renderer dependency; declare it before Renderer so target
+-- and C++ module dependency order matches (RenderGraph only needs Core + RHI).
+includes("RenderGraph")
 includes("Renderer")
 includes("Editor")
 includes("Launch")
