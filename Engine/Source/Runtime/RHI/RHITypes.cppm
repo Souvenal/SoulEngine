@@ -167,12 +167,14 @@ struct enum_range<SoulEngine::RHITransientBufferUsage> {
 export namespace SoulEngine {
 
 struct RHITransientConstantBufferDesc {
-    std::span<const std::byte> Data = {};
+    Uint64                                      SizeBytes   = 0;
+    std::optional<std::span<const std::byte>>   InitialData = std::nullopt;
 };
 
 struct RHITransientShaderStorageBufferDesc {
-    std::span<const std::byte> Data  = {};
-    RHITransientBufferUsage    Usage = RHITransientBufferUsage::ShaderRead;
+    Uint64                                      SizeBytes   = 0;
+    RHITransientBufferUsage                      Usage       = RHITransientBufferUsage::ShaderRead;
+    std::optional<std::span<const std::byte>>   InitialData = std::nullopt;
 };
 
 /// @brief Logical per-frame uniform buffer resolved by the active RHI backend.

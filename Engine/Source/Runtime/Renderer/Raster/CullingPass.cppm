@@ -6,26 +6,16 @@ export module Renderer:RasterPasses.CullingPass;
 
 import Core;
 import RHI;
+import RenderGraph;
 import Scene;
 
 export import std;
 
 export namespace SoulEngine {
 
-struct CullingPassInput {
-    RHIRef<RHITransientShaderStorageBuffer> SceneInstanceBuffer  = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> SceneIndirectBuffer  = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> GeometryBuffer       = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> ViewInstanceBuffer   = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> ViewIndirectBuffer   = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> ViewCounterBuffer    = nullptr;
-    Uint32                                  InstanceCount        = 0;
-    Uint32                                  CommandCount         = 0;
-};
-
 struct CullingPushConstants {
     Uint32 InstanceCount = 0;
-    Uint32 CommandCount = 0;
+    Uint32 CommandCount  = 0;
 };
 
 /// @brief Per-view culling pass (placeholder: copies instances one-to-one).
@@ -34,44 +24,60 @@ struct CullingPushConstants {
 /// and regenerates ViewIndirectBuffer grouped by geometryID on the GPU.
 class CullingPass final : public IRHIComputePass {
   public:
-    explicit CullingPass(RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass("CullingPass", std::move(Pipeline)) {}
+    static constexpr StringView Name = "CullingPass";
 
-    auto SetInput(CullingPassInput Input) -> void {
-        m_Input = std::move(Input);
+    /// Static pipeline descriptor for PipelineRegistry::Register<CullingPass>().
+    [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
+        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "CullingCompute.slang";
+        return ComputePipelineRequest{
+            .ComputeEntry = {.SourcePath = ShaderPath, .EntryPoint = "cullMain"},
+        };
     }
+
+    struct Parameter {
+        RGStorageBufferUAV ViewInstances  = {};
+        RGStorageBufferUAV ViewIndirect   = {};
+        RGStorageBufferUAV ViewCounter    = {};
+        RGStorageBufferSRV SceneInstances = {};
+        RGStorageBufferSRV SceneIndirect  = {};
+        RGStorageBufferSRV GeometryTable  = {};
+        Uint32 InstanceCount = 0;  ///< CPU passthrough: dispatch size.
+        Uint32 CommandCount  = 0;
+    };
+
+    CullingPass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
+        : IRHIComputePass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
-        auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet() || !Input.SceneInstanceBuffer || !Input.SceneIndirectBuffer ||
-            !Input.GeometryBuffer || !Input.ViewInstanceBuffer || !Input.ViewIndirectBuffer ||
-            !Input.ViewCounterBuffer || Input.InstanceCount == 0)
+        if (!m_Parameter.SceneInstances.Ref || !m_Parameter.SceneIndirect.Ref ||
+            !m_Parameter.GeometryTable.Ref || !m_Parameter.ViewInstances.Ref || !m_Parameter.ViewIndirect.Ref ||
+            !m_Parameter.ViewCounter.Ref || m_Parameter.InstanceCount == 0)
             return std::unexpected(ErrorMessage("Culling pass resources are not ready"));
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_cullPass.sceneInstances", std::move(Input.SceneInstanceBuffer), true},
-                RHIShaderBindingRequest{"g_cullPass.sceneIndirectCommands", std::move(Input.SceneIndirectBuffer), true},
-                RHIShaderBindingRequest{"g_cullPass.geometryTable.records", std::move(Input.GeometryBuffer), true},
-                RHIShaderBindingRequest{"g_cullPass.viewInstances", std::move(Input.ViewInstanceBuffer), false},
-                RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", std::move(Input.ViewIndirectBuffer), false},
-                RHIShaderBindingRequest{"g_cullPass.viewCounter", std::move(Input.ViewCounterBuffer), false},
+                RHIShaderBindingRequest{"g_cullPass.sceneInstances", m_Parameter.SceneInstances.Ref, true},
+                RHIShaderBindingRequest{"g_cullPass.sceneIndirectCommands", m_Parameter.SceneIndirect.Ref, true},
+                RHIShaderBindingRequest{"g_cullPass.geometryTable.records", m_Parameter.GeometryTable.Ref, true},
+                RHIShaderBindingRequest{"g_cullPass.viewInstances", m_Parameter.ViewInstances.Ref, false},
+                RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", m_Parameter.ViewIndirect.Ref, false},
+                RHIShaderBindingRequest{"g_cullPass.viewCounter", m_Parameter.ViewCounter.Ref, false},
             }); !R)
             return std::unexpected(R.error());
 
         if (auto R = PushConstants(0, CullingPushConstants{
-                .InstanceCount = Input.InstanceCount,
-                .CommandCount = Input.CommandCount,
+                .InstanceCount = m_Parameter.InstanceCount,
+                .CommandCount = m_Parameter.CommandCount,
             }); !R)
             return std::unexpected(R.error());
 
-        Dispatch((std::max(Input.InstanceCount, Input.CommandCount) + 63) / 64);
+        Dispatch((std::max(m_Parameter.InstanceCount, m_Parameter.CommandCount) + 63) / 64);
         return {};
     }
 
   private:
-    CullingPassInput m_Input = {};
+    Parameter m_Parameter = {};
 };
 
 } // namespace SoulEngine

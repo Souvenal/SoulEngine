@@ -16,5 +16,6 @@ Each module has its own `CONTEXT.md` with module-specific terms, architecture, a
 | Resource | `Engine/Source/Runtime/Resource/` | [Resource](Engine/Source/Runtime/Resource/CONTEXT.md) |
 | Material | `Engine/Source/Runtime/Material/` | [Material](Engine/Source/Runtime/Material/CONTEXT.md) |
 | Renderer | `Engine/Source/Runtime/Renderer/` | [Renderer](Engine/Source/Runtime/Renderer/CONTEXT.md) |
+| RenderGraph | `Engine/Source/Runtime/RenderGraph/` | [RenderGraph](Engine/Source/Runtime/RenderGraph/CONTEXT.md) |
 | Scene | `Engine/Source/Runtime/Scene/` | [Scene](Engine/Source/Runtime/Scene/CONTEXT.md) |
 | TaskGraph | `Engine/Source/Runtime/TaskGraph/` | [TaskGraph](Engine/Source/Runtime/TaskGraph/CONTEXT.md) |

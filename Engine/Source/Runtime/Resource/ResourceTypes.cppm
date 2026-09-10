@@ -101,24 +101,6 @@ template <ManagedResource T>
     return Value.Object.get();
 }
 
-/// @brief Async graphics pipeline request descriptor.
-struct GraphicsPipelineRequest {
-    ShaderEntry              VertEntry         = {};
-    ShaderEntry              FragEntry         = {};
-    RHIVertexInputLayoutDesc VertexInputLayout = {};
-    RHIPrimitiveTopology     Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState       Rasterizer        = {};
-    RHIBlendState            Blend             = {};
-    RHIDepthStencilState     DepthStencil      = {};
-    std::vector<RHIFormat>   ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                DepthFormat       = RHIFormat::Unknown;
-};
-
-/// @brief Async compute pipeline request descriptor.
-struct ComputePipelineRequest {
-    ShaderEntry ComputeEntry = {};
-};
-
 /// @brief Async hardware ray-tracing pipeline request descriptor.
 struct RayTracingPipelineRequest {
     ShaderEntry                                RayGeneration     = {};

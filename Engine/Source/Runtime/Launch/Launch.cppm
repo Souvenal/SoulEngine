@@ -15,6 +15,7 @@ import WindowSystem;
 import Application;
 import Editor;
 import RHI;
+import RenderGraph;
 import Scene;
 import Renderer;
 import TaskGraph;
@@ -113,8 +114,13 @@ class EngineLoop {
             return std::unexpected(WinResult.error().Append("Failed to create window system"));
         m_WindowSystem = std::move(*WinResult);
 
+        auto& Cfg = ConfigManager::Get().GetConfig();
+
         // ── RHI context — process-wide singleton ──────────────────────────
-        if (auto R = RHIRenderDevice::Create(m_WindowSystem.get()); !R) {
+        const auto Backend = Cfg.Render.RHI.value_or("Vulkan");
+        if (!Cfg.Render.RHI.has_value())
+            LogInfo("[Render].RHI not set; falling back to the default '{}' backend", Backend);
+        if (auto R = RHIRenderDevice::Create(Backend, m_WindowSystem.get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Failed to create RHI context"));
         }
@@ -132,7 +138,9 @@ class EngineLoop {
 
         ResourceManager::Get().Init();
 
-        auto&      Cfg             = ConfigManager::Get().GetConfig();
+        // Cross-frame pipeline registry 
+        PipelineRegistry::Get().Init();
+
         const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Raster");
         if (auto R = SelectRenderer(InitialRenderer); !R) {
             Shutdown();
@@ -211,6 +219,11 @@ class EngineLoop {
         m_Editor.ReleaseRHIResources();
 
         CloseRenderers();
+
+        // Release cross-frame pipeline refs while the deferred-deletion queue
+        // and native device are still alive — MUST precede
+        // RHIRenderDevice::Destroy()
+        PipelineRegistry::Get().Clear();
 
         // Release GPU textures before VMA allocator dies.
         ResourceManager::Get().Clear();

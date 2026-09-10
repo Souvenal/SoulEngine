@@ -264,7 +264,8 @@ class RayTracingRenderer final : public IRenderer {
         const auto GeometryInstanceDataBytes = std::as_bytes(std::span{GeometryInstances});
         auto GeometryInstanceBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = GeometryInstanceDataBytes,
+                .SizeBytes = static_cast<Uint64>(GeometryInstanceDataBytes.size()),
+                .InitialData = GeometryInstanceDataBytes
             });
         if (!GeometryInstanceBuffer)
             return std::unexpected(GeometryInstanceBuffer.error().Append(
@@ -275,7 +276,8 @@ class RayTracingRenderer final : public IRenderer {
             GeometryGpuRecords.emplace_back(Geometry.BuildGpuData());
         auto GeometryBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = std::as_bytes(std::span{GeometryGpuRecords}),
+                .SizeBytes = static_cast<Uint64>(std::as_bytes(std::span{GeometryGpuRecords}).size()),
+                .InitialData = std::as_bytes(std::span{GeometryGpuRecords})
             });
         if (!GeometryBuffer)
             return std::unexpected(
@@ -283,7 +285,8 @@ class RayTracingRenderer final : public IRenderer {
         const auto MaterialDataBytes = std::as_bytes(std::span{MaterialRecords});
         auto MaterialBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = MaterialDataBytes,
+                .SizeBytes = static_cast<Uint64>(MaterialDataBytes.size()),
+                .InitialData = MaterialDataBytes
             });
         if (!MaterialBuffer)
             return std::unexpected(
@@ -292,7 +295,8 @@ class RayTracingRenderer final : public IRenderer {
         const auto LightBytes  = std::as_bytes(std::span{Lights});
         auto LightBuffer =
             RHIRenderDevice::Get().CreateTransientShaderStorageBuffer(RHITransientShaderStorageBufferDesc{
-                .Data = LightBytes,
+                .SizeBytes = static_cast<Uint64>(LightBytes.size()),
+                .InitialData = LightBytes
             });
         if (!LightBuffer)
             return std::unexpected(
@@ -308,14 +312,16 @@ class RayTracingRenderer final : public IRenderer {
         };
         const auto ViewData = RendererViewConstants{View};
         auto FrameBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
-            .Data = std::as_bytes(std::span{&FrameData, 1}),
-        });
+                .SizeBytes = static_cast<Uint64>(std::as_bytes(std::span{&FrameData, 1}).size()),
+                .InitialData = std::as_bytes(std::span{&FrameData, 1})
+            });
         if (!FrameBuffer)
             return std::unexpected(
                 FrameBuffer.error().Append("RayTracingRenderer frame transient constant allocation failed"));
         auto ViewBuffer = RHIRenderDevice::Get().CreateTransientConstantBuffer(RHITransientConstantBufferDesc{
-            .Data = std::as_bytes(std::span{&ViewData, 1}),
-        });
+                .SizeBytes = static_cast<Uint64>(std::as_bytes(std::span{&ViewData, 1}).size()),
+                .InitialData = std::as_bytes(std::span{&ViewData, 1})
+            });
         if (!ViewBuffer)
             return std::unexpected(
                 ViewBuffer.error().Append("RayTracingRenderer view transient constant allocation failed"));
