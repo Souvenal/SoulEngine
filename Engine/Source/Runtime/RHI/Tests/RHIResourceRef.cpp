@@ -202,7 +202,7 @@ class MockRenderDevice final : public RHIRenderDevice {
         return std::unexpected(ErrorMessage("mock TLAS creation is not implemented"));
     }
 
-    [[nodiscard]] auto Execute(RenderPassList&) -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto Execute(RenderResult&) -> std::expected<void, ErrorMessage> override {
         return {};
     }
     [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
@@ -217,17 +217,21 @@ class MockRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 override {
         return 0;
     }
-    auto WaitIdle() -> void override {}
-    auto Shutdown() -> void override {
+    [[nodiscard]] auto WaitIdle() -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+    [[nodiscard]] auto Shutdown() -> std::expected<void, ErrorMessage> override {
         m_DeletionQueue.Drain();
+        return {};
     }
 
-    auto Tick() -> void override {
+    [[nodiscard]] auto Tick() -> std::expected<void, ErrorMessage> override {
         if (!m_GpuComplete)
-            return;
+            return {};
         auto Callbacks = std::move(m_CompletionCallbacks);
         for (auto& Complete : Callbacks)
             Complete();
+        return {};
     }
 
     bool   m_FailVertexBuffer    = false;
@@ -357,7 +361,7 @@ TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
     EXPECT_EQ(Copy.TryGet(), nullptr);
 
     Device.m_GpuComplete = true;
-    Device.Tick();
+    ASSERT_TRUE(Device.Tick().has_value());
     EXPECT_EQ(Copy.GetState(), RHIRefState::Ready);
     EXPECT_TRUE(Copy);
     EXPECT_NE(Copy.TryGet(), nullptr);
@@ -387,11 +391,11 @@ TEST(RHIResourceRefTest, CompletionCallbackKeepsPayloadAliveUntilGpuCompletion) 
 
     Buffer = nullptr;
     Copy   = nullptr;
-    Device.Tick();
+    ASSERT_TRUE(Device.Tick().has_value());
     EXPECT_EQ(Device.m_VertexDestructions, 0);
 
     Device.m_GpuComplete = true;
-    Device.Tick();
+    ASSERT_TRUE(Device.Tick().has_value());
     EXPECT_EQ(Device.m_VertexDestructions, 0);
     DrainRHIDeferredDeletions();
     EXPECT_EQ(Device.m_VertexDestructions, 1);
@@ -405,7 +409,7 @@ TEST(RHIResourceRefTest, CompletionCannotOverwriteFailure) {
 
     Buffer.MarkFailed(ErrorMessage("mock completion failure"));
     Device.m_GpuComplete = true;
-    Device.Tick();
+    ASSERT_TRUE(Device.Tick().has_value());
 
     EXPECT_EQ(Buffer.GetState(), RHIRefState::Failed);
     ASSERT_TRUE(Buffer.GetError().has_value());

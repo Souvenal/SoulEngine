@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import Core;
+import RHI;
 import Scene;
 import Renderer;
 import TaskGraph;

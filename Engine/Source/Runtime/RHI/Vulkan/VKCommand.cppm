@@ -399,26 +399,6 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
                                  vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
     }
 
-    auto operator()(const RHIBuildOrUpdateTopLevelAccelerationStructureCmd& Cmd) -> void {
-        auto* TargetPtr = Cmd.TargetRef.TryGet();
-        if (!TargetPtr) {
-            Error = ErrorMessage("TLAS build references an invalid target");
-            return;
-        }
-        auto& Tlas = static_cast<VulkanTopLevelAccelerationStructure&>(*TargetPtr);
-        if (auto R = Tlas.RecordBuild(Buf, Cmd.Instances, Cmd.Mode); !R) {
-            Error = R.error().Append("Failed to record TLAS build");
-            return;
-        }
-        const vk::MemoryBarrier2 BuildBarrier{
-            .srcStageMask  = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-            .srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
-            .dstStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
-            .dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR,
-        };
-        Buf.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &BuildBarrier});
-    }
-
     auto operator()(const RHITraceRaysCmd& Cmd) -> void {
         Buf.traceRaysKHR(m_Pipeline.GetRayGenerationRegion(),
                          m_Pipeline.GetMissRegion(),
@@ -427,10 +407,14 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
                          Cmd.Width,
                          Cmd.Height,
                          Cmd.Depth);
+        // Cross-frame hazard: the TLAS is a single structure, so the next
+        // frame's TLAS build must not start while this frame's trace may
+        // still be reading it. Same-queue submissions may overlap without an
+        // explicit barrier.
         const vk::MemoryBarrier2 TraceBarrier{
             .srcStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
             .srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR,
-            .dstStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dstStageMask  = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
             .dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR,
         };
         Buf.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &TraceBarrier});

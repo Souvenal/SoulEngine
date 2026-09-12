@@ -6,7 +6,6 @@ export module RHI:Command;
 
 export import :Types;
 export import :Pipeline;
-export import :RayTracing;
 import :Ref;
 
 export import std;
@@ -57,13 +56,6 @@ struct RHIDispatchCmd {
     Uint32 GroupCountZ = 1;
 };
 
-/// @brief Build or update a persistent TLAS from renderer-provided logical instances.
-struct RHIBuildOrUpdateTopLevelAccelerationStructureCmd {
-    RHIRef<RHITopLevelAccelerationStructure>      TargetRef = nullptr;
-    std::vector<RHIAccelerationStructureInstance> Instances = {};
-    RHITopLevelAccelerationStructureBuildMode     Mode      = RHITopLevelAccelerationStructureBuildMode::Auto;
-};
-
 /// @brief Dispatch hardware rays through the pipeline-owned shader binding table.
 struct RHITraceRaysCmd {
     Uint32                        Width       = 0;
@@ -90,7 +82,6 @@ using RHICommand = std::variant<RHISetViewportCmd,
                                 RHIDrawCmd,
                                 RHIDrawIndirectCmd,
                                 RHIDispatchCmd,
-                                RHIBuildOrUpdateTopLevelAccelerationStructureCmd,
                                 RHITraceRaysCmd,
                                 RHICopyTextureToBufferCmd>;
 

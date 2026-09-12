@@ -31,83 +31,31 @@ struct alignas(16) RasterIndirectCommand {
 };
 static_assert(sizeof(RasterIndirectCommand) == sizeof(Uint32) * 4);
 
-/// @brief Current-frame CPU tables shared by every camera view.
-/// GPU buffers are graph-created per ViewGraph via Create*Buffer + InitialData.
-struct RasterFrameDrawData {
-    std::vector<InstanceRecord::GpuData> Instances        = {};
-    std::vector<GeometryRecord::GpuData> GeometryRecords  = {};
-    std::vector<MaterialRecord::GpuData> MaterialRecords  = {};
-    std::vector<RasterIndirectCommand>   IndirectCommands = {};
+/// @brief Group the canonically sorted instance table into one indirect draw
+/// per geometry. The instance table must already be sorted by GeometryID
+/// (SceneGpuData's canonical order).
+[[nodiscard]] auto BuildRasterIndirectCommands(const SceneGpuData& DrawData)
+    -> std::vector<RasterIndirectCommand> {
+    std::vector<RasterIndirectCommand> Result = {};
+    for (Uint32 InstanceIndex = 0; InstanceIndex < DrawData.InstanceRecords.size();) {
+        const auto GeometryID = DrawData.InstanceRecords[InstanceIndex].GeometryID;
+        const auto GroupBegin = InstanceIndex;
+        while (InstanceIndex < DrawData.InstanceRecords.size() &&
+               DrawData.InstanceRecords[InstanceIndex].GeometryID == GeometryID)
+            ++InstanceIndex;
 
-    [[nodiscard]] static auto Create(std::span<const InstanceRecord> SourceInstances,
-                                     const RHIRefArray<RHISampledTexture>& Textures)
-        -> std::expected<RasterFrameDrawData, ErrorMessage> {
-        RasterFrameDrawData Result = {};
-        std::unordered_map<const GeometryRecord*, Uint32> GeometryIDs = {};
-        std::unordered_map<const MaterialRecord*, Uint32> MaterialIDs = {};
-        std::vector<Uint32>                               IndexCounts = {};
-        GeometryIDs.reserve(SourceInstances.size());
-        MaterialIDs.reserve(SourceInstances.size());
-        IndexCounts.reserve(SourceInstances.size());
-        Result.Instances.reserve(SourceInstances.size());
-        // Deferred lighting samples material index 0 even for an empty scene.
-        Result.MaterialRecords.emplace_back(MaterialRecord::GpuData{});
-
-        for (const auto& SourceInstance : SourceInstances) {
-            if (!SourceInstance.Geometry)
-                continue;
-
-            const auto& Geometry = *SourceInstance.Geometry;
-            if (!Geometry.PositionBuffer || !Geometry.NormalBuffer || !Geometry.IndexBuffer ||
-                Geometry.IndexCount == 0)
-                continue;
-
-            const auto* GeometryPtr = std::addressof(Geometry);
-            const auto  [It, Inserted] =
-                GeometryIDs.emplace(GeometryPtr, static_cast<Uint32>(Result.GeometryRecords.size()));
-            const auto GeometryID = It->second;
-            if (Inserted) {
-                Result.GeometryRecords.emplace_back(Geometry.BuildGpuData());
-                IndexCounts.emplace_back(Geometry.IndexCount);
-            }
-            Uint32 MaterialID = 0;
-            if (SourceInstance.Material) {
-                const auto* Record = std::addressof(*SourceInstance.Material);
-                const auto [MaterialIt, MaterialInserted] =
-                    MaterialIDs.emplace(Record, static_cast<Uint32>(Result.MaterialRecords.size()));
-                MaterialID = MaterialIt->second;
-                if (MaterialInserted) {
-                    Result.MaterialRecords.emplace_back(Record->BuildGpuData(Textures));
-                }
-            }
-            Result.Instances.emplace_back(SourceInstance.BuildGpuData(GeometryID, MaterialID));
-        }
-
-        std::ranges::sort(Result.Instances, [](const auto& Lhs, const auto& Rhs) {
-            return Lhs.GeometryID < Rhs.GeometryID;
+        // VertexCount is the number of vertex-shader invocations. The
+        // vertex shader uses SV_VertexID to index this Geometry's index
+        // buffer, so the draw count is the Geometry IndexCount.
+        Result.emplace_back(RasterIndirectCommand{
+            .VertexCount   = DrawData.GeometryIndexCounts[GeometryID],
+            .InstanceCount = InstanceIndex - GroupBegin,
+            .FirstVertex   = 0,
+            .FirstInstance = GroupBegin,
         });
-
-        for (Uint32 InstanceIndex = 0; InstanceIndex < Result.Instances.size();) {
-            const auto GeometryID = Result.Instances[InstanceIndex].GeometryID;
-            const auto GroupBegin = InstanceIndex;
-            while (InstanceIndex < Result.Instances.size() &&
-                   Result.Instances[InstanceIndex].GeometryID == GeometryID)
-                ++InstanceIndex;
-
-            // VertexCount is the number of vertex-shader invocations. The
-            // vertex shader uses SV_VertexID to index this Geometry's index
-            // buffer, so the draw count is the Geometry IndexCount.
-            Result.IndirectCommands.emplace_back(RasterIndirectCommand{
-                .VertexCount   = IndexCounts[GeometryID],
-                .InstanceCount = InstanceIndex - GroupBegin,
-                .FirstVertex   = 0,
-                .FirstInstance = GroupBegin,
-            });
-        }
-
-        return Result;
     }
-};
+    return Result;
+}
 
 /// @brief Single-material metallic-roughness forward renderer.
 class RasterRenderer final : public IRenderer {
@@ -157,17 +105,17 @@ class RasterRenderer final : public IRenderer {
         if (Scene.Views.empty() && Editor.Views.empty())
             return Result;
 
-        auto DrawData = RasterFrameDrawData::Create(Scene.Instances, Scene.Textures);
-        if (!DrawData)
-            return std::unexpected(DrawData.error().Append("Raster frame draw-data construction failed"));
+        const auto Instances        = FilterInstances(Scene.Instances);
+        const auto DrawData         = SceneGpuData::Create(Instances, Scene.Lights, Scene.Textures);
+        const auto IndirectCommands = BuildRasterIndirectCommands(DrawData);
 
         for (const auto& View : Scene.Views) {
-            if (auto R = RenderView(Result.CmdList, *DrawData, View, Scene, Editor, nullptr); !R)
+            if (auto R = RenderView(Result.CmdList, DrawData, IndirectCommands, View, Scene, Editor, nullptr); !R)
                 return std::unexpected(R.error().Append("Raster geometry view rendering failed"));
         }
         for (const auto& EditorView : Editor.Views) {
             const auto View = EditorView.ToCameraViewRecord();
-            if (auto R = RenderView(Result.CmdList, *DrawData, View, Scene, Editor, &EditorView); !R)
+            if (auto R = RenderView(Result.CmdList, DrawData, IndirectCommands, View, Scene, Editor, &EditorView); !R)
                 return std::unexpected(R.error().Append("Raster editor-camera view rendering failed"));
         }
 
@@ -175,8 +123,37 @@ class RasterRenderer final : public IRenderer {
     }
 
   private:
+    /// @brief Upload-gate the frame's instances: queue lazy uploads on first
+    /// encounter, then keep only GPU-ready instances for this frame's tables.
+    [[nodiscard]] auto FilterInstances(std::span<const InstanceRecord> SourceInstances)
+        -> std::vector<InstanceRecord> {
+        std::vector<InstanceRecord> Result = {};
+        Result.reserve(SourceInstances.size());
+        for (const auto& SourceInstance : SourceInstances) {
+            if (!SourceInstance.Geometry)
+                continue;
+
+            // Lazy upload: queue buffer creation on first encounter, then
+            // gate on GPU readiness. Freshly loaded geometry skips a frame or
+            // two while the RHI thread uploads it.
+            auto& Geometry = *SourceInstance.Geometry;
+            if (!Geometry.IsUploadRequested(false)) {
+                if (auto R = m_Uploader.Upload(Geometry, false); !R) {
+                    LogWarning("RasterRenderer: geometry upload failed: {}", R.error().ToString());
+                    continue;
+                }
+            }
+            if (!Geometry.IsReadyOnGpu(false))
+                continue;
+
+            Result.emplace_back(SourceInstance);
+        }
+        return Result;
+    }
+
     [[nodiscard]] auto RenderView(RenderPassList&             CmdList,
-                                  const RasterFrameDrawData& DrawData,
+                                  const SceneGpuData&               DrawData,
+                                  std::span<const RasterIndirectCommand> IndirectCommands,
                                   const CameraViewRecord&          View,
                                   const GameSnapshot&               Scene,
                                   const EditorSnapshot&             Editor,
@@ -197,7 +174,7 @@ class RasterRenderer final : public IRenderer {
 
         // Feature gates only — pipeline readiness is Compile's job (Ensure +
         // Pending prune + Ready ref stash). Do not snapshot GetState here.
-        const bool HasInstances = !DrawData.Instances.empty();
+        const bool HasInstances = !DrawData.InstanceRecords.empty();
         const bool EditorSel    = EditorView && Editor.SelectedEntity && HasInstances &&
                                static_cast<bool>(EditorView->SelectionMask);
         // Outline Present policy follows the feature gate (not readiness). If
@@ -211,7 +188,6 @@ class RasterRenderer final : public IRenderer {
 
         const auto FrameData =
             BuildFrameConstants(Scene.Time, View.ExposureEV100, static_cast<Uint32>(Scene.Lights.size()));
-        const auto Lights = BuildLightGpuData(Scene.Lights);
         const auto ViewData = RendererViewConstants{View};
 
         const auto MaterialBytes = std::as_bytes(std::span{DrawData.MaterialRecords});
@@ -253,9 +229,9 @@ class RasterRenderer final : public IRenderer {
         RGStorageBufferHandle SceneIndirect  = {};
         RGStorageBufferHandle GeometryTable  = {};
         if (HasInstances) {
-            const auto InstanceBytes = std::as_bytes(std::span{DrawData.Instances});
+            const auto InstanceBytes = std::as_bytes(std::span{DrawData.InstanceRecords});
             const auto GeometryBytes = std::as_bytes(std::span{DrawData.GeometryRecords});
-            const auto IndirectBytes = std::as_bytes(std::span{DrawData.IndirectCommands});
+            const auto IndirectBytes = std::as_bytes(IndirectCommands);
             SceneInstances = ViewGraph.CreateShaderStorageBuffer(
                 "SceneInstances",
                 RGShaderStorageBufferDesc{
@@ -285,7 +261,7 @@ class RasterRenderer final : public IRenderer {
         // Empty light list still needs a live SSBO binding for deferred lighting;
         // a zeroed 4-byte InitialData keeps the resource contentful.
         static constexpr std::array<std::byte, sizeof(Uint32)> ZeroLightSlot{};
-        const auto LightBytes = std::as_bytes(std::span{Lights});
+        const auto LightBytes = std::as_bytes(std::span{DrawData.LightRecords});
         const auto LightTable = ViewGraph.CreateShaderStorageBuffer(
             "FrameLights",
             RGShaderStorageBufferDesc{
@@ -311,8 +287,8 @@ class RasterRenderer final : public IRenderer {
         RGStorageBufferHandle SelectedIndirect  = {};
 
         if (HasInstances) {
-            const auto InstanceDataSize = DrawData.Instances.size() * sizeof(InstanceRecord::GpuData);
-            const auto IndirectDataSize = DrawData.IndirectCommands.size() * sizeof(RasterIndirectCommand);
+            const auto InstanceDataSize = DrawData.InstanceRecords.size() * sizeof(InstanceRecord::GpuData);
+            const auto IndirectDataSize = IndirectCommands.size() * sizeof(RasterIndirectCommand);
 
             const auto ViewInstances = ViewGraph.CreateShaderStorageBuffer(
                 "ViewInstances",
@@ -342,8 +318,8 @@ class RasterRenderer final : public IRenderer {
                 .SceneInstances = RGStorageBufferSRV{.Buffer = SceneInstances},
                 .SceneIndirect  = RGStorageBufferSRV{.Buffer = SceneIndirect},
                 .GeometryTable  = RGStorageBufferSRV{.Buffer = GeometryTable},
-                .InstanceCount  = static_cast<Uint32>(DrawData.Instances.size()),
-                .CommandCount   = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+                .InstanceCount  = static_cast<Uint32>(DrawData.InstanceRecords.size()),
+                .CommandCount   = static_cast<Uint32>(IndirectCommands.size()),
             });
 
             if (EditorView && Editor.SelectedEntity) {
@@ -364,7 +340,7 @@ class RasterRenderer final : public IRenderer {
                 // The filter shader accumulates per-command instance counts via
                 // InterlockedAdd, so the counters must start at zero every frame.
                 const std::vector<std::byte> ZeroCounters(
-                    DrawData.IndirectCommands.size() * sizeof(Uint32), std::byte{0});
+                    IndirectCommands.size() * sizeof(Uint32), std::byte{0});
                 const auto SelectedCounters = ViewGraph.CreateShaderStorageBuffer(
                     "SelectedCounters",
                     RGShaderStorageBufferDesc{
@@ -379,7 +355,7 @@ class RasterRenderer final : public IRenderer {
                     .SelectedInstances = RGStorageBufferUAV{.Buffer = SelectedInstances},
                     .SelectedIndirect  = RGStorageBufferUAV{.Buffer = SelectedIndirect},
                     .SelectedCounters  = RGStorageBufferUAV{.Buffer = SelectedCounters},
-                    .CommandCount      = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+                    .CommandCount      = static_cast<Uint32>(IndirectCommands.size()),
                     .SelectedEntityId  = static_cast<Uint32>(entt::to_integral(*Editor.SelectedEntity)),
                 });
             }
@@ -399,7 +375,7 @@ class RasterRenderer final : public IRenderer {
                 .LinearSampler      = SamplerLinearRef,
                 .AnisotropicSampler = SamplerAnisoRef,
                 .Textures           = Scene.Textures,
-                .DrawCount          = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+                .DrawCount          = static_cast<Uint32>(IndirectCommands.size()),
             });
         }
 
@@ -445,7 +421,7 @@ class RasterRenderer final : public IRenderer {
                 .ViewBuffer        = {.Buffer = ViewCB},
                 .LinearSampler     = SamplerLinearRef,
                 .Textures          = Scene.Textures,
-                .DrawCount         = static_cast<Uint32>(DrawData.IndirectCommands.size()),
+                .DrawCount         = static_cast<Uint32>(IndirectCommands.size()),
             });
             ViewGraph.AddPass<SelectionOutlinePass>(SelectionOutlinePass::Parameter{
                 .SceneColor    = RGColorRT{.Texture = SceneColor, .Load = true},
@@ -475,6 +451,7 @@ class RasterRenderer final : public IRenderer {
 
     RHIRef<RHISampler>                    m_SamplerLinear            = nullptr;
     RHIRef<RHISampler>                    m_SamplerAniso             = nullptr;
+    GeometryUploader                      m_Uploader                 = {};
 };
 
 RendererFactory::AutoRegistrar<RasterRenderer> RegRasterRenderer{"Raster"};

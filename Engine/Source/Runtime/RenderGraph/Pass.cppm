@@ -15,6 +15,7 @@ export namespace SoulEngine {
 enum class RGUsage : Uint8 {
     Unknown = 0,
     SampledRead,            ///< RGTextureSRV
+    StorageTextureWrite,    ///< RGStorageTextureUAV
     ColorAttachmentWrite,   ///< RGColorRT
     DepthAttachmentWrite,   ///< RGDepthRT
     StorageBufferRead,      ///< RGStorageBufferSRV
@@ -27,6 +28,7 @@ enum class RGUsage : Uint8 {
 
 [[nodiscard]] constexpr auto IsWriteUsage(RGUsage Usage) noexcept -> bool {
     switch (Usage) {
+    case RGUsage::StorageTextureWrite:
     case RGUsage::ColorAttachmentWrite:
     case RGUsage::DepthAttachmentWrite:
     case RGUsage::StorageBufferWrite:

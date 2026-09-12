@@ -7,31 +7,6 @@ module RayTracing;
 static const float kRayEpsilon = 0.001;
 static const float kRayMaxDistance = 10000.0;
 
-public struct RayTracingInstanceData {
-    public uint firstGeometry;
-    public uint geometryCount;
-    public uint entityId;
-};
-
-public struct RayTracingGeometryData {
-    public uint64_t positionAddress;
-    public uint64_t normalAddress;
-    public uint64_t tangentAddress;
-    public uint64_t texCoordAddress;
-    public uint64_t indexAddress;
-    public uint positionByteOffset;
-    public uint normalByteOffset;
-    public uint tangentByteOffset;
-    public uint texCoordByteOffset;
-    public uint indexByteOffset;
-    public uint positionStride;
-    public uint normalStride;
-    public uint tangentStride;
-    public uint texCoordStride;
-    public uint indexStride;
-    public uint materialIndex;
-};
-
 public struct RayTracingFrameData {
     public float time;
     public float exposureEV100;
@@ -42,7 +17,6 @@ public struct RayTracingFrameData {
 public struct RayTracingResources {
     public RaytracingAccelerationStructure tlas;
     public RWTexture2D<float4> output;
-    public RWTexture2D<float4> accumulation;
     public RWTexture2D<float4> primaryNormal;
     public RWTexture2D<uint> primaryEntityId;
     public ConstantBuffer<RayTracingFrameData> frame;
@@ -50,52 +24,10 @@ public struct RayTracingResources {
     public SamplerState              linearSampler;
     public StructuredBuffer<MaterialRecord> materials;
     public StructuredBuffer<LightRecord> lights;
-    public StructuredBuffer<RayTracingInstanceData> instances;
-    public StructuredBuffer<RayTracingGeometryData> geometries;
+    public StructuredBuffer<InstanceRecord> instances;
+    public GeometryRecordTable geometryTable;
 };
 public ParameterBlock<RayTracingResources> g_rayTracing;
-
-float3 loadFloat3(uint64_t address) {
-    float* values = (float*)address;
-    return float3(values[0], values[1], values[2]);
-}
-
-uint loadUint32(uint64_t address) {
-    uint* value = (uint*)address;
-    return value[0];
-}
-
-float3 loadPosition(RayTracingGeometryData geometry, uint vertexIndex) {
-    uint64_t address = geometry.positionAddress + uint64_t(geometry.positionByteOffset) +
-                       uint64_t(vertexIndex) * uint64_t(geometry.positionStride);
-    return loadFloat3(address);
-}
-
-float3 loadNormal(RayTracingGeometryData geometry, uint vertexIndex) {
-    uint64_t address = geometry.normalAddress + uint64_t(geometry.normalByteOffset) +
-                       uint64_t(vertexIndex) * uint64_t(geometry.normalStride);
-    return loadFloat3(address);
-}
-
-float4 loadTangent(RayTracingGeometryData geometry, uint vertexIndex) {
-    uint64_t address = geometry.tangentAddress + uint64_t(geometry.tangentByteOffset) +
-                       uint64_t(vertexIndex) * uint64_t(geometry.tangentStride);
-    float* values = (float*)address;
-    return float4(values[0], values[1], values[2], values[3]);
-}
-
-float2 loadTexCoord(RayTracingGeometryData geometry, uint vertexIndex) {
-    uint64_t address = geometry.texCoordAddress + uint64_t(geometry.texCoordByteOffset) +
-                       uint64_t(vertexIndex) * uint64_t(geometry.texCoordStride);
-    float* values = (float*)address;
-    return float2(values[0], values[1]);
-}
-
-uint loadIndex(RayTracingGeometryData geometry, uint indexIndex) {
-    uint64_t address = geometry.indexAddress + uint64_t(geometry.indexByteOffset) +
-                       uint64_t(indexIndex) * uint64_t(geometry.indexStride);
-    return loadUint32(address);
-}
 
 struct PathPayload {
     float3 position;
@@ -148,9 +80,8 @@ bool traceShadow(float3 origin, float3 direction, float maxDistance) {
 void rayGenMain() {
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 size = DispatchRaysDimensions().xy;
-    uint sampleIndex = uint(g_rayTracing.frame.pathSettings.x);
     uint maxBounces = max(uint(g_rayTracing.frame.pathSettings.y), 1u);
-    uint randomState = hashUint(pixel.x + pixel.y * size.x + sampleIndex * 0x9e3779b9u);
+    uint randomState = hashUint(pixel.x + pixel.y * size.x + asuint(g_rayTracing.frame.time));
 
     float2 jitter = float2(nextRandom(randomState), nextRandom(randomState));
     float2 uv = (float2(pixel) + jitter) / float2(size);
@@ -238,19 +169,14 @@ void rayGenMain() {
         ray.TMax = kRayMaxDistance;
     }
 
-    float3 accumulated = sampleIndex == 0u
-        ? radiance
-        : (g_rayTracing.accumulation[pixel].xyz * float(sampleIndex) + radiance) / float(sampleIndex + 1u);
-    g_rayTracing.accumulation[pixel] = float4(accumulated, 1.0);
-    if (sampleIndex == 0u) {
-        if (primaryPayload.hit != 0u) {
-            g_rayTracing.primaryNormal[pixel] = float4(normalize(primaryPayload.normal), 1.0);
-            g_rayTracing.primaryEntityId[pixel] = primaryPayload.entityId;
-        } else {
-            g_rayTracing.primaryNormal[pixel] = float4(0.0, 0.0, 1.0, 1.0);
-            g_rayTracing.primaryEntityId[pixel] = 0xffffffffu;
-        }
+    if (primaryPayload.hit != 0u) {
+        g_rayTracing.primaryNormal[pixel] = float4(normalize(primaryPayload.normal), 1.0);
+        g_rayTracing.primaryEntityId[pixel] = primaryPayload.entityId;
+    } else {
+        g_rayTracing.primaryNormal[pixel] = float4(0.0, 0.0, 1.0, 1.0);
+        g_rayTracing.primaryEntityId[pixel] = 0xffffffffu;
     }
+    float3 accumulated = radiance;
     accumulated *= exp2(-g_rayTracing.frame.exposureEV100);
     float3 displayColor = accumulated / (accumulated + 1.0);
     displayColor = pow(displayColor, 1.0 / 2.2);
@@ -269,47 +195,35 @@ void shadowMissMain(inout ShadowPayload payload) {
 
 [shader("closesthit")]
 void closestHitMain(inout PathPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
-    RayTracingInstanceData instanceData = g_rayTracing.instances[InstanceID()];
-    if (GeometryIndex() >= instanceData.geometryCount) {
-        payload.hit = 0;
-        return;
-    }
-
-    RayTracingGeometryData geometry = g_rayTracing.geometries[instanceData.firstGeometry + GeometryIndex()];
+    // TLAS slot order matches the instance table: InstanceIndex() is the
+    // zero-based TLAS slot and indexes it directly (InstanceID() would be
+    // the custom index, which is never assigned). The hit's geometry and
+    // material resolve through the instance record — geometry and material
+    // are never bound to each other.
+    InstanceRecord instanceData = g_rayTracing.instances[InstanceIndex()];
     uint firstIndex = PrimitiveIndex() * 3;
-    uint3 indices = uint3(loadIndex(geometry, firstIndex),
-                          loadIndex(geometry, firstIndex + 1),
-                          loadIndex(geometry, firstIndex + 2));
+    VertexInfo vertex0 = g_rayTracing.geometryTable.pullVertex(instanceData.geometryID, firstIndex);
+    VertexInfo vertex1 = g_rayTracing.geometryTable.pullVertex(instanceData.geometryID, firstIndex + 1);
+    VertexInfo vertex2 = g_rayTracing.geometryTable.pullVertex(instanceData.geometryID, firstIndex + 2);
     float3 barycentrics = float3(1.0 - attributes.barycentrics.x - attributes.barycentrics.y,
                                   attributes.barycentrics.x,
                                   attributes.barycentrics.y);
-    float3 position0 = loadPosition(geometry, indices.x);
-    float3 position1 = loadPosition(geometry, indices.y);
-    float3 position2 = loadPosition(geometry, indices.z);
-    float3 normal0 = loadNormal(geometry, indices.x);
-    float3 normal1 = loadNormal(geometry, indices.y);
-    float3 normal2 = loadNormal(geometry, indices.z);
-    float2 uv0 = loadTexCoord(geometry, indices.x);
-    float2 uv1 = loadTexCoord(geometry, indices.y);
-    float2 uv2 = loadTexCoord(geometry, indices.z);
-    float4 objectTangent = float4(1.0, 0.0, 0.0, 1.0);
-    if (hasTexture(g_rayTracing.materials[geometry.materialIndex].normalTexture)) {
-        float4 tangent0 = loadTangent(geometry, indices.x);
-        float4 tangent1 = loadTangent(geometry, indices.y);
-        float4 tangent2 = loadTangent(geometry, indices.z);
-        objectTangent = tangent0 * barycentrics.x + tangent1 * barycentrics.y + tangent2 * barycentrics.z;
-    }
-    float3 objectPosition = position0 * barycentrics.x + position1 * barycentrics.y + position2 * barycentrics.z;
-    float3 geometricNormal = normalize(cross(position1 - position0, position2 - position0));
-    float3 objectNormal = normalize(normal0 * barycentrics.x + normal1 * barycentrics.y + normal2 * barycentrics.z);
+    float4 objectTangent = vertex0.tangent * barycentrics.x + vertex1.tangent * barycentrics.y +
+                           vertex2.tangent * barycentrics.z;
+    float3 objectPosition = vertex0.position * barycentrics.x + vertex1.position * barycentrics.y +
+                            vertex2.position * barycentrics.z;
+    float3 geometricNormal = normalize(cross(vertex1.position - vertex0.position,
+                                             vertex2.position - vertex0.position));
+    float3 objectNormal = normalize(vertex0.normal * barycentrics.x + vertex1.normal * barycentrics.y +
+                                    vertex2.normal * barycentrics.z);
     if (dot(objectNormal, geometricNormal) < 0.0)
         objectNormal = -objectNormal;
     payload.position = mul(ObjectToWorld3x4(), float4(objectPosition, 1.0));
     payload.normal = normalize(mul(objectNormal, (float3x3)ObjectToWorld3x4()));
     payload.tangent = float4(normalize(mul(objectTangent.xyz, (float3x3)ObjectToWorld3x4())), objectTangent.w);
-    payload.materialIndex = geometry.materialIndex;
-    payload.entityId = instanceData.entityId;
-    payload.uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
+    payload.materialIndex = instanceData.materialID;
+    payload.entityId = instanceData.entityID;
+    payload.uv = vertex0.uv * barycentrics.x + vertex1.uv * barycentrics.y + vertex2.uv * barycentrics.z;
     payload.hit = 1;
 }
 

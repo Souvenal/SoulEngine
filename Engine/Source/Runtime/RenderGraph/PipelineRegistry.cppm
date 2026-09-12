@@ -38,6 +38,15 @@ struct ComputePipelineRequest {
     ShaderEntry ComputeEntry = {};
 };
 
+/// @brief Async ray-tracing pipeline request descriptor (moved from
+/// Resource:Types; the Resource pipeline workflow is retired).
+struct RayTracingPipelineRequest {
+    ShaderEntry                                RayGeneration     = {};
+    std::vector<ShaderEntry>                   MissEntries       = {};
+    std::vector<RayTracingHitGroupCompileDesc> HitGroups         = {};
+    Uint32                                     MaxRecursionDepth = 1;
+};
+
 } // namespace SoulEngine
 
 namespace SoulEngine {
@@ -55,6 +64,35 @@ namespace {
 [[nodiscard]] auto SameComputeRequest(const ComputePipelineRequest& A, const ComputePipelineRequest& B) -> bool {
     return A.ComputeEntry.SourcePath == B.ComputeEntry.SourcePath &&
            A.ComputeEntry.EntryPoint == B.ComputeEntry.EntryPoint;
+}
+
+[[nodiscard]] auto SameEntryList(const std::vector<ShaderEntry>& A, const std::vector<ShaderEntry>& B) -> bool {
+    return A.size() == B.size() &&
+           std::ranges::equal(A, B, [](const ShaderEntry& Lhs, const ShaderEntry& Rhs) {
+               return Lhs.SourcePath == Rhs.SourcePath && Lhs.EntryPoint == Rhs.EntryPoint;
+           });
+}
+
+[[nodiscard]] auto SameRayTracingRequest(const RayTracingPipelineRequest& A, const RayTracingPipelineRequest& B)
+    -> bool {
+    const auto SameHitGroups = [](const std::vector<RayTracingHitGroupCompileDesc>& Lhs,
+                                  const std::vector<RayTracingHitGroupCompileDesc>& Rhs) {
+        const auto SameOptionalEntry = [](const std::optional<ShaderEntry>& L, const std::optional<ShaderEntry>& R) {
+            if (L.has_value() != R.has_value())
+                return false;
+            return !L || (L->SourcePath == R->SourcePath && L->EntryPoint == R->EntryPoint);
+        };
+        return Lhs.size() == Rhs.size() &&
+               std::ranges::equal(Lhs, Rhs, [&](const RayTracingHitGroupCompileDesc& L,
+                                                const RayTracingHitGroupCompileDesc& R) {
+                   return L.Type == R.Type && SameOptionalEntry(L.ClosestHit, R.ClosestHit) &&
+                          SameOptionalEntry(L.AnyHit, R.AnyHit) && SameOptionalEntry(L.Intersection, R.Intersection);
+               });
+    };
+    return A.RayGeneration.SourcePath == B.RayGeneration.SourcePath &&
+           A.RayGeneration.EntryPoint == B.RayGeneration.EntryPoint &&
+           SameEntryList(A.MissEntries, B.MissEntries) && SameHitGroups(A.HitGroups, B.HitGroups) &&
+           A.MaxRecursionDepth == B.MaxRecursionDepth;
 }
 
 /// Map an async RHIRef state onto the registry-facing pipeline state.
@@ -155,13 +193,16 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
     // ── Descriptor registration (renderer OnAttach; no async, no refs) ──
 
     /// Typed registration: pulls the descriptor from `TPass::BuildPipelineRequest()`
-    /// and keys it by the pass type. The request's type selects graphics vs compute.
+    /// and keys it by the pass type. The request's type selects graphics,
+    /// compute, or ray tracing.
     template <typename TPass>
     auto Register() -> void {
         if constexpr (std::same_as<decltype(TPass::BuildPipelineRequest()), GraphicsPipelineRequest>)
             RegisterGraphics(PipelineKeyOf<TPass>(), TPass::BuildPipelineRequest());
-        else
+        else if constexpr (std::same_as<decltype(TPass::BuildPipelineRequest()), ComputePipelineRequest>)
             RegisterCompute(PipelineKeyOf<TPass>(), TPass::BuildPipelineRequest());
+        else
+            RegisterRayTracing(PipelineKeyOf<TPass>(), TPass::BuildPipelineRequest());
     }
 
     auto RegisterGraphics(StringView Key, const GraphicsPipelineRequest& Desc) -> void {
@@ -170,6 +211,10 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
 
     auto RegisterCompute(StringView Key, const ComputePipelineRequest& Desc) -> void {
         Register(Key, RHIPassType::Compute, Desc, &Entry::ComputeDesc, SameComputeRequest);
+    }
+
+    auto RegisterRayTracing(StringView Key, const RayTracingPipelineRequest& Desc) -> void {
+        Register(Key, RHIPassType::RayTracing, Desc, &Entry::RayTracingDesc, SameRayTracingRequest);
     }
 
     // ── Lazy start + query (idempotent; D5: first frame that needs the Pass) ─
@@ -191,6 +236,9 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
             break;
         case RHIPassType::Compute:
             StartComputeAsyncLocked(E, Name);
+            break;
+        case RHIPassType::RayTracing:
+            StartRayTracingAsyncLocked(E, Name);
             break;
         default:
             break;
@@ -215,6 +263,8 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
             return MapRefState(E.GraphicsRef.GetState());
         case RHIPassType::Compute:
             return MapRefState(E.ComputeRef.GetState());
+        case RHIPassType::RayTracing:
+            return MapRefState(E.RayTracingRef.GetState());
         default:
             return RGPipelineState::Pending;
         }
@@ -231,6 +281,8 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
             return E.GraphicsRef.GetError();
         case RHIPassType::Compute:
             return E.ComputeRef.GetError();
+        case RHIPassType::RayTracing:
+            return E.RayTracingRef.GetError();
         default:
             return std::nullopt;
         }
@@ -248,6 +300,10 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         return GetReady(Key, RHIPassType::Compute, &Entry::ComputeRef);
     }
 
+    [[nodiscard]] auto GetReadyRayTracing(StringView Key) const -> RHIRef<RHIRayTracingPipeline> {
+        return GetReady(Key, RHIPassType::RayTracing, &Entry::RayTracingRef);
+    }
+
   private:
     PipelineRegistry()  = default;
     ~PipelineRegistry() = default;
@@ -257,8 +313,10 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         RHIPassType                 Kind         = RHIPassType::Unknown;
         GraphicsPipelineRequest     GraphicsDesc = {};
         ComputePipelineRequest      ComputeDesc  = {};
+        RayTracingPipelineRequest   RayTracingDesc = {};
         RHIRef<RHIGraphicsPipeline> GraphicsRef  = nullptr;
         RHIRef<RHIComputePipeline>  ComputeRef   = nullptr;
+        RHIRef<RHIRayTracingPipeline> RayTracingRef = nullptr;
     };
 
     mutable std::mutex                m_Mutex   = {};
@@ -406,6 +464,60 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
                             ShaderStage::Compute,
                             [](const String& PipelineName, const RHIComputePipelineDesc& PipelineDescArg) {
                                 return RHIRenderDevice::Get().CreateComputePipeline(PipelineName, PipelineDescArg);
+                            });
+                    });
+                if (!EnqueueResult)
+                    PipelineRef.MarkFailed(EnqueueResult.error());
+            });
+        if (!EnqueueResult)
+            PipelineRef.MarkFailed(EnqueueResult.error());
+    }
+
+    /// Async create (logic moved from the retired Resource:Pipeline workflow).
+    auto StartRayTracingAsyncLocked(Entry& E, String Name) -> void {
+        auto PipelineRef   = RHIRef<RHIRayTracingPipeline>::Create();
+        auto BindingSetRef = RHIRef<RHIShaderBindingSet>::Create();
+        E.RayTracingRef    = PipelineRef;
+
+        auto Desc          = E.RayTracingDesc;
+        auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
+            [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
+                const auto&       Cfg = ConfigManager::Get();
+                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+
+                auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
+                    .RayGeneration = Desc.RayGeneration,
+                    .MissEntries   = Desc.MissEntries,
+                    .HitGroups     = Desc.HitGroups,
+                    .IncludeDirs   = IncludeDirs,
+                });
+                if (!Program) {
+                    auto Error = Program.error().Append(Format(
+                        "Ray-tracing pipeline shader '{}'", Desc.RayGeneration.SourcePath.string()));
+                    LogError("Failed to prepare ray-tracing pipeline: {}", Error.ToString());
+                    PipelineRef.MarkFailed(std::move(Error));
+                    return;
+                }
+
+                auto PipelineDesc = RHIRayTracingPipelineDesc{
+                    .Program           = std::move(*Program),
+                    .MaxRecursionDepth = Desc.MaxRecursionDepth,
+                };
+                auto EnqueueResult = TaskGraph::Get().EnqueueTask(
+                    ThreadQueue::RHI,
+                    [PipelineRef, BindingSetRef, Name = std::move(Name),
+                     PipelineDesc = std::move(PipelineDesc)]() mutable {
+                        using magic_enum::bitwise_operators::operator|;
+                        PublishPipelineOnRhiThread(
+                            PipelineRef,
+                            BindingSetRef,
+                            std::move(Name),
+                            std::move(PipelineDesc),
+                            ShaderStage::RayGeneration | ShaderStage::Intersection | ShaderStage::AnyHit |
+                                ShaderStage::ClosestHit | ShaderStage::Miss | ShaderStage::Callable,
+                            [](const String& PipelineName, const RHIRayTracingPipelineDesc& PipelineDescArg) {
+                                return RHIRenderDevice::Get().CreateRayTracingPipeline(PipelineName,
+                                                                                       PipelineDescArg);
                             });
                     });
                 if (!EnqueueResult)

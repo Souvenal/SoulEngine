@@ -19,7 +19,6 @@ import RenderGraph;
 import Scene;
 import Renderer;
 import TaskGraph;
-import Resource;
 export import std;
 
 export namespace SoulEngine {
@@ -51,6 +50,18 @@ struct FrameSlot {
 };
 
 constexpr Uint32 kSlotCount = 3;
+
+// Tracy identifies instrumented strings by pointer address, not content
+// (see Tracy manual, "Unique pointers"): identical literals are not
+// guaranteed to pool to one address, and a mismatched pointer silently
+// splits frame sources. Always pass these named constants instead of
+// fresh literals.
+inline constexpr const char* kGameThreadName   = "GameThread";
+inline constexpr const char* kRenderThreadName = "RenderThread";
+inline constexpr const char* kRHIThreadName    = "RHIThread";
+inline constexpr const char* kGameFrameName    = "GameFrame";
+inline constexpr const char* kRenderFrameName  = "RenderFrame";
+inline constexpr const char* kRHIFrameName     = "RHIFrame";
 
 class EngineLoop {
   public:
@@ -136,8 +147,6 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
 
-        ResourceManager::Get().Init();
-
         // Cross-frame pipeline registry 
         PipelineRegistry::Get().Init();
 
@@ -187,7 +196,6 @@ class EngineLoop {
         if (m_RHIThread.joinable())
             m_RHIThread.request_stop();
 
-        ResourceManager::Get().BeginShutdown();
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
@@ -206,7 +214,7 @@ class EngineLoop {
         CloseApplication();
 
         // Release frame slot snapshots and command observers before
-        // ResourceManager::Clear() and RenderDevice::Destroy() tear down VMA.
+        // RenderDevice::Destroy() tears down VMA.
         for (auto& Slot : m_Slots) {
             Slot.GameData     = {};
             Slot.EditorData   = {};
@@ -214,8 +222,7 @@ class EngineLoop {
             Slot.RenderPacket = {};
         }
 
-        // Release editor GPU resources before ResourceManager::Clear() and
-        // RenderDevice::Destroy() tear down the backend.
+        // Release editor GPU resources before RenderDevice::Destroy() tears down the backend.
         m_Editor.ReleaseRHIResources();
 
         CloseRenderers();
@@ -225,10 +232,8 @@ class EngineLoop {
         // RHIRenderDevice::Destroy()
         PipelineRegistry::Get().Clear();
 
-        // Release GPU textures before VMA allocator dies.
-        ResourceManager::Get().Clear();
-
-        RHIRenderDevice::Destroy();
+        if (auto R = RHIRenderDevice::Destroy(); !R)
+            LogError("RHI teardown failed:\n{}", R.error().ToString());
         if (m_WindowSystem) {
             m_WindowSystem->Shutdown();
             m_WindowSystem.reset();
@@ -248,7 +253,7 @@ class EngineLoop {
     // ── Loops ────────────────────────────────────────────────────────────────
 
     auto GameLoop() -> void {
-        tracy::SetThreadName("GameLoop");
+        tracy::SetThreadName(kGameThreadName);
         SetLogThreadRole(LogThreadRole::Game);
         while (!m_FatalError.load(std::memory_order_acquire)) {
             if (m_WindowSystem->Tick())
@@ -272,6 +277,8 @@ class EngineLoop {
             }
             if (m_FatalError.load(std::memory_order_acquire))
                 break;
+
+            FrameMarkStart(kGameFrameName);
 
             // Each engine loop owns an independent ordinal. Render/RHI tasks
             // carry the producer's ordinal and execute when the consumer
@@ -311,11 +318,12 @@ class EngineLoop {
             Slot.Cv.notify_all();
 
             m_GameSlotIndex = (m_GameSlotIndex + 1) % kSlotCount;
+            FrameMarkEnd(kGameFrameName);
         }
     }
 
     auto RenderLoop(std::stop_token Stop) -> void {
-        tracy::SetThreadName("RenderLoop");
+        tracy::SetThreadName(kRenderThreadName);
         SetLogThreadRole(LogThreadRole::Render);
         while (!Stop.stop_requested()) {
             auto& Slot = m_Slots[m_RenderSlotIndex];
@@ -326,6 +334,8 @@ class EngineLoop {
             }
             if (Stop.stop_requested())
                 break;
+
+            FrameMarkStart(kRenderFrameName);
 
             // Advance RenderThread's local frame ordinal before draining or
             // publishing tasks for this frame.
@@ -399,11 +409,12 @@ class EngineLoop {
             Slot.Cv.notify_all();
 
             m_RenderSlotIndex = (m_RenderSlotIndex + 1) % kSlotCount;
+            FrameMarkEnd(kRenderFrameName);
         }
     }
 
     auto RHILoop(std::stop_token Stop) -> void {
-        tracy::SetThreadName("RHILoop");
+        tracy::SetThreadName(kRHIThreadName);
         SetLogThreadRole(LogThreadRole::RHI);
 
         while (!Stop.stop_requested()) {
@@ -423,6 +434,8 @@ class EngineLoop {
             if (Stop.stop_requested() || m_FatalError.load(std::memory_order_acquire))
                 break;
 
+            FrameMarkStart(kRHIFrameName);
+
             if (auto R = RHIRenderDevice::Get().BeginFrame(); !R) {
                 LogError("RHI BeginFrame fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
@@ -436,32 +449,31 @@ class EngineLoop {
             TaskGraph::Get().DrainTasks(ThreadQueue::RHI);
             TaskGraph::Get().DrainFrameTasks(ThreadQueue::RHI);
 
-            // Resource handles are passive state reads; publish completed sampled-texture uploads here
-            // on the RHI thread before the next command list can observe them.
-            RHIRenderDevice::Get().Tick();
+            // Publish completed sampled-texture uploads here on the RHI thread
+            // before the next command list can observe them.
+            if (auto R = RHIRenderDevice::Get().Tick(); !R) {
+                LogError("RHI Tick fatal error:\n{}", R.error().ToString());
+                SignalFatalError();
+                break;
+            }
             // Retire native resources whose last RHIRef was released since the previous frame.
             DrainRHIDeferredDeletions();
-            ResourceManager::Get().TickRhiDependencies();
 
             // Execute borrows the slot-owned packet. RhiConsumedRenderPacket
             // remains false while this call and EndFrame() read it.
-            if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket.CmdList); !R) {
+            if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
                 break;
             }
 
-            // Tracy docs: "put the FrameMark macro after you have completed
-            // rendering the frame. Ideally, that would be right after the
-            // swap buffers command." — EndFrame() does submit + present.
             auto CompletionResult = RHIRenderDevice::Get().EndFrame();
             if (!CompletionResult) {
                 LogError("RHI EndFrame fatal error:\n{}", CompletionResult.error().ToString());
                 SignalFatalError();
                 break;
             }
-            FrameMark;
-
+            
             {
                 std::lock_guard Lock(Slot.Mutex);
                 Slot.Completion = *CompletionResult;
@@ -472,16 +484,24 @@ class EngineLoop {
             // RenderThread may be waiting to replace this packet; notify it
             // even when the GPU timeline has already completed the work.
             Slot.Cv.notify_all();
-            ResourceManager::Get().CollectReleasedResources();
 
             m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
+            FrameMarkEnd(kRHIFrameName);
+
+            // Unnamed master frame mark: feeds the GUI's default numbered
+            // frame set (framerate, frame images). The named continuous
+            // spans above carry the per-stage intervals.
+            FrameMark;
         }
 
         // GPU must finish all in-flight work before resources are destroyed.
         // Application resources (VertexBuffer, etc.) are freed when the app
         // resets; their DeviceBuffer destructors call vmaDestroyBuffer, which
         // fails if the GPU still references them.
-        RHIRenderDevice::Get().WaitIdle();
+        if (auto R = RHIRenderDevice::Get().WaitIdle(); !R) {
+            LogError("RHI WaitIdle fatal error:\n{}", R.error().ToString());
+            SignalFatalError();
+        }
     }
 
     // ── State ───────────────────────────────────────────────────────────────

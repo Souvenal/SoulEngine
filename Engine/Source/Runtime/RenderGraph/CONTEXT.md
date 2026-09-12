@@ -25,6 +25,8 @@ A Parameter field type whose type itself is the access declaration. Nine views:
 `RGConstantBufferSRV`, `RGCopySrc`, `RGCopyDst`. Each carries a `.Ref` payload
 the graph fills: at AddPass for imported resources, at Compile (after
 realization) for graph-created transients. `Record()` reads `m_Parameter.X.Ref`.
+Acceleration structures have no view: BLAS/TLAS builds are frame-start device
+work carried by `RenderResult`, not graph passes.
 _Avoid_: AccessFields-style parallel declaration lists
 
 **Handle**:

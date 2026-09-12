@@ -280,6 +280,12 @@ class VulkanResourceContext final {
     [[nodiscard]] auto GetComputeFamily() const -> Uint32 { return m_ComputeFamily; }
     [[nodiscard]] auto GetTransferFamily() const -> Uint32 { return m_TransferFamily; }
     [[nodiscard]] auto GetFramesInFlight() const -> Uint32 { return m_FramesInFlight; }
+    /// Current frame slot being executed, written by the render device in
+    /// BeginFrame. RHI-thread confined: written and read only while executing
+    /// that thread's frame, so a plain value suffices. Frame-slotted payloads
+    /// (e.g. the TLAS) resolve their internal slot from it.
+    [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 { return m_CurrentFrameIndex; }
+    auto SetCurrentFrameIndex(Uint32 FrameIndex) -> void { m_CurrentFrameIndex = FrameIndex; }
     [[nodiscard]] auto GetTimeline() const -> VulkanTimelineSemaphore& {
         return const_cast<VulkanTimelineSemaphore&>(m_Timeline);
     }
@@ -629,6 +635,7 @@ class VulkanResourceContext final {
     VulkanBufferTracker              m_BufferTracker;
     VulkanTimelineSemaphore           m_Timeline;
     Uint32                           m_FramesInFlight = 2;
+    Uint32                           m_CurrentFrameIndex = 0;
 };
 
 } // namespace SoulEngine

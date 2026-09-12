@@ -20,7 +20,7 @@ Engine startup and the three-thread Game → Render → RHI pipeline.
 ## RHI reference lifetime across slots
 
 A normal command list carries RHIRef<T> values rather than raw RHI observers.
-RHILoop borrows Slot.RenderPacket.CmdList for Execute() and leaves the packet
+RHILoop borrows Slot.RenderPacket for Execute() and leaves the packet
 in the FrameSlot after EndFrame() returns an RHIFrameCompletion. RenderLoop
 waits for the RHI-consumed flag and that completion token immediately before
 replacing the packet, so slot ownership itself proves the RHIRef lifetime.
@@ -31,16 +31,17 @@ after that call returns.
 
 ## Shutdown order
 
-1. Request worker stop, start ResourceManager shutdown, and wake slots.
+1. Request worker stop and wake slots.
 2. Join RenderLoop and RHILoop while TaskGraph is still running, so a worker
    caught mid-frame finishes its in-flight slot against live task services
    instead of failing with spurious "TaskGraph is not running" errors; RHILoop
    waits for GPU idle on exit. TaskGraph stops only after both workers join.
-3. Close the application; clear slot snapshots/render packets; release Editor and renderer GPU owners.
-4. Clear ResourceManager so ordinary RHIRef owners release while the render device/deletion queue still exists.
-5. Destroy the RHI device, then the window system and Editor.
+3. Close the application; clear slot snapshots/render packets; release Editor,
+   renderer, and PipelineRegistry GPU owners while the render device/deletion
+   queue still exists.
+4. Destroy the RHI device, then the window system and Editor.
 
-No RHI ref that may own a native payload may outlive step 5.
+No RHI ref that may own a native payload may outlive step 4.
 
 ## Dependencies
 
@@ -48,7 +49,6 @@ No RHI ref that may own a native payload may outlive step 5.
 - WindowSystem — window creation and events
 - Application — application lifecycle and mutable Scene
 - RHI — singleton lifecycle and RHI-thread execute/tick
-- Resource — request shutdown, dependency polling, resource cleanup
 - Scene — per-frame snapshot
 - Renderer — renderer selection and RenderLoop frame recording
 - TaskGraph — Game/Render/RHI task queues

@@ -13,7 +13,6 @@ import std;
 export import Core;
 export import Material;
 export import RHI;
-export import Resource;
 
 export namespace SoulEngine {
 
@@ -22,19 +21,68 @@ export namespace SoulEngine {
 /// The record owns imported CPU metadata and ref-backed GPU buffers. MeshSystem
 /// owns the record through the scene-local mesh resource cache.
 ///
+/// GPU residency is lazy: the loader fills CPU data only. The renderer-owned
+/// `GeometryUploader` queues buffer creation on first use and sets
+/// `BufferUploadRequested`; the ray-tracing path additionally queues a static
+/// BLAS descriptor once the buffers are Ready and sets `BlasRequested` — the
+/// same step enters the BLAS into a frame's pending-build batch (carried by
+/// RenderResult, built by the device at the start of that frame's execution).
+/// Both flags mean "the request has been issued", never "completed" — actual
+/// usability is the corresponding RHIRef reaching Ready, queried via
+/// `IsReadyOnGpu`. A record may enter an RT frame with a not-yet-built BLAS,
+/// safe because the frame-start AS phase runs the build before every pass.
+///
+/// Mutation rule: `GeometryUploader` is the sole writer of GPU state (buffers,
+/// BLAS, flags). The record itself carries only const queries
+/// (`IsUploadRequested` / `IsReadyOnGpu` / `BuildGpuData`); upload is never a
+/// member operation. Treat the record as read-only outside `GeometryUploader`.
+///
 /// Tangents are stored as xyz plus a fixed-handedness w component. Bitangents
 /// are intentionally not imported or stored; consumers derive them from the
 /// normal and tangent with cross(normal, tangent).
 struct GeometryRecord {
-    String Name     = {};
-    // TODO: Delete this after refractoring RayTracingRenderer
-    String CacheKey = {};
+    String Name = {};
 
-    RHIRef<RHIVertexBuffer> PositionBuffer = nullptr;
-    RHIRef<RHIVertexBuffer> NormalBuffer   = nullptr;
-    RHIRef<RHIVertexBuffer> TangentBuffer  = nullptr;
-    RHIRef<RHIVertexBuffer> TexCoordBuffer = nullptr;
-    RHIRef<RHIIndexBuffer>  IndexBuffer    = nullptr;
+    RHIRef<RHIVertexBuffer>                    PositionBuffer = nullptr;
+    RHIRef<RHIVertexBuffer>                    NormalBuffer   = nullptr;
+    RHIRef<RHIVertexBuffer>                    TangentBuffer  = nullptr;
+    RHIRef<RHIVertexBuffer>                    TexCoordBuffer = nullptr;
+    RHIRef<RHIIndexBuffer>                     IndexBuffer    = nullptr;
+    /// @brief Geometry-owned static BLAS descriptor; queued on demand by the RT path, hollow until built, built once, never updated.
+    RHIRef<RHIBottomLevelAccelerationStructure> Blas          = nullptr;
+
+    /// @brief Set by GeometryUploader once buffer creation has been queued to the RHI thread.
+    bool BufferUploadRequested = false;
+    /// @brief Set by GeometryUploader once BLAS creation has been queued; the
+    /// same step enters the BLAS into the pending build batch.
+    bool BlasRequested = false;
+
+    /// @brief Whether the upload request has been issued: buffers always; with
+    /// NeedBLAS, the BLAS allocation request as well. "Requested", not
+    /// "completed" — see IsReadyOnGpu for actual usability.
+    [[nodiscard]] auto IsUploadRequested(bool NeedBLAS) const -> bool {
+        return BufferUploadRequested && (!NeedBLAS || BlasRequested);
+    }
+
+    /// @brief Whether the requested resources are usable on the GPU: every
+    /// required buffer ref Ready; with NeedBLAS, the BLAS allocation ref Ready
+    /// as well. Absent tangent or texcoord streams do not block readiness. Does
+    /// NOT track the deferred BLAS build (storage materializes at the
+    /// frame-start AS phase).
+    [[nodiscard]] auto IsReadyOnGpu(bool NeedBLAS) const -> bool {
+        if (!BufferUploadRequested)
+            return false;
+        const auto IsReady = [](const auto& Ref) { return Ref.TryGet() != nullptr; };
+        if (!IsReady(PositionBuffer) || !IsReady(NormalBuffer) || !IsReady(IndexBuffer))
+            return false;
+        if (HasTangents && !IsReady(TangentBuffer))
+            return false;
+        if (HasUV0 && !IsReady(TexCoordBuffer))
+            return false;
+        if (NeedBLAS && (!BlasRequested || !IsReady(Blas)))
+            return false;
+        return true;
+    }
 
     /// @brief Shader ABI for the raster geometry address table.
     struct alignas(16) GpuData {
@@ -223,76 +271,9 @@ struct GeometryLoader {
             return hlslpp::interop::float4{hlslpp::float4{Center.x, Center.y, Center.z, std::sqrt(RadiusSquared)}};
         };
 
-        auto&      Device = RHIRenderDevice::Get();
-        const auto Key    = Format("{}#{}", MeshPath, MeshIndex);
-
-        // Vertex attributes share the same RHI creation pattern; keep the
-        // attribute-specific data layout at each call site while centralizing
-        // resource naming and failure logging.
-        const auto CreateVertexBuffer = [&Device,
-                                         &Key](StringView                 AttributeName,
-                                               std::span<const std::byte> Data,
-                                               Uint64                     VertexCount,
-                                               Uint32 Stride) -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> {
-            auto Result = Device.CreateVertexBuffer(Format("{}/{}", Key, AttributeName),
-                                                    {
-                                                        .Data        = Data,
-                                                        .VertexCount = VertexCount,
-                                                        .Stride      = Stride,
-                                                    });
-            if (!Result) {
-                LogError("GeometryLoader: {} buffer creation failed: {}", AttributeName, Result.error().ToString());
-                return std::unexpected(Result.error());
-            }
-            return std::move(*Result);
-        };
-
-        const auto CreateIndexBuffer =
-            [&Device, &Key](std::span<const std::byte> Data,
-                            Uint64 IndexCount) -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> {
-            auto Result = Device.CreateIndexBuffer(Format("{}/Index", Key),
-                                                   {
-                                                       .Data       = Data,
-                                                       .IndexCount = IndexCount,
-                                                   });
-            if (!Result) {
-                LogError("GeometryLoader: index buffer creation failed: {}", Result.error().ToString());
-                return std::unexpected(Result.error());
-            }
-            return std::move(*Result);
-        };
-
-        auto PositionBuffer =
-            CreateVertexBuffer("Position", std::as_bytes(std::span{Positions}), Positions.size(), sizeof(Positions[0]));
-        if (!PositionBuffer)
-            return nullptr;
-
-        auto NormalBuffer =
-            CreateVertexBuffer("Normal", std::as_bytes(std::span{Normals}), Normals.size(), sizeof(Normals[0]));
-        if (!NormalBuffer)
-            return nullptr;
-
-        RHIRef<RHIVertexBuffer> TangentBuffer = nullptr;
-        if (HasTangents && !Tangents.empty()) {
-            auto Result =
-                CreateVertexBuffer("Tangent", std::as_bytes(std::span{Tangents}), Tangents.size(), sizeof(Tangents[0]));
-            if (!Result)
-                return nullptr;
-            TangentBuffer = std::move(*Result);
-        }
-
-        RHIRef<RHIVertexBuffer> TexCoordBuffer = nullptr;
-        if (HasUV0 && !UVs.empty()) {
-            auto Result = CreateVertexBuffer("TexCoord", std::as_bytes(std::span{UVs}), UVs.size(), sizeof(UVs[0]));
-            if (!Result)
-                return nullptr;
-            TexCoordBuffer = std::move(*Result);
-        }
-
-        auto IndexBuffer = CreateIndexBuffer(std::as_bytes(std::span{Indices}), Indices.size());
-        if (!IndexBuffer)
-            return nullptr;
-
+        // lazy upload: the loader fills CPU data only. RHI buffer
+        // creation is deferred to the renderer-owned GeometryUploader, which
+        // runs on the renderer thread on first use.
         LogDebug("GeometryLoader: \"{}[{}]\" successfully loaded, with {} positions, {} normals, {} tangents, {} uv "
                  "coordinates, {} indices",
                  MeshPath,
@@ -305,12 +286,6 @@ struct GeometryLoader {
 
         return std::make_shared<GeometryRecord>(GeometryRecord{
             .Name                = AiMesh->mName.C_Str(),
-            .CacheKey            = Key,
-            .PositionBuffer      = std::move(*PositionBuffer),
-            .NormalBuffer        = std::move(*NormalBuffer),
-            .TangentBuffer       = std::move(TangentBuffer),
-            .TexCoordBuffer      = std::move(TexCoordBuffer),
-            .IndexBuffer         = std::move(*IndexBuffer),
             .IndexCount          = static_cast<Uint32>(Indices.size()),
             .HasUV0              = HasUV0,
             .HasTangents         = HasTangents,

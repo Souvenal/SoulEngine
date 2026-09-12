@@ -26,13 +26,13 @@ Reflected scalar/vector/matrix shape (scalar type, rows, columns).
 Reflected shader-visible resource binding (parameter path, set, binding, type, array count).
 The path is the full shader parameter path within the reflected program, such as
 `g_frameView.view`, and is the stable host-side lookup key inside one pipeline
-layout. It is not a Resource cache key or backend descriptor name.
+layout. It is not an asset cache key or backend descriptor name.
 
 **Shader binding name**:
 Canonical host-side name for one reflected shader resource binding inside one
 linked pipeline layout. It is currently the reflected `Binding::ParameterPath`.
 It must be unique within that pipeline layout and must not be conflated with a
-Resource name, Resource key, asset path, or backend descriptor object name.
+asset name, asset cache key, asset path, or backend descriptor object name.
 
 **PushConstantRange**:
 Reflected push-constant byte range (offset, size).

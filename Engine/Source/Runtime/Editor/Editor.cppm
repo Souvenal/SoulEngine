@@ -17,7 +17,6 @@ import Core;
 import EditorTypes;
 import Application;
 import RHI;
-import Resource;
 import Renderer;
 import Scene;
 import WindowSystem;
@@ -120,7 +119,7 @@ class Editor {
 
     /// @brief Release GPU resource refs. Must be called on the engine main
     /// thread after the render/RHI threads have joined, before
-    /// ResourceManager::Clear() and RenderDevice::Destroy().
+    /// RenderDevice::Destroy().
     auto ReleaseRHIResources() -> void {
         if (m_ImGuiContext) {
             std::scoped_lock Lock(m_TextureQueueMutex);

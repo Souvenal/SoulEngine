@@ -1,5 +1,7 @@
 module;
 
+#include <tracy/Tracy.hpp>
+
 export module TaskGraph;
 
 import std;
@@ -57,7 +59,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
         m_Workers.reserve(WorkerCount);
         for (std::size_t WorkerIndex = 0; WorkerIndex < WorkerCount; ++WorkerIndex)
-            m_Workers.emplace_back([this](std::stop_token Stop) { WorkerLoop(Stop); });
+            m_Workers.emplace_back([this, WorkerIndex](std::stop_token Stop) { WorkerLoop(WorkerIndex, Stop); });
 
         LogInfo("Background worker threads spawned ({})", WorkerCount);
     }
@@ -248,7 +250,12 @@ class TaskGraph final : public Singleton<TaskGraph> {
         Shutdown();
     }
 
-    auto WorkerLoop(std::stop_token Stop) -> void {
+    auto WorkerLoop(std::size_t WorkerIndex, std::stop_token Stop) -> void {
+        // SetThreadName copies the string, so a formatted local is fine here;
+        // pointer identity only matters for names embedded in events (see the
+        // Profiling rule in .agents/rules/cpp-coding-spec.md).
+        const String ThreadName = Format("WorkerThread{}", WorkerIndex);
+        tracy::SetThreadName(ThreadName.c_str());
         SetLogThreadRole(LogThreadRole::Worker);
         while (!Stop.stop_requested()) {
             std::function<void()> Task;

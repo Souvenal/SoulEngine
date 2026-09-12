@@ -6,7 +6,6 @@
 #include <hlsl++.h>
 
 import Scene;
-import Resource;
 
 using namespace SoulEngine;
 

@@ -35,7 +35,6 @@ RHI-thread task enqueued after `Editor::BindWindowSystem()`.
 
 - `Core` — logging, config
 - `RHI` — command list, GPU resource creation
-- `Resource` — UI pipeline/sampler/constant-buffer requests
 - `TaskGraph` — RHI-thread resource creation task
 - `WindowSystem` — platform backend selection; GLFW native handle for `imgui_impl_glfw`
 - Third-party: Dear ImGui (local checkout target, see root `imgui_dir` option)

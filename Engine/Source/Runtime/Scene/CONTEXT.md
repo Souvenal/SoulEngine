@@ -91,7 +91,8 @@ RHIRef render-target bundle needed by the renderer; it carries no native raw poi
 ## Dependencies
 
 - `Core` — types, error handling
-- `Resource` — typed runtime resource refs and snapshot handles
+- `RHI` — ref-backed camera render targets and geometry GPU payloads
+- `Material` — mesh-imported material assets
 - `entt` — Scene Registry and component metadata
 - `libyaml` — internal Scene Loading implementation
 - `hlsl++` — vector and matrix math

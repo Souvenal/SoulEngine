@@ -171,6 +171,40 @@ class VulkanCapability : public Singleton<VulkanCapability> {
                                               vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
                                               vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
 
+        // Hardware ray tracing is an optional all-or-nothing bundle: match the
+        // RT extensions against availability, then keep them only when every
+        // extension AND the required features are present. The supported
+        // features chain is handed to device creation wholesale, so supported
+        // RT features are enabled automatically once the extensions are on.
+        if (auto RtMatch = MatchRequests(
+                m_RayTracingExts,
+                ExtProps,
+                [](const vk::ExtensionProperties& Prop) { return static_cast<const char*>(Prop.extensionName); },
+                "ray-tracing extensions");
+            !RtMatch)
+            return std::unexpected(RtMatch.error());
+        const auto& V12        = m_SupportedFeatures.get<vk::PhysicalDeviceVulkan12Features>();
+        const auto& AsFeatures = m_SupportedFeatures.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>();
+        const auto& RtFeatures = m_SupportedFeatures.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
+        const bool  AllRtExtensions =
+            std::ranges::all_of(m_RayTracingExts, [](const auto& Ext) { return Ext.Enabled; });
+        const bool RtSupported = AllRtExtensions && AsFeatures.accelerationStructure &&
+                                 RtFeatures.rayTracingPipeline && V12.bufferDeviceAddress &&
+                                 V12.descriptorIndexing;
+        if (!RtSupported) {
+            for (auto& Ext : m_RayTracingExts)
+                Ext.Enabled = false;
+            LogWarning("Hardware ray tracing unavailable (extensions: {}, accelerationStructure: {}, "
+                       "rayTracingPipeline: {}, bufferDeviceAddress: {}, descriptorIndexing: {})",
+                       AllRtExtensions,
+                       static_cast<bool>(AsFeatures.accelerationStructure),
+                       static_cast<bool>(RtFeatures.rayTracingPipeline),
+                       static_cast<bool>(V12.bufferDeviceAddress),
+                       static_cast<bool>(V12.descriptorIndexing));
+        } else {
+            LogInfo("Hardware ray tracing enabled");
+        }
+
         // Add ray tracing extensions if they are available
         for (const auto& Ext : m_RayTracingExts) {
             if (Ext.Enabled)

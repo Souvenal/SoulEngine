@@ -1,5 +1,7 @@
 module;
 
+#include <hlsl++.h>
+
 export module RHI:Types;
 
 export import Core;
@@ -50,7 +52,6 @@ class RHIObject {
 };
 
 class RHIRenderTarget;
-class RHITopLevelAccelerationStructure;
 
 // ── Buffer descriptor types ────────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ struct RHISamplerDesc {
 
 /// Polymorphic base for vertex buffer resources and their immutable metadata.
 /// Backend concrete classes (e.g. VulkanVertexBuffer) own GPU allocations.
-/// ResourceManager owns RHIVertexBuffer instances; command lists only observe them.
+/// Higher-level owners keep RHIRef instances; command lists only observe them.
 class RHIVertexBuffer : public RHIObject {
   public:
     RHIVertexBuffer(const RHIVertexBuffer&)                    = delete;
@@ -241,7 +242,7 @@ class RHITransientShaderStorageBuffer : public RHIObject {
 
 /// Shader-visible sampling state object.
 ///
-/// Backends own the native sampler handle. ResourceManager owns RHISampler
+/// Backends own the native sampler handle. Higher-level owners keep RHIRef
 /// instances; command lists only observe them.
 class RHISampler : public RHIObject {
   public:
@@ -310,11 +311,65 @@ class RHIReadbackBuffer : public RHIObject {
     Uint32 m_Size = 0;
 };
 
+// ── Ray-tracing acceleration structures ─────────────────────────────────────
+
+/// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
+struct RHIBottomLevelAccelerationStructureDesc {
+    RHIRef<RHIVertexBuffer> VertexBufferRef = nullptr;
+    RHIRef<RHIIndexBuffer>  IndexBufferRef  = nullptr;
+};
+
+/// GPU payload containing reusable object-space triangle geometry.
+class RHIBottomLevelAccelerationStructure : public RHIObject {
+  public:
+    RHIBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructure&)                    = delete;
+    auto operator=(const RHIBottomLevelAccelerationStructure&) -> RHIBottomLevelAccelerationStructure& = delete;
+    RHIBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructure&&)                         = delete;
+    auto operator=(RHIBottomLevelAccelerationStructure&&) -> RHIBottomLevelAccelerationStructure&      = delete;
+    virtual ~RHIBottomLevelAccelerationStructure()                                                     = default;
+
+  protected:
+    explicit RHIBottomLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
+};
+
+/// One TLAS instance: a BLAS plus its world transform for this frame.
+struct RHITopLevelAccelerationStructureInstance {
+    RHIRef<RHIBottomLevelAccelerationStructure> Blas      = nullptr;
+    hlslpp::float4x4                            Transform = hlslpp::float4x4::identity();
+};
+
+/// Descriptor for a per-frame hollow TLAS.
+///
+/// Instances slot order is the canonical TLAS instance order: the device
+/// packs them 1:1, so Slang InstanceIndex() indexes the renderer's sorted
+/// instance table by the same slot.
+struct RHITopLevelAccelerationStructureDesc {
+    std::vector<RHITopLevelAccelerationStructureInstance> Instances = {};
+};
+
+/// Hollow TLAS handle: instance metadata is recorded at creation; the device
+/// materializes storage and builds it at frame start.
+class RHITopLevelAccelerationStructure : public RHIObject {
+  public:
+    RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
+    auto operator=(const RHITopLevelAccelerationStructure&) -> RHITopLevelAccelerationStructure& = delete;
+    RHITopLevelAccelerationStructure(RHITopLevelAccelerationStructure&&)                         = delete;
+    auto operator=(RHITopLevelAccelerationStructure&&) -> RHITopLevelAccelerationStructure&      = delete;
+    virtual ~RHITopLevelAccelerationStructure()                                                  = default;
+
+    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
+        return ShaderResourceType::AccelerationStructure;
+    }
+
+  protected:
+    explicit RHITopLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
+};
+
 // ── Opaque handle types ───────────────────────────────────────────────────
 
 /// Polymorphic base for shader-readable sampled texture resources.
 /// Backend concrete class (e.g. VulkanSampledTexture) owns the GPU allocation.
-/// ResourceManager owns RHISampledTexture instances.
+/// Higher-level owners keep RHIRef instances of RHISampledTexture.
 class RHISampledTexture : public RHIObject {
   public:
     RHISampledTexture(const RHISampledTexture&)                    = delete;
@@ -440,7 +495,7 @@ enum class RHITextureUsage : Uint32 {
 
 /// Polymorphic base for render-target images (color or depth/stencil).
 /// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
-/// Backend concrete class owns GPU allocation. ResourceManager owns render targets.
+/// Backend concrete class owns GPU allocation. Higher-level owners keep RHIRef instances.
 class RHIRenderTarget : public RHIObject {
   public:
     RHIRenderTarget(const RHIRenderTarget&)                    = delete;

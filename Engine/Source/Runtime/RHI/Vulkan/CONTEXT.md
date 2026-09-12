@@ -16,7 +16,7 @@ FrameSlot-owned RHIRef contract described by the RHI context.
 | **Immediate completion callback** | Callback retained by an immediate-lane timeline point. Async buffer/texture creation captures the RHI ref payload and marks it ready only after the required transfer/graphics chain completes. |
 | **Deferred deletion queue** | RHI-module-owned queue behind GDeferredDeletionQueue. Final RHIRef release enqueues native destruction; RHILoop drains it on the RHI thread after Tick() via DrainRHIDeferredDeletions(), and Shutdown() performs the final drain. |
 | **Transient arena** | Host-visible per-frame uniform or shader-storage backing buffer. The current arena segment is reused only after the matching frame-context timeline wait. |
-| **Swapchain image** | Backend-private image acquired for presentation. PresentSourceRef is transitioned/copied or rendered into it; it is not a Resource payload. |
+| **Swapchain image** | Backend-private image acquired for presentation. PresentSourceRef is transitioned/copied or rendered into it; it is not an engine-owned RHIRef payload. |
 | **Vulkan object naming** | Application-defined `VK_EXT_debug_utils` labels assigned through `VulkanDebugUtils::SetObjectName`. Every Vulkan handle created or allocated and owned by SoulEngine, including internal handles, is required to receive a deterministic name after successful creation. |
 
 ## Debug utilities and object naming
@@ -79,15 +79,23 @@ list. RenderThread waits on that token immediately before replacing the slot's
 RenderResult, so the list's RHIRefs remain alive while the submission is in
 flight.
 
-TLAS backing capacity is fixed after creation for now. An update that exceeds
-the initial instance capacity fails instead of replacing native backing while
-an earlier submission may still reference it.
+TLAS is per-frame: the renderer creates a hollow TLAS each frame, and the AS
+phase allocates storage sized to that frame's instance count, packs the
+recorded instances, and builds once. There is no persistent TLAS backing and
+no capacity; the backing (storage, scratch, host instance buffer) retires with
+the object through deferred deletion.
 
 ## Threading and lifecycle
 
 - Normal runtime native creation is enqueued to ThreadQueue::RHI by
   EnqueueResourceCreation; RHILoop drains that queue before Tick() and
-  Execute().
+  Execute(). Exception: hollow BLAS and TLAS descriptors are created
+  synchronously on the caller thread (Create performs no device calls); their
+  GPU storage allocation and build stay RHI-thread confined in the frame-start
+  AS batch, orchestrated data-driven from RenderResult's pending lists through
+  static Build entry points on the AS payloads (no AS command types — ADR 13):
+  the BLAS batch shares one alignment-split scratch; each TLAS owns an aligned
+  persistent scratch.
 - VulkanImmediateContext, command pools, descriptors, frame arenas, and queue
   submission are RHI-thread confined during normal operation. WaitFinish() is
   the explicit exception: it performs only a read-only host wait on the device

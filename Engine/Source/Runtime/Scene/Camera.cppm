@@ -100,14 +100,19 @@ struct CameraRenderTargetsLoader {
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::R16G16B16A16_SFLOAT,
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource,
+            // ShaderStorage: the ray-tracing renderer writes primary normals
+            // as a storage image.
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource | RHITextureUsage::ShaderStorage,
         };
         const RHIRenderTargetDesc EntityIdDesc{
             .Width  = Width,
             .Height = Height,
             .Format = RHIFormat::R32_UINT,
-            // TransferSrc enables editor picking readback copies.
-            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource | RHITextureUsage::TransferSrc,
+            // TransferSrc enables editor picking readback copies;
+            // ShaderStorage lets the ray-tracing renderer write primary
+            // entity IDs as a storage image.
+            .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource |
+                      RHITextureUsage::TransferSrc | RHITextureUsage::ShaderStorage,
         };
         const RHIRenderTargetDesc MaterialIdDesc{
             .Width  = Width,

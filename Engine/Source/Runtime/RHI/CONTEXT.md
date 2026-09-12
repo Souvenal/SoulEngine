@@ -19,10 +19,10 @@ handles and record declarative commands.
 | **Frame completion** | Backend-independent token returned by EndFrame(). The owning FrameSlot retains its RenderResult until WaitFinish() confirms GPU completion. |
 | **Shader parameters** | Copyable CPU-side values partitioned by reflected descriptor-set layout. RHIShaderParameterResources carries ref-backed sampled textures, samplers, and render targets used by that snapshot. |
 | **Transient buffers and arenas** | RenderDevice creates typed, immediately-ready `RHIRef` transient uniform/storage-buffer resources from data descriptors. The RHI frame task copies data into the current backend frame arena after resetting that frame's region and resolves the backend slice used by shader binding. A transient ref is valid only for the logical frame in which it was created. |
-| **RenderDevice** | Process-wide RHI singleton. Its create APIs return RHIRef<T> immediately and queue backend-native construction to ThreadQueue::RHI; Execute() consumes a command list; the pure-virtual Tick() retires backend-native completions. Deferred destruction is drained separately by RHILoop through DrainRHIDeferredDeletions(). |
+| **RenderDevice** | Process-wide RHI singleton. Its create APIs return RHIRef<T> immediately and queue backend-native construction to ThreadQueue::RHI (hollow BLAS/TLAS descriptors excepted: synchronous, no device calls); Execute() consumes the whole RenderResult frame packet; the pure-virtual Tick() retires backend-native completions. Deferred destruction is drained separately by RHILoop through DrainRHIDeferredDeletions(). |
 | **Ready resource** | A ref for which `operator bool()` is true and whose payload can be read through `operator->`, `operator*`, or `TryGet()`. GPU-uploaded buffers/textures become ready only when their immediate-context completion callback retires. |
 | **Render target / present source** | Engine-owned ref-backed attachment image. PresentSourceRef is the final color output; the backend copies/blits/renders it into a backend-private swapchain image. |
-| **Swapchain image** | Backend-private presentation image; never a Resource-managed sampled texture or an RHIRef exposed to Renderer. |
+| **Swapchain image** | Backend-private presentation image; never an engine-owned sampled texture or an RHIRef exposed to Renderer. |
 | **Graphics / ray-tracing pipeline** | Backend-polymorphic pipeline payload retained by bind, draw, push-constant, parameter-binding, or trace commands. |
 | **Frame-affined task** | A TaskGraph callback tagged with the producer thread's frame ordinal. The RHI queue executes only callbacks matching the current RHI thread ordinal. |
 | **Transient data upload** | A transient RHI resource creation task owns a byte snapshot, allocates the current Vulkan arena after frame reset, writes the data, and publishes a Ready `RHIRef` before command recording. |
@@ -68,14 +68,13 @@ to ordinary RHI resources.
 
 ## Relationships
 
-- RHI does not import Resource and does not use ResourceHandle<T>.
-- Resource, Scene, and Renderer may own/ref-count higher-level request objects;
-  a recorded command owns the RHI-lifetime portion through RHIRef<T>.
+- Scene, Renderer, Editor, and other higher-level owners keep RHIRef values;
+  a recorded command owns the RHI-lifetime portion through copied RHIRef<T>.
 - A caller that owns a borrowed command list must retain every ref-backed
   command resource until that submission is no longer GPU-visible. The
   backend returns an RHIFrameCompletion token so the caller can wait at the
   packet replacement boundary.
-- Resource readiness is separate from submission lifetime: GpuPending means
+- Payload readiness is separate from submission lifetime: GpuPending means
   a newly created payload is not recordable; an in-flight submitted Ready
   payload remains alive through command-list retention.
 - Frame-affined transient creation tasks retain byte snapshots until the RHI

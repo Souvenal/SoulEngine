@@ -160,7 +160,7 @@ Details:
 2. `m_FatalError = true`, `notify_all`, `TaskGraph.Shutdown()`
 3. request_stop + join RenderLoop
 4. request_stop + join RHILoop (RHILoop calls WaitIdle before returning)
-5. Release Application, FrameSlot, Editor, Renderer, and ResourceManager owners while the render-device deletion queue is valid
+5. Release Application, FrameSlot, Editor, Renderer, and PipelineRegistry owners while the render-device deletion queue is valid
 6. RenderDevice::Destroy after GPU idle; backend shutdown drains in-flight submissions and deferred native destruction
 7. WindowDisplay::Shutdown
 

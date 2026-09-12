@@ -1,5 +1,3 @@
-module;
-
 export module RHI:Pass;
 
 import Core;
@@ -234,19 +232,6 @@ class IRHIRayTracingPass : public IRHIPass {
     }
 
   protected:
-    auto BuildOrUpdateTopLevelAccelerationStructure(
-        RHIRef<RHITopLevelAccelerationStructure>          TargetRef,
-        std::span<const RHIAccelerationStructureInstance> Instances,
-        RHITopLevelAccelerationStructureBuildMode Mode = RHITopLevelAccelerationStructureBuildMode::Auto) -> void {
-        if (!TargetRef)
-            return;
-        m_Commands.emplace_back(RHIBuildOrUpdateTopLevelAccelerationStructureCmd{
-            .TargetRef = std::move(TargetRef),
-            .Instances = std::vector<RHIAccelerationStructureInstance>{Instances.begin(), Instances.end()},
-            .Mode      = Mode,
-        });
-    }
-
     auto TraceRays(Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
         m_Commands.emplace_back(RHITraceRaysCmd{
             .Width = Width,

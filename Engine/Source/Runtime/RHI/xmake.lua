@@ -2,7 +2,7 @@ target("RHI")
     set_kind("moduleonly")
 
     add_deps("Core", "Shader", "WindowSystem", "TaskGraph")
-    add_packages("magic_enum", "imgui", "imgui-club", {public = true})
+    add_packages("magic_enum", "imgui", "imgui-club", "hlslpp", {public = true})
 
     add_files("*.cppm")      -- RHI primary module + partitions
 
@@ -15,11 +15,11 @@ target("VMA")
 target("RHIVulkan")
     set_kind("moduleonly")
 
-    add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw", "magic_enum", "imgui", "imgui-club", {public = true})
+    add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw", "magic_enum", "imgui", "imgui-club", "hlslpp", {public = true})
     add_deps("RHI", "VMA", "WindowSystem", "TaskGraph")
     add_files("Vulkan/*.cppm")
 
 test_module("RHI", {
     additional_deps     = {"RHIVulkan", "ShaderCompiler", "WindowSystem"},
-    additional_packages = {"glfw", "vulkan-headers", "imgui", "imgui-club"},
+    additional_packages = {"glfw", "vulkan-headers", "imgui", "imgui-club", "hlslpp"},
 })

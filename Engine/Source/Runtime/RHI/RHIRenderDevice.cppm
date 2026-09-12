@@ -1,3 +1,7 @@
+module;
+
+#include <imgui_threaded_rendering.h>
+
 export module RHI:RenderDevice;
 
 export import Core;
@@ -6,8 +10,8 @@ export import std;
 import :Types;
 import :Ref;
 import :Pipeline;
-import :RayTracing;
 import :Pass;
+import :Command;
 
 namespace SoulEngine {
 namespace {
@@ -26,6 +30,22 @@ namespace {
 } // namespace SoulEngine
 
 export namespace SoulEngine {
+
+/// @brief Per-frame RHI packet produced by a renderer, consumed by Execute().
+///
+/// Owned by RHI so the frame contract is stable: new per-frame payload lands
+/// here instead of growing the Execute signature. Field types must be RHI
+/// module or RHI-hosted third-party types. FrameSlot retention keeps every
+/// referenced payload alive until GPU completion.
+struct RenderResult {
+    RenderPassList CmdList = {};
+    /// Hollow BLAS descriptors the device builds at frame start, before any pass.
+    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> PendingBlasBuilds = {};
+    /// Hollow per-frame TLAS handles, built after the BLAS batch.
+    std::vector<RHIRef<RHITopLevelAccelerationStructure>> PendingTlasBuilds = {};
+    /// Editor ImGui draw data for this frame, consumed on the RHI thread.
+    UPtr<ImDrawDataSnapshot> ImGuiSnapshot = nullptr;
+};
 
 enum class RHIBackendType {
     Unknown = 0,
@@ -99,7 +119,7 @@ class RHIRenderDevice {
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTopLevelAccelerationStructure")); }
 
     /// @brief Retire backend-native completion callbacks. Called once per frame on the RHI thread.
-    virtual auto Tick() -> void { NotImplemented("Tick"); }
+    [[nodiscard]] virtual auto Tick() -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Tick")); }
 
     /// @brief Create a frame-affined transient constant buffer from a data snapshot.
     [[nodiscard]] virtual auto CreateTransientConstantBuffer(StringView                         Name,
@@ -127,13 +147,14 @@ class RHIRenderDevice {
     /// @brief Prepare the current backend frame slot before frame-affined tasks run.
     [[nodiscard]] virtual auto BeginFrame() -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("BeginFrame")); }
 
-    /// @brief Execute a frame's worth of RHI commands borrowed from the caller.
+    /// @brief Execute one frame packet borrowed from the caller.
     ///
-    /// Records the current frame's commands after BeginFrame() has completed,
-    /// but does not take ownership of PassList.  The caller keeps the packet
-    /// alive until WaitFinish() confirms that its submission is no longer GPU
-    /// visible.
-    [[nodiscard]] virtual auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Execute")); }
+    /// Records the frame's AS work first — the pending BLAS batch, then each
+    /// TLAS build — followed by the pass list, after BeginFrame() has
+    /// completed. Does not take ownership of Result; the caller keeps the
+    /// packet alive until WaitFinish() confirms its submission is no longer
+    /// GPU visible.
+    [[nodiscard]] virtual auto Execute(RenderResult& Result) -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Execute")); }
 
     /// @brief Finish and submit the current backend frame slot.
     ///
@@ -157,13 +178,13 @@ class RHIRenderDevice {
     /// @brief Block the CPU until all GPU work completes.
     /// Safe to call at any point after Init(); required before destroying
     /// GPU resources that may still be referenced by in-flight commands.
-    virtual auto WaitIdle() -> void { NotImplemented("WaitIdle"); }
+    [[nodiscard]] virtual auto WaitIdle() -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("WaitIdle")); }
 
     // ── Shutdown ─────────────────────────────────────────────────────────
 
     /// @brief Graceful teardown before destruction.
     /// Must be called before the object is destroyed.
-    virtual auto Shutdown() -> void { NotImplemented("Shutdown"); }
+    [[nodiscard]] virtual auto Shutdown() -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Shutdown")); }
 
     // ── Singleton lifecycle ──────────────────────────────────────────────────
 
@@ -182,7 +203,7 @@ class RHIRenderDevice {
     /// Calls Shutdown() on the backend instance, then releases ownership.
     /// Safe to call multiple times.  After the first call the singleton is
     /// destroyed and subsequent Get() calls are invalid.
-    static auto Destroy() -> void;
+    [[nodiscard]] static auto Destroy() -> std::expected<void, ErrorMessage>;
 
     /// @brief Access the process-wide RHI singleton.
     ///
@@ -248,12 +269,16 @@ inline UPtr<RHIRenderDevice> RHIRenderDevice::s_Instance = nullptr;
     return {};
 }
 
-inline auto RHIRenderDevice::Destroy() -> void {
-    if (s_Instance) {
-        s_Instance->Shutdown();
-        s_Instance.reset();
-        GDeferredDeletionQueue = nullptr;
-    }
+[[nodiscard]] inline auto RHIRenderDevice::Destroy() -> std::expected<void, ErrorMessage> {
+    if (!s_Instance)
+        return {};
+
+    auto ShutdownResult = s_Instance->Shutdown();
+    s_Instance.reset();
+    GDeferredDeletionQueue = nullptr;
+    if (!ShutdownResult)
+        return std::unexpected(ShutdownResult.error());
+    return {};
 }
 
 inline auto RHIRenderDevice::Get() -> RHIRenderDevice& {

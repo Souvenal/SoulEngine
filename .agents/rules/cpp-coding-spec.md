@@ -84,6 +84,15 @@ Code form and readability only, not behavior.
   Non-negative sentinel names (e.g. `None`) are acceptable when the enum
   represents a bitmask and zero means "nothing set".
 
+## Profiling (Tracy)
+
+- Tracy identifies instrumented strings by pointer address, not content (see the Tracy manual, "Unique pointers"): identical string literals are not guaranteed to pool to a single address, and a mismatched pointer silently splits frame sources. Never pass a fresh string literal to a Tracy macro at more than one place.
+- Define each name once as an `inline constexpr const char*` constant and pass the variable to `FrameMarkStart`/`FrameMarkEnd`/`FrameMarkNamed`/`ZoneScopedN`/`tracy::SetThreadName`. Do not use plain namespace-scope `constexpr` for this — `const` implies internal linkage, giving one address per translation unit.
+- Thread names use `<Domain>Thread` (e.g. `GameThread`, `RenderThread`, `RHIThread`); continuous frame spans use `<Domain>Frame` (e.g. `GameFrame`, `RenderFrame`, `RHIFrame`).
+- Zones record work events only. Do not add a top-level zone that duplicates a frame span; the per-frame interval is owned by `FrameMarkStart`/`FrameMarkEnd`.
+- An unnamed master `FrameMark` is emitted on the RHI thread right after `EndFrame` (submit + present); it feeds the GUI's default numbered frame set. The named continuous spans `GameFrame`/`RenderFrame`/`RHIFrame` coexist with it and carry the per-stage intervals. GPU contexts do not depend on the master mark: `TracyVulkan`/`TracyD3D12` attach GPU zones via timestamp calibration (`VK_EXT_calibrated_timestamps` + `TracyVkContextCalibrated`), not frame marks.
+- `tracy::SetThreadName` copies the string it is given, so indexed thread names (e.g. `Format("WorkerThread{}", i)`) may be formatted locals. Pointer identity applies only to names embedded in events — `FrameMarkStart`/`FrameMarkEnd`/`FrameMarkNamed`/`ZoneText` and zone names in `SourceLocationData` — those require stable pointers.
+
 ## Quick Reference
 
 | Rule | Scope | Enforced |
@@ -100,3 +109,5 @@ Code form and readability only, not behavior.
 | Declaration-site defaults | All data members | Review |
 | `UPtr<T>` / `SPtr<T>` aliases | All code | Review |
 | `Unknown = 0` first enumerator | All `enum class` | Review |
+| Tracy strings via named constants (pointer identity) | All Tracy macros | Review |
+| Zone = work event only; no zone duplicating a frame span | All Tracy zones | Review |

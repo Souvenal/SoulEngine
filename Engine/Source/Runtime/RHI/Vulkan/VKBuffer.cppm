@@ -148,9 +148,17 @@ class VulkanDeviceBuffer : public RHIObject {
   public:
     explicit VulkanDeviceBuffer(String Name) : RHIObject(std::move(Name)) {}
 
+    /// Alignment: optional minimum alignment (power of two, in bytes) for the
+    /// buffer's device address. 0 means no explicit requirement. Required when
+    /// a consumer needs the base address itself aligned (e.g. a dedicated
+    /// acceleration-structure scratch buffer); consumers that can offset into
+    /// a larger buffer should align their offsets instead.
     [[nodiscard]] static auto
-    Create(const VulkanResourceContext& Context, StringView Name, Uint64 Size, vk::BufferUsageFlags Usage)
-        -> std::expected<VulkanDeviceBuffer, ErrorMessage> {
+    Create(const VulkanResourceContext& Context,
+           StringView                    Name,
+           Uint64                        Size,
+           vk::BufferUsageFlags          Usage,
+           Uint64                        Alignment = 0) -> std::expected<VulkanDeviceBuffer, ErrorMessage> {
         VulkanDeviceBuffer Buf{String(Name)};
         Buf.m_Allocator = Context.GetAllocator();
         const std::array QueueFamilies{Context.GetGraphicsFamily(), Context.GetTransferFamily()};
@@ -176,12 +184,20 @@ class VulkanDeviceBuffer : public RHIObject {
             .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
         };
 
-        if (vmaCreateBuffer(Context.GetAllocator(),
-                            reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
-                            &AllocInfo,
-                            reinterpret_cast<VkBuffer*>(&Buf.m_Buffer),
-                            &Buf.m_Allocation,
-                            nullptr) != VK_SUCCESS) {
+        const auto Created = Alignment > 0 ? vmaCreateBufferWithAlignment(Context.GetAllocator(),
+                                                               reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
+                                                               &AllocInfo,
+                                                               Alignment,
+                                                               reinterpret_cast<VkBuffer*>(&Buf.m_Buffer),
+                                                               &Buf.m_Allocation,
+                                                               nullptr)
+                                           : vmaCreateBuffer(Context.GetAllocator(),
+                                                             reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
+                                                             &AllocInfo,
+                                                             reinterpret_cast<VkBuffer*>(&Buf.m_Buffer),
+                                                             &Buf.m_Allocation,
+                                                             nullptr);
+        if (Created != VK_SUCCESS) {
             return std::unexpected(ErrorMessage("Failed to create VulkanDeviceBuffer via VMA"));
         }
 

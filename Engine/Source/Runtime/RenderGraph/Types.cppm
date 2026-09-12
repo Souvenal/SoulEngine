@@ -77,6 +77,14 @@ struct RGTextureSRV {
     RHIRef<RHIRenderTarget> Ref     = nullptr;
 };
 
+/// Shader storage-image write (e.g. `RWTexture2D` ray-tracing outputs).
+struct RGStorageTextureUAV {
+    using RGViewTag = void;
+
+    RGTextureHandle         Texture = {};
+    RHIRef<RHIRenderTarget> Ref     = nullptr;
+};
+
 struct RGStorageBufferSRV {
     using RGViewTag = void;
 
@@ -127,6 +135,10 @@ struct RGTextureDesc {
     Uint32    Height     = 0;
     RHIFormat Format     = RHIFormat::Unknown;
     bool      AllowDepth = false;
+    /// Adds ShaderStorage | ShaderResource usage on top of the base color or
+    /// depth usage: the target can be bound as a storage UAV and read as an
+    /// SRV by later passes.
+    bool      AllowShaderStorage = false;
     /// Reserved — must be 1; the realization path cannot create multi-mip
     /// targets today (RHIRenderTargetDesc has no mip field).
     Uint32    MipLevels  = 1;

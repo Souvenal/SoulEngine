@@ -13,7 +13,6 @@ Each module has its own `CONTEXT.md` with module-specific terms, architecture, a
 | Vulkan | `Engine/Source/Runtime/RHI/Vulkan/` | [Vulkan](Engine/Source/Runtime/RHI/Vulkan/CONTEXT.md) |
 | Shader | `Engine/Source/Runtime/Shader/` | [Shader](Engine/Source/Runtime/Shader/CONTEXT.md) |
 | ShaderCompiler | `Engine/Source/Runtime/ShaderCompiler/` | [ShaderCompiler](Engine/Source/Runtime/ShaderCompiler/CONTEXT.md) |
-| Resource | `Engine/Source/Runtime/Resource/` | [Resource](Engine/Source/Runtime/Resource/CONTEXT.md) |
 | Material | `Engine/Source/Runtime/Material/` | [Material](Engine/Source/Runtime/Material/CONTEXT.md) |
 | Renderer | `Engine/Source/Runtime/Renderer/` | [Renderer](Engine/Source/Runtime/Renderer/CONTEXT.md) |
 | RenderGraph | `Engine/Source/Runtime/RenderGraph/` | [RenderGraph](Engine/Source/Runtime/RenderGraph/CONTEXT.md) |

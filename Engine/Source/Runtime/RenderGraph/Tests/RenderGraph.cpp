@@ -1,4 +1,4 @@
-/// @file   RenderGraphGraph.cpp
+/// @file   RenderGraph.cpp
 /// @brief  gtest coverage for the RenderGraph Parameter-API orchestration:
 ///         last-writer ordering, side-effect pruning, pipeline pruning,
 ///         transient realization, and the single-call Compile contract.

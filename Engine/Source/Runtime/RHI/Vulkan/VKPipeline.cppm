@@ -62,7 +62,7 @@ struct VulkanReflectedDescriptorBinding {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// VulkanGraphicsPipeline — concrete Vulkan pipeline owned by ResourceManager.
+// VulkanGraphicsPipeline — concrete Vulkan pipeline kept alive by RHIRef owners.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Vulkan graphics pipeline using the layout owned by its shader binding set.

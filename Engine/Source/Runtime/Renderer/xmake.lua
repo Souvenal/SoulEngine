@@ -3,12 +3,11 @@ target("Renderer")
 
     add_packages("magic_enum", {public = true})
     add_packages("glfw", "hlslpp")
-    add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "Resource", "RenderGraph")
+    add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph")
 
-    add_files("Common.cppm", "IRenderer.cppm", "RasterRenderer.cppm", "Renderer.cppm")
+    add_files("*.cppm")
     add_files("Editor/*.cppm")
     add_files("Raster/*.cppm")
-    -- add_files("RayTracing/*.cppm")  -- Disabled: RayTracing pipeline deprecated
-    -- add_files("PostProcess/*.cppm")  -- Reserved for future bloom/tonemap passes
+    add_files("RayTracing/*.cppm")
 
-test_module("Renderer", {additional_packages = {"entt", "glfw"}, exclude_tests = {"RayTracingTransform"}})
+test_module("Renderer", {additional_packages = {"entt", "glfw"}})

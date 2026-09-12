@@ -56,11 +56,11 @@ retaining that handoff.
   component types.
 - YAML loading stays inside the Scene module in a non-exported IO
   partition. `libyaml` implementation types do not cross the public Scene API.
-- `Resource::Mesh` exposes imported mesh groups and submeshes with their
-  resource handles. Each renderer expands ready submeshes from its own mesh-resource
-  cache into renderer-local draw instances. SceneSnapshot carries value-semantic
-  Renderable Instances, which pair a mesh asset identity with a Scene Entity's
-  derived world Transform and no GPU draw representation.
+- Scene `MeshSystem` owns imported mesh groups and GeometryRecord values with
+  their RHIRef GPU payloads. Each renderer expands ready submeshes from that
+  scene-owned cache into renderer-local draw instances. SceneSnapshot carries
+  value-semantic Renderable Instances, which pair a mesh asset identity with a
+  Scene Entity's derived world Transform and no GPU draw representation.
 
 ## Consequences
 
@@ -90,8 +90,9 @@ identities from those snapshots.
 - Use separate authoring and runtime ECS components. Rejected as a default:
   one component may safely co-locate both when meta persists only authoring
   fields.
-- Add world transforms to Resource mesh submeshes. Rejected because a resource
-  asset may be instantiated by multiple Scene Entities at different transforms.
+- Add world transforms to mesh submeshes at import time. Rejected because a
+  mesh asset may be instantiated by multiple Scene Entities at different
+  transforms.
 
 ## Non-Goals
 

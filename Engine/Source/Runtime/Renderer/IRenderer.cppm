@@ -7,19 +7,12 @@ export module Renderer:IRenderer;
 import Core;
 export import EditorTypes;
 import RHI;
-import Resource;
 import Scene;
 import TaskGraph;
 
 export import std;
 
 export namespace SoulEngine {
-
-/// @brief Render-thread packet retained by its FrameSlot until GPU completion.
-struct RenderResult {
-    RenderPassList                 CmdList        = {};
-    UPtr<ImDrawDataSnapshot>       ImGuiSnapshot  = nullptr;
-};
 
 /// @brief Abstract base class for all renderers.
 ///

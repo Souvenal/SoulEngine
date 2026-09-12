@@ -112,6 +112,8 @@ template <typename ViewT>
         return {.ResourceIndex = View.Texture.Index, .Usage = RGUsage::DepthAttachmentWrite};
     else if constexpr (std::same_as<ViewT, RGTextureSRV>)
         return {.ResourceIndex = View.Texture.Index, .Usage = RGUsage::SampledRead};
+    else if constexpr (std::same_as<ViewT, RGStorageTextureUAV>)
+        return {.ResourceIndex = View.Texture.Index, .Usage = RGUsage::StorageTextureWrite};
     else if constexpr (std::same_as<ViewT, RGStorageBufferSRV>)
         return {.ResourceIndex = View.Buffer.Index, .Usage = RGUsage::StorageBufferRead};
     else if constexpr (std::same_as<ViewT, RGStorageBufferUAV>)
@@ -143,7 +145,8 @@ template <typename ViewT>
 auto ResolveViewRef(ViewT& View, const std::vector<RGResourceEntry>& Resources) -> void {
     const auto& Entry = Resources[ViewResourceIndex(View)];
     if constexpr (std::same_as<ViewT, RGColorRT> || std::same_as<ViewT, RGDepthRT> ||
-                  std::same_as<ViewT, RGTextureSRV> || std::same_as<ViewT, RGCopySrc>)
+                  std::same_as<ViewT, RGTextureSRV> || std::same_as<ViewT, RGStorageTextureUAV> ||
+                  std::same_as<ViewT, RGCopySrc>)
         View.Ref = Entry.Target;
     else if constexpr (std::same_as<ViewT, RGCopyDst>)
         View.Ref = Entry.Readback;
@@ -352,8 +355,17 @@ class RenderGraph {
                                    "construction",
                                    TPass::Name)));
                     return std::make_unique<TPass>(std::move(P), std::move(Pipeline));
-                } else {
+                } else if constexpr (std::same_as<decltype(TPass::BuildPipelineRequest()),
+                                                  ComputePipelineRequest>) {
                     auto Pipeline = PipelineRegistry::Get().GetReadyCompute(PipelineKeyOf<TPass>());
+                    if (!Pipeline)
+                        return std::unexpected(ErrorMessage(
+                            Format("RenderGraph: pipeline for pass '{}' was Ready at prune time but is gone at "
+                                   "construction",
+                                   TPass::Name)));
+                    return std::make_unique<TPass>(std::move(P), std::move(Pipeline));
+                } else {
+                    auto Pipeline = PipelineRegistry::Get().GetReadyRayTracing(PipelineKeyOf<TPass>());
                     if (!Pipeline)
                         return std::unexpected(ErrorMessage(
                             Format("RenderGraph: pipeline for pass '{}' was Ready at prune time but is gone at "
@@ -532,13 +544,15 @@ class RenderGraph {
                     if (D.Width == 0 || D.Height == 0 || D.Format == RHIFormat::Unknown || D.MipLevels != 1)
                         return std::unexpected(ErrorMessage(
                             Format("RenderGraph: transient texture '{}' has an invalid descriptor", Resource.Name)));
+                    auto Usage = D.AllowDepth ? RHITextureUsage::DepthStencil : RHITextureUsage::RenderTarget;
+                    if (D.AllowShaderStorage)
+                        Usage = Usage | RHITextureUsage::ShaderStorage | RHITextureUsage::ShaderResource;
                     auto Created = Device.CreateRenderTarget(
                         Resource.Name,
                         RHIRenderTargetDesc{.Width  = D.Width,
                                             .Height = D.Height,
                                             .Format = D.Format,
-                                            .Usage  = D.AllowDepth ? RHITextureUsage::DepthStencil
-                                                                   : RHITextureUsage::RenderTarget});
+                                            .Usage  = Usage});
                     if (!Created)
                         return std::unexpected(Created.error().Append(
                             Format("RenderGraph: failed to realize transient texture '{}'", Resource.Name)));

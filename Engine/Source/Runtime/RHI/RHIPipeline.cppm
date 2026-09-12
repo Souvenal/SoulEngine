@@ -45,9 +45,33 @@ struct RHIShaderBindingRequest {
     RHIShaderBindingRequest(StringView ParameterPathIn, RHIRef<T> Resource, bool IsReadOnlyIn)
         : ParameterPath(ParameterPathIn),
           Resource(Resource.TryGet()),
-          Type(Resource ? Resource->GetShaderBindingType() : ShaderResourceType::Unknown),
+          Type(ResolveRequestType(Resource, IsReadOnlyIn)),
           IsRenderTarget(std::same_as<T, RHIRenderTarget>),
           IsReadOnly(IsReadOnlyIn) {}
+
+  private:
+    /// A render target's usage flags are capabilities, not a binding type: the
+    /// same image can be storage-written by one pass and sampled by another
+    /// (the RT pass storage-writes the GBuffer normal target; deferred
+    /// lighting samples it). The binding intent (IsReadOnly) selects the
+    /// shader-level type; the resource's static type is the fallback.
+    template <typename T>
+    [[nodiscard]] static auto ResolveRequestType(const RHIRef<T>& Resource, bool IsReadOnly)
+        -> ShaderResourceType {
+        auto* Object = Resource.TryGet();
+        if (!Object)
+            return ShaderResourceType::Unknown;
+        if constexpr (std::same_as<T, RHIRenderTarget>) {
+            const auto Usage        = static_cast<Uint32>(Object->GetUsage());
+            const bool bCanSample   = (Usage & static_cast<Uint32>(RHITextureUsage::ShaderResource)) != 0;
+            const bool bCanStorage  = (Usage & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0;
+            if (IsReadOnly && bCanSample)
+                return ShaderResourceType::SampledTexture;
+            if (!IsReadOnly && bCanStorage)
+                return ShaderResourceType::StorageTexture;
+        }
+        return Object->GetShaderBindingType();
+    }
 };
 
 /// @brief Backend-owned descriptor resources for one reflected shader layout.
@@ -250,7 +274,7 @@ class RHIShaderBindingSet : public RHIObject {
 
 /// @brief Polymorphic base for all pipeline resources.
 /// Backend concrete classes (e.g. VulkanGraphicsPipeline) own native pipeline state.
-/// ResourceManager owns RHIPipeline instances; command lists only observe them.
+/// Higher-level owners keep RHIRef instances; command lists only observe them.
 class RHIPipeline : public RHIObject {
   public:
     RHIPipeline(const RHIPipeline&)                    = delete;

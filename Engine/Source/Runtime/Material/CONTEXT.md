@@ -26,7 +26,7 @@ compilation, or backend-specific Vulkan bindings.
 ## Ownership and Dependencies
 
 - `Material` depends on `Core`, `RHI`, EnTT, Assimp, and image decoding support;
-  it must not depend on `Scene`, `Resource`, `Renderer`, or backend modules.
+  it must not depend on `Scene`, `Renderer`, or backend modules.
 - `MaterialYamlRecord` owns YAML authoring data and Assets-relative texture paths.
 - `MaterialAssimpLoader` imports Assimp materials; `MaterialYamlLoader` imports
   complete material YAML records. Both produce `MaterialRecord` handles.

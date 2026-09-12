@@ -6,6 +6,7 @@ import vulkan;
 import std;
 
 import :Context;
+import :Buffer;
 
 namespace SoulEngine {
 
@@ -25,6 +26,10 @@ struct VulkanFrameContext {
     /// Allocated each frame in Execute(), freed in next frame's BeginFrame
     /// after timeline wait guarantees GPU has consumed them.
     std::vector<vk::raii::CommandBuffer> ScratchSecondaries;
+    /// Throwaway BLAS build scratch materialized by the frame-start AS phase.
+    /// Retired in next frame's BeginFrame, after the timeline wait guarantees
+    /// the GPU has consumed the builds that used them.
+    std::vector<SPtr<VulkanDeviceBuffer>> RetainedAsScratch;
 
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context, Uint32 FrameIndex)
         -> std::expected<VulkanFrameContext, ErrorMessage> {

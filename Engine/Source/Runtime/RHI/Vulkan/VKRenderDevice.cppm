@@ -45,7 +45,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
   public:
     VulkanRenderDevice() {}
     ~VulkanRenderDevice() {
-        Shutdown();
+        (void)Shutdown();
     }
 
     [[nodiscard]] auto Initialize(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> override {
@@ -119,13 +119,18 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // ── Frame lifecycle — private ─────────────────────────────────────
 
     [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
+        // Publish the executing frame slot so frame-slotted payloads (TLAS)
+        // resolve their internal slot during this frame's command recording.
+        m_ResourceContext->SetCurrentFrameIndex(m_CurrentFrame);
         // CPU-GPU sync: wait for the timeline semaphore to reach the value
         // from N frames ago (when this slot was last signalled).
         uint64_t WaitValue = m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue;
         m_ResourceContext->GetTimeline().Wait(WaitValue);
 
-        // GPU done with this frame slot — safe to free scratch secondaries.
+        // GPU done with this frame slot — safe to free scratch secondaries
+        // and the throwaway BLAS scratch retired from the AS phase.
         m_FrameContext[m_CurrentFrame].ScratchSecondaries.clear();
+        m_FrameContext[m_CurrentFrame].RetainedAsScratch.clear();
 
         auto& PresentCompleteSema = m_FrameContext[m_CurrentFrame].PresentComplete;
         auto  AcquireRes          = m_Swapchain.AcquireNextImage(PresentCompleteSema);
@@ -474,54 +479,74 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return Resource;
     }
 
+    /// Creates the hollow BLAS descriptor synchronously on the caller thread:
+    /// VulkanBottomLevelAccelerationStructure::Create performs no device calls
+    /// (input validation plus baking geometry/device addresses from Ready
+    /// buffers), so the RHI-thread creation round-trip is unnecessary. GPU
+    /// storage allocation and the build itself stay RHI-thread confined in the
+    /// frame-start AS batch (Build + MaterializeBuildInfos).
     [[nodiscard]] auto CreateBottomLevelAccelerationStructure(StringView                                     Name,
                                                               const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
-        return EnqueueResourceCreation<RHIBottomLevelAccelerationStructure>(
-            [this, Name = String(Name), Desc](
-                RHIRef<RHIBottomLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
-                if (!Result) {
-                    Resource.MarkFailed(Result.error());
-                    return std::unexpected(Result.error());
-                }
-                return Resource.Publish(std::move(*Result), RHIRefState::Ready);
-            });
+        auto Resource = RHIRef<RHIBottomLevelAccelerationStructure>::Create();
+        auto Result   = VulkanBottomLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
+        if (!Result) {
+            Resource.MarkFailed(Result.error());
+            return std::unexpected(Result.error());
+        }
+        if (auto Publish = Resource.Publish(std::move(*Result), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
     }
 
+    /// Creates the per-frame hollow TLAS synchronously on the caller thread:
+    /// VulkanTopLevelAccelerationStructure::Create performs no device calls
+    /// (validation plus instance metadata copy). Native storage allocation and
+    /// the build are RHI-thread confined in the frame-start AS phase; per-frame
+    /// rebuilds make the async creation round-trip pure latency.
     [[nodiscard]] auto CreateTopLevelAccelerationStructure(StringView                                  Name,
                                                            const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> override {
-        return EnqueueResourceCreation<RHITopLevelAccelerationStructure>(
-            [this, Name = String(Name), Desc](
-                RHIRef<RHITopLevelAccelerationStructure>& Resource) mutable -> std::expected<void, ErrorMessage> {
-                auto Result = VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
-                if (!Result) {
-                    Resource.MarkFailed(Result.error());
-                    return std::unexpected(Result.error());
-                }
-                return Resource.Publish(std::move(*Result), RHIRefState::Ready);
-            });
+        auto Resource = RHIRef<RHITopLevelAccelerationStructure>::Create();
+        auto Result   = VulkanTopLevelAccelerationStructure::Create(*m_ResourceContext, Name, Desc);
+        if (!Result) {
+            Resource.MarkFailed(Result.error());
+            return std::unexpected(Result.error());
+        }
+        if (auto Publish = Resource.Publish(std::move(*Result), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
     }
 
-    auto Tick() -> void override {
+    [[nodiscard]] auto Tick() -> std::expected<void, ErrorMessage> override {
         m_ResourceContext->GetImmediateContext().Tick();
         m_DescriptorManager.Tick();
+        return {};
     }
 
-    auto WaitIdle() -> void override {
-        if (m_ResourceContext && *m_ResourceContext->GetDevice())
-            (void)m_ResourceContext->GetDevice().waitIdle();
+    [[nodiscard]] auto WaitIdle() -> std::expected<void, ErrorMessage> override {
+        if (!m_ResourceContext || !*m_ResourceContext->GetDevice())
+            return {};
+        if (auto R = m_ResourceContext->GetDevice().waitIdle(); R != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage(Format("Vulkan device wait idle failed: {}", vk::to_string(R))));
+        return {};
     }
 
-    auto Shutdown() -> void override {
+    [[nodiscard]] auto Shutdown() -> std::expected<void, ErrorMessage> override {
+        std::optional<ErrorMessage> ShutdownError = std::nullopt;
+        const auto RecordShutdownError = [&ShutdownError](const ErrorMessage& Error) {
+            if (!ShutdownError)
+                ShutdownError = Error;
+        };
+
         if (std::exchange(m_NeedsShutdown, false)) {
-            WaitIdle();
+            if (auto R = WaitIdle(); !R)
+                RecordShutdownError(R.error());
             ImGui_ImplVulkan_Shutdown();
-            auto ImmediateDrain = m_ResourceContext->GetImmediateContext().Drain();
-            if (!ImmediateDrain)
-                LogError("{}", ImmediateDrain.error().ToString());
-            WaitIdle();
+            if (auto R = m_ResourceContext->GetImmediateContext().Drain(); !R)
+                RecordShutdownError(R.error());
+            if (auto R = WaitIdle(); !R)
+                RecordShutdownError(R.error());
             DrainRHIDeferredDeletions();
         }
 
@@ -534,6 +559,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // Descriptor sets and their pool must be released while VkDevice is alive.
         m_DescriptorManager.Shutdown();
         m_ResourceContext.reset();
+
+        if (ShutdownError)
+            return std::unexpected(std::move(*ShutdownError));
+        return {};
     }
 
   private:
@@ -737,7 +766,63 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     // ═════════════════════════════════════════════════════════════════════════════
     // Execute — consume RenderPassList and record commands
     // ═════════════════════════════════════════════════════════════════════════════
-    [[nodiscard]] auto Execute(RenderPassList& PassList) -> std::expected<void, ErrorMessage> override {
+
+    /// Record the renderer-produced frame-start AS work (the pending BLAS
+    /// batch, then each TLAS build) into a dedicated secondary appended to the
+    /// primary ahead of every pass, so the trace consumes both in submission
+    /// order.
+    [[nodiscard]] auto RecordAccelerationStructureWork(vk::raii::CommandBuffer& Primary,
+                                                       const RenderResult&      Result)
+        -> std::expected<void, ErrorMessage> {
+        auto&                        FC = m_FrameContext[m_CurrentFrame];
+        vk::CommandBufferAllocateInfo Alloc{
+            .commandPool        = *FC.SubPool,
+            .level              = vk::CommandBufferLevel::eSecondary,
+            .commandBufferCount = 1,
+        };
+        auto AllocResult = m_ResourceContext->GetDevice().allocateCommandBuffers(Alloc);
+        if (AllocResult.result != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage("Execute: failed to allocate AS-phase secondary CB"));
+        m_ResourceContext->GetDebugUtils().SetObjectName(
+            *AllocResult.value[0], Format("Internal/CommandBuffer/Secondary/Frame{}/ASBuild", m_CurrentFrame));
+        auto& SecBuf = FC.ScratchSecondaries.emplace_back(std::move(AllocResult.value[0]));
+
+        vk::CommandBufferInheritanceInfo Inheritance{};
+        vk::CommandBufferBeginInfo       BeginCI{
+            .flags            = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+            .pInheritanceInfo = &Inheritance,
+        };
+        if (auto R = SecBuf.begin(BeginCI); R != vk::Result::eSuccess)
+            return std::unexpected(
+                ErrorMessage(Format("Execute: AS-phase secondary CB begin failed: {}", vk::to_string(R))));
+
+        // step 1: the BLAS batch — hollow descriptors materialize and build
+        // into one shared scratch buffer, in ONE batched build call.
+        if (!Result.PendingBlasBuilds.empty()) {
+            auto Scratch = VulkanBottomLevelAccelerationStructure::Build(
+                *m_ResourceContext,
+                SecBuf,
+                Result.PendingBlasBuilds,
+                Format("Internal/Buffer/ASBuildScratch/Frame{}", m_CurrentFrame));
+            if (!Scratch)
+                return std::unexpected(Scratch.error().Append("Execute: BLAS batch build failed"));
+            // The shared batch scratch retires when this frame slot's next
+            // BeginFrame has drained the GPU work that used it.
+            if (*Scratch)
+                FC.RetainedAsScratch.push_back(std::move(*Scratch));
+        }
+        // step 2: each per-frame TLAS build, consuming the BLAS batch above.
+        if (!Result.PendingTlasBuilds.empty())
+            VulkanTopLevelAccelerationStructure::Build(*m_ResourceContext, SecBuf, Result.PendingTlasBuilds);
+
+        if (auto R = SecBuf.end(); R != vk::Result::eSuccess)
+            return std::unexpected(
+                ErrorMessage(Format("Execute: AS-phase secondary CB end failed: {}", vk::to_string(R))));
+        Primary.executeCommands({static_cast<vk::CommandBuffer>(*SecBuf)});
+        return {};
+    }
+    
+    [[nodiscard]] auto Execute(RenderResult& Result) -> std::expected<void, ErrorMessage> override {
         if (m_TransientUploadError)
             return std::unexpected(std::exchange(m_TransientUploadError, std::nullopt).value());
         if (auto R = EmitTransientUploadBarrier(); !R)
@@ -746,8 +831,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         auto& FC      = m_FrameContext[m_CurrentFrame];
         auto& Primary = FC.PrimaryBuffer;
 
-        for (std::size_t PassIndex = 0; PassIndex < PassList.Passes.size(); ++PassIndex) {
-            const auto& Pass = PassList.Passes[PassIndex];
+        // Frame-start AS phase: the BLAS batch first, then each TLAS build, so
+        // the pass list's trace consumes both in submission order. Recorded
+        // into its own secondary — the primary stays a pure skeleton.
+        if (!Result.PendingBlasBuilds.empty() || !Result.PendingTlasBuilds.empty())
+            if (auto R = RecordAccelerationStructureWork(Primary, Result); !R)
+                return std::unexpected(R.error().Append("Execute: acceleration-structure work failed"));
+
+        for (std::size_t PassIndex = 0; PassIndex < Result.CmdList.Passes.size(); ++PassIndex) {
+            const auto& Pass = Result.CmdList.Passes[PassIndex];
             if (!Pass)
                 return std::unexpected(ErrorMessage(
                     Format("Execute: pass {} is null", PassIndex)));
@@ -874,8 +966,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // Primary CB was already prepared in BeginFrame. Presentation overlays
         // follow all pass-local output blits and preserve the final swapchain contents.
-        if (PassList.ImGuiPresentationOverlay) {
-            if (auto R = RecordImGuiPresentationOverlay(Primary, *PassList.ImGuiPresentationOverlay); !R)
+        if (Result.CmdList.ImGuiPresentationOverlay) {
+            if (auto R = RecordImGuiPresentationOverlay(Primary, *Result.CmdList.ImGuiPresentationOverlay); !R)
                 return std::unexpected(R.error());
         }
         m_ResourceContext->GetImageTracker().Transition(
