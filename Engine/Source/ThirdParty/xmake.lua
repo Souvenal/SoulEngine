@@ -69,7 +69,7 @@ add_requires("magic_enum[modules]")
 -- TODO: use module build
 add_requires("toml++")
 
-add_requires("tracy 0.13.0")
+add_requires("tracy 0.14.1")
 
 add_requires("spdlog[std_format,noexcept]")
 

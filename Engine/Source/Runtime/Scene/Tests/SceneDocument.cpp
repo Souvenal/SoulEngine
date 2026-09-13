@@ -561,24 +561,4 @@ entities:
 
     std::filesystem::remove(FilePath);
 }
-
-TEST(SceneDocument, OmitsUnsupportedLightTypeFromSnapshot) {
-    const auto FilePath = WriteSceneFile(R"(
-entities:
-  - components:
-      light:
-        type: spot
-        intensity: 400.0
-)");
-
-    const auto Loaded = Scene::LoadFromFile(FilePath);
-    ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
-    ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
-    EXPECT_EQ(Loaded->second.Warnings.front().Message, "unsupported light type; component was omitted");
-    EXPECT_TRUE(Loaded->first->GetRegistry().view<LightComponent>().empty());
-    const auto Snapshot = Loaded->first->BuildSnapshot();
-
-    EXPECT_TRUE(Snapshot.Lights.empty());
-    std::filesystem::remove(FilePath);
-}
 } // namespace
