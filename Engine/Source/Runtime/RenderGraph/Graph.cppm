@@ -5,6 +5,7 @@ export module RenderGraph:Graph;
 import :Types;
 import :Pass;
 import :PipelineRegistry;
+import :Runtime;
 import RHI;
 export import Core;
 export import std;
@@ -103,11 +104,11 @@ auto ForEachView(ParameterT& Value, FnT&& On) -> void {
 #undef RG_FOREACH_VIEW_BRANCH
 
 /// The view type IS the access declaration: each view maps to exactly one
-/// (usage, present) pair against its handle's resource slot.
+/// usage against its handle's resource slot.
 template <typename ViewT>
 [[nodiscard]] auto CollectAccess(const ViewT& View) -> RGPassNode::Access {
     if constexpr (std::same_as<ViewT, RGColorRT>)
-        return {.ResourceIndex = View.Texture.Index, .Usage = RGUsage::ColorAttachmentWrite, .Present = View.Present};
+        return {.ResourceIndex = View.Texture.Index, .Usage = RGUsage::ColorAttachmentWrite};
     else if constexpr (std::same_as<ViewT, RGDepthRT>)
         return {.ResourceIndex = View.Texture.Index, .Usage = RGUsage::DepthAttachmentWrite};
     else if constexpr (std::same_as<ViewT, RGTextureSRV>)
@@ -171,17 +172,32 @@ auto ResolveParameterViews(ParameterT& P, const std::vector<RGResourceEntry>& Re
 
 export namespace SoulEngine {
 
-/// Per-frame render graph. Registration (Create*/Import/AddPass) records
-/// resources and passes; a single Compile() validates, orders, prunes,
-/// realizes live transients, and constructs the surviving passes into a
-/// RenderPassList. The graph is single-use: rebuild it every frame.
-class RenderGraph {
+/// Per-frame render graph builder (the UE FRDGBuilder analogue, ADR 05).
+/// Registration (Create*/Import/AddPass) records resources and passes; a
+/// single Compile() validates, orders, prunes, realizes live transients, and
+/// constructs the surviving passes into a RenderPassList. Single-use: rebuild
+/// it every frame. Pooled transient texture refs return to RGRenderTargetPool
+/// when the builder is destroyed (end of Render) — the compiled pass list
+/// holds its own copies, and reuse is safe by single-queue submission
+/// ordering plus per-frame image state initialization.
+class RenderGraphBuilder {
   public:
-    RenderGraph()                      = default;
-    RenderGraph(const RenderGraph&)    = delete;
-    auto operator=(const RenderGraph&) = delete;
-    RenderGraph(RenderGraph&&)         = delete;
-    auto operator=(RenderGraph&&)      = delete;
+    RenderGraphBuilder()                                       = default;
+    RenderGraphBuilder(const RenderGraphBuilder&)              = delete;
+    auto operator=(const RenderGraphBuilder&) -> RenderGraphBuilder& = delete;
+    RenderGraphBuilder(RenderGraphBuilder&&)                   = delete;
+    auto operator=(RenderGraphBuilder&&) -> RenderGraphBuilder& = delete;
+
+    ~RenderGraphBuilder() {
+        // Return pooled transient textures immediately (RenderThread
+        // frame-end semantics, ADR 05). Imported resources are external and
+        // never touch the pool.
+        auto& Pool = RenderGraph::Get().GetPool();
+        for (auto& Resource : m_Resources) {
+            if (Resource.TargetFromPool)
+                Pool.Release(std::move(Resource.Target), Resource.RealizedTargetDesc);
+        }
+    }
 
     // ── Resource registration ─────────────────────────────────────────────
 
@@ -292,24 +308,12 @@ class RenderGraph {
         Node.Name = String(PassName);
         if constexpr (requires { TPass::NeverPrune; })
             Node.NeverPrune = TPass::NeverPrune;
-        if constexpr (requires { TPass::PresentOutput; })
-            Node.PresentOutput = TPass::PresentOutput;
         if constexpr (requires { TPass::BuildPipelineRequest(); }) {
             Node.HasPipeline = true;
             Node.PipelineKey = PipelineKeyOf<TPass>();
         }
 
         ForEachView(In, [&](const auto& Field) {
-            using FieldT = std::remove_cvref_t<decltype(Field)>;
-            if constexpr (std::same_as<FieldT, RGColorRT>) {
-                if (Field.Present && Field.Load) {
-                    m_PendingError = Format(
-                        "RenderGraph: pass '{}' declares a color attachment that is both Present and Load; the "
-                        "present write is terminal, it cannot preserve prior contents",
-                        PassName);
-                    return;
-                }
-            }
             auto Access = CollectAccess(Field);
             if (Access.ResourceIndex == kRGInvalidIndex ||
                 Access.ResourceIndex >= static_cast<Uint32>(m_Resources.size())) {
@@ -431,14 +435,14 @@ class RenderGraph {
         }
 
         // Side-effect predicate, shared by Step 2 and Step 3: the pass must
-        // not be pruned (NeverPrune), carries the frame Present, or writes an
-        // imported resource (the write is visible outside the graph).
+        // not be pruned (NeverPrune), or writes an imported resource (the
+        // write is visible outside the graph).
         const auto IsSideEffect = [&](Uint32 I) -> bool {
             const auto& Node = m_Passes[I];
-            if (Node.NeverPrune || Node.PresentOutput)
+            if (Node.NeverPrune)
                 return true;
             return std::ranges::any_of(Node.Accesses, [&](const RGPassNode::Access& A) {
-                return A.Present || (IsWriteUsage(A.Usage) && m_Resources[A.ResourceIndex].IsImported);
+                return IsWriteUsage(A.Usage) && m_Resources[A.ResourceIndex].IsImported;
             });
         };
 
@@ -516,13 +520,43 @@ class RenderGraph {
 
         // Step 4: realize the graph-created transients that surviving passes
         // touch. Imported resources already carry their RHI object; dead
-        // transients are never allocated.
-        std::vector<bool> Live(m_Resources.size(), false);
+        // transients are never allocated. Texture usage bits are derived here
+        // — after pruning — as the union over surviving views (ADR 05):
+        // creation never guesses a usage union.
+        std::vector<bool>             Live(m_Resources.size(), false);
+        std::vector<RHITextureUsage>  DerivedUsage(m_Resources.size(), RHITextureUsage::None);
+        const auto AddDerivedUsage = [&](Uint32 ResourceIndex, RGUsage Usage) {
+            auto& Flags = DerivedUsage[ResourceIndex];
+            switch (Usage) {
+            case RGUsage::ColorAttachmentWrite:
+                Flags = Flags | RHITextureUsage::RenderTarget;
+                break;
+            case RGUsage::DepthAttachmentWrite:
+                Flags = Flags | RHITextureUsage::DepthStencil;
+                break;
+            case RGUsage::SampledRead:
+                Flags = Flags | RHITextureUsage::ShaderResource;
+                break;
+            case RGUsage::StorageTextureWrite:
+                Flags = Flags | RHITextureUsage::ShaderStorage;
+                break;
+            case RGUsage::CopySource:
+                Flags = Flags | RHITextureUsage::TransferSrc;
+                break;
+            // RGUsage::CopyDestination maps to TransferDst but is buffer-only
+            // today (RGCopyDst targets readback buffers); a future texture
+            // copy-dst view adds its case here.
+            default:
+                break;
+            }
+        };
         for (Uint32 I = 0; I < PassCount; ++I) {
             if (!Required[I] || Pruned[I])
                 continue;
-            for (const auto& A : m_Passes[I].Accesses)
+            for (const auto& A : m_Passes[I].Accesses) {
                 Live[A.ResourceIndex] = true;
+                AddDerivedUsage(A.ResourceIndex, A.Usage);
+            }
         }
         const bool NeedsDevice = std::ranges::any_of(std::views::iota(std::size_t{0}, m_Resources.size()),
                                                      [&](std::size_t R) {
@@ -533,30 +567,30 @@ class RenderGraph {
                                                      });
         if (NeedsDevice) {
             // The device is touched only when a live transient exists: a graph
-            // of imported-only resources never needs one.
+            // of imported-only resources never needs one. Transient textures
+            // come from the cross-frame pool (ADR 05); the device is hit only
+            // on a pool miss.
             auto& Device = RHIRenderDevice::Get();
+            auto& Pool   = RenderGraph::Get().GetPool();
             for (std::size_t R = 0; R < m_Resources.size(); ++R) {
                 auto& Resource = m_Resources[R];
                 if (!Live[R])
                     continue;
                 if (Resource.IsTransientTexture) {
                     const auto& D = Resource.TextureDesc;
-                    if (D.Width == 0 || D.Height == 0 || D.Format == RHIFormat::Unknown || D.MipLevels != 1)
+                    if (D.Width == 0 || D.Height == 0 || D.Format == RHIFormat::Unknown)
                         return std::unexpected(ErrorMessage(
                             Format("RenderGraph: transient texture '{}' has an invalid descriptor", Resource.Name)));
-                    auto Usage = D.AllowDepth ? RHITextureUsage::DepthStencil : RHITextureUsage::RenderTarget;
-                    if (D.AllowShaderStorage)
-                        Usage = Usage | RHITextureUsage::ShaderStorage | RHITextureUsage::ShaderResource;
-                    auto Created = Device.CreateRenderTarget(
-                        Resource.Name,
-                        RHIRenderTargetDesc{.Width  = D.Width,
-                                            .Height = D.Height,
-                                            .Format = D.Format,
-                                            .Usage  = Usage});
+                    Resource.RealizedTargetDesc = RHIRenderTargetDesc{.Width  = D.Width,
+                                                                      .Height = D.Height,
+                                                                      .Format = D.Format,
+                                                                      .Usage  = DerivedUsage[R]};
+                    auto Created = Pool.Acquire(Resource.Name, Resource.RealizedTargetDesc);
                     if (!Created)
                         return std::unexpected(Created.error().Append(
                             Format("RenderGraph: failed to realize transient texture '{}'", Resource.Name)));
-                    Resource.Target = std::move(*Created);
+                    Resource.Target         = std::move(*Created);
+                    Resource.TargetFromPool = true;
                 } else if (Resource.IsTransientStorageBuffer) {
                     const auto& D = Resource.StorageBufferDesc;
                     auto        Created = Device.CreateTransientShaderStorageBuffer(
@@ -588,9 +622,9 @@ class RenderGraph {
             }
         }
 
-        // Step 5: construct surviving passes in final order. A pass carrying
-        // the Present (static PresentOutput marker or a Present access) marks
-        // itself as the frame's present output.
+        // Step 5: construct surviving passes in final order. Present is an
+        // explicit BlitToSwapchainPass (NeverPrune), so no pass needs any
+        // frame-output marking here.
         RenderPassList Result{};
         for (const auto I : Order) {
             if (!Required[I] || Pruned[I])
@@ -599,11 +633,6 @@ class RenderGraph {
             if (!Pass)
                 return std::unexpected(
                     Pass.error().Append(Format("RenderGraph: failed to construct pass '{}'", m_Passes[I].Name)));
-            const bool Presents =
-                m_Passes[I].PresentOutput ||
-                std::ranges::any_of(m_Passes[I].Accesses, [](const RGPassNode::Access& A) { return A.Present; });
-            if (Presents && (*Pass)->GetType() == RHIPassType::Graphics)
-                static_cast<IRHIGraphicsPass&>(**Pass).SetPresentOutput();
             Result.Passes.push_back(std::move(*Pass));
         }
         return Result;

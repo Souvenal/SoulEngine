@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (2026-06-26)
+Accepted (2026-06-26). Partially superseded by [ADR 05](05-rendergraph-pooled-transients-and-explicit-present.md):
+the view-scoped render-target ownership decision ("Camera may own view-scoped
+transient resource owners") no longer holds — view targets are renderer-created
+pooled graph transients. The Scene/SceneSnapshot layering decision stands.
 
 ## Context
 

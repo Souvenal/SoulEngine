@@ -10,88 +10,37 @@ import std;
 import Core;
 import RHI;
 import Scene;
+import Renderer;
 import WindowSystem;
 import EditorTypes;
 
 export namespace SoulEngine {
 
-/// @brief Render targets owned by one editor camera.
-struct EditorCameraRenderTargets {
-    CameraRenderTargets     Camera        = {};
-    RHIRef<RHIRenderTarget> SelectionMask = nullptr;
-
-    /// @brief Return whether every editor-camera render target is ready.
-    [[nodiscard]] auto IsValid() const -> bool {
-        return Camera.IsValid() && SelectionMask;
-    }
-};
-
-/// @brief Resource loader for editor-camera render targets.
-struct EditorCameraRenderTargetsLoader {
-    using result_type = SPtr<EditorCameraRenderTargets>;
-
-    auto operator()(StringView ResourceName, Uint32 Width, Uint32 Height) const -> result_type {
-        if (Width == 0 || Height == 0)
-            return nullptr;
-
-        auto CameraTargets = CameraRenderTargetsLoader{}(ResourceName, Width, Height);
-        if (!CameraTargets)
-            return nullptr;
-
-        auto SelectionMask = RHIRenderDevice::Get().CreateRenderTarget(
-            Format("{}/SelectionMask", ResourceName),
-            RHIRenderTargetDesc{
-                .Width  = Width,
-                .Height = Height,
-                .Format = RHIFormat::R8_UNORM,
-                .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource,
-            });
-        if (!SelectionMask) {
-            LogWarning("Failed to queue editor-camera selection-mask creation: {}", SelectionMask.error().ToString());
-            return nullptr;
-        }
-
-        const auto HasQueuedCreation = [](const auto& Ref) -> bool {
-            return Ref.GetState() != RHIRefState::Unknown;
-        };
-        const auto& GBuffer = CameraTargets->GBuffer;
-        if (!HasQueuedCreation(GBuffer.AlbedoRT) || !HasQueuedCreation(GBuffer.NormalRT) ||
-            !HasQueuedCreation(GBuffer.MaterialIdRT) || !HasQueuedCreation(GBuffer.EntityIdRT) ||
-            !HasQueuedCreation(GBuffer.DepthRT) || !HasQueuedCreation(CameraTargets->SceneColorRT))
-            return nullptr;
-
-        return std::make_shared<EditorCameraRenderTargets>(EditorCameraRenderTargets{
-            .Camera        = std::move(*CameraTargets),
-            .SelectionMask = std::move(*SelectionMask),
-        });
-    }
-};
-
-using EditorCameraRenderTargetsCache  = entt::resource_cache<EditorCameraRenderTargets, EditorCameraRenderTargetsLoader>;
-using EditorCameraRenderTargetsHandle = entt::resource<EditorCameraRenderTargets>;
-
-/// @brief Resize request for one editor camera.
+/// @brief Viewport change request for one editor camera.
 struct EditorCameraResizeEvent {
     entt::entity CameraEntity = entt::null;
+    Uint32       X            = 0;
+    Uint32       Y            = 0;
     Uint32       Width        = 0;
     Uint32       Height       = 0;
 };
 
 /// @brief Editor-only camera component with viewport and selection state.
+///
+/// Holds no view render targets (ADR 05): the editor view's targets are
+/// renderer-created pooled RenderGraph transients derived from the Viewport.
 struct EditorCameraComponent {
-    Float32                         FOV            = 60.0f;
-    Float32                         NearPlane      = 0.1f;
-    Float32                         FarPlane       = 100.0f;
-    Float32                         ExposureEV100  = 15.0f;
-    Uint32                          ViewportWidth  = 0;
-    Uint32                          ViewportHeight = 0;
-    EditorCameraRenderTargetsHandle Targets        = {};
-    std::optional<entt::entity>    ReadbackEntity = std::nullopt;
-    std::optional<entt::entity>    SelectedEntity = std::nullopt;
-    RHIRef<RHIReadbackBuffer>      Readback       = nullptr;
+    Float32                       FOV            = 60.0f;
+    Float32                       NearPlane      = 0.1f;
+    Float32                       FarPlane       = 100.0f;
+    Float32                       ExposureEV100  = 15.0f;
+    CameraViewport                Viewport       = {};
+    std::optional<entt::entity>   ReadbackEntity = std::nullopt;
+    std::optional<entt::entity>   SelectedEntity = std::nullopt;
+    RHIRef<RHIReadbackBuffer>     Readback       = nullptr;
 };
 
-/// @brief Editor-owned camera system and editor viewport resource owner.
+/// @brief Editor-owned camera system and editor viewport state owner.
 class EditorCameraSystem final : public ISystem {
   public:
     /// @brief Create an editor camera system bound to one window system.
@@ -124,12 +73,11 @@ class EditorCameraSystem final : public ISystem {
         for (const auto Entity : m_Registry.view<EditorCameraComponent, TransformComponent>()) {
             const auto& Camera    = m_Registry.get<EditorCameraComponent>(Entity);
             const auto& Transform = m_Registry.get<TransformComponent>(Entity);
-            if (!Camera.Targets || !Camera.Targets->IsValid() || Camera.ViewportWidth == 0 ||
-                Camera.ViewportHeight == 0)
+            if (Camera.Viewport.Width == 0 || Camera.Viewport.Height == 0)
                 continue;
 
             const Float32 AspectRatio =
-                static_cast<Float32>(Camera.ViewportWidth) / static_cast<Float32>(Camera.ViewportHeight);
+                static_cast<Float32>(Camera.Viewport.Width) / static_cast<Float32>(Camera.Viewport.Height);
             const Float32 FovRad = Camera.FOV * (std::numbers::pi_v<Float32> / 180.0f);
             const auto Projection = hlslpp::float4x4::perspective(hlslpp::projection(
                 hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, Camera.NearPlane, Camera.FarPlane),
@@ -150,9 +98,8 @@ class EditorCameraSystem final : public ISystem {
                     .ViewProjection = hlslpp::mul(View, Projection),
                     .CameraPosition = Position,
                     .ExposureEV100  = Camera.ExposureEV100,
-                    .Targets        = Camera.Targets->Camera,
+                    .Viewport       = Camera.Viewport,
                 },
-                .SelectionMask = Camera.Targets->SelectionMask,
             });
         }
         return Views;
@@ -212,9 +159,16 @@ class EditorCameraSystem final : public ISystem {
                                                 : std::optional<entt::entity>{static_cast<entt::entity>(*EntityId)};
                 }
             }
-            if (Camera.ViewportWidth == 0 || Camera.ViewportHeight == 0 || IO.DisplaySize.x <= 0.0f ||
-                IO.DisplaySize.y <= 0.0f || IO.MousePos.x < 0.0f || IO.MousePos.y < 0.0f ||
-                IO.MousePos.x >= IO.DisplaySize.x || IO.MousePos.y >= IO.DisplaySize.y)
+            // The click guard mirrors the hover mapping: mouse in logical
+            // coords, viewport in physical pixels — scale by
+            // DisplayFramebufferScale before the rect test (DPI awareness).
+            const auto& Vp = Camera.Viewport;
+            if (Vp.Width == 0 || Vp.Height == 0)
+                continue;
+            const Float32 MouseX = IO.MousePos.x * IO.DisplayFramebufferScale.x;
+            const Float32 MouseY = IO.MousePos.y * IO.DisplayFramebufferScale.y;
+            if (MouseX < static_cast<Float32>(Vp.X) || MouseY < static_cast<Float32>(Vp.Y) ||
+                MouseX >= static_cast<Float32>(Vp.X + Vp.Width) || MouseY >= static_cast<Float32>(Vp.Y + Vp.Height))
                 continue;
             if (!IO.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 Camera.SelectedEntity = Camera.ReadbackEntity;
@@ -225,43 +179,26 @@ class EditorCameraSystem final : public ISystem {
     auto OnCameraResize(EditorCameraResizeEvent& Event) -> void {
         if (!m_Registry.valid(Event.CameraEntity) || !m_Registry.all_of<EditorCameraComponent>(Event.CameraEntity))
             return;
-        if (!m_Registry.all_of<NameComponent>(Event.CameraEntity)) {
-            LogError("Editor camera entity {} has no NameComponent", entt::to_integral(Event.CameraEntity));
-            return;
-        }
 
         auto& Component = m_Registry.get<EditorCameraComponent>(Event.CameraEntity);
         if (Event.Width == 0 || Event.Height == 0) {
-            Component.Targets        = {};
-            Component.ViewportWidth  = 0;
-            Component.ViewportHeight = 0;
+            Component.Viewport = {};
             return;
         }
 
-        if (Component.ViewportWidth == Event.Width && Component.ViewportHeight == Event.Height && Component.Targets &&
-            Component.Targets->IsValid())
-            return;
-
-        const auto& Name = m_Registry.get<NameComponent>(Event.CameraEntity).Name;
-        const auto  ResourceKey = Format("EditorCamera/{}/{}", Name, entt::to_integral(Event.CameraEntity));
-        const auto  ResourceId  = entt::hashed_string{ResourceKey.data(), ResourceKey.size()};
-        auto [It, Loaded] = m_Cache.force_load(ResourceId, ResourceKey, Event.Width, Event.Height);
-        if (It->second) {
-            Component.Targets        = It->second;
-            Component.ViewportWidth  = Event.Width;
-            Component.ViewportHeight = Event.Height;
-        } else {
-            LogError("Failed to load editor camera render targets for '{}'", ResourceKey);
-        }
+        Component.Viewport = CameraViewport{
+            .X      = Event.X,
+            .Y      = Event.Y,
+            .Width  = Event.Width,
+            .Height = Event.Height,
+        };
     }
 
     [[nodiscard]] auto GetAxis(ImGuiKey Positive, ImGuiKey Negative) const -> Float32 {
         return (ImGui::IsKeyDown(Positive) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(Negative) ? 1.0f : 0.0f);
     }
 
-    IWindowSystem*                 m_Window = nullptr;
-    EditorCameraRenderTargetsCache m_Cache  = {};
+    IWindowSystem* m_Window = nullptr;
 };
 
 } // namespace SoulEngine
-

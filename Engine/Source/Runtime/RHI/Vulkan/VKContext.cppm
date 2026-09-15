@@ -38,6 +38,14 @@ class VulkanImageTracker {
         m_ImageStates[Image] = State;
     }
 
+    /// Drop a destroyed image's tracked state. Without this, a driver-reused
+    /// VkImage handle would make the new image inherit a stale layout and
+    /// emit an invalid oldLayout barrier (ADR 05 pool era: eviction destroys
+    /// idle images while their entries would otherwise linger).
+    auto Forget(vk::Image Image) -> void {
+        m_ImageStates.erase(Image);
+    }
+
     auto Transition(vk::raii::CommandBuffer& CmdBuf,
                     vk::Image                Image,
                     const VulkanImageState&  DesiredState) -> void {

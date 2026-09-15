@@ -15,14 +15,14 @@ into each FrameSlot.
 | **RenderResult** | Per-frame RHI packet owned by the RHI module: pass list, pending BLAS/TLAS build refs, and the ImGui snapshot. RenderLoop produces it; RHILoop borrows it for RHIRenderDevice::Execute() and keeps it alive until GPU completion. |
 | **Renderer cache** | Engine-global cache of attached renderers. Renderer-local request/resource wrappers may survive renderer switching until engine shutdown. |
 | **Recorded resource ref** | An RHIRef<T> whose `operator bool()` confirms a Ready payload before recording. The command copies the ref as the GPU-use lifetime carrier. |
-| **GBuffer** | Camera-owned collection of four color render targets plus one shared depth render target: albedo, normal, material ID, entity ID, and depth. |
-| **CameraRenderTargets** | Camera-owned view output bundle containing the GBuffer and the final SceneColorRT used as the present source. |
+| **GBuffer** | Raster-renderer view-target set of four color render targets (albedo, normal, material ID, entity ID) plus one shared depth target, defined by the Renderer module (`GBuffer.cppm`) and created per view as pooled graph transients from the camera's Viewport (ADR 05). Not a Scene concept; RayTracing does not produce a GBuffer. |
+| **View targets** | The per-view render targets a renderer creates via `RenderGraphBuilder::CreateTexture` from the view's Viewport: the GBuffer set and SceneColor for Raster, output/EntityId targets for RayTracing. Contents live only for the frame; cross-frame state (accumulation, future TAA history) is a renderer-owned persistent resource imported per frame. |
 | **Geometry pass** | Raster RHIPass that writes the four G-buffer color attachments and the shared depth attachment. |
 | **Lighting pass** | Separate raster RHIPass that samples the G-buffer, including shared depth, and writes SceneColorRT. |
 | **Post-process pass** | A raster RHIPass appended after scene lighting. Post-process builders live under `Renderer/PostProcess/` and operate on the current view's ref-backed targets. |
-| **EditorViewRecord** | Editor-only view snapshot carrying one editor camera pose, its persistent camera render targets, and the R8_UNORM selection mask used by editor post-processing. |
+| **EditorViewRecord** | Editor-only view snapshot carrying one editor camera pose and Viewport; its view targets (including the R8_UNORM selection mask used by editor post-processing) are pooled graph transients like any other view's. |
 | **Editor selection outline** | Editor post-process that reads the EntityId G-buffer at the selected pixel, then marks pixels adjacent to the selected ID with the orange outline color while preserving SceneColorRT for non-outline pixels. RasterRenderer consumes the editor-camera mask; it does not create one per frame. |
-| **Present source** | Ref-backed final engine-owned SceneColorRT assigned to RHICommandList::PresentSourceRef; it is presented by the backend, not rendered directly into the swapchain by Renderer. |
+| **Present** | A graph-visible `BlitToSwapchainPass` (NeverPrune transfer pass) that blits the view's final output into the camera's Viewport rect of the backend-private swapchain via `RHIBlitToSwapchainCmd` (ADR 05). Raster blits SceneColor; RayTracing blits its accumulation output directly and has no SceneColor. |
 | **GeometryRecordTable** | Slang facade (Common/Geometry.slang) over the per-pass geometry record table. Shader parameter blocks embed it instead of a raw `StructuredBuffer<GeometryRecord>`; it exposes `pullVertex(recordIndex, vertexIndex)` and `pullBoundingSphere(recordIndex)` and fully encapsulates the GPU-address ABI of GeometryRecord. Reflection recurses into such resource-facade structs, so host code binds the inner member path (e.g. `g_rasterDraw.geometryTable.records`), not the facade itself. |
 | **VertexInfo** | Decoded vertex attributes (position, normal, tangent, uv) returned by `GeometryRecordTable::pullVertex`. Null tangent/texCoord addresses pull silent defaults ((1,0,0,1) and (0,0)). |
 | **Static BLAS** | The bottom-level acceleration structure owned by a Scene `GeometryRecord`: a hollow descriptor until built once from its position/index buffers at the frame-start AS phase, immutable for the record's lifetime (no update/refit; dynamic geometry is out of scope). Geometry ownership replaces any external key-based BLAS cache. |
@@ -67,10 +67,13 @@ into each FrameSlot.
 - Uploadable records own their `GpuData` ABI mirror and `BuildGpuData()`
   method. Renderer passes the resulting byte snapshot to a transient RHI
   creation descriptor and never queries a native Vulkan buffer object.
-- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and assigns SceneColorRT as the present source. LightRecord::GpuData is the shared 48-byte light ABI uploaded by Raster and RayTracing; light resources are bound only by lighting passes.
-  RayTracingRenderer uses ref-backed TLAS/BLAS, output, accumulation targets,
-  and transient geometry/material/view buffers; Renderer never observes a
-  Vulkan device address or descriptor index.
+- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and presents by appending a BlitToSwapchainPass for SceneColor. LightRecord::GpuData is the shared 48-byte light ABI uploaded by Raster and RayTracing; light resources are bound only by lighting passes.
+  RayTracingRenderer uses ref-backed TLAS/BLAS, output, and renderer-owned
+  accumulation targets (persistent, imported per frame), plus transient
+  geometry/material/view buffers; it writes primary normals/entity IDs to
+  pooled storage-image view targets and blits its accumulation output directly
+  to the swapchain. Renderer never observes a Vulkan device address or
+  descriptor index.
   RasterRenderer derives per-geometry indirect commands from the shared
   SceneGpuData tables for vertex pulling. Geometry/instance
   data is published as frame-affined transient resource creation tasks before

@@ -17,6 +17,7 @@ import Scene;
 import :IRenderer;
 import :Common;
 import :EditorPasses;
+import :GBuffer;
 import :RasterPasses;
 
 export import std;
@@ -109,13 +110,14 @@ class RasterRenderer final : public IRenderer {
         const auto DrawData         = SceneGpuData::Create(Instances, Scene.Lights, Scene.Textures);
         const auto IndirectCommands = BuildRasterIndirectCommands(DrawData);
 
+        Uint32 ViewIndex = 0;
         for (const auto& View : Scene.Views) {
-            if (auto R = RenderView(Result.CmdList, DrawData, IndirectCommands, View, Scene, Editor, nullptr); !R)
+            if (auto R = RenderView(Result.CmdList, Format("View/Scene{}", ViewIndex++), DrawData, IndirectCommands, View, Scene, Editor, nullptr); !R)
                 return std::unexpected(R.error().Append("Raster geometry view rendering failed"));
         }
         for (const auto& EditorView : Editor.Views) {
             const auto View = EditorView.ToCameraViewRecord();
-            if (auto R = RenderView(Result.CmdList, DrawData, IndirectCommands, View, Scene, Editor, &EditorView); !R)
+            if (auto R = RenderView(Result.CmdList, Format("View/Editor{}", ViewIndex++), DrawData, IndirectCommands, View, Scene, Editor, &EditorView); !R)
                 return std::unexpected(R.error().Append("Raster editor-camera view rendering failed"));
         }
 
@@ -152,6 +154,7 @@ class RasterRenderer final : public IRenderer {
     }
 
     [[nodiscard]] auto RenderView(RenderPassList&             CmdList,
+                                  StringView                        ViewName,
                                   const SceneGpuData&               DrawData,
                                   std::span<const RasterIndirectCommand> IndirectCommands,
                                   const CameraViewRecord&          View,
@@ -160,31 +163,33 @@ class RasterRenderer final : public IRenderer {
                                   const EditorViewRecord*     EditorView) -> std::expected<void, ErrorMessage> {
         using magic_enum::bitwise_operators::operator|;
 
-        const auto& AlbedoRTRef     = View.Targets.GBuffer.AlbedoRT;
-        const auto& NormalRTRef     = View.Targets.GBuffer.NormalRT;
-        const auto& EntityIdRTRef   = View.Targets.GBuffer.EntityIdRT;
-        const auto& MaterialIdRTRef = View.Targets.GBuffer.MaterialIdRT;
-        const auto& DepthRTRef      = View.Targets.GBuffer.DepthRT;
-        const auto& SceneColorRTRef = View.Targets.SceneColorRT;
+        // View targets are created on the graph below (ADR 05); the only
+        // readiness gate left is the renderer-owned samplers.
         const auto& SamplerLinearRef = m_SamplerLinear;
         const auto& SamplerAnisoRef  = m_SamplerAniso;
-        if (!AlbedoRTRef || !NormalRTRef || !EntityIdRTRef || !MaterialIdRTRef || !DepthRTRef || !SceneColorRTRef ||
-            !SamplerLinearRef || !SamplerAnisoRef)
+        if (!SamplerLinearRef || !SamplerAnisoRef)
             return {};
 
         // Feature gates only — pipeline readiness is Compile's job (Ensure +
         // Pending prune + Ready ref stash). Do not snapshot GetState here.
         const bool HasInstances = !DrawData.InstanceRecords.empty();
-        const bool EditorSel    = EditorView && Editor.SelectedEntity && HasInstances &&
-                               static_cast<bool>(EditorView->SelectionMask);
-        // Outline Present policy follows the feature gate (not readiness). If
-        // the outline pipeline is still Pending at Compile, its side-effect
-        // chain cannot be built and the frame compiles to an empty pass list
-        // — the graph's soft-degrade contract.
+        const bool EditorSel    = EditorView && Editor.SelectedEntity && HasInstances;
+        // Outline follows the feature gate (not readiness). If the outline
+        // pipeline is still Pending at Compile, the whole lighting -> outline
+        // -> blit chain drops (the NeverPrune blit's last-writer dependency is
+        // the outline) and the frame compiles to an empty pass list — the
+        // graph's soft-degrade contract.
         const bool WantOutline  = EditorSel;
 
         // ── RenderGraph wiring ───────────────────────────────────────────
-        RenderGraph ViewGraph{};
+        RenderGraphBuilder ViewGraph{};
+
+        // View targets are pooled graph transients (ADR 05): the descriptor
+        // carries only extent + format; Compile derives usage from the passes'
+        // views (e.g. EntityId additionally gets TransferSrc when the picking
+        // pass survives).
+        const auto Targets =
+            RasterViewTargets::Create(ViewGraph, ViewName, View.GetWidth(), View.GetHeight());
 
         const auto FrameData =
             BuildFrameConstants(Scene.Time, View.ExposureEV100, static_cast<Uint32>(Scene.Lights.size()));
@@ -272,14 +277,14 @@ class RasterRenderer final : public IRenderer {
                                    : std::optional<std::span<const std::byte>>{LightBytes},
             });
 
-        // The GBuffer render targets are shared between Geometry (the writer,
+        // The GBuffer handles are shared between Geometry (the writer,
         // inside the instance block below) and Lighting/EntityPicking/Outline
-        // (the readers, registered after it), so they are imported once here.
-        const auto Albedo     = ViewGraph.Import(AlbedoRTRef);
-        const auto Normal     = ViewGraph.Import(NormalRTRef);
-        const auto MaterialId = ViewGraph.Import(MaterialIdRTRef);
-        const auto EntityId   = ViewGraph.Import(EntityIdRTRef);
-        const auto Depth      = ViewGraph.Import(DepthRTRef);
+        // (the readers, registered after it).
+        const auto Albedo     = Targets.GBuffer.Albedo;
+        const auto Normal     = Targets.GBuffer.Normal;
+        const auto MaterialId = Targets.GBuffer.MaterialId;
+        const auto EntityId   = Targets.GBuffer.EntityId;
+        const auto Depth      = Targets.GBuffer.Depth;
 
         // Selection filter outputs live at view scope: the mask pass consumes
         // them and is registered outside the instance block.
@@ -388,12 +393,11 @@ class RasterRenderer final : public IRenderer {
             });
         }
 
-        const auto SceneColor = ViewGraph.Import(SceneColorRTRef);
-        // One pass, runtime frame config: the write is the terminal present
-        // write without the outline overblend, or a plain color write that
-        // SelectionOutline's load RMW blends over and presents.
+        const auto SceneColor = Targets.SceneColor;
+        // Lighting writes SceneColor; the explicit BlitToSwapchainPass below
+        // reads it (with the outline RMW in between when the feature is on).
         ViewGraph.AddPass<DeferredLightingPass>(DeferredLightingPass::Parameter{
-            .SceneColor     = RGColorRT{.Texture = SceneColor, .Present = !WantOutline},
+            .SceneColor     = RGColorRT{.Texture = SceneColor},
             .Albedo         = RGTextureSRV{.Texture = Albedo},
             .Normal         = RGTextureSRV{.Texture = Normal},
             .MaterialId     = RGTextureSRV{.Texture = MaterialId},
@@ -409,8 +413,12 @@ class RasterRenderer final : public IRenderer {
         });
 
         if (WantOutline) {
-            const auto& MaskRT = EditorView->SelectionMask;
-            const auto Mask = ViewGraph.Import(MaskRT);
+            // The selection mask is a pooled transient like any other view
+            // target (ADR 05): RGColorRT write + RGTextureSRV read derive
+            // RenderTarget | ShaderResource.
+            const auto Mask = ViewGraph.CreateTexture(
+                Format("{}/SelectionMask", ViewName),
+                RGTextureDesc{.Width = View.GetWidth(), .Height = View.GetHeight(), .Format = RHIFormat::R8_UNORM});
             ViewGraph.AddPass<SelectionMaskPass>(SelectionMaskPass::Parameter{
                 .Mask              = RGColorRT{.Texture = Mask},
                 .SelectedInstances = RGStorageBufferSRV{.Buffer = SelectedInstances},
@@ -432,9 +440,20 @@ class RasterRenderer final : public IRenderer {
             });
         }
 
+        // Present is explicit (ADR 05): blit the view's final SceneColor
+        // into the swapchain. Reading SceneColor orders the blit after
+        // lighting (and after the outline RMW when enabled) via the
+        // last-writer chain; NeverPrune keeps it alive without consumers.
+        ViewGraph.AddPass<BlitToSwapchainPass>(BlitToSwapchainPass::Parameter{
+            .Source    = RGCopySrc{.Texture = SceneColor},
+            .DstX      = View.Viewport.X,
+            .DstY      = View.Viewport.Y,
+            .DstWidth  = View.GetWidth(),
+            .DstHeight = View.GetHeight(),
+        });
+
         // Compile/splice anchor: the per-view graph orders, prunes, realizes,
-        // and constructs the feature-gated chain in one call. Present rides
-        // RGColorRT{.Present} or the outline RMW + PresentOutput carrier.
+        // and constructs the feature-gated chain in one call.
         auto ViewGraphPasses = ViewGraph.Compile();
         if (!ViewGraphPasses)
             return std::unexpected(ViewGraphPasses.error().Append("Raster view render-graph compile failed"));

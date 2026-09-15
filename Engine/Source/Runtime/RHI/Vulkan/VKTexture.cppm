@@ -37,12 +37,14 @@ class VulkanDeviceTexture : public RHIObject {
                                  vk::Image Image,
                                  VmaAllocation Allocation,
                                  vk::raii::ImageView&& ImageView,
-                                 VulkanDebugUtils& DebugUtils)
+                                 VulkanDebugUtils& DebugUtils,
+                                 VulkanImageTracker& ImageTracker)
         : RHIObject(std::move(Name)),
           m_Allocator(Alloc),
           m_Image(Image),
           m_Allocation(Allocation),
-          m_ImageView(std::move(ImageView)) {
+          m_ImageView(std::move(ImageView)),
+          m_ImageTracker(&ImageTracker) {
         DebugUtils.SetObjectName(m_Image, Format("{}#Image", GetName()));
         DebugUtils.SetObjectName(GetImageView(), Format("{}#ImageView", GetName()));
     }
@@ -108,10 +110,15 @@ class VulkanDeviceTexture : public RHIObject {
             VkImage,
             RawAlloc,
             std::move(ViewRes.value),
-            Context.GetDebugUtils());
+            Context.GetDebugUtils(),
+            Context.GetImageTracker());
     }
 
     ~VulkanDeviceTexture() {
+        // Destruction runs on the RHI thread (deferred-deletion drain), the
+        // same thread that records with the tracker — safe to forget here.
+        if (m_ImageTracker && m_Image)
+            m_ImageTracker->Forget(m_Image);
         if (m_Allocation)
             vmaDestroyImage(m_Allocator, static_cast<VkImage>(m_Image), m_Allocation);
     }
@@ -122,7 +129,8 @@ class VulkanDeviceTexture : public RHIObject {
           m_Allocator(std::exchange(Other.m_Allocator, nullptr)),
           m_Image(std::exchange(Other.m_Image, nullptr)),
           m_Allocation(std::exchange(Other.m_Allocation, nullptr)),
-          m_ImageView(std::move(Other.m_ImageView)) {}
+          m_ImageView(std::move(Other.m_ImageView)),
+          m_ImageTracker(std::exchange(Other.m_ImageTracker, nullptr)) {}
 
     auto operator=(VulkanDeviceTexture&& Other) noexcept -> VulkanDeviceTexture& {
         if (this != &Other) {
@@ -131,6 +139,7 @@ class VulkanDeviceTexture : public RHIObject {
             std::swap(m_Image, Other.m_Image);
             std::swap(m_Allocation, Other.m_Allocation);
             std::swap(m_ImageView, Other.m_ImageView);
+            std::swap(m_ImageTracker, Other.m_ImageTracker);
         }
         return *this;
     }
@@ -222,6 +231,9 @@ class VulkanDeviceTexture : public RHIObject {
     vk::Image           m_Image      = nullptr;
     VmaAllocation       m_Allocation = nullptr;
     vk::raii::ImageView m_ImageView  = nullptr;
+    // Non-owning: the tracker lives in VulkanResourceContext and outlives all
+    // textures (deferred deletion drains before device shutdown).
+    VulkanImageTracker* m_ImageTracker = nullptr;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -390,8 +402,6 @@ class VulkanRenderTarget final : public RHIRenderTarget {
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::DepthStencil)) != 0;
         const bool IsColor =
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::RenderTarget)) != 0;
-        const bool IsFrameOutput =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::FrameOutput)) != 0;
         const bool IsTransferSrc =
             (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::TransferSrc)) != 0;
         const bool IsTransferDst =
@@ -403,15 +413,18 @@ class VulkanRenderTarget final : public RHIRenderTarget {
         if (IsStorage && IsDepth)
             return std::unexpected(
                 ErrorMessage("VulkanRenderTarget::Create: storage usage is not supported for depth targets"));
-        if (!IsDepth && !IsColor)
-            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: missing attachment usage"));
+        // Derived usage (ADR 05) may legitimately produce storage- or
+        // transfer-only targets (e.g. a UAV-written blit source); only a
+        // completely empty usage is an error.
+        if (Desc.Usage == RHITextureUsage::None)
+            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: empty usage"));
 
         auto Usage = vk::ImageUsageFlags{};
         if (IsDepth)
             Usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
         if (IsColor)
             Usage |= vk::ImageUsageFlagBits::eColorAttachment;
-        if (IsFrameOutput || IsTransferSrc)
+        if (IsTransferSrc)
             Usage |= vk::ImageUsageFlagBits::eTransferSrc;
         if (IsTransferDst)
             Usage |= vk::ImageUsageFlagBits::eTransferDst;

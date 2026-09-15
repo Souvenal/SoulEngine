@@ -152,7 +152,7 @@ TEST_F(PipelineRegistryTest, PendingPipelineDropsTheSideEffectChainAsAnEmptyFram
     TaskGraph::Get().Init(0);
     PipelineRegistry::Get().Register<AsyncGraphicsPass>();
 
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
     Graph.AddPass<AsyncGraphicsPass>({.Output = RGColorRT{.Texture = Target}});
 
@@ -168,7 +168,7 @@ TEST_F(PipelineRegistryTest, PendingPipelineCascadesToDependents) {
     TaskGraph::Get().Init(0);
     PipelineRegistry::Get().Register<AsyncComputePass>();
 
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Scratch = Graph.CreateShaderStorageBuffer(
         "Scratch", RGShaderStorageBufferDesc{.SizeBytes = 16, .Usage = RHITransientBufferUsage::ShaderRead});
     const auto Target = Graph.Import(RHIRef<RHIRenderTarget>{});
@@ -189,7 +189,7 @@ TEST_F(PipelineRegistryTest, DeadPipelinePassIsPrunedBeforeAnyPipelineLookup) {
     PipelineRegistry::Get().EnsureRequestStarted(PipelineKeyOf<AsyncGraphicsPass>());  // → Failed (TaskGraph stopped)
     ASSERT_EQ(PipelineRegistry::Get().GetState(PipelineKeyOf<AsyncGraphicsPass>()), RGPipelineState::Failed);
 
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Scratch = Graph.CreateTexture(
         "Scratch", RGTextureDesc{.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
     Graph.AddPass<AsyncGraphicsPass>({.Output = RGColorRT{.Texture = Scratch}});
@@ -205,7 +205,7 @@ TEST_F(PipelineRegistryTest, FailedPipelineOnARequiredPassIsAFrameError) {
     // error and names the pass.
     PipelineRegistry::Get().Register<AsyncGraphicsPass>();
 
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
     Graph.AddPass<AsyncGraphicsPass>({.Output = RGColorRT{.Texture = Target}});
 

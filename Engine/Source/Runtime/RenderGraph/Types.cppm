@@ -58,7 +58,6 @@ struct RGColorRT {
     using RGViewTag = void;
 
     RGTextureHandle         Texture = {};
-    bool                    Present = false;  ///< terminal swapchain write
     bool                    Load    = false;  ///< attachment loadOp=Load (read-modify-write)
     RHIRef<RHIRenderTarget> Ref     = nullptr;
 };
@@ -129,19 +128,13 @@ struct RGCopyDst {
 
 // ── Transient creation descriptors ─────────────────────────────────────────
 
-/// Descriptor for a graph-created (transient) render target.
+/// Descriptor for a graph-created (transient) render target. Usage bits are
+/// derived by Compile from the surviving views (ADR 05); the descriptor only
+/// says what the texture IS, never how passes use it.
 struct RGTextureDesc {
-    Uint32    Width      = 0;
-    Uint32    Height     = 0;
-    RHIFormat Format     = RHIFormat::Unknown;
-    bool      AllowDepth = false;
-    /// Adds ShaderStorage | ShaderResource usage on top of the base color or
-    /// depth usage: the target can be bound as a storage UAV and read as an
-    /// SRV by later passes.
-    bool      AllowShaderStorage = false;
-    /// Reserved — must be 1; the realization path cannot create multi-mip
-    /// targets today (RHIRenderTargetDesc has no mip field).
-    Uint32    MipLevels  = 1;
+    Uint32    Width  = 0;
+    Uint32    Height = 0;
+    RHIFormat Format = RHIFormat::Unknown;
 };
 
 /// Descriptor for a graph-created transient shader-storage buffer. The graph

@@ -429,9 +429,73 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
-    VulkanTransferCmdVisitor(vk::raii::CommandBuffer&                              InBuffer,
-                             VulkanResourceContext&                                InResourceContext)
-        : VulkanCmdVisitor(InBuffer, InResourceContext) {}
+    VulkanTransferCmdVisitor(vk::raii::CommandBuffer&  InBuffer,
+                             VulkanResourceContext&    InResourceContext,
+                             VulkanSwapchain&          InSwapchain)
+        : VulkanCmdVisitor(InBuffer, InResourceContext), m_Swapchain(InSwapchain) {}
+
+    auto operator()(const RHIBlitToSwapchainCmd& Cmd) -> void {
+        const auto* SourcePtr = Cmd.Source.TryGet();
+        if (!SourcePtr) {
+            Error = ErrorMessage("Blit-to-swapchain references a source that is not ready");
+            return;
+        }
+        const auto& Src = static_cast<const VulkanRenderTarget&>(*SourcePtr);
+        if (ToVkImageAspect(Src.GetFormat()) != vk::ImageAspectFlagBits::eColor) {
+            Error = ErrorMessage("Blit-to-swapchain requires a color source target");
+            return;
+        }
+        const auto SrcImage = Src.GetVkImage();
+        const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
+
+        // step 1: transition source to transfer-src and the swapchain image
+        // to transfer-dst; the swapchain image stays backend-private
+        ResourceContext.GetImageTracker().Transition(
+            Buf,
+            SrcImage,
+            VulkanImageState{
+                .stage  = vk::PipelineStageFlagBits2::eTransfer,
+                .access = vk::AccessFlagBits2::eTransferRead,
+                .layout = vk::ImageLayout::eTransferSrcOptimal,
+                .aspect = vk::ImageAspectFlagBits::eColor,
+            });
+        ResourceContext.GetImageTracker().Transition(
+            Buf,
+            DstImage,
+            VulkanImageState{
+                .stage   = vk::PipelineStageFlagBits2::eTransfer,
+                .access  = vk::AccessFlagBits2::eTransferWrite,
+                .layout  = vk::ImageLayout::eTransferDstOptimal,
+                .aspect  = vk::ImageAspectFlagBits::eColor,
+                .isWrite = true,
+            });
+
+        // step 2: blit the whole source into the explicit destination rect; filtering is fixed Nearest (ADR 05)
+        vk::ImageBlit BlitRegion{
+            .srcSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel       = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount     = 1},
+            .srcOffsets     = std::array<vk::Offset3D, 2>{
+                    vk::Offset3D{0, 0, 0},
+                    vk::Offset3D{static_cast<Int32>(Src.GetWidth()), static_cast<Int32>(Src.GetHeight()), 1}},
+            .dstSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel       = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount     = 1},
+            .dstOffsets     = std::array<vk::Offset3D, 2>{
+                    vk::Offset3D{static_cast<Int32>(Cmd.DstX), static_cast<Int32>(Cmd.DstY), 0},
+                    vk::Offset3D{static_cast<Int32>(Cmd.DstX + Cmd.DstWidth),
+                                 static_cast<Int32>(Cmd.DstY + Cmd.DstHeight),
+                                 1}},
+        };
+        Buf.blitImage(SrcImage,
+                      vk::ImageLayout::eTransferSrcOptimal,
+                      DstImage,
+                      vk::ImageLayout::eTransferDstOptimal,
+                      {BlitRegion},
+                      vk::Filter::eNearest);
+    }
 
     auto operator()(const RHICopyTextureToBufferCmd& Cmd) -> void {
         const auto* SourcePtr = Cmd.Source.TryGet();
@@ -479,6 +543,9 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
                               Dst.GetVkBuffer(),
                               {Region});
     }
+
+  private:
+    VulkanSwapchain& m_Swapchain;
 };
 
 } // namespace SoulEngine

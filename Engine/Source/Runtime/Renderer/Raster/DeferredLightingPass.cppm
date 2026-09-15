@@ -14,10 +14,9 @@ export namespace SoulEngine {
 
 /// @brief Deferred lighting over the GBuffer.
 ///
-/// The class IS the graph's TPass. The frame config picks SceneColor's write
-/// kind at AddPass time: `RGColorRT{.Present = true}` is the terminal present
-/// write; a plain `RGColorRT` feeds SelectionOutline's load RMW, which carries
-/// the Present.
+/// The class IS the graph's TPass. SceneColor is a plain color write;
+/// SelectionOutline may overblend it (load RMW) and the explicit
+/// BlitToSwapchainPass presents it (ADR 05).
 class DeferredLightingPass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "DeferredLightingPass";

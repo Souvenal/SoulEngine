@@ -14,9 +14,8 @@ UI abstraction layer.
 | **UIDrawFrame** | Self-owning deep copy of one frame of ImGui draw data. Move-only: `Data.CmdLists` points into its own `Lists` storage. |
 | **SnapshotDrawData** | Deep-copies a live `ImDrawData` into a `UIDrawFrame`. Must run on the ImGui thread before the next `NewFrame()`. |
 | **UIPanel / UIPanelCallback** | One registered debug/editor panel: a name plus an ImGui immediate-mode callback invoked in registration order during `BuildFrame()`. |
-| **EditorCameraComponent** | Editor-only camera component containing camera parameters, editor viewport dimensions, persistent `EditorCameraRenderTargets`, picking readback state, and selected-entity state. |
-| **EditorCameraRenderTargets** | Editor-camera-owned persistent bundle containing generic camera G-buffer/SceneColor outputs plus the R8_UNORM selection mask. The bundle is recreated with the editor camera extent and carried by `EditorViewRecord`. |
-| **Selected render pixel** | The latest editor scene-view pixel chosen by the user. It is copied into the immutable `EditorSnapshot` and consumed by Renderer post-processing to identify the selected EntityId in the G-buffer. |
+| **EditorCameraComponent** | Editor-only camera component containing camera parameters, the editor Viewport rectangle, picking readback state, and selected-entity state. It holds no RHI resources; the editor view's render targets (including the R8_UNORM selection mask) are renderer-created pooled RenderGraph transients (ADR 05). |
+| **Selected render pixel** | The latest editor scene-view pixel chosen by the user, mapped through the editor camera's Viewport. It is copied into the immutable `EditorSnapshot` and consumed by Renderer post-processing to identify the selected EntityId in the EntityId view target. |
 | **Active Scene binding** | A non-owning `const Scene*` held by Editor for the current UI tick. Launch binds it after Application creation and clears it before Application destruction; panels do not retain it across frames. |
 | **Live system query** | A read-only `Scene::GetSystem<T>()` lookup performed by a panel at draw time, followed by immediate consumption of the returned system inspection data. |
 

@@ -75,6 +75,18 @@ struct RHICopyTextureToBufferCmd {
     RHIRef<RHIReadbackBuffer> Target    = nullptr;
 };
 
+/// @brief Blit the complete render target into the acquired swapchain image.
+///
+/// This is the only present path (ADR 05): the backend resolves the current
+/// swapchain image, which stays backend-private. Fixed nearest filtering.
+struct RHIBlitToSwapchainCmd {
+    RHIRef<RHIRenderTarget> Source    = nullptr;
+    Uint32                  DstX      = 0;
+    Uint32                  DstY      = 0;
+    Uint32                  DstWidth  = 1;
+    Uint32                  DstHeight = 1;
+};
+
 /// @brief All command types dispatched via std::visit.
 using RHICommand = std::variant<RHISetViewportCmd,
                                 RHISetScissorCmd,
@@ -83,7 +95,8 @@ using RHICommand = std::variant<RHISetViewportCmd,
                                 RHIDrawIndirectCmd,
                                 RHIDispatchCmd,
                                 RHITraceRaysCmd,
-                                RHICopyTextureToBufferCmd>;
+                                RHICopyTextureToBufferCmd,
+                                RHIBlitToSwapchainCmd>;
 
 /// @brief One Dear ImGui overlay to record over the acquired presentation image.
 ///

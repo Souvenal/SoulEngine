@@ -4,6 +4,9 @@ import Core;
 import std;
 
 export import :IRenderer;
+// :GBuffer is exported for the cross-module EntityId picking contract
+// (GBuffer::BackgroundEntityId; the editor maps readback values against it).
+export import :GBuffer;
 // Note: :Common and :RasterRenderer are module-internal partitions; nothing here
 // or in consumers of `import Renderer;` references their declarations, and the
 // xmake moduleonly target links every partition object file directly, so the

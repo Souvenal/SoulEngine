@@ -48,7 +48,6 @@ struct TextureDataLoader {
                 .Height   = static_cast<Uint32>(Height),
                 .Channels = 4,
                 .Format   = RHIFormat::R8G8B8A8_UNORM,
-                .Usage    = RHITextureUsage::ShaderResource,
             });
         if (!Texture) {
             LogWarning("TextureDataLoader: failed to create RHI texture '{}': {}",

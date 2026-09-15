@@ -123,14 +123,19 @@ class EditorWorld {
             Snapshot.SelectedEntity = Camera.SelectedEntity;
             Snapshot.ReadbackTarget = Camera.Readback;
             const auto& IO     = ImGui::GetIO();
-            if (Camera.ViewportWidth > 0 && Camera.ViewportHeight > 0 && IO.DisplaySize.x > 0.0f &&
-                IO.DisplaySize.y > 0.0f && IO.MousePos.x >= 0.0f && IO.MousePos.y >= 0.0f &&
-                IO.MousePos.x < IO.DisplaySize.x && IO.MousePos.y < IO.DisplaySize.y) {
+            const auto& Vp     = Camera.Viewport;
+            // Map the mouse position through the camera's Viewport rect.
+            // MousePos is in logical ImGui coords while the viewport is in
+            // physical pixels — scale by DisplayFramebufferScale first.
+            const Float32 MouseX = IO.MousePos.x * IO.DisplayFramebufferScale.x;
+            const Float32 MouseY = IO.MousePos.y * IO.DisplayFramebufferScale.y;
+            if (Vp.Width > 0 && Vp.Height > 0 && MouseX >= static_cast<Float32>(Vp.X) &&
+                MouseY >= static_cast<Float32>(Vp.Y) &&
+                MouseX < static_cast<Float32>(Vp.X + Vp.Width) &&
+                MouseY < static_cast<Float32>(Vp.Y + Vp.Height)) {
                 Snapshot.HoverPixel = PixelCoordinate{
-                    .X = (std::min)(static_cast<Uint32>((IO.MousePos.x / IO.DisplaySize.x) * Camera.ViewportWidth),
-                                    Camera.ViewportWidth - 1),
-                    .Y = (std::min)(static_cast<Uint32>((IO.MousePos.y / IO.DisplaySize.y) * Camera.ViewportHeight),
-                                    Camera.ViewportHeight - 1),
+                    .X = (std::min)(static_cast<Uint32>(MouseX - static_cast<Float32>(Vp.X)), Vp.Width - 1),
+                    .Y = (std::min)(static_cast<Uint32>(MouseY - static_cast<Float32>(Vp.Y)), Vp.Height - 1),
                 };
                 Snapshot.IsHovering = true;
             }

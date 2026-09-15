@@ -40,8 +40,8 @@ static_assert(offsetof(RayTracingFrameConstants, PathSettings) == 16);
 /// requests joins the frame's pending-build AS work alongside a freshly
 /// created hollow TLAS (no culling — secondary rays need off-screen geometry),
 /// which the device builds ahead of every pass; PathTracingPass traces into
-/// a transient output target and PresentBlitPass copies the result into
-/// SceneColorRT carrying the frame Present.
+/// a transient output target and BlitToSwapchainPass presents it directly
+/// (ADR 05 — no SceneColorRT roundtrip).
 class RayTracingRenderer final : public IRenderer {
   public:
     RayTracingRenderer() = default;
@@ -52,7 +52,6 @@ class RayTracingRenderer final : public IRenderer {
     [[nodiscard]] auto OnAttach() -> std::expected<void, ErrorMessage> override {
         auto& Registry = PipelineRegistry::Get();
         Registry.Register<PathTracingPass>();
-        Registry.Register<PresentBlitPass>();
 
         auto SamplerLinear = RHIRenderDevice::Get().CreateSampler("Renderer/RayTracing/Sampler/Linear",
                                                                   {.Profile = RHISamplerProfile::LinearRepeat});
@@ -77,10 +76,11 @@ class RayTracingRenderer final : public IRenderer {
             return Result;
         const auto& View = Views.front();
 
-        auto* ViewNormal   = View.Targets.GBuffer.NormalRT.TryGet();
-        auto* ViewEntityId = View.Targets.GBuffer.EntityIdRT.TryGet();
-        auto* SceneColor   = View.Targets.SceneColorRT.TryGet();
-        if (!ViewNormal || !ViewEntityId || !SceneColor)
+        // No camera-owned targets anymore (ADR 05): the viewport extent is
+        // the only input the view carries.
+        const Uint32 ViewWidth  = View.GetWidth();
+        const Uint32 ViewHeight = View.GetHeight();
+        if (ViewWidth == 0 || ViewHeight == 0)
             return Result;
 
         // ── Filter RT-ready instances, then build the shared scene tables ──
@@ -118,7 +118,7 @@ class RayTracingRenderer final : public IRenderer {
         const auto ViewData = RendererViewConstants{View};
 
         // ── Build the frame graph ──
-        RenderGraph Graph;
+        RenderGraphBuilder Graph;
 
         const auto InstancesHandle = Graph.CreateShaderStorageBuffer(
             "RT/Instances",
@@ -145,21 +145,26 @@ class RayTracingRenderer final : public IRenderer {
             RGConstantBufferDesc{.SizeBytes   = std::as_bytes(std::span{&ViewData, 1}).size(),
                                  .InitialData = std::as_bytes(std::span{&ViewData, 1})});
 
-        // Create the output target once: PathTracing (UAV write) and
-        // PresentBlit (SRV read) must reference the same graph resource so
-        // the graph sees the dependency edge between them.
+        // Create the output target once: PathTracing (UAV write) and the
+        // present blit (copy source) must reference the same graph resource
+        // so the graph sees the dependency edge between them. Usage bits are
+        // derived by Compile from those views (ADR 05).
         const auto OutputHandle = Graph.CreateTexture(
             "RT/Output",
-            RGTextureDesc{.Width  = ViewNormal->GetWidth(),
-                          .Height = ViewNormal->GetHeight(),
-                          .Format = RHIFormat::B8G8R8A8_UNORM,
-                          .AllowShaderStorage = true});
+            RGTextureDesc{.Width = ViewWidth, .Height = ViewHeight, .Format = RHIFormat::B8G8R8A8_UNORM});
+        // Primary-surface outputs are pooled graph transients too: the trace
+        // pass's UAV views derive their ShaderStorage usage (ADR 05).
+        const auto PrimaryNormalHandle = Graph.CreateTexture(
+            "RT/PrimaryNormal",
+            RGTextureDesc{.Width = ViewWidth, .Height = ViewHeight, .Format = RHIFormat::R16G16B16A16_SFLOAT});
+        const auto PrimaryEntityIdHandle = Graph.CreateTexture(
+            "RT/PrimaryEntityId",
+            RGTextureDesc{.Width = ViewWidth, .Height = ViewHeight, .Format = RHIFormat::R32_UINT});
         PathTracingPass::Parameter TraceParameter = {};
         TraceParameter.TlasRef          = *Tlas;
         TraceParameter.Output         = RGStorageTextureUAV{.Texture = OutputHandle};
-        TraceParameter.PrimaryNormal  = RGStorageTextureUAV{.Texture = Graph.Import(View.Targets.GBuffer.NormalRT)};
-        TraceParameter.PrimaryEntityId =
-            RGStorageTextureUAV{.Texture = Graph.Import(View.Targets.GBuffer.EntityIdRT)};
+        TraceParameter.PrimaryNormal   = RGStorageTextureUAV{.Texture = PrimaryNormalHandle};
+        TraceParameter.PrimaryEntityId = RGStorageTextureUAV{.Texture = PrimaryEntityIdHandle};
         TraceParameter.Instances    = RGStorageBufferSRV{.Buffer = InstancesHandle};
         TraceParameter.Geometries   = RGStorageBufferSRV{.Buffer = GeometriesHandle};
         TraceParameter.Materials    = RGStorageBufferSRV{.Buffer = MaterialsHandle};
@@ -169,12 +174,15 @@ class RayTracingRenderer final : public IRenderer {
         TraceParameter.LinearSampler = m_SamplerLinear;
         TraceParameter.Textures      = Scene.Textures;
         TraceParameter.Extent =
-            PathTracingExtent{.Width = ViewNormal->GetWidth(), .Height = ViewNormal->GetHeight()};
+            PathTracingExtent{.Width = ViewWidth, .Height = ViewHeight};
         Graph.AddPass<PathTracingPass>(std::move(TraceParameter));
 
-        Graph.AddPass<PresentBlitPass>(PresentBlitPass::Parameter{
-            .Source     = RGTextureSRV{.Texture = OutputHandle},
-            .SceneColor = RGColorRT{.Texture = Graph.Import(View.Targets.SceneColorRT), .Present = true},
+        Graph.AddPass<BlitToSwapchainPass>(BlitToSwapchainPass::Parameter{
+            .Source    = RGCopySrc{.Texture = OutputHandle},
+            .DstX      = View.Viewport.X,
+            .DstY      = View.Viewport.Y,
+            .DstWidth  = ViewWidth,
+            .DstHeight = ViewHeight,
         });
 
         auto PassList = Graph.Compile();

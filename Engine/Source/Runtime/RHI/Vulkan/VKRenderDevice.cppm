@@ -374,8 +374,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
              Width    = Desc.Width,
              Height   = Desc.Height,
              Channels = Desc.Channels,
-             Format   = Desc.Format,
-             Usage    = Desc.Usage](RHIRef<RHISampledTexture>& Resource) mutable -> std::expected<void, ErrorMessage> {
+             Format   = Desc.Format](RHIRef<RHISampledTexture>& Resource) mutable -> std::expected<void, ErrorMessage> {
                 auto Payload = Resource.m_Payload;
                 auto Result =
                     VulkanSampledTexture::Create(*m_ResourceContext,
@@ -384,8 +383,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                                                                        .Width    = Width,
                                                                        .Height   = Height,
                                                                        .Channels = Channels,
-                                                                       .Format   = Format,
-                                                                       .Usage    = Usage},
+                                                                       .Format   = Format},
                                                  [Payload] { (void)Payload->TryMarkReady(); });
                 if (!Result) {
                     Resource.MarkFailed(Result.error());
@@ -665,61 +663,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(Result.error());
         return Resource;
     }
-    auto RecordPresentBlit(vk::raii::CommandBuffer& Buf, RHIRenderTarget* Source) -> void {
-        auto& SrcRT = static_cast<const VulkanRenderTarget&>(*Source);
-
-        const auto SrcImage = SrcRT.GetVkImage();
-        const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
-
-        m_ResourceContext->GetImageTracker().Transition(
-            Buf,
-            SrcImage,
-            VulkanImageState{
-                .stage  = vk::PipelineStageFlagBits2::eTransfer,
-                .access = vk::AccessFlagBits2::eTransferRead,
-                .layout = vk::ImageLayout::eTransferSrcOptimal,
-                .aspect = vk::ImageAspectFlagBits::eColor,
-            });
-        m_ResourceContext->GetImageTracker().Transition(
-            Buf,
-            DstImage,
-            VulkanImageState{
-                .stage  = vk::PipelineStageFlagBits2::eTransfer,
-                .access = vk::AccessFlagBits2::eTransferWrite,
-                .layout = vk::ImageLayout::eTransferDstOptimal,
-                .aspect = vk::ImageAspectFlagBits::eColor,
-                .isWrite = true,
-            });
-
-        const auto DstExtent = m_Swapchain.GetExtent();
-        vk::ImageBlit BlitRegion{
-            .srcSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel       = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount     = 1},
-            .srcOffsets =
-                std::array<vk::Offset3D, 2>{
-                    vk::Offset3D{0, 0, 0},
-                    vk::Offset3D{static_cast<Int32>(SrcRT.GetWidth()), static_cast<Int32>(SrcRT.GetHeight()), 1}},
-            .dstSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel       = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount     = 1},
-            .dstOffsets =
-                std::array<vk::Offset3D, 2>{
-                    vk::Offset3D{0, 0, 0},
-                    vk::Offset3D{static_cast<Int32>(DstExtent.width), static_cast<Int32>(DstExtent.height), 1}},
-        };
-
-        Buf.blitImage(SrcImage,
-                      vk::ImageLayout::eTransferSrcOptimal,
-                      DstImage,
-                      vk::ImageLayout::eTransferDstOptimal,
-                      {BlitRegion},
-                      vk::Filter::eNearest);
-
-    }
-
     [[nodiscard]] auto RecordImGuiPresentationOverlay(vk::raii::CommandBuffer&              Buf,
                                                       const RHIImGuiPresentationOverlayCmd& Overlay)
         -> std::expected<void, ErrorMessage> {
@@ -934,7 +877,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                         break;
                     }
                     case RHIPassType::Transfer: {
-                        VulkanTransferCmdVisitor Visitor{SecBuf, *m_ResourceContext};
+                        VulkanTransferCmdVisitor Visitor{SecBuf, *m_ResourceContext, m_Swapchain};
                         RecordResult = RecordCommands(Visitor);
                         break;
                     }
@@ -948,21 +891,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 return std::unexpected(ErrorMessage(Format("Execute: secondary CB end failed: {}", vk::to_string(R))));
 
             Primary.executeCommands({static_cast<vk::CommandBuffer>(*SecBuf)});
-            if (Pass->GetType() == RHIPassType::Graphics) {
-                const auto& GraphicsPass = static_cast<const IRHIGraphicsPass&>(*Pass);
-                if (GraphicsPass.HasPresentOutput()) {
-                    const auto& Attachments = GraphicsPass.GetAttachments();
-                    if (Attachments.ColorAttachments.size() != 1)
-                        return std::unexpected(ErrorMessage(Format(
-                            "Execute: pass {} present output requires exactly one color attachment", Pass->GetName())));
-                    auto* PresentSource = Attachments.ColorAttachments.front().TextureRef.TryGet();
-                    if (!PresentSource)
-                        return std::unexpected(ErrorMessage(Format(
-                            "Execute: pass {} present output attachment is not ready", Pass->GetName())));
-                    RecordPresentBlit(Primary, PresentSource);
-                }
-            }
         }
+
+        // Present is explicit: BlitToSwapchain transfer passes already recorded
+        // their blits as pass commands above (ADR 05); nothing implicit here.
 
         // Primary CB was already prepared in BeginFrame. Presentation overlays
         // follow all pass-local output blits and preserve the final swapchain contents.

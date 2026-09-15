@@ -7,7 +7,7 @@ export module Renderer:RasterPasses.GeometryPass;
 import Core;
 import RHI;
 import RenderGraph;
-import Scene;
+import :GBuffer;
 
 export import std;
 

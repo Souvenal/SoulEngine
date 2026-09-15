@@ -147,8 +147,9 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
 
-        // Cross-frame pipeline registry 
-        PipelineRegistry::Get().Init();
+        // Cross-frame render-graph facilities (pipeline registry + transient
+        // render-target pool, ADR 05)
+        RenderGraph::Get().Init();
 
         const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Raster");
         if (auto R = SelectRenderer(InitialRenderer); !R) {
@@ -227,10 +228,10 @@ class EngineLoop {
 
         CloseRenderers();
 
-        // Release cross-frame pipeline refs while the deferred-deletion queue
-        // and native device are still alive — MUST precede
-        // RHIRenderDevice::Destroy()
-        PipelineRegistry::Get().Clear();
+        // Release cross-frame render-graph state (pool + pipeline refs) while
+        // the deferred-deletion queue and native device are still alive —
+        // MUST precede RHIRenderDevice::Destroy()
+        RenderGraph::Get().Shutdown();
 
         if (auto R = RHIRenderDevice::Destroy(); !R)
             LogError("RHI teardown failed:\n{}", R.error().ToString());
@@ -341,6 +342,10 @@ class EngineLoop {
             // publishing tasks for this frame.
             TaskGraph::Get().IncreaseThreadFrameIndex();
             TaskGraph::Get().DrainTasks(ThreadQueue::Render);
+
+            // Pool maintenance (LRU eviction) runs before this frame's
+            // Compile acquires (ADR 05).
+            RenderGraph::Get().Tick();
 
             if (!Slot.Renderer) {
                 LogError("Render loop received a frame without a renderer");

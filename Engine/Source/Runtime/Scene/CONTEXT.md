@@ -30,17 +30,16 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 | **World Coordinate System** | The Scene uses a right-handed, Y-up coordinate system. Asset-format coordinate differences are converted at an asset-import boundary. |
 | **Transform** | `Core:ECS.Transform` component containing local translation, rotation, and scale data. Scene Documents express it as `components.transform`, with rotation as Euler angles in degrees applied in X → Y → Z order about fixed parent-space axes; the runtime adds a default TransformComponent when omitted and derives its world matrix through the Scene Hierarchy. |
 | **SceneSnapshot** | Immutable per-frame render view built from `Scene` at the end of the GameLoop and held by the frame slot. It contains camera views, value-semantic geometry/material `InstanceRecord` values, and optional editor selection input. |
-| **PixelCoordinate** | A physical framebuffer pixel coordinate carried as optional editor selection input. The renderer post-process reads the EntityId G-buffer at this coordinate to determine the selected ID. |
-| **GBuffer** | Camera-owned ref-backed render-target set containing albedo, normal, material ID, entity ID, and one shared depth target. The depth target is both the geometry-pass depth attachment and the deferred lighting sampled depth resource. |
-| **CameraRenderTargets** | Camera-owned output bundle containing the GBuffer and the final SceneColorRT render target. Post-process passes load SceneColorRT so they can overlay results without replacing the lighting image. |
-| **CameraViewRecord** | One immutable camera/view record defined with the Camera component family: view-projection data plus ref-backed CameraRenderTargets. Renderers allocate their own transient constant buffers while recording the frame. |
+| **PixelCoordinate** | A physical framebuffer pixel coordinate carried as optional editor selection input. The renderer post-process reads the EntityId view target at this coordinate to determine the selected ID; mouse coordinates are mapped through the camera's Viewport. |
+| **Viewport** | A physical-pixel rectangle `{X, Y, Width, Height}` on the window where a camera's final image lands. CameraComponent persists it, resize events carry it, and the renderer's present blit targets it. |
+| **CameraViewRecord** | One immutable camera/view record defined with the Camera component family: view-projection data plus the view's Viewport. It carries no RHI resources; renderers create the view's render targets as pooled RenderGraph transients (ADR 05). Renderers allocate their own transient constant buffers while recording the frame. |
 | **GeometryRecord** | Scene-owned imported geometry record containing CPU vertex metadata, local bounding sphere, ref-backed position, normal, tangent, UV, and index buffers, and a `GpuData` shader-address ABI constructed by `BuildGpuData()`. It has no material identity. Bitangents are not stored; consumers derive them from normal and tangent. |
 | **SubMesh** | One imported `aiMesh` name, geometry handle, and default imported `MaterialHandle`. It preserves the material binding at imported-geometry scope rather than in GeometryRecord. |
 | **MeshAssetNode** | One static node from an imported asset hierarchy. It stores its local transform, ordered child nodes, and ordered references to `SubMesh` values; multiple nodes may reference the same SubMesh. |
 | **MeshRecord** | Scene-local cached imported asset. It owns a normalized absolute asset path, the complete imported material table, deduplicated SubMesh values, and an immutable MeshAssetNode tree shared by every entity that instances that mesh. |
 | **Material inspection query** | A transient flat `std::vector<ConstMaterialHandle>` returned by MeshSystem. The Editor groups and displays records by their MaterialRecord provenance during the current draw. |
 | **InstanceRecord** | Value-semantic SceneSnapshot record for one geometry/material instance. It carries the entity ID, GeometryRecord handle, selected MaterialHandle, and derived world transform. |
-| **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data and may retain component-private runtime view state; control behaviour is separate Runtime State. |
+| **CameraComponent** | Optional component describing a camera attached to a Scene Entity. It persists only authoring camera data (lens parameters) plus the Viewport rectangle, and holds no RHI resources; control behaviour is separate Runtime State. |
 | **LightComponent** | Optional authoring component describing a Directional or Point light attached to a Scene Entity. Spot lights and shadow flags are not part of the current contract. |
 | **LightRecord** | Immutable world-space light record in a GameSnapshot. It carries the source entity ID, physical light values, and the shared 48-byte `GpuData` ABI consumed by Raster and RayTracing renderers. |
 | **Scene system query** | A templated lookup of one registered Scene system. It returns an optional borrowed reference wrapper, preserving constness and hiding the Scene's `SystemScheduler` from consumers. |
@@ -86,12 +85,13 @@ components.
 Authoring State and component-private Runtime State may coexist in one
 component type. Each component's explicitly registered EnTT meta data fields
 participate in Scene Document loading. Renderer-owned resource caches retain asset-resource ownership while resolving the
-asset identities in snapshots. CameraViewRecord additionally carries the camera-owned
-RHIRef render-target bundle needed by the renderer; it carries no native raw pointers.
+asset identities in snapshots. CameraViewRecord carries no RHI resources; view render
+targets are renderer-created pooled RenderGraph transients derived from the camera's
+Viewport (ADR 05). The GBuffer is a Renderer-module structure, not a Scene concept.
 ## Dependencies
 
 - `Core` — types, error handling
-- `RHI` — ref-backed camera render targets and geometry GPU payloads
+- `RHI` — ref-backed geometry GPU payloads
 - `Material` — mesh-imported material assets
 - `entt` — Scene Registry and component metadata
 - `libyaml` — internal Scene Loading implementation
@@ -100,7 +100,9 @@ RHIRef render-target bundle needed by the renderer; it carries no native raw poi
 ## RHI ownership boundary
 
 Scene authoring components remain renderer-neutral and must not store backend raw
-pointers. Camera-owned CameraRenderTargets are the explicit runtime exception: they
-carry copyable RHIRef<RHIRenderTarget> handles for the view's render outputs, never
-native pointers. Renderers record only Ready refs, and command-list copies followed
-by Vulkan submission retention own the GPU-use lifetime.
+pointers. Geometry GPU payloads (ref-backed vertex/index buffers on GeometryRecord)
+are the explicit runtime exception: they carry copyable RHIRef handles, never native
+pointers. View render targets are not Scene state at all — renderers create them per
+frame as pooled RenderGraph transients from the camera's Viewport (ADR 05). Renderers
+record only Ready refs, and command-list copies followed by Vulkan submission
+retention own the GPU-use lifetime.

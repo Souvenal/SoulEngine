@@ -24,10 +24,11 @@ static_assert(sizeof(SelectionOutlinePushConstants) == 8);
 export namespace SoulEngine {
 
 /// @brief Blends the outline color over the lit SceneColor through the
-/// selection mask and carries the frame Present.
+/// selection mask.
 ///
 /// The class IS the graph's TPass. SceneColor is the only legal fused RMW —
 /// a loadOp=Load color attachment declared via `RGColorRT{.Load = true}`.
+/// Present is the explicit BlitToSwapchainPass downstream (ADR 05).
 class SelectionOutlinePass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "SelectionOutlinePass";
@@ -51,11 +52,6 @@ class SelectionOutlinePass final : public IRHIGraphicsPass {
             .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
         };
     }
-
-    /// Present carrier: the graph marks this pass as the frame's present
-    /// output (its SceneColor attachment is a Load RMW, so no view bit says
-    /// so — the marker does).
-    static constexpr bool PresentOutput = true;
 
     struct Parameter {
         /// Fused read-modify-write attachment: one internal RmwAttachment

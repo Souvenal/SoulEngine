@@ -16,7 +16,7 @@ FrameSlot-owned RHIRef contract described by the RHI context.
 | **Immediate completion callback** | Callback retained by an immediate-lane timeline point. Async buffer/texture creation captures the RHI ref payload and marks it ready only after the required transfer/graphics chain completes. |
 | **Deferred deletion queue** | RHI-module-owned queue behind GDeferredDeletionQueue. Final RHIRef release enqueues native destruction; RHILoop drains it on the RHI thread after Tick() via DrainRHIDeferredDeletions(), and Shutdown() performs the final drain. |
 | **Transient arena** | Host-visible per-frame uniform or shader-storage backing buffer. The current arena segment is reused only after the matching frame-context timeline wait. |
-| **Swapchain image** | Backend-private image acquired for presentation. PresentSourceRef is transitioned/copied or rendered into it; it is not an engine-owned RHIRef payload. |
+| **Swapchain image** | Backend-private image acquired for presentation. The `RHIBlitToSwapchainCmd` visitor transitions it and blits the command's source render target into it at the command's explicit dst rect (fixed Nearest filter); the ImGui overlay may then load-and-render on top. It is never an engine-owned RHIRef payload. |
 | **Vulkan object naming** | Application-defined `VK_EXT_debug_utils` labels assigned through `VulkanDebugUtils::SetObjectName`. Every Vulkan handle created or allocated and owned by SoulEngine, including internal handles, is required to receive a deterministic name after successful creation. |
 
 ## Debug utilities and object naming
@@ -55,7 +55,7 @@ Internal/Instance
 Internal/Device
 Internal/CommandBuffer/Primary/Frame0
 Internal/CommandPool/Secondary/Frame0
-Camera/RenderTarget/EditorViewport/SceneColor
+Renderer/RenderTarget/View0/SceneColor
 Renderer/GraphicsPipeline/GeometryPass
 ```
 

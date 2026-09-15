@@ -10,8 +10,8 @@ export import std;
 export namespace SoulEngine {
 
 /// How a pass touches a resource. The view type of the Parameter field
-/// determines the usage; ordering only needs the read/write class and the
-/// Present bit, the rest is diagnostic and barrier-hint granularity.
+/// determines the usage; ordering only needs the read/write class, the rest
+/// is diagnostic and barrier-hint granularity.
 enum class RGUsage : Uint8 {
     Unknown = 0,
     SampledRead,            ///< RGTextureSRV
@@ -46,13 +46,11 @@ struct RGPassNode {
 
     /// Pass-type static markers, read from TPass at AddPass.
     bool NeverPrune    = false;  ///< TPass::NeverPrune — pruning must never drop this pass
-    bool PresentOutput = false;  ///< TPass::PresentOutput — carries the frame Present
     bool HasPipeline   = false;  ///< TPass declares BuildPipelineRequest()
 
     struct Access {
         Uint32  ResourceIndex = 0;  ///< index into the graph's resource table
         RGUsage Usage         = RGUsage::Unknown;
-        bool    Present       = false;  ///< the frame's terminal swapchain write
     };
     std::vector<Access> Accesses = {};
 
@@ -91,6 +89,13 @@ struct RGResourceEntry {
     std::vector<std::byte>      OwnedInitialData          = {};
 
     // ── Resolved RHI object (imported at AddPass, realized at Compile) ──
+    /// The desc a transient texture was realized with (derived usage
+    /// included); the builder returns the pooled ref under this key.
+    RHIRenderTargetDesc                      RealizedTargetDesc = {};
+    /// True once Compile acquired the texture from the pool. The builder
+    /// destructor keys the pool return on this, not on ref readiness — a
+    /// just-created ref may still be pending when the builder dies.
+    bool                                     TargetFromPool     = false;
     RHIRef<RHIRenderTarget>                  Target          = nullptr;
     RHIRef<RHIReadbackBuffer>                Readback        = nullptr;
     RHIRef<RHITransientShaderStorageBuffer>  StorageBuffer   = nullptr;

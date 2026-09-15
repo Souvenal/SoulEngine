@@ -94,14 +94,6 @@ class IRHIGraphicsPass : public IRHIPass {
         return m_Attachments;
     }
 
-    auto SetPresentOutput() -> void {
-        m_PresentOutput = true;
-    }
-
-    [[nodiscard]] auto HasPresentOutput() const noexcept -> bool {
-        return m_PresentOutput;
-    }
-
   protected:
     auto SetViewport(Float32 X,
                      Float32 Y,
@@ -150,7 +142,6 @@ class IRHIGraphicsPass : public IRHIPass {
     }
 
     RHIGraphicsAttachments m_Attachments = {};
-    bool                   m_PresentOutput = false;
 
   private:
     RHIRef<RHIGraphicsPipeline> m_Pipeline = nullptr;
@@ -199,6 +190,24 @@ class IRHITransferPass : public IRHIPass {
     }
 
   protected:
+    /// Blits the complete source into the acquired swapchain image at the given
+    /// destination rect. This is the only present path (ADR 05).
+    auto BlitToSwapchain(RHIRef<RHIRenderTarget> Source,
+                         Uint32                  DstX,
+                         Uint32                  DstY,
+                         Uint32                  DstWidth,
+                         Uint32                  DstHeight) -> void {
+        if (!Source || DstWidth == 0 || DstHeight == 0)
+            return;
+        m_Commands.emplace_back(RHIBlitToSwapchainCmd{
+            .Source    = std::move(Source),
+            .DstX      = DstX,
+            .DstY      = DstY,
+            .DstWidth  = DstWidth,
+            .DstHeight = DstHeight,
+        });
+    }
+
     auto CopyTextureToBuffer(RHIRef<RHIRenderTarget>   Source,
                              Uint32                    SrcX,
                              Uint32                    SrcY,

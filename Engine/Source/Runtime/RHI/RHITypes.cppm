@@ -483,7 +483,6 @@ enum class RHITextureUsage : Uint32 {
     RenderTarget   = 1u << 0,
     DepthStencil   = 1u << 1,
     ShaderResource = 1u << 2,
-    FrameOutput    = 1u << 3,
     ShaderStorage  = 1u << 4,
     TransferSrc    = 1u << 5,
     TransferDst    = 1u << 6,
@@ -528,7 +527,8 @@ struct RHISampledTextureDesc {
     Uint32                     Height   = 1;
     Uint32                     Channels = 4;
     RHIFormat                  Format   = RHIFormat::R8G8B8A8_UNORM;
-    RHITextureUsage            Usage    = RHITextureUsage::ShaderResource;
+    // Sampled textures have fixed backend upload/sampled semantics (ADR 05):
+    // no usage field.
 };
 
 struct RHIRenderTargetDesc {

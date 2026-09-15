@@ -34,6 +34,9 @@ class MockRenderDevice final : public RHIRenderDevice {
     Uint32 CreatedTargets         = 0;
     Uint32 CreatedStorageBuffers  = 0;
     Uint32 CreatedConstantBuffers = 0;
+    /// Usage bits of the last realized render target — lets tests assert the
+    /// graph's derived usage (ADR 05).
+    RHITextureUsage LastTargetUsage = RHITextureUsage::None;
     /// Bytes the last transient upload carried — lets tests assert what
     /// realize actually forwarded to the RHI.
     std::vector<std::byte> LastUpload = {};
@@ -41,9 +44,10 @@ class MockRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override {
         return {};
     }
-    [[nodiscard]] auto CreateRenderTarget(StringView, const RHIRenderTargetDesc&)
+    [[nodiscard]] auto CreateRenderTarget(StringView, const RHIRenderTargetDesc& Desc)
         -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> override {
         ++CreatedTargets;
+        LastTargetUsage = Desc.Usage;
         return RHIRef<RHIRenderTarget>{};
     }
     [[nodiscard]] auto CreateTransientShaderStorageBuffer(StringView,
@@ -110,27 +114,6 @@ struct WriteColorPass final : IRHIGraphicsPass {
     };
 
     WriteColorPass(Parameter In)
-        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {
-        ++Constructed;
-    }
-    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
-
-  private:
-    Parameter m_Parameter = {};
-};
-
-/// Static PresentOutput marker: the pass carries the frame Present
-/// regardless of view bits (its SceneColor is a Load attachment).
-struct OutlinePass final : IRHIGraphicsPass {
-    static constexpr StringView Name          = "Outline";
-    static constexpr bool       PresentOutput = true;
-    static inline Uint32        Constructed   = 0;
-
-    struct Parameter {
-        RGColorRT SceneColor = {.Load = true};
-    };
-
-    OutlinePass(Parameter In)
         : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {
         ++Constructed;
     }
@@ -309,6 +292,46 @@ struct BridgePass final : IRHIGraphicsPass {
     Parameter m_Parameter = {};
 };
 
+/// Depth-attachment writer mock: contributes DepthStencil to the texture's
+/// derived usage.
+struct WriteDepthPass final : IRHIGraphicsPass {
+    static constexpr StringView Name        = "WriteDepth";
+    static inline Uint32        Constructed = 0;
+
+    struct Parameter {
+        RGDepthRT Depth = {};
+    };
+
+    WriteDepthPass(Parameter In)
+        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {
+        ++Constructed;
+    }
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
+
+  private:
+    Parameter m_Parameter = {};
+};
+
+/// Storage-image writer mock: contributes ShaderStorage to the texture's
+/// derived usage while it survives pruning.
+struct WriteStorageTexturePass final : IRHIComputePass {
+    static constexpr StringView Name        = "WriteStorageTexture";
+    static inline Uint32        Constructed = 0;
+
+    struct Parameter {
+        RGStorageTextureUAV Output = {};
+    };
+
+    WriteStorageTexturePass(Parameter In)
+        : IRHIComputePass(String(Name)), m_Parameter(std::move(In)) {
+        ++Constructed;
+    }
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
+
+  private:
+    Parameter m_Parameter = {};
+};
+
 /// NeverPrune storage reader used as the frame anchor in ordering tests.
 struct AnchorPass final : IRHITransferPass {
     static constexpr StringView Name       = "Anchor";
@@ -327,7 +350,8 @@ struct AnchorPass final : IRHITransferPass {
 
 auto ResetMockCounters() -> void {
     WriteColorPass::Constructed      = 0;
-    OutlinePass::Constructed         = 0;
+    WriteDepthPass::Constructed      = 0;
+    WriteStorageTexturePass::Constructed = 0;
     ReadColorPass::Constructed       = 0;
     WriteStoragePass::Constructed    = 0;
     ReadStoragePass::Constructed     = 0;
@@ -340,6 +364,8 @@ auto ResetMockCounters() -> void {
     DeviceInjector::Get().CreatedStorageBuffers  = 0;
     DeviceInjector::Get().CreatedConstantBuffers = 0;
     DeviceInjector::Get().LastUpload.clear();
+    // Cross-frame pool state must not leak between tests.
+    RenderGraph::Get().GetPool().Clear();
 }
 
 /// Pass names in compiled order — the observable result of ordering + pruning.
@@ -351,7 +377,7 @@ auto ResetMockCounters() -> void {
     return Names;
 }
 
-[[nodiscard]] auto MakeStorage(RenderGraph& Graph, StringView Name, Uint64 SizeBytes = 16) -> RGStorageBufferHandle {
+[[nodiscard]] auto MakeStorage(RenderGraphBuilder& Graph, StringView Name, Uint64 SizeBytes = 16) -> RGStorageBufferHandle {
     return Graph.CreateShaderStorageBuffer(
         Name, RGShaderStorageBufferDesc{.SizeBytes = SizeBytes, .Usage = RHITransientBufferUsage::ShaderRead});
 }
@@ -362,7 +388,7 @@ auto ResetMockCounters() -> void {
 
 TEST(RenderGraphOrder, IndependentPassesKeepRegistrationOrder) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  X = MakeStorage(Graph, "X");
     const auto  Y = MakeStorage(Graph, "Y");
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = X}});
@@ -378,7 +404,7 @@ TEST(RenderGraphOrder, IndependentPassesKeepRegistrationOrder) {
 
 TEST(RenderGraphOrder, ReaderOrdersAfterLastWriterOnly) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  X = MakeStorage(Graph, "X");
     const auto  Y = MakeStorage(Graph, "Y");
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = X}});   // X writer
@@ -394,7 +420,7 @@ TEST(RenderGraphOrder, ReaderOrdersAfterLastWriterOnly) {
 
 TEST(RenderGraphOrder, MultipleWritersChainInRegistrationOrder) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  X = MakeStorage(Graph, "X");
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = X}});
     Graph.AddPass<FilterPass>({.Input  = RGStorageBufferSRV{.Buffer = X},
@@ -410,7 +436,7 @@ TEST(RenderGraphOrder, MultipleWritersChainInRegistrationOrder) {
 
 TEST(RenderGraphPrune, DeadProducerIsNeverConstructed) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Dead = MakeStorage(Graph, "Dead");
     const auto  Live = MakeStorage(Graph, "Live");
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = Dead}});  // nobody reads Dead
@@ -424,7 +450,7 @@ TEST(RenderGraphPrune, DeadProducerIsNeverConstructed) {
 
 TEST(RenderGraphPrune, PruneIsTransitiveOverTheDependencyChain) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  X = MakeStorage(Graph, "X");
     const auto  Y = MakeStorage(Graph, "Y");
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = X}});
@@ -445,7 +471,7 @@ TEST(RenderGraphPrune, PruneIsTransitiveOverTheDependencyChain) {
 
 TEST(RenderGraphPrune, ImportedWriteKeepsItsProducerChainAlive) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  X        = MakeStorage(Graph, "X");
     const auto  Imported = Graph.Import(RHIRef<RHIRenderTarget>{});
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = X}});
@@ -462,60 +488,187 @@ TEST(RenderGraphPrune, ImportedWriteKeepsItsProducerChainAlive) {
     EXPECT_EQ(DeviceInjector::Get().CreatedStorageBuffers, 1u);
 }
 
-// ── Present ────────────────────────────────────────────────────────────────
+// ── Blit to swapchain (explicit present, ADR 05) ──────────────────────────
 
-TEST(RenderGraphPresent, PresentAccessMarksTheGraphicsPassAsPresentOutput) {
+TEST(RenderGraphBlitToSwapchain, NeverPruneSurvivesWithoutConsumers) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
-    Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target, .Present = true}});
+    Graph.AddPass<BlitToSwapchainPass>(
+        {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
     ASSERT_EQ(List->Passes.size(), 1u);
-    EXPECT_TRUE(static_cast<IRHIGraphicsPass*>(List->Passes.front().get())->HasPresentOutput());
+    EXPECT_EQ(List->Passes.front()->GetName(), "BlitToSwapchainPass");
 }
 
-TEST(RenderGraphPresent, StaticPresentOutputMarkerMarksThePass) {
+TEST(RenderGraphBlitToSwapchain, OrdersAfterTheSourceWriter) {
     ResetMockCounters();
-    RenderGraph Graph;
-    const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
-    Graph.AddPass<OutlinePass>({.SceneColor = RGColorRT{.Texture = Target, .Load = true}});
-
-    auto List = Graph.Compile();
-    ASSERT_TRUE(List);
-    ASSERT_EQ(List->Passes.size(), 1u);
-    EXPECT_TRUE(static_cast<IRHIGraphicsPass*>(List->Passes.front().get())->HasPresentOutput());
-}
-
-TEST(RenderGraphPresent, PlainImportedWriteIsNotMarkedAsPresentOutput) {
-    ResetMockCounters();
-    RenderGraph Graph;
-    const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
+    RenderGraphBuilder Graph;
+    const auto  Target = Graph.CreateTexture(
+        "SceneColor", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
     Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+    Graph.AddPass<BlitToSwapchainPass>(
+        {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
-    ASSERT_EQ(List->Passes.size(), 1u);
-    EXPECT_FALSE(static_cast<IRHIGraphicsPass*>(List->Passes.front().get())->HasPresentOutput());
+    EXPECT_EQ(PassNames(*List), (std::vector<StringView>{"WriteColor", "BlitToSwapchainPass"}));
 }
 
-TEST(RenderGraphPresent, PresentAndLoadOnOneAttachmentIsRejected) {
+// ── Derived usage (ADR 05) ─────────────────────────────────────────────────
+
+TEST(RenderGraphDerivedUsage, SurvivingViewsFormTheUsageUnion) {
     ResetMockCounters();
-    RenderGraph Graph;
-    const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
-    Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target, .Present = true, .Load = true}});
+    RenderGraphBuilder Graph;
+    const auto  Target = Graph.CreateTexture(
+        "SceneColor", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+    Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+    Graph.AddPass<BlitToSwapchainPass>(
+        {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
 
     auto List = Graph.Compile();
-    ASSERT_FALSE(List);
-    EXPECT_NE(List.error().ToString().find("WriteColor"), String::npos);
+    ASSERT_TRUE(List);
+    ASSERT_EQ(DeviceInjector::Get().CreatedTargets, 1u);
+    const auto Usage = static_cast<Uint32>(DeviceInjector::Get().LastTargetUsage);
+    EXPECT_NE(Usage & static_cast<Uint32>(RHITextureUsage::RenderTarget), 0u);
+    EXPECT_NE(Usage & static_cast<Uint32>(RHITextureUsage::TransferSrc), 0u);
+    EXPECT_EQ(Usage & static_cast<Uint32>(RHITextureUsage::ShaderStorage), 0u);
+}
+
+TEST(RenderGraphDerivedUsage, PrunedPassesContributeNoUsage) {
+    ResetMockCounters();
+    RenderGraphBuilder Graph;
+    const auto  Target = Graph.CreateTexture(
+        "SceneColor", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+    Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+    // No side effect and nothing required depends on it: this sampled read is
+    // dead code and must not add ShaderResource to the derived usage.
+    Graph.AddPass<ReadColorPass>({.Input = RGTextureSRV{.Texture = Target}});
+    Graph.AddPass<BlitToSwapchainPass>(
+        {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    EXPECT_EQ(ReadColorPass::Constructed, 0u);
+    ASSERT_EQ(DeviceInjector::Get().CreatedTargets, 1u);
+    const auto Usage = static_cast<Uint32>(DeviceInjector::Get().LastTargetUsage);
+    EXPECT_EQ(Usage & static_cast<Uint32>(RHITextureUsage::ShaderResource), 0u);
+}
+
+// ── Render-target pool (ADR 05) ─────────────────────────────────────────────
+
+TEST(RenderGraphPool, ReusesAcrossBuilderLifetimes) {
+    ResetMockCounters();
+    const auto MakeFrame = [] {
+        RenderGraphBuilder Graph;
+        const auto Target = Graph.CreateTexture(
+            "SceneColor", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+        Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+        Graph.AddPass<BlitToSwapchainPass>(
+            {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+        auto List = Graph.Compile();
+        EXPECT_TRUE(List);
+        // Builder dies here: pooled refs return immediately (no GPU gate).
+    };
+    MakeFrame();
+    MakeFrame();
+    // Second frame's identical desc must hit the pool: no new creation.
+    EXPECT_EQ(DeviceInjector::Get().CreatedTargets, 1u);
+}
+
+TEST(RenderGraphPool, KeyDistinguishesDerivedUsage) {
+    ResetMockCounters();
+    const auto MakeFrame = [](bool Storage) {
+        RenderGraphBuilder Graph;
+        const auto Target = Graph.CreateTexture(
+            "Shared", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+        if (Storage)
+            Graph.AddPass<WriteStorageTexturePass>({.Output = RGStorageTextureUAV{.Texture = Target}});
+        else
+            Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+        Graph.AddPass<BlitToSwapchainPass>(
+            {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+        auto List = Graph.Compile();
+        EXPECT_TRUE(List);
+    };
+    MakeFrame(false);  // RenderTarget | TransferSrc
+    MakeFrame(true);   // ShaderStorage | TransferSrc — different bucket
+    EXPECT_EQ(DeviceInjector::Get().CreatedTargets, 2u);
+}
+
+TEST(RenderGraphPool, TickEvictsIdleEntries) {
+    ResetMockCounters();
+    {
+        RenderGraphBuilder Graph;
+        const auto Target = Graph.CreateTexture(
+            "SceneColor", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+        Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+        Graph.AddPass<BlitToSwapchainPass>(
+            {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+        auto List = Graph.Compile();
+        ASSERT_TRUE(List);
+    }
+    ASSERT_EQ(RenderGraph::Get().GetPool().GetFreeEntryCount(), 1u);
+    for (Uint32 I = 0; I < kRGEvictIdleFrames; ++I)
+        RenderGraph::Get().Tick();
+    EXPECT_EQ(RenderGraph::Get().GetPool().GetFreeEntryCount(), 0u);
+    // After eviction the same desc is a miss again.
+    {
+        RenderGraphBuilder Graph;
+        const auto Target = Graph.CreateTexture(
+            "SceneColor", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+        Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Target}});
+        Graph.AddPass<BlitToSwapchainPass>(
+            {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+        auto List = Graph.Compile();
+        ASSERT_TRUE(List);
+    }
+    EXPECT_EQ(DeviceInjector::Get().CreatedTargets, 2u);
+}
+
+TEST(RenderGraphDerivedUsage, DepthAttachmentDerivesDepthStencil) {
+    ResetMockCounters();
+    RenderGraphBuilder Graph;
+    const auto         Target = Graph.CreateTexture(
+        "Depth", {.Width = 8, .Height = 8, .Format = RHIFormat::D32_SFLOAT});
+    Graph.AddPass<WriteDepthPass>({.Depth = RGDepthRT{.Texture = Target}});
+    // A depth write alone is dead code; the NeverPrune reader anchors it.
+    Graph.AddPass<BlitToSwapchainPass>(
+        {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(DeviceInjector::Get().CreatedTargets, 1u);
+    const auto Usage = static_cast<Uint32>(DeviceInjector::Get().LastTargetUsage);
+    EXPECT_NE(Usage & static_cast<Uint32>(RHITextureUsage::DepthStencil), 0u);
+    EXPECT_EQ(Usage & static_cast<Uint32>(RHITextureUsage::RenderTarget), 0u);
+}
+
+TEST(RenderGraphDerivedUsage, StorageImageWriteDerivesShaderStorage) {
+    ResetMockCounters();
+    RenderGraphBuilder Graph;
+    const auto  Target = Graph.CreateTexture(
+        "RT/Output", {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
+    Graph.AddPass<WriteStorageTexturePass>({.Output = RGStorageTextureUAV{.Texture = Target}});
+    Graph.AddPass<BlitToSwapchainPass>(
+        {.Source = RGCopySrc{.Texture = Target}, .DstWidth = 8, .DstHeight = 8});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(DeviceInjector::Get().CreatedTargets, 1u);
+    const auto Usage = static_cast<Uint32>(DeviceInjector::Get().LastTargetUsage);
+    EXPECT_NE(Usage & static_cast<Uint32>(RHITextureUsage::ShaderStorage), 0u);
+    EXPECT_NE(Usage & static_cast<Uint32>(RHITextureUsage::TransferSrc), 0u);
+    EXPECT_EQ(Usage & static_cast<Uint32>(RHITextureUsage::RenderTarget), 0u);
 }
 
 // ── Realization ────────────────────────────────────────────────────────────
 
 TEST(RenderGraphRealize, DeadTransientsAreNeverRealized) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Dead = MakeStorage(Graph, "Dead");
     const auto  Live = MakeStorage(Graph, "Live");
     Graph.AddPass<WriteStoragePass>({.Output = RGStorageBufferUAV{.Buffer = Dead}});
@@ -528,7 +681,7 @@ TEST(RenderGraphRealize, DeadTransientsAreNeverRealized) {
 
 TEST(RenderGraphRealize, TransientWithInitialDataIsReadableWithoutAWriter) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     static constexpr std::array<std::byte, 16> Payload{};
     const auto Buffer = Graph.CreateShaderStorageBuffer(
         "UploadTable",
@@ -549,7 +702,7 @@ TEST(RenderGraphRealize, TransientWithoutInitialDataIsAlsoReadableWithoutAWriter
     // No InitialData means undefined scratch contents; the graph does not
     // police that — the reader simply reads whatever the GPU left there.
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Scratch = MakeStorage(Graph, "Scratch");
     Graph.AddPass<KeepReadStoragePass>({.Input = RGStorageBufferSRV{.Buffer = Scratch}});
 
@@ -560,7 +713,7 @@ TEST(RenderGraphRealize, TransientWithoutInitialDataIsAlsoReadableWithoutAWriter
 
 TEST(RenderGraphRealize, ConstantBufferWithInitialDataRealizesOnce) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     static constexpr std::array<std::byte, 32> Payload{};
     const auto CB = Graph.CreateConstantBuffer(
         "FrameConstants",
@@ -578,7 +731,7 @@ TEST(RenderGraphRealize, InitialDataBytesOutliveTheirSourceSpan) {
     // Compile; the graph copies the bytes at registration, so realize still
     // uploads the original content, never freed or reused memory.
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     {
         const std::vector<std::byte> Temporary(16, std::byte{0xAB});
         const auto Buffer = Graph.CreateShaderStorageBuffer(
@@ -601,7 +754,7 @@ TEST(RenderGraphRealize, InitialDataBytesOutliveTheirSourceSpan) {
 
 TEST(RenderGraphRealize, InitialDataSizeMismatchReturnsAnInvalidHandle) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     static constexpr std::array<std::byte, 8> Payload{};
     const auto Bad = Graph.CreateShaderStorageBuffer(
         "Bad",
@@ -615,7 +768,7 @@ TEST(RenderGraphRealize, InitialDataSizeMismatchReturnsAnInvalidHandle) {
 
 TEST(RenderGraphParameter, PassthroughFieldsSurviveTheAggregateWalkUntouched) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  X = MakeStorage(Graph, "X");
     const auto  Y = MakeStorage(Graph, "Y");
     Graph.AddPass<KeepFilterPass>({.Input  = RGStorageBufferSRV{.Buffer = X},
@@ -637,7 +790,7 @@ TEST(RenderGraphParameter, PassthroughFieldsSurviveTheAggregateWalkUntouched) {
 
 TEST(RenderGraphTransfer, CopyPassBuildsWithoutAPipeline) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  EntityId = Graph.Import(RHIRef<RHIRenderTarget>{});
     const auto  Readback = Graph.Import(RHIRef<RHIReadbackBuffer>{});
     Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = EntityId}});
@@ -654,7 +807,7 @@ TEST(RenderGraphTransfer, CopyPassBuildsWithoutAPipeline) {
 
 TEST(RenderGraphContract, CompileIsSingleUse) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Imported = Graph.Import(RHIRef<RHIRenderTarget>{});
     Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Imported}});
 
@@ -666,7 +819,7 @@ TEST(RenderGraphContract, CompileIsSingleUse) {
 
 TEST(RenderGraphContract, InvalidHandleIsRejectedAtCompile) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     Graph.AddPass<KeepReadStoragePass>({.Input = RGStorageBufferSRV{.Buffer = {}}});
 
     auto List = Graph.Compile();
@@ -676,7 +829,7 @@ TEST(RenderGraphContract, InvalidHandleIsRejectedAtCompile) {
 
 TEST(RenderGraphContract, AddPassAfterCompileIsIgnored) {
     ResetMockCounters();
-    RenderGraph Graph;
+    RenderGraphBuilder Graph;
     const auto  Imported = Graph.Import(RHIRef<RHIRenderTarget>{});
     Graph.AddPass<WriteColorPass>({.Output = RGColorRT{.Texture = Imported}});
 
