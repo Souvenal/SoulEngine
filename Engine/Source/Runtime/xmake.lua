@@ -43,7 +43,15 @@ function test_module(module_name, opt)
                 -- gtest[main] supplies gmock_main. Xmake places static libraries before
                 -- test objects on MSVC, so force-link that archive instead of adding a project-local main.
                 if is_plat("windows") then
-                    add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                    -- MSVC-style drivers (link.exe, clang-cl) accept /WHOLEARCHIVE
+                    -- directly, but the GNU-style clang++ driver that the clang/llvm
+                    -- toolchains use would treat it as an input file and fail with
+                    -- "no such file or directory"; forward it through -Wl, there.
+                    if is_config("toolchain", "clang", "llvm", "gcc") then
+                        add_ldflags("-Wl,/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                    else
+                        add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                    end
                 end
                 if opt.rpath_packages then
                     add_package_rpath(opt.rpath_packages)

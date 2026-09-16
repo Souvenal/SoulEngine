@@ -44,7 +44,7 @@ Each runtime module has its own `xmake.lua` for module-specific build configurat
 
 - xmake (latest)
 - A C++23 modules-capable compiler
-  - **Windows:** Microsoft Visual C++ (MSVC) from Visual Studio. This is the only currently supported Windows toolchain.
+  - **Windows:** LLVM Clang is **required** — MSVC currently cannot compile the project (see [Known Issues](#known-issues)). The root `xmake.lua` already pins the `clang` toolchain, so a plain `xmake f` picks it up automatically.
   - **macOS/Linux:** Clang is the configured toolchain.
 - **Vulkan SDK** — Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home). Before building or running, source the environment setup script:
 
@@ -99,11 +99,16 @@ Early, exploratory, single-developer. Nothing is stable. Everything is subject t
 
 ## Known Issues
 
-### Windows Toolchain: MSVC Required
+### Windows Toolchain: Clang Required (MSVC Currently Broken)
 
-Windows builds are currently supported and tested with **MSVC** only; the root `xmake.lua` selects it automatically.
+Windows builds must use **LLVM Clang**. The root `xmake.lua` hardcodes `set_toolchains("clang")`, so the default configure already uses it — do not switch the Windows toolchain back to MSVC.
 
-Do not override the Windows toolchain to LLVM Clang or `clang-cl`. The primary blocker is that the tested LLVM Clang **22.1.7** still triggers a compiler internal error while compiling SoulEngine's C++23 modules, even after the earlier Windows module/STL issues are addressed. The Clang path has also shown standard-library module integration failures (including missing concepts/type traits) and third-party Windows resource-compiler failures. Re-enable it only after the internal compiler error is fixed upstream or otherwise resolved, then validate the isolated `test_std/` project and a clean full-engine build.
+The blocker is MSVC compiler bugs with C++23 modules, not project code:
+
+- **MSVC 14.51 (VS 2026)** fails with a fatal **C1116** IFC-merge error: when a translation unit imports several modules whose global module fragments pull in `<thread>`/`<stop_token>` internal reference records (Tracy's headers inside the `Vulkan:Profiling` partition), MSVC mis-merges the module interface files.
+- **MSVC 14.44 / 14.38** fail even earlier, while compiling the `Core` module, so they are not a fallback path.
+
+Revisit MSVC only after those compiler bugs are fixed upstream (e.g. a Visual Studio update that resolves the C1116 IFC merge), then validate a clean full-engine build before changing the toolchain pin.
 
 ## License
 

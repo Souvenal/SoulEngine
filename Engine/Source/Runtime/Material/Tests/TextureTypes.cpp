@@ -1,4 +1,8 @@
 #include <gtest/gtest.h>
+// MaterialTypes uses hlsl++ types in its GMF, but the header is not exported
+// from the module: name the type textually here or clang rejects hlslpp:: as
+// an undeclared identifier (MSVC was lax about reachable-but-unexported names).
+#include <hlsl++.h>
 #include <assimp/GltfMaterial.h>
 
 import Material;

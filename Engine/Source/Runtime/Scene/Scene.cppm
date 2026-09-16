@@ -1,5 +1,8 @@
 module;
 
+// Clang 22 named-modules bug: concepts are shadowed through the std
+// re-export chain (import Core/RHI); textual include restores them.
+#include <concepts>
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 

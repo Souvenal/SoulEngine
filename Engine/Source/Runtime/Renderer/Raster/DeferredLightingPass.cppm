@@ -20,6 +20,7 @@ export namespace SoulEngine {
 class DeferredLightingPass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "DeferredLightingPass";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<DeferredLightingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
@@ -48,7 +49,7 @@ class DeferredLightingPass final : public IRHIGraphicsPass {
     };
 
     DeferredLightingPass(Parameter In, RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIGraphicsPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();

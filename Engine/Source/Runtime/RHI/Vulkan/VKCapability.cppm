@@ -292,6 +292,8 @@ class VulkanCapability : public Singleton<VulkanCapability> {
         m_DeviceExts.push_back({vk::KHRPortabilitySubsetExtensionName, false});
         // VK_EXT_memory_budget — used by VMA
         m_DeviceExts.push_back({vk::EXTMemoryBudgetExtensionName, false});
+        // VK_EXT_calibrated_timestamps — used by GPU profiling
+        m_DeviceExts.push_back({vk::EXTCalibratedTimestampsExtensionName, false});
 
         // Hardware ray tracing is an optional all-or-nothing device capability.
         // These extensions are appended only after ResolveRayTracingSupport validates

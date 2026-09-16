@@ -21,6 +21,7 @@ class BlitToSwapchainPass final : public IRHITransferPass {
   public:
     static constexpr StringView Name       = "BlitToSwapchainPass";
     static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGCopySrc Source    = {};
@@ -32,7 +33,7 @@ class BlitToSwapchainPass final : public IRHITransferPass {
         Uint32    DstHeight = 0;
     };
 
-    BlitToSwapchainPass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {}
+    BlitToSwapchainPass(Parameter In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();

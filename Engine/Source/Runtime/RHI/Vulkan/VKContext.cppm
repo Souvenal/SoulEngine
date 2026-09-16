@@ -3,6 +3,10 @@
 
 module;
 
+// Keep Tracy headers OUT of this fragment: they transitively pull
+// <thread>/<stop_token>, which embeds std-internal reference records into
+// Context.ifc that trip MSVC's IFC merge (C1116, VS 2026 14.51). All Tracy
+// knowledge lives in Vulkan:Profiling.
 #include <vk_mem_alloc.h>
 
 export module Vulkan:Context;
@@ -255,15 +259,17 @@ class VulkanResourceContext final {
     }
 
     [[nodiscard]] auto GetInstance() const -> vk::raii::Instance& { return const_cast<vk::raii::Instance&>(m_Instance); }
-    [[nodiscard]] auto GetDebugMessenger() const -> vk::raii::DebugUtilsMessengerEXT& {
-        return const_cast<vk::raii::DebugUtilsMessengerEXT&>(m_DebugMessenger);
-    }
     [[nodiscard]] auto GetSurface() const -> vk::raii::SurfaceKHR& { return const_cast<vk::raii::SurfaceKHR&>(m_Surface); }
     [[nodiscard]] auto GetPhysicalDevice() const -> vk::raii::PhysicalDevice& {
         return const_cast<vk::raii::PhysicalDevice&>(m_PhysicalDevice);
     }
     [[nodiscard]] auto GetDevice() const -> vk::raii::Device& { return const_cast<vk::raii::Device&>(m_Device); }
     [[nodiscard]] auto GetDebugUtils() const -> VulkanDebugUtils& { return const_cast<VulkanDebugUtils&>(m_DebugUtils); }
+    /// Opaque handle to the Tracy GPU context; owned and interpreted by
+    /// Vulkan:Profiling. Kept type-erased so this TU never sees Tracy headers.
+    [[nodiscard]] auto GetTracyCtx() const noexcept -> void* { return m_TracyCtx; }
+    auto SetTracyCtx(void* Ctx) noexcept -> void { m_TracyCtx = Ctx; }
+
     [[nodiscard]] auto GetGraphicsQueue() const -> vk::raii::Queue& {
         return const_cast<vk::raii::Queue&>(m_GraphicsQueue);
     }
@@ -311,7 +317,7 @@ class VulkanResourceContext final {
         auto EnabledLayers = VulkanCapability::Get().ResolveInstanceLayers(Context);
         if (!EnabledLayers)
             return std::unexpected(EnabledLayers.error());
-        const bool DebugUtils = ConfigManager::Get().GetConfig().RhiVulkan.DebugUtils.value_or(true);
+        const bool DebugUtils = VulkanDebugUtils::IsConfigEnabled();
 
         auto RequiredInstanceExtensions = m_SurfaceProvider->GetRequiredInstanceExtensions();
         if (!RequiredInstanceExtensions)
@@ -340,11 +346,10 @@ class VulkanResourceContext final {
         if (VulkanCapability::Get().IsInstanceExtensionEnabled(vk::KHRPortabilityEnumerationExtensionName))
             InstCI.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
-        if (DebugUtils) {
-            auto DebugMessengerCI = CreateDebugMessengerCI();
+        if (const auto ChainCI = VulkanDebugUtils::PrepareInstanceChain()) {
             vk::StructureChain<vk::InstanceCreateInfo, vk::DebugUtilsMessengerCreateInfoEXT> InstanceChain{
                 InstCI,
-                DebugMessengerCI,
+                *ChainCI,
             };
             auto InstanceResult = Context.createInstance(InstanceChain.get<vk::InstanceCreateInfo>());
             if (InstanceResult.result != vk::Result::eSuccess)
@@ -359,13 +364,8 @@ class VulkanResourceContext final {
             m_Instance = std::move(InstanceResult.value);
         }
 
-        if (DebugUtils) {
-            auto DebugMessenger = m_Instance.createDebugUtilsMessengerEXT(CreateDebugMessengerCI(), nullptr);
-            if (DebugMessenger.result != vk::Result::eSuccess)
-                return std::unexpected(ErrorMessage(
-                    Format("Failed to create Vulkan debug messenger: {}", vk::to_string(DebugMessenger.result))));
-            m_DebugMessenger = std::move(DebugMessenger.value);
-        }
+        if (const auto MessengerRes = m_DebugUtils.InitializeMessenger(m_Instance); !MessengerRes)
+            return std::unexpected(MessengerRes.error());
         return {};
     }
 
@@ -568,67 +568,12 @@ class VulkanResourceContext final {
         return {};
     }
 
-    [[nodiscard]] static auto CreateDebugMessengerCI() -> vk::DebugUtilsMessengerCreateInfoEXT {
-        return vk::DebugUtilsMessengerCreateInfoEXT{
-            .messageSeverity =
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-            .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                           vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-            .pfnUserCallback = &VulkanDebugCallback,
-        };
-    }
-
-    static VKAPI_ATTR auto VKAPI_CALL VulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT      MessageSeverity,
-                                                           vk::DebugUtilsMessageTypeFlagsEXT             MessageTypes,
-                                                           const vk::DebugUtilsMessengerCallbackDataEXT* CallbackData,
-                                                           void*) -> vk::Bool32 {
-        if (!CallbackData) {
-            LogError("[Vulkan] Debug callback data is empty");
-            return vk::True;
-        }
-        const StringView MessageId = CallbackData->pMessageIdName ? CallbackData->pMessageIdName : "UnknownMessage";
-        const StringView Message   = CallbackData->pMessage ? CallbackData->pMessage : "No Vulkan debug message";
-        const auto Types = vk::to_string(MessageTypes);
-        String DetailedMessage{Message};
-        if (CallbackData->objectCount > 0) {
-            DetailedMessage += Format("\nObjects: {}", CallbackData->objectCount);
-            for (Uint32 Index = 0; Index < CallbackData->objectCount; ++Index) {
-                const auto& Object = CallbackData->pObjects[Index];
-                DetailedMessage +=
-                    Format("\n    [{}] Vk{} 0x{:x}", Index, vk::to_string(Object.objectType), Object.objectHandle);
-                if (Object.pObjectName)
-                    DetailedMessage += Format("[{}]", Object.pObjectName);
-            }
-        }
-        switch (MessageSeverity) {
-        case vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose:
-            LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
-            break;
-        case vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo:
-            // There are too much `eInfo` messages,
-            // so we use `LogDebug`.
-            LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
-            break;
-        case vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning:
-            LogWarning("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
-            break;
-        case vk::DebugUtilsMessageSeverityFlagBitsEXT::eError:
-            LogError("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
-            break;
-        }
-        return vk::False;
-    }
-
     UPtr<IVulkanSurfaceProvider>     m_SurfaceProvider = nullptr;
     vk::raii::Instance               m_Instance        = nullptr;
-    vk::raii::DebugUtilsMessengerEXT m_DebugMessenger  = nullptr;
     vk::raii::SurfaceKHR             m_Surface         = nullptr;
     vk::raii::PhysicalDevice         m_PhysicalDevice  = nullptr;
     vk::raii::Device                 m_Device          = nullptr;
+    void*                            m_TracyCtx        = nullptr;
     VulkanDebugUtils                 m_DebugUtils;
     Uint32                           m_GraphicsFamily = vk::QueueFamilyIgnored;
     Uint32                           m_ComputeFamily  = vk::QueueFamilyIgnored;

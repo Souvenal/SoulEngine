@@ -1,12 +1,14 @@
 module;
 
+// Clang 22 named-modules bug: bare uint32_t is shadowed through the
+// std re-export chain (import RHI); a textual include restores it.
 #include <cstdint>
 
 export module Vulkan:Swapchain;
 
+// import std;
 import RHI;
 
-import std;
 import vulkan;
 
 import :Debug;

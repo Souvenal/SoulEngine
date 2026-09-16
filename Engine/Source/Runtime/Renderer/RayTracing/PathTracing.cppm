@@ -26,6 +26,7 @@ struct PathTracingExtent {
 class PathTracingPass final : public IRHIRayTracingPass {
   public:
     static constexpr StringView Name = "PathTracingPass";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<PathTracingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> RayTracingPipelineRequest {
@@ -67,7 +68,7 @@ class PathTracingPass final : public IRHIRayTracingPass {
     };
 
     PathTracingPass(Parameter In, RHIRef<RHIRayTracingPipeline> Pipeline)
-        : IRHIRayTracingPass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIRayTracingPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();

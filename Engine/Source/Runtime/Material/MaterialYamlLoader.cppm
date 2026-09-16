@@ -23,58 +23,7 @@ namespace {
     return true;
 }
 
-auto RegisterMaterialYamlMeta() -> void {
-    entt::meta_factory<MaterialYamlRecord> Factory = entt::meta_factory<MaterialYamlRecord>{}.type("material");
-    Factory.data<&MaterialYamlRecord::Name>("name");
-    Factory.data<&MaterialYamlRecord::Ambient>("ambient");
-    Factory.data<&MaterialYamlRecord::Diffuse>("diffuse");
-    Factory.data<&MaterialYamlRecord::Specular>("specular");
-    Factory.data<&MaterialYamlRecord::Emissive>("emissive");
-    Factory.data<&MaterialYamlRecord::Transparent>("transparent");
-    Factory.data<&MaterialYamlRecord::Reflective>("reflective");
-    Factory.data<&MaterialYamlRecord::Opacity>("opacity");
-    Factory.data<&MaterialYamlRecord::BumpScaling>("bump_scaling");
-    Factory.data<&MaterialYamlRecord::Shininess>("shininess");
-    Factory.data<&MaterialYamlRecord::ShininessStrength>("shininess_strength");
-    Factory.data<&MaterialYamlRecord::RefractionIndex>("refraction_index");
-    Factory.data<&MaterialYamlRecord::Reflectivity>("reflectivity");
-    Factory.data<&MaterialYamlRecord::EnableWireframe>("enable_wireframe");
-    Factory.data<&MaterialYamlRecord::TwoSided>("two_sided");
-    Factory.data<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function");
-    Factory.data<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model");
-    Factory.data<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode");
-    Factory.data<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff");
-    Factory.data<&MaterialYamlRecord::BaseColorFactor>("base_color_factor");
-    Factory.data<&MaterialYamlRecord::MetallicFactor>("metallic_factor");
-    Factory.data<&MaterialYamlRecord::RoughnessFactor>("roughness_factor");
-    Factory.data<&MaterialYamlRecord::SheenColorFactor>("sheen_color_factor");
-    Factory.data<&MaterialYamlRecord::SheenRoughnessFactor>("sheen_roughness_factor");
-    Factory.data<&MaterialYamlRecord::ClearcoatFactor>("clearcoat_factor");
-    Factory.data<&MaterialYamlRecord::ClearcoatRoughnessFactor>("clearcoat_roughness_factor");
-    Factory.data<&MaterialYamlRecord::TransmissionFactor>("transmission_factor");
-    Factory.data<&MaterialYamlRecord::VolumeThicknessFactor>("volume_thickness_factor");
-    Factory.data<&MaterialYamlRecord::VolumeAttenuationDistance>("volume_attenuation_distance");
-    Factory.data<&MaterialYamlRecord::VolumeAttenuationColor>("volume_attenuation_color");
-    Factory.data<&MaterialYamlRecord::BaseColorTexture>("base_color_texture");
-    Factory.data<&MaterialYamlRecord::NormalTexture>("normal_texture");
-    Factory.data<&MaterialYamlRecord::MetallicRoughnessTexture>("metallic_roughness_texture");
-    Factory.data<&MaterialYamlRecord::MetallicTexture>("metallic_texture");
-    Factory.data<&MaterialYamlRecord::RoughnessTexture>("roughness_texture");
-    Factory.data<&MaterialYamlRecord::OcclusionTexture>("occlusion_texture");
-    Factory.data<&MaterialYamlRecord::EmissiveTexture>("emissive_texture");
-}
-
 } // namespace
-
-// Note: this namespace must stay named. In a named module, clang 23 silently
-// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
-// which would skip this entt meta registration at program startup.
-namespace MetaRegistration {
-
-struct MaterialYamlMetaRegistration { MaterialYamlMetaRegistration() { RegisterMaterialYamlMeta(); } };
-MaterialYamlMetaRegistration g_MaterialYamlMetaRegistration = {};
-
-} // namespace MetaRegistration
 } // namespace SoulEngine
 
 export namespace SoulEngine {

@@ -108,13 +108,14 @@ const auto G_InjectDevice = DeviceInjector{};
 struct WriteColorPass final : IRHIGraphicsPass {
     static constexpr StringView Name = "WriteColor";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGColorRT Output = {};
     };
 
     WriteColorPass(Parameter In)
-        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {
+        : IRHIGraphicsPass(nullptr), m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -126,13 +127,14 @@ struct WriteColorPass final : IRHIGraphicsPass {
 struct ReadColorPass final : IRHIGraphicsPass {
     static constexpr StringView Name = "ReadColor";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGTextureSRV Input = {};
     };
 
     ReadColorPass(Parameter In)
-        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {
+        : IRHIGraphicsPass(nullptr), m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -144,12 +146,13 @@ struct ReadColorPass final : IRHIGraphicsPass {
 struct WriteStoragePass final : IRHITransferPass {
     static constexpr StringView Name = "WriteStorage";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferUAV Output = {};
     };
 
-    WriteStoragePass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {
+    WriteStoragePass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -161,12 +164,13 @@ struct WriteStoragePass final : IRHITransferPass {
 struct ReadStoragePass final : IRHITransferPass {
     static constexpr StringView Name = "ReadStorage";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input = {};
     };
 
-    ReadStoragePass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {
+    ReadStoragePass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -181,12 +185,13 @@ struct KeepReadStoragePass final : IRHITransferPass {
     static constexpr StringView Name       = "KeepReadStorage";
     static constexpr bool       NeverPrune = true;
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input = {};
     };
 
-    KeepReadStoragePass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {
+    KeepReadStoragePass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -201,6 +206,7 @@ struct FilterPass final : IRHIComputePass {
     static constexpr StringView Name = "Filter";
     static inline Uint32        Constructed = 0;
     static inline Uint32        LastTag     = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input  = {};
@@ -209,7 +215,7 @@ struct FilterPass final : IRHIComputePass {
         Float32            Scale  = 1.0f;
     };
 
-    FilterPass(Parameter In) : IRHIComputePass(String(Name)), m_Parameter(std::move(In)) {
+    FilterPass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
         LastTag = m_Parameter.Tag;
     }
@@ -223,13 +229,14 @@ struct KeepFilterPass final : IRHIComputePass {
     static constexpr StringView Name       = "KeepFilter";
     static constexpr bool       NeverPrune = true;
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input  = {};
         RGStorageBufferUAV Output = {};
     };
 
-    KeepFilterPass(Parameter In) : IRHIComputePass(String(Name)), m_Parameter(std::move(In)) {
+    KeepFilterPass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -242,12 +249,13 @@ struct ReadConstantPass final : IRHIComputePass {
     static constexpr StringView Name       = "ReadConstant";
     static constexpr bool       NeverPrune = true;
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGConstantBufferSRV Input = {};
     };
 
-    ReadConstantPass(Parameter In) : IRHIComputePass(String(Name)), m_Parameter(std::move(In)) {
+    ReadConstantPass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -259,13 +267,14 @@ struct ReadConstantPass final : IRHIComputePass {
 struct CopyPass final : IRHITransferPass {
     static constexpr StringView Name = "Copy";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGCopySrc Source = {};
         RGCopyDst Target = {};
     };
 
-    CopyPass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {
+    CopyPass(Parameter In) : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -278,6 +287,7 @@ struct CopyPass final : IRHITransferPass {
 /// imported write is the side effect that anchors its producer chain.
 struct BridgePass final : IRHIGraphicsPass {
     static constexpr StringView Name = "Bridge";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input  = {};
@@ -285,7 +295,7 @@ struct BridgePass final : IRHIGraphicsPass {
     };
 
     BridgePass(Parameter In)
-        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {}
+        : IRHIGraphicsPass(nullptr), m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:
@@ -297,13 +307,14 @@ struct BridgePass final : IRHIGraphicsPass {
 struct WriteDepthPass final : IRHIGraphicsPass {
     static constexpr StringView Name        = "WriteDepth";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGDepthRT Depth = {};
     };
 
     WriteDepthPass(Parameter In)
-        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {
+        : IRHIGraphicsPass(nullptr), m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -317,13 +328,14 @@ struct WriteDepthPass final : IRHIGraphicsPass {
 struct WriteStorageTexturePass final : IRHIComputePass {
     static constexpr StringView Name        = "WriteStorageTexture";
     static inline Uint32        Constructed = 0;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageTextureUAV Output = {};
     };
 
     WriteStorageTexturePass(Parameter In)
-        : IRHIComputePass(String(Name)), m_Parameter(std::move(In)) {
+        : m_Parameter(std::move(In)) {
         ++Constructed;
     }
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
@@ -336,12 +348,13 @@ struct WriteStorageTexturePass final : IRHIComputePass {
 struct AnchorPass final : IRHITransferPass {
     static constexpr StringView Name       = "Anchor";
     static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input = {};
     };
 
-    AnchorPass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {}
+    AnchorPass(Parameter In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:

@@ -19,7 +19,7 @@ enum class RHIPassType : Uint8 {
 /// @brief Renderer-independent pass builder and final RHI execution packet.
 class IRHIPass {
   public:
-    explicit IRHIPass(String Name) : m_Name(std::move(Name)) {}
+    IRHIPass()                                             = default;
     IRHIPass(const IRHIPass&)                              = delete;
     auto operator=(const IRHIPass&) -> IRHIPass&           = delete;
     IRHIPass(IRHIPass&&)                                   = default;
@@ -29,9 +29,7 @@ class IRHIPass {
     [[nodiscard]] virtual auto Record() -> std::expected<void, ErrorMessage> = 0;
     [[nodiscard]] virtual auto GetType() const noexcept -> RHIPassType       = 0;
 
-    [[nodiscard]] auto GetName() const noexcept -> StringView {
-        return m_Name;
-    }
+    [[nodiscard]] virtual auto GetName() const noexcept -> StringView = 0;
 
     /// Return the pipeline as a base pointer. nullptr for transfer passes.
     [[nodiscard]] virtual auto GetPipeline() const noexcept -> RHIPipeline* = 0;
@@ -73,14 +71,13 @@ class IRHIPass {
         return Pipeline->GetShaderBindingSet().TryGet();
     }
 
-    String                 m_Name     = {};
     std::vector<RHICommand> m_Commands = {};
 };
 
 class IRHIGraphicsPass : public IRHIPass {
   public:
-    explicit IRHIGraphicsPass(String Name, RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIPass(std::move(Name)), m_Pipeline(std::move(Pipeline)) {}
+    explicit IRHIGraphicsPass(RHIRef<RHIGraphicsPipeline> Pipeline)
+        : m_Pipeline(std::move(Pipeline)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Graphics;
@@ -151,8 +148,8 @@ class IRHIComputePass : public IRHIPass {
   public:
     /// A compute pass may carry an empty pipeline until dispatch commands are
     /// added with the compute pipeline stage.
-    explicit IRHIComputePass(String Name, RHIRef<RHIComputePipeline> Pipeline = nullptr)
-        : IRHIPass(std::move(Name)), m_Pipeline(std::move(Pipeline)) {}
+    explicit IRHIComputePass(RHIRef<RHIComputePipeline> Pipeline = nullptr)
+        : m_Pipeline(std::move(Pipeline)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Compute;
@@ -179,7 +176,7 @@ class IRHIComputePass : public IRHIPass {
 
 class IRHITransferPass : public IRHIPass {
   public:
-    explicit IRHITransferPass(String Name) : IRHIPass(std::move(Name)) {}
+    IRHITransferPass() = default;
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Transfer;
@@ -229,8 +226,8 @@ class IRHITransferPass : public IRHIPass {
 
 class IRHIRayTracingPass : public IRHIPass {
   public:
-    explicit IRHIRayTracingPass(String Name, RHIRef<RHIRayTracingPipeline> Pipeline)
-        : IRHIPass(std::move(Name)), m_Pipeline(std::move(Pipeline)) {}
+    explicit IRHIRayTracingPass(RHIRef<RHIRayTracingPipeline> Pipeline)
+        : m_Pipeline(std::move(Pipeline)) {}
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::RayTracing;

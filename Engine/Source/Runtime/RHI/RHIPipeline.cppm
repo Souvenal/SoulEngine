@@ -1,5 +1,10 @@
 module;
 
+// Clang 22 named-modules bug: importing a module that re-exports std (Core)
+// breaks concept lookup via the re-export chain; a textual <concepts> in the
+// GMF restores visibility. Safe to drop once clang fixes concept re-export.
+#include <concepts>
+
 export module RHI:Pipeline;
 
 export import Core;

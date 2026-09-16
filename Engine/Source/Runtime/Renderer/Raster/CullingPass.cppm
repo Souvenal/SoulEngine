@@ -25,6 +25,7 @@ struct CullingPushConstants {
 class CullingPass final : public IRHIComputePass {
   public:
     static constexpr StringView Name = "CullingPass";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<CullingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
@@ -46,7 +47,7 @@ class CullingPass final : public IRHIComputePass {
     };
 
     CullingPass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIComputePass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();

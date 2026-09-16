@@ -1,5 +1,8 @@
 module;
 
+// Clang 22 named-modules bug: concepts are shadowed through the std
+// re-export chain (import Core/RHI); textual include restores them.
+#include <concepts>
 export module RenderGraph:Graph;
 
 import :Types;
@@ -13,8 +16,12 @@ export import std;
 export namespace SoulEngine {
 } // namespace SoulEngine
 
-namespace SoulEngine {
-namespace {
+export namespace SoulEngine {
+
+// The templates below are exported on purpose: the exported AddPass template
+// is instantiated inside renderer module units, and at that instantiation
+// point only exported declarations of this partition are visible. Anonymous
+// namespaces here would make every cross-module AddPass call fail to compile.
 
 // ── Aggregate walk ─────────────────────────────────────────────────────────
 // Hand-rolled aggregate field enumeration (no reflection): probe the
@@ -58,8 +65,6 @@ auto VisitField(FieldT& Field, FnT& On) -> void {
         On(Field);
 }
 
-} // namespace
-
 } // namespace SoulEngine
 
 // Boilerplate generator for the structured-binding arities of ForEachView.
@@ -72,8 +77,7 @@ auto VisitField(FieldT& Field, FnT& On) -> void {
                    std::forward_as_tuple(__VA_ARGS__));                                                     \
     }
 
-namespace SoulEngine {
-namespace {
+export namespace SoulEngine {
 
 template <typename ParameterT, typename FnT>
 auto ForEachView(ParameterT& Value, FnT&& On) -> void {
@@ -165,8 +169,6 @@ template <typename ParameterT>
 auto ResolveParameterViews(ParameterT& P, const std::vector<RGResourceEntry>& Resources) -> void {
     ForEachView(P, [&](auto& Field) { ResolveViewRef(Field, Resources); });
 }
-
-} // namespace
 
 } // namespace SoulEngine
 

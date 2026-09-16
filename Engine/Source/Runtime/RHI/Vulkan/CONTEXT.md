@@ -26,6 +26,9 @@ FrameSlot-owned RHIRef contract described by the RHI context.
 `setDebugUtilsObjectNameEXT` directly. The service intentionally becomes a
 no-op when debug utils are disabled or unavailable, when the name is empty, or
 when the handle is null; these cases do not require caller-side branching.
+Whether names are consumed on the driver side is subject to the
+`RHI.Vulkan.DebugUtils` configuration; the producer-side obligation to call
+`SetObjectName` is unconditional.
 
 Every Vulkan handle created or allocated by the backend and retained by
 SoulEngine must be named immediately after successful creation, before the

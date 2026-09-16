@@ -17,6 +17,7 @@ export namespace SoulEngine {
 class SelectionFilterPass final : public IRHIComputePass {
   public:
     static constexpr StringView Name = "SelectionFilterPass";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<SelectionFilterPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
@@ -39,7 +40,7 @@ class SelectionFilterPass final : public IRHIComputePass {
     };
 
     SelectionFilterPass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIComputePass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();

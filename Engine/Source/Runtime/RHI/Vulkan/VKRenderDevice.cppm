@@ -34,6 +34,7 @@ import :Sampler;
 import :Texture;
 import :Context;
 import :Debug;
+import :Profiling;
 
 namespace SoulEngine {
 
@@ -59,6 +60,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // VulkanResourceContext owns shared Vulkan services and is borrowed by
         // resource factories through this RenderDevice-held pointer.
         m_ResourceContext = std::move(*Resources);
+
+        // ── Tracy GPU profiling ─────────────────────────────────────────
+        InitializeGpuProfiling(*m_ResourceContext);
 
         // ── Global descriptor manager ─────────────────────────────────────
         auto Descriptors = VulkanDescriptorManager::Create(
@@ -159,6 +163,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         };
         if (auto R = Primary.begin(PrimaryBegin); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Format("BeginFrame: primary CB begin failed: {}", vk::to_string(R))));
+        CollectGpu(*m_ResourceContext, Primary);
 
         if (auto R = m_TransientUniformArena.Reset(m_CurrentFrame); !R)
             return std::unexpected(R.error().Append("BeginFrame: transient constant arena reset failed"));
@@ -556,6 +561,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // Descriptor sets and their pool must be released while VkDevice is alive.
         m_DescriptorManager.Shutdown();
+        // Tracy context must die while VkDevice is still alive.
+        ShutdownGpuProfiling(*m_ResourceContext);
         m_ResourceContext.reset();
 
         if (ShutdownError)
@@ -666,6 +673,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto RecordImGuiPresentationOverlay(vk::raii::CommandBuffer&              Buf,
                                                       const RHIImGuiPresentationOverlayCmd& Overlay)
         -> std::expected<void, ErrorMessage> {
+        const LabelScope OverlayLabel{
+            *m_ResourceContext, Buf, "ImGuiOverlay"};
         if (!Overlay.Snapshot || !Overlay.TextureQueue || !Overlay.TextureMutex)
             return std::unexpected(ErrorMessage("ImGui presentation overlay has incomplete state"));
         {
@@ -742,6 +751,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // step 1: the BLAS batch — hollow descriptors materialize and build
         // into one shared scratch buffer, in ONE batched build call.
         if (!Result.PendingBlasBuilds.empty()) {
+            const LabelScope BlasLabel{
+                *m_ResourceContext, SecBuf, "BLASBatch"};
             auto Scratch = VulkanBottomLevelAccelerationStructure::Build(
                 *m_ResourceContext,
                 SecBuf,
@@ -755,8 +766,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 FC.RetainedAsScratch.push_back(std::move(*Scratch));
         }
         // step 2: each per-frame TLAS build, consuming the BLAS batch above.
-        if (!Result.PendingTlasBuilds.empty())
+        if (!Result.PendingTlasBuilds.empty()) {
+            const LabelScope TlasLabel{
+                *m_ResourceContext, SecBuf, "TLASBuild"};
             VulkanTopLevelAccelerationStructure::Build(*m_ResourceContext, SecBuf, Result.PendingTlasBuilds);
+        }
 
         if (auto R = SecBuf.end(); R != vk::Result::eSuccess)
             return std::unexpected(
@@ -780,6 +794,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (!Result.PendingBlasBuilds.empty() || !Result.PendingTlasBuilds.empty())
             if (auto R = RecordAccelerationStructureWork(Primary, Result); !R)
                 return std::unexpected(R.error().Append("Execute: acceleration-structure work failed"));
+
+        std::vector<vk::CommandBuffer> ExecSecondaries;
+        ExecSecondaries.reserve(Result.CmdList.Passes.size());
 
         for (std::size_t PassIndex = 0; PassIndex < Result.CmdList.Passes.size(); ++PassIndex) {
             const auto& Pass = Result.CmdList.Passes[PassIndex];
@@ -825,6 +842,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                     ErrorMessage(Format("Execute: secondary CB begin failed: {}", vk::to_string(R))));
 
             {
+                const LabelScope PassLabel{
+                    *m_ResourceContext, SecBuf, Pass->GetName()};
                 const auto RecordCommands = [&](auto& Visitor) -> std::expected<void, ErrorMessage> {
                     if (Visitor.GetError())
                         return std::unexpected(*Visitor.GetError());
@@ -890,8 +909,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             if (auto R = SecBuf.end(); R != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage(Format("Execute: secondary CB end failed: {}", vk::to_string(R))));
 
-            Primary.executeCommands({static_cast<vk::CommandBuffer>(*SecBuf)});
+            ExecSecondaries.push_back(static_cast<vk::CommandBuffer>(*SecBuf));
         }
+
+        if (!ExecSecondaries.empty())
+            Primary.executeCommands(ExecSecondaries);
 
         // Present is explicit: BlitToSwapchain transfer passes already recorded
         // their blits as pass commands above (ADR 05); nothing implicit here.

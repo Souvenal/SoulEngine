@@ -40,6 +40,7 @@ class PipelineRegistryTest : public testing::Test {
 /// compile is queued but never runs (stays Pending).
 struct AsyncGraphicsPass final : IRHIGraphicsPass {
     static constexpr StringView Name = "AsyncGraphics";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         return {};
@@ -50,7 +51,7 @@ struct AsyncGraphicsPass final : IRHIGraphicsPass {
     };
 
     AsyncGraphicsPass(Parameter In, RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIGraphicsPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:
@@ -60,6 +61,7 @@ struct AsyncGraphicsPass final : IRHIGraphicsPass {
 /// Same recipe as a compute pass.
 struct AsyncComputePass final : IRHIComputePass {
     static constexpr StringView Name = "AsyncCompute";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
         return {};
@@ -70,7 +72,7 @@ struct AsyncComputePass final : IRHIComputePass {
     };
 
     AsyncComputePass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIComputePass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:
@@ -81,6 +83,7 @@ struct AsyncComputePass final : IRHIComputePass {
 /// (the side effect that anchors it in the frame).
 struct ConsumerPass final : IRHIGraphicsPass {
     static constexpr StringView Name = "Consumer";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGStorageBufferSRV Input  = {};
@@ -88,7 +91,7 @@ struct ConsumerPass final : IRHIGraphicsPass {
     };
 
     ConsumerPass(Parameter In)
-        : IRHIGraphicsPass(String(Name), nullptr), m_Parameter(std::move(In)) {}
+        : IRHIGraphicsPass(nullptr), m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:

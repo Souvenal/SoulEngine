@@ -19,6 +19,7 @@ export namespace SoulEngine {
 class EntityPickingPass final : public IRHITransferPass {
   public:
     static constexpr StringView Name = "EntityPickingPass";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
         RGCopySrc       EntityId = {};
@@ -26,7 +27,7 @@ class EntityPickingPass final : public IRHITransferPass {
         PixelCoordinate Pixel    = {};
     };
 
-    EntityPickingPass(Parameter In) : IRHITransferPass(String(Name)), m_Parameter(std::move(In)) {}
+    EntityPickingPass(Parameter In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();

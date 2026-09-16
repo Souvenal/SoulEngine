@@ -16,6 +16,7 @@ export namespace SoulEngine {
 class GeometryPass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "GeometryPass";
+    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<GeometryPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
@@ -50,7 +51,7 @@ class GeometryPass final : public IRHIGraphicsPass {
     };
 
     GeometryPass(Parameter In, RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(String(Name), std::move(Pipeline)), m_Parameter(std::move(In)) {}
+        : IRHIGraphicsPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
