@@ -1,3 +1,6 @@
+env_map:
+  asset: autumn_field_puresky_4k.hdr
+  intensity: 1.0
 entities:
   - name: Sponza
     components:
@@ -7,15 +10,3 @@ entities:
         scale: [1.0, 1.0, 1.0]
       mesh:
         asset: Sponza/glTF/Sponza.gltf
-  - name: Sun
-    components:
-      transform:
-        translation: [0.0, 0.0, 0.0]
-        rotation: [47.81, 17.39, -18.25]
-        scale: [1.0, 1.0, 1.0]
-      light:
-        type: directional
-        color_r: 1.0
-        color_g: 1.0
-        color_b: 1.0
-        intensity: 100000.0

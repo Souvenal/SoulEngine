@@ -106,6 +106,8 @@ export namespace SoulEngine {
     }
     App->m_Name = String(Name);
     App->m_RootDirectory = (ConfigManager::Get().ApplicationsRootDirPath() / Name).lexically_normal();
+    // Asset-relative paths resolve against the current application root.
+    AssetManager::Get().SetApplicationRoot(App->m_RootDirectory);
     const auto ScenePath = App->m_RootDirectory / "Scene.yaml";
     auto Loaded = Scene::LoadFromFile(ScenePath);
     if (!Loaded)

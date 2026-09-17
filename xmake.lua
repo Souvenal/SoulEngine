@@ -40,8 +40,8 @@ set_policy("build.c++.modules", true)
     --     set_symbols("debug", "embed")
     -- end
 -- else
-    set_toolchains("clang")
-    add_cxxflags("-fno-exceptions", "-fno-rtti")
+set_toolchains("clang")
+add_cxxflags("-fno-exceptions", "-fno-rtti")
 -- end
 
 add_rules("mode.release", "mode.releasedbg", "mode.debug")
