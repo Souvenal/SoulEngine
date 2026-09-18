@@ -14,7 +14,7 @@ Canonical pipeline stage enum (`Vertex`, `Fragment`, `Compute`, `Hull`, `Domain`
 _Avoid_: RHIStage (deleted — was a 3-value subset), SlangStage (native Slang type, mapped in the Slang backend only).
 
 **ScalarType**:
-Minimal scalar-type vocabulary for normalized reflection (`Float32`, `Int32`, `Uint32`).
+Minimal scalar-type vocabulary for normalized reflection (`Float32`, `Int32`, `Uint32`, `Bool`).
 
 **ResourceType**:
 Minimal resource categories (`ConstantBuffer`, `StorageBuffer`, `SampledTexture`, `StorageTexture`, `Sampler`).
@@ -37,6 +37,15 @@ asset name, asset cache key, asset path, or backend descriptor object name.
 **PushConstantRange**:
 Reflected push-constant byte range (offset, size).
 
+**SpecializationConstant**:
+Reflected shader-global constant declared with Slang `[SpecializationConstant]` (a Vulkan spec
+constant). Its value is fixed at pipeline creation, not compile time: one compiled program
+instantiates any number of pipelines with different values, and the compiled artifact is
+unchanged. The host keys provided values by constant name, under the same uniqueness discipline
+as *Shader binding name*; the reflection entry records name, spec-constant ID, scalar type, and
+optional default value. Distinct from `PushConstantRange` (per-dispatch mutable bytes) and
+constant buffers (per-frame data).
+
 **Runtime constant-buffer ABI**:
 Runtime Slang constant-buffer structs use the default Vulkan `std140` layout.
 Declare only semantic fields in shader code; do not add named padding fields. Host
@@ -52,7 +61,8 @@ Shared 3x`float4` storage-buffer ABI for Directional and Point lights. The
 Reflected vertex attribute requirement (semantic name/index, location, value type). Describes what the shader consumes, not how CPU-side vertex buffers feed it.
 
 **Reflection**:
-Normalized pipeline reflection data (bindings, push constants, vertex inputs).
+Normalized pipeline reflection data (bindings, push constants, vertex inputs,
+specialization constants).
 `GraphicsProgram` owns the linked graphics shader combination's reflection by
 value.
 

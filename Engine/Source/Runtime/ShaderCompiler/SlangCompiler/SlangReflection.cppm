@@ -49,9 +49,10 @@ struct ReflectionCursor {
 };
 
 struct ReflectionSinks {
-    slang::ShaderReflection*              ProgramLayout = nullptr;
-    std::vector<ShaderBinding>*           Bindings      = nullptr;
-    std::vector<ShaderPushConstantRange>* PushConstants = nullptr;
+    slang::ShaderReflection*                   ProgramLayout           = nullptr;
+    std::vector<ShaderBinding>*                Bindings                = nullptr;
+    std::vector<ShaderPushConstantRange>*      PushConstants           = nullptr;
+    std::vector<ShaderSpecializationConstant>* SpecializationConstants = nullptr;
 };
 
 enum class ReflectionVisitMode {
@@ -114,6 +115,54 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return {};
 }
 
+[[nodiscard]] auto EmitSpecializationConstant(slang::VariableLayoutReflection* Var,
+                                              const String&                    Path,
+                                              ReflectionSinks&                 Sinks)
+    -> std::expected<void, ErrorMessage> {
+    auto* TypeLayout = Var->getTypeLayout();
+    if (!TypeLayout)
+        return {};
+
+    // Specialization constants are host-scalar values; vectors and matrices
+    // have no scalar spec-constant representation in the engine's vocabulary.
+    const auto ValueType = ToShaderValueType(TypeLayout);
+    if (ValueType.RowCount != 1 || ValueType.ColumnCount != 1) {
+        return std::unexpected(ErrorMessage(Format(
+            "Specialization constant '{}' must be a scalar value (reflection reports {}x{})",
+            Path,
+            ValueType.RowCount,
+            ValueType.ColumnCount)));
+    }
+    if (ValueType.ScalarType == ShaderScalarType::Unknown) {
+        return std::unexpected(ErrorMessage(
+            Format("Specialization constant '{}' has an unsupported scalar type in reflection", Path)));
+    }
+
+    // The spec-constant ID rides the SpecializationConstant category offset axis.
+    const auto Id = Var->getOffset(slang::ParameterCategory::SpecializationConstant);
+    if (Id == SLANG_UNKNOWN_SIZE) {
+        return std::unexpected(ErrorMessage(
+            Format("Specialization constant '{}' is missing a spec-constant ID in reflection", Path)));
+    }
+
+    // The Slang API exposes defaults only through the integer channel; float
+    // defaults stay unknown until a getter exists.
+    std::optional<Int64> DefaultValue = std::nullopt;
+    if (auto* Variable = Var->getVariable(); Variable && Variable->hasDefaultValue()) {
+        Int64 RawDefault = 0;
+        if (SLANG_SUCCEEDED(Variable->getDefaultValueInt(&RawDefault)))
+            DefaultValue = RawDefault;
+    }
+
+    Sinks.SpecializationConstants->push_back(ShaderSpecializationConstant{
+        .Name         = Path,
+        .ConstantId   = static_cast<Uint32>(Id),
+        .ScalarType   = ValueType.ScalarType,
+        .DefaultValue = DefaultValue,
+    });
+    return {};
+}
+
 [[nodiscard]] auto VisitVariable(slang::VariableLayoutReflection* Var,
                                  const ReflectionCursor&          Parent,
                                  ReflectionSinks&                 Sinks,
@@ -136,6 +185,12 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
             return {};
         return EmitPushConstantRange(Var, Parent.UniformBase, slang::ParameterCategory::Uniform, Path, Sinks);
     }
+    // Specialization constants live on their own category axis; emit them
+    // before the leaf gate would silently drop them.
+    if (HasCategory(Var, slang::ParameterCategory::SpecializationConstant)) {
+        return EmitSpecializationConstant(Var, Path, Sinks);
+    }
+
     if (HasCategory(Var, slang::ParameterCategory::PushConstantBuffer)) {
         return EmitPushConstantRange(Var, Parent.PushBase, slang::ParameterCategory::PushConstantBuffer, Path, Sinks);
     }
@@ -258,18 +313,20 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     }
 }
 
-[[nodiscard]] auto CollectProgramInterface(slang::ShaderReflection*                       ProgramLayout,
+[[nodiscard]] auto CollectProgramInterface(slang::ShaderReflection*                      ProgramLayout,
                                            std::span<slang::EntryPointReflection* const> EntryPoints,
-                                           std::vector<ShaderBinding>&                    Bindings,
-                                           std::vector<ShaderPushConstantRange>&          PushConstants)
+                                           std::vector<ShaderBinding>&                   Bindings,
+                                           std::vector<ShaderPushConstantRange>&         PushConstants,
+                                           std::vector<ShaderSpecializationConstant>&    SpecializationConstants)
     -> std::expected<void, ErrorMessage> {
     if (!ProgramLayout)
         return {};
 
     ReflectionSinks Sinks{
-        .ProgramLayout = ProgramLayout,
-        .Bindings      = &Bindings,
-        .PushConstants = &PushConstants,
+        .ProgramLayout           = ProgramLayout,
+        .Bindings                = &Bindings,
+        .PushConstants           = &PushConstants,
+        .SpecializationConstants = &SpecializationConstants,
     };
 
     // Global parameters carry every descriptor binding plus explicitly
@@ -413,10 +470,13 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     // include all graphics stages.  Vertex inputs come specifically from the
     // vertex entry point because fragment inputs are interpolants, not CPU
     // vertex-buffer attributes.
-    std::vector<ShaderBinding>           Bindings;
-    std::vector<ShaderPushConstantRange> PushConstants;
-    const std::array                     EntryPoints{VertexEntryPoint, FragmentEntryPoint};
-    if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants); !R)
+    std::vector<ShaderBinding>                Bindings;
+    std::vector<ShaderPushConstantRange>      PushConstants;
+    std::vector<ShaderSpecializationConstant> SpecializationConstants;
+    const std::array                          EntryPoints{VertexEntryPoint, FragmentEntryPoint};
+    if (auto R =
+            CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants, SpecializationConstants);
+        !R)
         return std::unexpected(std::move(R.error()));
 
     auto VertexInputs = ExtractVertexInputs(VertexEntryPoint);
@@ -424,10 +484,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         return std::unexpected(VertexInputs.error());
 
     return ShaderReflection{
-        .Bindings      = std::move(Bindings),
-        .PushConstants = MergePushConstantRanges(std::move(PushConstants)),
-        .VertexInputs  = std::move(*VertexInputs),
-        .BindlessSpace = ExtractBindlessSpace(ProgramLayout),
+        .Bindings                = std::move(Bindings),
+        .PushConstants           = MergePushConstantRanges(std::move(PushConstants)),
+        .SpecializationConstants = std::move(SpecializationConstants),
+        .VertexInputs            = std::move(*VertexInputs),
+        .BindlessSpace           = ExtractBindlessSpace(ProgramLayout),
     };
 }
 
@@ -437,17 +498,21 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!ProgramLayout || !ComputeEntryPoint)
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
-    std::vector<ShaderBinding>           Bindings;
-    std::vector<ShaderPushConstantRange> PushConstants;
-    const std::array                     EntryPoints{ComputeEntryPoint};
-    if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants); !R)
+    std::vector<ShaderBinding>                Bindings;
+    std::vector<ShaderPushConstantRange>      PushConstants;
+    std::vector<ShaderSpecializationConstant> SpecializationConstants;
+    const std::array                          EntryPoints{ComputeEntryPoint};
+    if (auto R =
+            CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants, SpecializationConstants);
+        !R)
         return std::unexpected(std::move(R.error()));
 
     return ShaderReflection{
-        .Bindings      = std::move(Bindings),
-        .PushConstants = MergePushConstantRanges(std::move(PushConstants)),
-        .VertexInputs  = {},
-        .BindlessSpace = ExtractBindlessSpace(ProgramLayout),
+        .Bindings                = std::move(Bindings),
+        .PushConstants           = MergePushConstantRanges(std::move(PushConstants)),
+        .SpecializationConstants = std::move(SpecializationConstants),
+        .VertexInputs            = {},
+        .BindlessSpace           = ExtractBindlessSpace(ProgramLayout),
     };
 }
 
@@ -457,16 +522,19 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!ProgramLayout || EntryPoints.empty())
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
-    std::vector<ShaderBinding>           Bindings;
-    std::vector<ShaderPushConstantRange> PushConstants;
-    if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants); !R)
+    std::vector<ShaderBinding>                Bindings;
+    std::vector<ShaderPushConstantRange>      PushConstants;
+    std::vector<ShaderSpecializationConstant> SpecializationConstants;
+    if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants, SpecializationConstants);
+        !R)
         return std::unexpected(std::move(R.error()));
 
     return ShaderReflection{
-        .Bindings      = std::move(Bindings),
-        .PushConstants = MergePushConstantRanges(std::move(PushConstants)),
-        .VertexInputs  = {},
-        .BindlessSpace = ExtractBindlessSpace(ProgramLayout),
+        .Bindings                = std::move(Bindings),
+        .PushConstants           = MergePushConstantRanges(std::move(PushConstants)),
+        .SpecializationConstants = std::move(SpecializationConstants),
+        .VertexInputs            = {},
+        .BindlessSpace           = ExtractBindlessSpace(ProgramLayout),
     };
 }
 

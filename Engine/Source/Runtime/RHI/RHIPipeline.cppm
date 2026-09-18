@@ -79,6 +79,97 @@ struct RHIShaderBindingRequest {
     }
 };
 
+// ── Specialization constants ────────────────────────────────────────────────
+
+/// @brief Host-provided value for one shader specialization constant.
+///
+/// The name is the lookup key (same discipline as the shader binding name);
+/// reflection remains the type authority — a variant whose active type
+/// disagrees with the reflected scalar type is a hard error at resolution.
+struct RHISpecializationConstant {
+    String Name = {};
+
+    std::variant<bool, Int32, Uint32, Float32> Value = false;
+
+    [[nodiscard]] auto operator==(const RHISpecializationConstant&) const -> bool = default;
+};
+
+/// @brief One validated specialization value, ready for backend lowering.
+struct RHISpecializedConstant {
+    Uint32           ConstantId  = 0;
+    ShaderScalarType ScalarType  = ShaderScalarType::Unknown;
+    /// 4-byte payload: bool as 0/1, float bit-cast.  The engine's scalar
+    /// vocabulary caps spec constants at 32 bits.
+    Uint32 PackedValue = 0;
+};
+
+/// @brief Resolve host-provided specialization values against reflection.
+///
+/// Device-independent validation shared by every backend: duplicate names in
+/// the request, names absent from reflection, and type mismatches are hard
+/// errors (fail-fast).  Omitted constants keep their SPIR-V defaults.
+[[nodiscard]] inline auto ResolveSpecializationConstants(
+    const ShaderReflection&                    Reflection,
+    std::span<const RHISpecializationConstant> Constants)
+    -> std::expected<std::vector<RHISpecializedConstant>, ErrorMessage> {
+    std::vector<RHISpecializedConstant> Resolved;
+    Resolved.reserve(Constants.size());
+
+    for (size_t Index = 0; Index < Constants.size(); ++Index) {
+        const auto& Constant = Constants[Index];
+        for (size_t Previous = 0; Previous < Index; ++Previous)
+            if (Constants[Previous].Name == Constant.Name)
+                return std::unexpected(ErrorMessage(Format(
+                    "Specialization constant '{}' appears more than once in the request", Constant.Name)));
+
+        const auto Reflected = std::ranges::find_if(Reflection.SpecializationConstants,
+                                                    [&Constant](const ShaderSpecializationConstant& Candidate) {
+                                                        return Candidate.Name == Constant.Name;
+                                                    });
+        if (Reflected == Reflection.SpecializationConstants.end())
+            return std::unexpected(ErrorMessage(Format(
+                "Specialization constant '{}' is not present in the shader reflection", Constant.Name)));
+
+        const auto RequestedType = std::visit(
+            []<typename T>(const T&) -> ShaderScalarType {
+                if constexpr (std::same_as<T, bool>)
+                    return ShaderScalarType::Bool;
+                else if constexpr (std::same_as<T, Int32>)
+                    return ShaderScalarType::Int32;
+                else if constexpr (std::same_as<T, Uint32>)
+                    return ShaderScalarType::Uint32;
+                else
+                    return ShaderScalarType::Float32;
+            },
+            Constant.Value);
+        if (RequestedType != Reflected->ScalarType)
+            return std::unexpected(ErrorMessage(Format("Specialization constant '{}' expects {}, received {}",
+                                                       Constant.Name,
+                                                       magic_enum::enum_name(Reflected->ScalarType),
+                                                       magic_enum::enum_name(RequestedType))));
+
+        Uint32 Packed = 0;
+        std::visit(
+            [&Packed]<typename T>(const T& Value) {
+                if constexpr (std::same_as<T, bool>)
+                    Packed = Value ? 1U : 0U;
+                else if constexpr (std::same_as<T, Float32>)
+                    Packed = std::bit_cast<Uint32>(Value);
+                else
+                    Packed = static_cast<Uint32>(Value);
+            },
+            Constant.Value);
+
+        Resolved.push_back(RHISpecializedConstant{
+            .ConstantId  = Reflected->ConstantId,
+            .ScalarType  = Reflected->ScalarType,
+            .PackedValue = Packed,
+        });
+    }
+
+    return Resolved;
+}
+
 /// @brief Backend-owned descriptor resources for one reflected shader layout.
 class RHIShaderBindingSet : public RHIObject {
   public:
@@ -338,6 +429,8 @@ class RHIGraphicsPipeline : public RHIPipeline {
 struct RHIComputePipelineDesc {
     ShaderComputeProgram        Program    = {};
     RHIRef<RHIShaderBindingSet> BindingSet = nullptr;
+    /// Values fixed at pipeline creation; two value sets are two pipelines.
+    std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
 class RHIComputePipeline : public RHIPipeline {

@@ -59,6 +59,7 @@ enum class ShaderScalarType : Uint8 {
     Float32 = 1,
     Int32   = 2,
     Uint32  = 3,
+    Bool    = 4,
 };
 
 /// @brief Minimal resource categories supported by the first reflection pass.
@@ -105,6 +106,24 @@ struct ShaderPushConstantRange {
     Uint32 Size   = 0;
 };
 
+/// @brief Reflected shader specialization constant (Vulkan spec constant).
+///
+/// Its value is fixed at pipeline creation, not compile time: one compiled
+/// program instantiates any number of pipelines with different values.  The
+/// host API keys provided values by name; the ID and type recorded here are
+/// the resolution authority.
+struct ShaderSpecializationConstant {
+    /// Shader-side constant name; the host-side lookup key.
+    String Name = {};
+    /// Vulkan spec-constant ID (constantID in VkSpecializationMapEntry).
+    Uint32 ConstantId = 0;
+    /// Scalar type of the constant; vectors and matrices are not supported.
+    ShaderScalarType ScalarType = ShaderScalarType::Unknown;
+    /// Default value through the Slang integer channel.  Float constants have
+    /// no SDK getter, so their default stays unknown (std::nullopt).
+    std::optional<Int64> DefaultValue = std::nullopt;
+};
+
 /// @brief Reflected shader-side vertex attribute requirement.
 ///
 /// This describes what the shader consumes.  It intentionally does not
@@ -119,14 +138,12 @@ struct ShaderVertexInputAttribute {
 };
 
 /// @brief Normalized pipeline reflection data.
-///
-/// TODO: Add specialization-constant reflection when pipeline specialization
-/// is introduced.
 struct ShaderReflection {
-    std::vector<ShaderBinding>              Bindings      = {};
-    std::vector<ShaderPushConstantRange>    PushConstants = {};
-    std::vector<ShaderVertexInputAttribute> VertexInputs  = {};
-    std::optional<Uint32>                   BindlessSpace = std::nullopt;
+    std::vector<ShaderBinding>                Bindings                = {};
+    std::vector<ShaderPushConstantRange>      PushConstants           = {};
+    std::vector<ShaderSpecializationConstant> SpecializationConstants = {};
+    std::vector<ShaderVertexInputAttribute>   VertexInputs            = {};
+    std::optional<Uint32>                     BindlessSpace           = std::nullopt;
 };
 
 /// @brief Compiled shader artifact for one graphics pipeline shader combination.
