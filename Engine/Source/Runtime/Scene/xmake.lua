@@ -13,7 +13,11 @@ target("Scene")
 -- -O2/-O3 and ee-instrument at -O0, independent of this project's code (crash
 -- reproducer: %TEMP%/SceneDocument-757a3d.*). Exclude it until the toolchain
 -- is upgraded past 23.1.1; every other test target compiles and links clean.
+-- The exclusion is applied per target inside test_module (exclude_on_clang):
+-- the configured toolchain name is not visible at script scope under xmake
+-- v3 (get_config("toolchain") returns nil there), so the frontend check runs
+-- in on_config where target:toolchains() is resolved.
 test_module("Scene", {
     additional_packages = {"entt"},
-    exclude_tests = is_config("toolchain", "clang", "llvm") and {"SceneDocument"} or nil,
+    exclude_on_clang = {"SceneDocument"},
 })
