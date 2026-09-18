@@ -507,6 +507,9 @@ class RHIRenderTarget : public RHIObject {
     [[nodiscard]] virtual auto GetHeight() const -> Uint32         = 0;
     [[nodiscard]] virtual auto GetFormat() const -> RHIFormat      = 0;
     [[nodiscard]] virtual auto GetUsage() const -> RHITextureUsage = 0;
+    /// Mip level count is a creation-time property (RHIRenderTargetDesc::MipLevels);
+    /// per-mip views are backend-owned attachments of the image (D2).
+    [[nodiscard]] virtual auto GetMipLevelCount() const -> Uint32  = 0;
 
     [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
         const auto Usage = static_cast<Uint32>(GetUsage());
@@ -532,10 +535,11 @@ struct RHISampledTextureDesc {
 };
 
 struct RHIRenderTargetDesc {
-    Uint32          Width  = 1;
-    Uint32          Height = 1;
-    RHIFormat       Format = RHIFormat::B8G8R8A8_UNORM;
-    RHITextureUsage Usage  = RHITextureUsage::RenderTarget;
+    Uint32          Width     = 1;
+    Uint32          Height    = 1;
+    Uint32          MipLevels = 1;
+    RHIFormat       Format    = RHIFormat::B8G8R8A8_UNORM;
+    RHITextureUsage Usage     = RHITextureUsage::RenderTarget;
 };
 
 // ── Clear values ─────────────────────────────────────────────────────────────

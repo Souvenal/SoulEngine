@@ -688,6 +688,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_ResourceContext->GetImageTracker().Transition(
             Buf,
             DstImage,
+            VulkanImageTracker::FullRange(vk::ImageAspectFlagBits::eColor),
             VulkanImageState{
                 .stage  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                 .access = vk::AccessFlagBits2::eColorAttachmentRead |
@@ -927,6 +928,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_ResourceContext->GetImageTracker().Transition(
             Primary,
             m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex()),
+            VulkanImageTracker::FullRange(vk::ImageAspectFlagBits::eColor),
             VulkanImageState{
                 .stage  = vk::PipelineStageFlagBits2::eTransfer,
                 .layout = vk::ImageLayout::ePresentSrcKHR,

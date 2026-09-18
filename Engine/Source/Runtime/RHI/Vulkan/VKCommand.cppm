@@ -90,12 +90,12 @@ class VulkanCmdVisitor {
                 ResourceContext.GetImageTracker().Transition(
                     Buf,
                     Target->GetVkImage(),
+                    VulkanImageTracker::FullRange(ToVkImageAspect(Target->GetFormat())),
                     VulkanImageState{
                         .stage  = TransitionStages,
                         .access = IsSampled ? vk::AccessFlagBits2::eShaderRead
                                             : vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
                         .layout = IsSampled ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eGeneral,
-                        .aspect = ToVkImageAspect(Target->GetFormat()),
                     });
             }
 
@@ -179,6 +179,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             ResourceContext.GetImageTracker().Transition(
                 Buf,
                 ColorRT.GetVkImage(),
+                VulkanImageTracker::FullRange(ToVkImageAspect(ColorRT.GetFormat())),
                 VulkanImageState{
                     .stage  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                     // Clear uses eClear, which does not load old contents; eLoad must
@@ -187,7 +188,6 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
                                                    : vk::AccessFlagBits2::eColorAttachmentRead |
                                                          vk::AccessFlagBits2::eColorAttachmentWrite,
                     .layout = vk::ImageLayout::eColorAttachmentOptimal,
-                    .aspect = ToVkImageAspect(ColorRT.GetFormat()),
                     .isWrite = true,
                 });
             if (AttachmentDesc.Clear && std::holds_alternative<std::monostate>(AttachmentDesc.ClearValue)) {
@@ -219,6 +219,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             ResourceContext.GetImageTracker().Transition(
                 Buf,
                 VkDepthRT.GetVkImage(),
+                VulkanImageTracker::FullRange(ToVkImageAspect(VkDepthRT.GetFormat())),
                 VulkanImageState{
                     // Depth attachment writes, including the final store operation, may
                     // occur in either fragment-test stage. This is synchronization
@@ -232,7 +233,6 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
                                   : vk::AccessFlagBits2::eDepthStencilAttachmentRead |
                                         vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
                     .layout = vk::ImageLayout::eDepthAttachmentOptimal,
-                    .aspect = ToVkImageAspect(VkDepthRT.GetFormat()),
                     .isWrite = true,
                 });
             DepthAttachment = vk::RenderingAttachmentInfo{
@@ -453,20 +453,28 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
         ResourceContext.GetImageTracker().Transition(
             Buf,
             SrcImage,
+            vk::ImageSubresourceRange{.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                      .baseMipLevel   = 0,
+                                      .levelCount     = 1,
+                                      .baseArrayLayer = 0,
+                                      .layerCount     = 1},
             VulkanImageState{
                 .stage  = vk::PipelineStageFlagBits2::eTransfer,
                 .access = vk::AccessFlagBits2::eTransferRead,
                 .layout = vk::ImageLayout::eTransferSrcOptimal,
-                .aspect = vk::ImageAspectFlagBits::eColor,
             });
         ResourceContext.GetImageTracker().Transition(
             Buf,
             DstImage,
+            vk::ImageSubresourceRange{.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                      .baseMipLevel   = 0,
+                                      .levelCount     = 1,
+                                      .baseArrayLayer = 0,
+                                      .layerCount     = 1},
             VulkanImageState{
                 .stage   = vk::PipelineStageFlagBits2::eTransfer,
                 .access  = vk::AccessFlagBits2::eTransferWrite,
                 .layout  = vk::ImageLayout::eTransferDstOptimal,
-                .aspect  = vk::ImageAspectFlagBits::eColor,
                 .isWrite = true,
             });
 
@@ -521,11 +529,15 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
 
         ResourceContext.GetImageTracker().Transition(Buf,
                                Src.GetVkImage(),
+                               vk::ImageSubresourceRange{.aspectMask     = ToVkImageAspect(Src.GetFormat()),
+                                                         .baseMipLevel   = 0,
+                                                         .levelCount     = 1,
+                                                         .baseArrayLayer = 0,
+                                                         .layerCount     = 1},
                                VulkanImageState{
                                    .stage  = vk::PipelineStageFlagBits2::eTransfer,
                                    .access = vk::AccessFlagBits2::eTransferRead,
                                    .layout = vk::ImageLayout::eTransferSrcOptimal,
-                                   .aspect = ToVkImageAspect(Src.GetFormat()),
                                });
         const vk::BufferImageCopy Region{
             .bufferOffset      = Offset,

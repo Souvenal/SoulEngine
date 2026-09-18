@@ -23,23 +23,59 @@ import :Semaphore;
 
 export namespace SoulEngine {
 
-/// @brief Tracked Vulkan image state used for automatic synchronization barriers.
+/// @brief Tracked Vulkan image subresource state used for automatic synchronization barriers.
 struct VulkanImageState {
     vk::PipelineStageFlags2 stage       = vk::PipelineStageFlagBits2::eNone;
     vk::AccessFlags2        access      = vk::AccessFlagBits2::eNone;
     vk::ImageLayout         layout      = vk::ImageLayout::eUndefined;
-    vk::ImageAspectFlags    aspect      = vk::ImageAspectFlagBits::eColor;
     Uint32                  queueFamily = vk::QueueFamilyIgnored;
     bool                    isWrite     = false;
 };
 
-/// @brief Device-level image state tracker shared by Vulkan command recording.
+/// @brief Per-subresource tracking key: (image, single aspect bit, mip level, array layer).
+struct VulkanImageSubresourceKey {
+    vk::Image               Image      = nullptr;
+    vk::ImageAspectFlagBits Aspect     = vk::ImageAspectFlagBits::eColor;
+    Uint32                  MipLevel   = 0;
+    Uint32                  ArrayLayer = 0;
+
+    bool operator==(const VulkanImageSubresourceKey&) const = default;
+};
+
+struct VulkanImageSubresourceKeyHash {
+    auto operator()(const VulkanImageSubresourceKey& Key) const -> std::size_t {
+        std::size_t Hash = std::hash<VkImage>{}(static_cast<VkImage>(Key.Image));
+        auto        Combine = [&Hash](Uint32 Value) {
+            Hash ^= std::hash<Uint32>{}(Value) + 0x9e3779b9U + (Hash << 6U) + (Hash >> 2U);
+        };
+        Combine(std::to_underlying(Key.Aspect));
+        Combine(Key.MipLevel);
+        Combine(Key.ArrayLayer);
+        return Hash;
+    }
+};
+
+/// @brief Device-level per-subresource image state tracker shared by Vulkan command recording.
+///
+/// State is keyed by (image, aspect, mip, layer); barrier granularity matches the key —
+/// no whole-image over-sync, no coalescing (all engine images have arrayLayers == 1 and
+/// at most ~13 mips, so per-subresource barrier counts stay small). Register() records
+/// the image's (mipLevels, arrayLayers) at creation and seeds color-aspect subresources;
+/// Transition() resolves vk::RemainingMipLevels/vk::RemainingArrayLayers against the
+/// registered dimensions, defaulting to 1 for unregistered images (legacy fallback).
 class VulkanImageTracker {
   public:
     VulkanImageTracker() = default;
 
-    auto Register(vk::Image Image, VulkanImageState State = {}) -> void {
-        m_ImageStates[Image] = State;
+    /// Record an image's subresource dimensions and seed every (color, mip, layer)
+    /// subresource with State. Depth/stencil aspect keys are created lazily by Transition.
+    auto Register(vk::Image Image, Uint32 MipLevels, Uint32 ArrayLayers, VulkanImageState State = {}) -> void {
+        m_ImageInfos[Image] = {.MipLevels = MipLevels, .ArrayLayers = ArrayLayers};
+        for (Uint32 Mip = 0; Mip < MipLevels; ++Mip)
+            for (Uint32 Layer = 0; Layer < ArrayLayers; ++Layer)
+                m_SubresourceStates[VulkanImageSubresourceKey{
+                    .Image = Image, .Aspect = vk::ImageAspectFlagBits::eColor, .MipLevel = Mip, .ArrayLayer = Layer}] =
+                    State;
     }
 
     /// Drop a destroyed image's tracked state. Without this, a driver-reused
@@ -47,49 +83,104 @@ class VulkanImageTracker {
     /// emit an invalid oldLayout barrier (ADR 05 pool era: eviction destroys
     /// idle images while their entries would otherwise linger).
     auto Forget(vk::Image Image) -> void {
-        m_ImageStates.erase(Image);
+        m_ImageInfos.erase(Image);
+        for (auto It = m_SubresourceStates.begin(); It != m_SubresourceStates.end();) {
+            if (It->first.Image == Image)
+                It = m_SubresourceStates.erase(It);
+            else
+                ++It;
+        }
     }
 
-    auto Transition(vk::raii::CommandBuffer& CmdBuf,
-                    vk::Image                Image,
-                    const VulkanImageState&  DesiredState) -> void {
-        auto It      = m_ImageStates.find(Image);
-        auto Current = (It != m_ImageStates.end()) ? It->second : VulkanImageState{};
+    /// Whole-image range: every mip and layer, resolved against the registered
+    /// dimensions at transition time. Use for view-based usages whose VkImageView
+    /// spans the full mip chain (attachments, whole-image sampled/storage bindings).
+    [[nodiscard]] static auto FullRange(vk::ImageAspectFlags Aspect) -> vk::ImageSubresourceRange {
+        return {.aspectMask     = Aspect,
+                .baseMipLevel   = 0,
+                .levelCount     = vk::RemainingMipLevels,
+                .baseArrayLayer = 0,
+                .layerCount     = vk::RemainingArrayLayers};
+    }
 
-        const bool NeedsBarrier =
-            (Current.stage != DesiredState.stage) || (Current.access != DesiredState.access) ||
-            (Current.layout != DesiredState.layout) || Current.isWrite;
+    /// Drive every subresource in Range to DesiredState, emitting one image memory
+    /// barrier per subresource whose tracked state differs (or after a prior write).
+    auto Transition(const vk::raii::CommandBuffer& CmdBuf,
+                    vk::Image                    Image,
+                    const vk::ImageSubresourceRange Range,
+                    const VulkanImageState&        DesiredState) -> void {
+        const auto   InfoIt     = m_ImageInfos.find(Image);
+        const Uint32 RegisteredMips   = (InfoIt != m_ImageInfos.end()) ? InfoIt->second.MipLevels   : 1;
+        const Uint32 RegisteredLayers = (InfoIt != m_ImageInfos.end()) ? InfoIt->second.ArrayLayers : 1;
+        const Uint32 MipCount =
+            (Range.levelCount == vk::RemainingMipLevels) ? RegisteredMips : Range.levelCount;
+        const Uint32 LayerCount =
+            (Range.layerCount == vk::RemainingArrayLayers) ? RegisteredLayers : Range.layerCount;
 
-        if (NeedsBarrier) {
-            vk::ImageMemoryBarrier2 Barrier{
-                .srcStageMask        = Current.stage,
-                .srcAccessMask       = Current.access,
-                .dstStageMask        = DesiredState.stage,
-                .dstAccessMask       = DesiredState.access,
-                .oldLayout           = Current.layout,
-                .newLayout           = DesiredState.layout,
-                .srcQueueFamilyIndex = Current.queueFamily,
-                .dstQueueFamilyIndex = DesiredState.queueFamily,
-                .image               = Image,
-                .subresourceRange    = {.aspectMask     = DesiredState.aspect,
-                                        .baseMipLevel   = 0,
-                                        .levelCount     = vk::RemainingMipLevels,
-                                        .baseArrayLayer = 0,
-                                        .layerCount     = vk::RemainingArrayLayers},
-            };
+        static constexpr vk::ImageAspectFlagBits KnownAspects[] = {
+            vk::ImageAspectFlagBits::eColor,
+            vk::ImageAspectFlagBits::eDepth,
+            vk::ImageAspectFlagBits::eStencil,
+        };
+
+        std::vector<vk::ImageMemoryBarrier2> Barriers;
+        for (const auto Aspect : KnownAspects) {
+            if ((static_cast<Uint32>(Range.aspectMask) & static_cast<Uint32>(Aspect)) == 0)
+                continue;
+            for (Uint32 Mip = Range.baseMipLevel; Mip < Range.baseMipLevel + MipCount; ++Mip) {
+                for (Uint32 Layer = Range.baseArrayLayer; Layer < Range.baseArrayLayer + LayerCount; ++Layer) {
+                    const VulkanImageSubresourceKey Key{
+                        .Image = Image, .Aspect = Aspect, .MipLevel = Mip, .ArrayLayer = Layer};
+                    const auto            It      = m_SubresourceStates.find(Key);
+                    const VulkanImageState Current = (It != m_SubresourceStates.end()) ? It->second : VulkanImageState{};
+
+                    const bool NeedsBarrier =
+                        (Current.stage != DesiredState.stage) || (Current.access != DesiredState.access) ||
+                        (Current.layout != DesiredState.layout) || Current.isWrite;
+
+                    if (NeedsBarrier) {
+                        Barriers.push_back(vk::ImageMemoryBarrier2{
+                            .srcStageMask        = Current.stage,
+                            .srcAccessMask       = Current.access,
+                            .dstStageMask        = DesiredState.stage,
+                            .dstAccessMask       = DesiredState.access,
+                            .oldLayout           = Current.layout,
+                            .newLayout           = DesiredState.layout,
+                            .srcQueueFamilyIndex = Current.queueFamily,
+                            .dstQueueFamilyIndex = DesiredState.queueFamily,
+                            .image               = Image,
+                            .subresourceRange    = {.aspectMask     = Aspect,
+                                                    .baseMipLevel   = Mip,
+                                                    .levelCount     = 1,
+                                                    .baseArrayLayer = Layer,
+                                                    .layerCount     = 1},
+                        });
+                    }
+
+                    m_SubresourceStates[Key] = DesiredState;
+                }
+            }
+        }
+
+        if (!Barriers.empty()) {
             vk::DependencyInfo Dependency{
                 .dependencyFlags         = vk::DependencyFlagBits::eByRegion,
-                .imageMemoryBarrierCount = 1,
-                .pImageMemoryBarriers    = &Barrier,
+                .imageMemoryBarrierCount = static_cast<Uint32>(Barriers.size()),
+                .pImageMemoryBarriers    = Barriers.data(),
             };
             CmdBuf.pipelineBarrier2(Dependency);
         }
-
-        m_ImageStates[Image] = DesiredState;
     }
 
   private:
-    std::unordered_map<vk::Image, VulkanImageState> m_ImageStates = {};
+    struct VulkanImageInfo {
+        Uint32 MipLevels   = 1;
+        Uint32 ArrayLayers = 1;
+    };
+
+    std::unordered_map<vk::Image, VulkanImageInfo>                            m_ImageInfos        = {};
+    std::unordered_map<VulkanImageSubresourceKey, VulkanImageState, VulkanImageSubresourceKeyHash>
+        m_SubresourceStates = {};
 };
 
 /// @brief Tracked Vulkan buffer range state used for automatic synchronization barriers.

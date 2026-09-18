@@ -210,6 +210,8 @@ class VulkanSwapchain {
         for (Uint32 Index = 0; Index < Result.m_Images.size(); ++Index) {
             Context.GetDebugUtils().SetObjectName(Result.m_Images[Index], Format("Internal/Image/Swapchain{}", Index));
             Result.m_ImageTracker->Register(Result.m_Images[Index],
+                1,
+                SwapchainCI.imageArrayLayers,
                 VulkanImageState{
                     // The first time a swapchain image is used in a frame,
                     // is when the scene color blits to the swapchain.
