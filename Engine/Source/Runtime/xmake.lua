@@ -24,6 +24,12 @@ function test_module(module_name, opt)
     table.insert(packages, "gtest")
     local tests_dir = path.absolute(path.join(os.scriptdir(), "Tests"))
     local exclude_patterns = opt.exclude_tests or {}
+    -- Test base-name patterns dropped when the active toolchain is a clang
+    -- frontend (any driver style).  Evaluated per target in on_config: the
+    -- configured toolchain name is not visible at script scope in xmake v3
+    -- (get_config("toolchain") returns nil), so the check must run where
+    -- target:toolchains() is resolved.
+    local exclude_on_clang = opt.exclude_on_clang or {}
     for _, testfile in ipairs(os.files("Tests/**.cpp")) do
         local basename = path.basename(testfile)
         local excluded = false
@@ -40,29 +46,60 @@ function test_module(module_name, opt)
                 set_default(false)
                 add_deps(table.unpack(deps))
                 add_packages(table.unpack(packages))
-                -- gtest[main] supplies gmock_main. Xmake places static libraries before
-                -- test objects on MSVC, so force-link that archive instead of adding a project-local main.
-                if is_plat("windows") then
-                    -- MSVC-style drivers (link.exe, clang-cl) accept /WHOLEARCHIVE
-                    -- directly, but the GNU-style clang++ driver that the clang/llvm
-                    -- toolchains use would treat it as an input file and fail with
-                    -- "no such file or directory"; forward it through -Wl, there.
-                    if is_config("toolchain", "clang", "llvm", "gcc") then
-                        add_ldflags("-Wl,/WHOLEARCHIVE:gmock_main.lib", {force = true})
-                    else
-                        add_ldflags("/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                -- gtest[main] supplies gmock_main. Xmake places static libraries
+                -- before test objects on MSVC, so force-link that archive instead
+                -- of adding a project-local main.  Driver style decides the flag
+                -- form: link.exe / clang-cl accept /WHOLEARCHIVE directly; the
+                -- GNU-style clang++ driver (toolchain "clang"/"gcc" on Windows)
+                -- needs -Wl, forwarding.  Both decisions need the resolved
+                -- toolchain, so they run in on_config (see exclude_on_clang).
+                on_config(function(target)
+                    local clang_frontend = false
+                    local gnu_driver     = false
+                    for _, toolchain_inst in pairs(target:toolchains()) do
+                        local name = toolchain_inst:name()
+                        if name == "clang" or name == "llvm" then
+                            clang_frontend = true
+                        end
+                        if name == "clang" or name == "gcc" then
+                            gnu_driver = true
+                        end
                     end
-                end
+
+                    -- Clang-frontend exclusions (e.g. the clang 23.1.1
+                    -- optimizer SEGV workaround in Scene).  Disabled targets
+                    -- must not register tests either, or `xmake test` runs a
+                    -- binary that was never built.
+                    local disabled = false
+                    for _, pattern in ipairs(exclude_on_clang) do
+                        if basename:match(pattern) then
+                            if clang_frontend then
+                                target:set("enabled", false)
+                                disabled = true
+                            end
+                            break
+                        end
+                    end
+
+                    if not disabled then
+                        target:add("tests", "default", {
+                            group = module_name,
+                            runenvs = {
+                                SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
+                            }
+                        })
+                    end
+
+                    if gnu_driver then
+                        target:add("ldflags", "-Wl,/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                    else
+                        target:add("ldflags", "/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                    end
+                end)
                 if opt.rpath_packages then
                     add_package_rpath(opt.rpath_packages)
                 end
                 add_files(testfile)
-                add_tests("default", {
-                    group = module_name,
-                    runenvs = {
-                        SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
-                    }
-                })
         end
     end
 end
