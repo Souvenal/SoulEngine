@@ -79,6 +79,53 @@ struct RHIShaderBindingRequest {
     }
 };
 
+/// @brief One element of a shader resource array binding (WT2/D16).
+/// Mip follows the D16 convention: a value >= the target's mip level count
+/// selects the whole-chain default view; the backend resolves it.
+struct RHIArrayBindingElement {
+    RHIObject* Resource      = nullptr;
+    Uint32     Mip           = 0;
+    Uint32     ArrayIndex    = 0;
+    bool       IsRenderTarget = false;
+};
+
+// Note: no templated constructors/factories here — a template instantiated
+// with a type from another partition of this module (e.g. RHIRenderTarget
+// from RHI:Types) crashes clang 23.1.1's mangler in consumer TUs
+// (same ICE family as the entt meta bug, 2026-09-16).
+
+/// @brief Element binding one mip of a render target into a shader array (WT2/D16).
+[[nodiscard]] inline auto MakeRenderTargetArrayElement(RHIRef<RHIRenderTarget> Target,
+                                                       Uint32                  Mip,
+                                                       Uint32                  ArrayIndex) -> RHIArrayBindingElement {
+    return RHIArrayBindingElement{
+        .Resource      = Target.TryGet(),
+        .Mip           = Mip,
+        .ArrayIndex    = ArrayIndex,
+        .IsRenderTarget = true,
+    };
+}
+
+/// @brief Element binding a sampled texture into a shader array (WT2).
+[[nodiscard]] inline auto MakeSampledTextureArrayElement(RHIRef<RHISampledTexture> Texture,
+                                                         Uint32                    ArrayIndex) -> RHIArrayBindingElement {
+    return RHIArrayBindingElement{
+        .Resource      = Texture.TryGet(),
+        .ArrayIndex    = ArrayIndex,
+        .IsRenderTarget = false,
+    };
+}
+
+/// @brief Request binding a shader-side resource array (fixed or unbounded).
+/// Elements may address arbitrary array indices; gaps stay unbound
+/// (partially-bound descriptor sets make that legal).
+struct RHIShaderArrayBindingRequest {
+    StringView                              ParameterPath = {};
+    std::span<const RHIArrayBindingElement> Elements      = {};
+    ShaderResourceType                      Type          = ShaderResourceType::Unknown;
+    bool                                    IsReadOnly    = true;
+};
+
 /// @brief Backend-owned descriptor resources for one reflected shader layout.
 class RHIShaderBindingSet : public RHIObject {
   public:
@@ -91,6 +138,14 @@ class RHIShaderBindingSet : public RHIObject {
         // render targets after binding resources are type-erased.
         bool               IsRenderTarget = false;
         bool               IsReadOnly     = true;
+        /// Backend-filled effective descriptor count: ArrayCount for fixed
+        /// arrays, the chosen layout count for unbounded ones (WT2).
+        Uint32             ArrayCapacity  = 1;
+        /// True when the slot backs an unbounded (variable descriptor count) array.
+        bool               IsVariableCountArray = false;
+        /// Bound array elements (WT2); empty for scalar slots. Indices may
+        /// have gaps — unbound elements are never written.
+        std::vector<RHIArrayBindingElement> ArrayElements = {};
     };
 
     RHIShaderBindingSet(const RHIShaderBindingSet&)                    = delete;
@@ -117,7 +172,9 @@ class RHIShaderBindingSet : public RHIObject {
                 return true;
         }
         return std::ranges::any_of(m_BindingsBySet, [](const auto& Bindings) {
-            return std::ranges::any_of(Bindings, [](const Slot& Binding) { return Binding.Resource == nullptr; });
+            return std::ranges::any_of(Bindings, [](const Slot& Binding) {
+                return Binding.Resource == nullptr && Binding.ArrayElements.empty();
+            });
         });
     }
 
@@ -152,7 +209,7 @@ class RHIShaderBindingSet : public RHIObject {
                                                            magic_enum::enum_name(Request.Type))));
             if ((*It)->Info.ArrayCount != 1)
                 return std::unexpected(ErrorMessage(Format(
-                    "Shader parameter '{}' is an array and cannot use scalar batch binding", Request.ParameterPath)));
+                    "Shader parameter '{}' is an array; use BindArrayResources instead", Request.ParameterPath)));
         }
 
         // Then we check if all set index are the same
@@ -178,7 +235,13 @@ class RHIShaderBindingSet : public RHIObject {
             return std::unexpected(
                 ErrorMessage(Format("Shader binding batch contains multiple descriptor sets: {}", Details)));
         }
-        if (Resources.size() != m_BindingsBySet[SetIndex].size())
+        // Sets that contain array slots are completed by separate
+        // BindArrayResources batches, so the whole-set count check only
+        // applies to purely scalar sets.
+        const bool SetHasArraySlots = std::ranges::any_of(m_BindingsBySet[SetIndex], [](const Slot& Binding) {
+            return Binding.Info.ArrayCount != 1;
+        });
+        if (!SetHasArraySlots && Resources.size() != m_BindingsBySet[SetIndex].size())
             return std::unexpected(ErrorMessage(Format("Shader binding set {} requires {} resources, received {}",
                                                        SetIndex,
                                                        m_BindingsBySet[SetIndex].size(),
@@ -197,6 +260,81 @@ class RHIShaderBindingSet : public RHIObject {
             Slot->IsReadOnly = Resources[Index].IsReadOnly;
         }
         return OnResourcesBound(SetIndex);
+    }
+
+    /// Binds shader-side resource arrays (fixed or unbounded). One batch must
+    /// target a single descriptor set; scalar slots of the same set are bound
+    /// through BindResources (WT2).
+    [[nodiscard]] auto BindArrayResources(std::span<const RHIShaderArrayBindingRequest> Requests)
+        -> std::expected<void, ErrorMessage> {
+        if (Requests.empty())
+            return std::unexpected(ErrorMessage("Shader array binding batch must not be empty"));
+
+        struct ResolvedRequest {
+            Slot*       Target = nullptr;
+            const RHIShaderArrayBindingRequest* Request = nullptr;
+        };
+        std::vector<ResolvedRequest> Resolved;
+        Resolved.reserve(Requests.size());
+        std::optional<Uint32> SetIndex = std::nullopt;
+
+        for (const auto& Request : Requests) {
+            if (Request.Elements.empty())
+                return std::unexpected(ErrorMessage(
+                    Format("Shader array parameter '{}' has no elements", Request.ParameterPath)));
+
+            Slot* Target = nullptr;
+            for (auto& SetBindings : m_BindingsBySet)
+                for (auto& Binding : SetBindings)
+                    if (Binding.Info.ParameterPath == Request.ParameterPath) {
+                        Target = &Binding;
+                        break;
+                    }
+            if (!Target)
+                return std::unexpected(ErrorMessage(Format(
+                    "Shader parameter '{}' is not present in the shader binding layout", Request.ParameterPath)));
+            if (Target->Info.ArrayCount == 1)
+                return std::unexpected(ErrorMessage(Format(
+                    "Shader parameter '{}' is not an array; use BindResources instead", Request.ParameterPath)));
+            if (Request.Type != Target->Info.Type)
+                return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {}, received {}",
+                                                           Request.ParameterPath,
+                                                           magic_enum::enum_name(Target->Info.Type),
+                                                           magic_enum::enum_name(Request.Type))));
+            if (!SetIndex)
+                SetIndex = Target->Info.Set;
+            else if (*SetIndex != Target->Info.Set)
+                return std::unexpected(ErrorMessage(
+                    Format("Shader array binding batch contains multiple descriptor sets: '{}' (set {})",
+                           Request.ParameterPath,
+                           Target->Info.Set)));
+
+            // Reject duplicate (path, index) pairs and out-of-capacity indices.
+            std::vector<Uint32> SeenIndices;
+            SeenIndices.reserve(Request.Elements.size());
+            for (const auto& Element : Request.Elements) {
+                if (!Element.Resource)
+                    return std::unexpected(ErrorMessage(Format(
+                        "Shader array parameter '{}' has an element with no ready resource", Request.ParameterPath)));
+                if (std::ranges::find(SeenIndices, Element.ArrayIndex) != SeenIndices.end())
+                    return std::unexpected(ErrorMessage(Format(
+                        "Shader array parameter '{}' binds index {} more than once", Request.ParameterPath, Element.ArrayIndex)));
+                SeenIndices.push_back(Element.ArrayIndex);
+                if (Element.ArrayIndex >= Target->ArrayCapacity)
+                    return std::unexpected(ErrorMessage(Format(
+                        "Shader array parameter '{}' index {} exceeds the array capacity of {}",
+                        Request.ParameterPath,
+                        Element.ArrayIndex,
+                        Target->ArrayCapacity)));
+            }
+            Resolved.push_back(ResolvedRequest{.Target = Target, .Request = &Request});
+        }
+
+        for (auto& [Target, Request] : Resolved) {
+            Target->ArrayElements.assign(Request->Elements.begin(), Request->Elements.end());
+            Target->IsReadOnly = Request->IsReadOnly;
+        }
+        return OnResourcesBound(*SetIndex);
     }
 
     /// Binds the sampled-image array used by the reflected bindless space.

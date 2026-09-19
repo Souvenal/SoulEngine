@@ -56,6 +56,14 @@ class IRHIPass {
         return BindingSet->BindResources(Resources);
     }
 
+    [[nodiscard]] auto BindArrayResources(std::span<const RHIShaderArrayBindingRequest> Requests)
+        -> std::expected<void, ErrorMessage> {
+        auto* BindingSet = GetShaderBindingSet();
+        if (!BindingSet)
+            return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
+        return BindingSet->BindArrayResources(Requests);
+    }
+
     template <typename T>
     [[nodiscard]] auto PushConstants(Uint32 Offset, const T& Data) -> std::expected<void, ErrorMessage> {
         auto* BindingSet = GetShaderBindingSet();

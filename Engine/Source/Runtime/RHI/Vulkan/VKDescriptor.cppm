@@ -66,8 +66,8 @@ class VulkanDescriptorManager {
         // ── Verify descriptor indexing features are supported ───────────
         const auto& V12 = VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
         if (!V12.descriptorIndexing || !V12.descriptorBindingPartiallyBound ||
-            !V12.runtimeDescriptorArray ||
-            !V12.descriptorBindingSampledImageUpdateAfterBind)
+            !V12.runtimeDescriptorArray || !V12.descriptorBindingSampledImageUpdateAfterBind ||
+            !V12.descriptorBindingVariableDescriptorCount)
             return std::unexpected(
                 ErrorMessage("VulkanDescriptorManager: required Vulkan 1.2 descriptor indexing features not supported by device"));
 
@@ -130,7 +130,11 @@ class VulkanDescriptorManager {
     }
 
   private:
-    [[nodiscard]] auto AllocateDescriptorSets(std::span<const vk::DescriptorSetLayout> Layouts)
+    /// Allocates one descriptor set; VariableCount (when set) feeds
+    /// VkDescriptorSetVariableDescriptorCountAllocateInfo for layouts whose
+    /// last binding is an unbounded array (WT2).
+    [[nodiscard]] auto AllocateDescriptorSets(std::span<const vk::DescriptorSetLayout> Layouts,
+                                              std::optional<Uint32>                       VariableCount)
         -> std::expected<std::vector<vk::raii::DescriptorSet>, ErrorMessage> {
         if (Layouts.empty())
             return std::unexpected(ErrorMessage("VulkanDescriptorManager: descriptor set layout list is empty"));
@@ -144,13 +148,32 @@ class VulkanDescriptorManager {
             .descriptorSetCount = static_cast<Uint32>(Layouts.size()),
             .pSetLayouts        = Layouts.data(),
         };
-        auto Res = m_Device->allocateDescriptorSets(AllocateInfo);
-        if (Res.result != vk::Result::eSuccess || Res.value.size() != Layouts.size())
-            return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate descriptor sets"));
+        std::expected<std::vector<vk::raii::DescriptorSet>, ErrorMessage> Result = std::unexpected(
+            ErrorMessage("VulkanDescriptorManager: failed to allocate descriptor sets"));
+
+        if (VariableCount) {
+            const Uint32 Counts[] = {*VariableCount};
+            vk::DescriptorSetVariableDescriptorCountAllocateInfo VariableCountsInfo{
+                .descriptorSetCount = 1,
+                .pDescriptorCounts  = Counts,
+            };
+            vk::StructureChain<vk::DescriptorSetAllocateInfo,
+                               vk::DescriptorSetVariableDescriptorCountAllocateInfo>
+                Chain{AllocateInfo, VariableCountsInfo};
+            auto Res = m_Device->allocateDescriptorSets(Chain.get<vk::DescriptorSetAllocateInfo>());
+            if (Res.result == vk::Result::eSuccess && Res.value.size() == Layouts.size())
+                Result = std::move(Res.value);
+        } else {
+            auto Res = m_Device->allocateDescriptorSets(AllocateInfo);
+            if (Res.result == vk::Result::eSuccess && Res.value.size() == Layouts.size())
+                Result = std::move(Res.value);
+        }
+        if (!Result)
+            return Result;
 
         std::vector<vk::raii::DescriptorSet> Sets;
-        Sets.reserve(Res.value.size());
-        for (auto& Set : Res.value) {
+        Sets.reserve(Result->size());
+        for (auto& Set : *Result) {
             if (m_DebugUtils)
                 m_DebugUtils->SetObjectName(
                     *Set, Format("Internal/DescriptorSet/Persistent/Set{}", m_NextPersistentSet++));
@@ -177,9 +200,21 @@ class VulkanDescriptorManager {
             return *It->second.Set;
         }
 
-        // Step 2: Cache miss, so allocate a new descriptor set and write all bindings
+        // Step 2: Cache miss, so allocate a new descriptor set and write all bindings.
+        // Unbounded array layouts allocate with a variable descriptor count equal to
+        // the highest bound element index + 1 (partially bound covers the rest).
+        std::optional<Uint32> VariableCount = std::nullopt;
+        for (const auto& Binding : Bindings) {
+            if (!Binding.IsVariableCountArray)
+                continue;
+            Uint32 Count = 1;
+            for (const auto& Element : Binding.ArrayElements)
+                Count = (std::max)(Count, Element.ArrayIndex + 1);
+            VariableCount = Count;
+            break;
+        }
         const auto Layout = Key.Layout;
-        auto Allocated = AllocateDescriptorSets(std::span{&Layout, 1});
+        auto Allocated = AllocateDescriptorSets(std::span{&Layout, 1}, VariableCount);
         if (!Allocated) {
             LogError("{}", Allocated.error().ToString());
             return nullptr;
@@ -192,6 +227,41 @@ class VulkanDescriptorManager {
         Writes.reserve(Bindings.size());
         for (Uint32 Index = 0; Index < Bindings.size(); ++Index) {
             const auto& Binding = Bindings[Index];
+            // Array slots write one descriptor per bound element (WT2).
+            if (!Binding.ArrayElements.empty()) {
+                for (const auto& Element : Binding.ArrayElements) {
+                    switch (Binding.Info.Type) {
+                    case ShaderResourceType::SampledTexture:
+                        if (Element.IsRenderTarget) {
+                            const auto* Target = static_cast<const VulkanRenderTarget*>(Element.Resource);
+                            // D16: an out-of-range mip selects the whole-chain view.
+                            const auto MipIndex = Element.Mip >= Target->GetMipLevelCount()
+                                                      ? VulkanRenderTarget::WholeChain
+                                                      : Element.Mip;
+                            Writes.push_back(Target->GetWriteDescriptorSet(
+                                Handle, Binding.Info.BindingIndex, Element.ArrayIndex, Binding.IsReadOnly, MipIndex));
+                        } else {
+                            const auto* Texture = static_cast<const VulkanSampledTexture*>(Element.Resource);
+                            Writes.push_back(Texture->GetWriteDescriptorSet(
+                                Handle, Binding.Info.BindingIndex, Element.ArrayIndex, Binding.IsReadOnly));
+                        }
+                        break;
+                    case ShaderResourceType::StorageTexture:
+                        if (const auto* Target = static_cast<const VulkanRenderTarget*>(Element.Resource)) {
+                            const auto MipIndex = Element.Mip >= Target->GetMipLevelCount()
+                                                      ? VulkanRenderTarget::WholeChain
+                                                      : Element.Mip;
+                            Writes.push_back(Target->GetWriteDescriptorSet(
+                                Handle, Binding.Info.BindingIndex, Element.ArrayIndex, Binding.IsReadOnly, MipIndex));
+                        }
+                        break;
+                    default:
+                        // Arrays of buffers/samplers are not used yet; extend here.
+                        break;
+                    }
+                }
+                continue;
+            }
             switch (Binding.Info.Type) {
             case ShaderResourceType::ConstantBuffer:
                 if (const auto* Buffer = static_cast<const VulkanTransientConstantBuffer*>(Binding.Resource))
