@@ -373,11 +373,59 @@ class VulkanComputePipeline final : public RHIComputePipeline {
             Context.GetDebugUtils().SetObjectName(*ShaderModule, Name);
         }
 
+        // Specialization constants (WT3): validate host values against the
+        // reflection, then lower them to VkSpecializationInfo. Constants the
+        // host omits keep their shader-declared defaults (Q2). Every value is
+        // 32-bit (Q1), so one word of backing storage per entry suffices.
+        std::vector<vk::SpecializationMapEntry> MapEntries;
+        std::vector<Uint32>                     SpecData;
+        if (!Desc.SpecializationConstants.empty()) {
+            if (auto R = ValidateSpecializationConstants(Desc.SpecializationConstants, Desc.Program.Reflection); !R)
+                return std::unexpected(R.error());
+
+            MapEntries.reserve(Desc.SpecializationConstants.size());
+            for (const auto& Value : Desc.SpecializationConstants) {
+                const auto& Reflection = Desc.Program.Reflection;
+                const auto  It         = std::ranges::find_if(Reflection.SpecializationConstants, [&](const auto& R) {
+                    return R.Name == Value.Name;
+                });
+
+                Uint32 Bits = 0;
+                std::visit(
+                    [&](const auto& Held) {
+                        using HeldType = std::decay_t<decltype(Held)>;
+                        if constexpr (std::same_as<HeldType, bool>)
+                            Bits = Held ? 1U : 0U;
+                        else if constexpr (std::same_as<HeldType, Uint32>)
+                            Bits = Held;
+                        else
+                            Bits = std::bit_cast<Uint32>(static_cast<Int32>(Held));
+                    },
+                    Value.Value);
+
+                MapEntries.push_back(vk::SpecializationMapEntry{
+                    .constantID = It->ConstantId,
+                    .offset     = static_cast<Uint32>(SpecData.size() * sizeof(Uint32)),
+                    .size       = sizeof(Uint32),
+                });
+                SpecData.push_back(Bits);
+            }
+        }
+
+        vk::SpecializationInfo SpecInfo{
+            .mapEntryCount = static_cast<Uint32>(MapEntries.size()),
+            .pMapEntries   = MapEntries.data(),
+            .dataSize      = SpecData.size() * sizeof(Uint32),
+            .pData         = SpecData.data(),
+        };
+
         vk::PipelineShaderStageCreateInfo StageCI{
             .stage  = vk::ShaderStageFlagBits::eCompute,
             .module = *ShaderModule,
             .pName  = Desc.Program.ComputeEntryPointName.c_str(),
         };
+        if (!MapEntries.empty())
+            StageCI.setPNext(&SpecInfo);
 
         vk::ComputePipelineCreateInfo PipelineCI{
             .stage  = StageCI,

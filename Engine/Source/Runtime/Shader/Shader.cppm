@@ -59,6 +59,7 @@ enum class ShaderScalarType : Uint8 {
     Float32 = 1,
     Int32   = 2,
     Uint32  = 3,
+    Bool    = 4,
 };
 
 /// @brief Minimal resource categories supported by the first reflection pass.
@@ -105,6 +106,18 @@ struct ShaderPushConstantRange {
     Uint32 Size   = 0;
 };
 
+/// @brief Reflected specialization constant (Slang [SpecializationConstant]).
+///
+/// Host code looks values up by Name (Q7); ConstantId only exists in
+/// reflection and the Vulkan layer. Defaults come from Slang's integer getter:
+/// bool/int/uint are populated, float has no SDK getter and stays nullopt (Q2).
+struct ShaderSpecializationConstant {
+    String                Name         = {};
+    Uint32                ConstantId   = 0;
+    ShaderScalarType      ScalarType   = ShaderScalarType::Unknown;
+    std::optional<Int64>  DefaultValue = std::nullopt;
+};
+
 /// @brief Reflected shader-side vertex attribute requirement.
 ///
 /// This describes what the shader consumes.  It intentionally does not
@@ -119,14 +132,12 @@ struct ShaderVertexInputAttribute {
 };
 
 /// @brief Normalized pipeline reflection data.
-///
-/// TODO: Add specialization-constant reflection when pipeline specialization
-/// is introduced.
 struct ShaderReflection {
-    std::vector<ShaderBinding>              Bindings      = {};
-    std::vector<ShaderPushConstantRange>    PushConstants = {};
-    std::vector<ShaderVertexInputAttribute> VertexInputs  = {};
-    std::optional<Uint32>                   BindlessSpace = std::nullopt;
+    std::vector<ShaderBinding>                 Bindings                 = {};
+    std::vector<ShaderPushConstantRange>       PushConstants            = {};
+    std::vector<ShaderVertexInputAttribute>    VertexInputs             = {};
+    std::vector<ShaderSpecializationConstant>  SpecializationConstants  = {};
+    std::optional<Uint32>                      BindlessSpace            = std::nullopt;
 };
 
 /// @brief Compiled shader artifact for one graphics pipeline shader combination.

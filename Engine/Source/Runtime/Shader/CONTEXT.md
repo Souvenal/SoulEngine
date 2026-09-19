@@ -14,7 +14,13 @@ Canonical pipeline stage enum (`Vertex`, `Fragment`, `Compute`, `Hull`, `Domain`
 _Avoid_: RHIStage (deleted — was a 3-value subset), SlangStage (native Slang type, mapped in the Slang backend only).
 
 **ScalarType**:
-Minimal scalar-type vocabulary for normalized reflection (`Float32`, `Int32`, `Uint32`).
+Minimal scalar-type vocabulary for normalized reflection (`Float32`, `Int32`, `Uint32`, `Bool`).
+
+**SpecializationConstant**:
+Reflected `Slang [SpecializationConstant]` global (name, constant id, scalar type, optional
+default). Host code looks values up by name; the constant id only exists in reflection and
+the Vulkan layer. Host-provided values are fixed at pipeline creation; omitted constants
+keep their shader-declared defaults. Float defaults have no Slang SDK getter and stay empty.
 
 **ResourceType**:
 Minimal resource categories (`ConstantBuffer`, `StorageBuffer`, `SampledTexture`, `StorageTexture`, `Sampler`).
@@ -52,7 +58,8 @@ Shared 3x`float4` storage-buffer ABI for Directional and Point lights. The
 Reflected vertex attribute requirement (semantic name/index, location, value type). Describes what the shader consumes, not how CPU-side vertex buffers feed it.
 
 **Reflection**:
-Normalized pipeline reflection data (bindings, push constants, vertex inputs).
+Normalized pipeline reflection data (bindings, push constants, vertex inputs,
+specialization constants).
 `GraphicsProgram` owns the linked graphics shader combination's reflection by
 value.
 

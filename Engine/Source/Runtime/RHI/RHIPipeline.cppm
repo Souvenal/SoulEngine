@@ -473,9 +473,64 @@ class RHIGraphicsPipeline : public RHIPipeline {
 
 // ── Compute pipeline ────────────────────────────────────────────────────────
 
+/// @brief One host-provided specialization constant value (WT3, Q8).
+/// The reflection remains the type authority: a variant holding the wrong
+/// scalar type for the reflected constant is a hard error (Q3).
+struct RHISpecializationConstant {
+    String                                  Name  = {};
+    std::variant<bool, Int32, Uint32, Float32> Value = false;
+
+    bool operator==(const RHISpecializationConstant&) const = default;
+};
+
+/// @brief Validates provided spec values against the shader reflection (WT3 Q3/Q9):
+/// unknown names, duplicate names, and variant/reflection scalar-type
+/// mismatches are hard errors. Device-independent, so it lives here rather
+/// than in a backend.
+[[nodiscard]] inline auto ValidateSpecializationConstants(std::span<const RHISpecializationConstant> Values,
+                                                          const ShaderReflection& Reflection)
+    -> std::expected<void, ErrorMessage> {
+    std::vector<StringView> Seen;
+    Seen.reserve(Values.size());
+    for (const auto& Value : Values) {
+        if (std::ranges::find(Seen, StringView{Value.Name}) != Seen.end())
+            return std::unexpected(ErrorMessage(
+                Format("Specialization constant '{}' is provided more than once", Value.Name)));
+        Seen.push_back(Value.Name);
+
+        const auto It = std::ranges::find_if(Reflection.SpecializationConstants, [&](const auto& Reflected) {
+            return Reflected.Name == Value.Name;
+        });
+        if (It == Reflection.SpecializationConstants.end())
+            return std::unexpected(ErrorMessage(
+                Format("Specialization constant '{}' is not present in the shader reflection", Value.Name)));
+
+        const auto Matches = [](const auto& Held, ShaderScalarType Type) {
+            using HeldType = std::decay_t<decltype(Held)>;
+            if constexpr (std::same_as<HeldType, bool>)
+                return Type == ShaderScalarType::Bool;
+            else if constexpr (std::same_as<HeldType, Int32>)
+                return Type == ShaderScalarType::Int32;
+            else if constexpr (std::same_as<HeldType, Uint32>)
+                return Type == ShaderScalarType::Uint32;
+            else
+                return Type == ShaderScalarType::Float32;
+        };
+        if (!std::visit([&](const auto& Held) { return Matches(Held, It->ScalarType); }, Value.Value))
+            return std::unexpected(ErrorMessage(Format(
+                "Specialization constant '{}' holds a value of the wrong scalar type (reflected as {})",
+                Value.Name,
+                magic_enum::enum_name(It->ScalarType))));
+    }
+    return {};
+}
+
 struct RHIComputePipelineDesc {
-    ShaderComputeProgram        Program    = {};
-    RHIRef<RHIShaderBindingSet> BindingSet = nullptr;
+    ShaderComputeProgram                  Program                 = {};
+    RHIRef<RHIShaderBindingSet>           BindingSet              = nullptr;
+    /// Values fixed at pipeline creation (VkSpecializationInfo). They are
+    /// part of the pipeline identity: two value sets must yield two pipelines.
+    std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
 class RHIComputePipeline : public RHIPipeline {

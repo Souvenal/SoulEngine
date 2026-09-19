@@ -121,6 +121,8 @@ namespace {
         return ShaderScalarType::Int32;
     case slang::TypeReflection::ScalarType::UInt32:
         return ShaderScalarType::Uint32;
+    case slang::TypeReflection::ScalarType::Bool:
+        return ShaderScalarType::Bool;
     default:
         return ShaderScalarType::Unknown;
     }

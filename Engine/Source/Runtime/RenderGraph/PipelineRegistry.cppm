@@ -39,6 +39,10 @@ struct GraphicsPipelineRequest {
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
 struct ComputePipelineRequest {
     ShaderEntry ComputeEntry = {};
+    /// Specialization constant values fixed at pipeline creation (WT3).
+    /// They are part of the pipeline identity: two value sets must produce
+    /// two pipelines, so the idempotence predicate compares them.
+    std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
 /// @brief Async ray-tracing pipeline request descriptor (moved from
@@ -66,7 +70,8 @@ namespace {
 
 [[nodiscard]] auto SameComputeRequest(const ComputePipelineRequest& A, const ComputePipelineRequest& B) -> bool {
     return A.ComputeEntry.SourcePath == B.ComputeEntry.SourcePath &&
-           A.ComputeEntry.EntryPoint == B.ComputeEntry.EntryPoint;
+           A.ComputeEntry.EntryPoint == B.ComputeEntry.EntryPoint &&
+           A.SpecializationConstants == B.SpecializationConstants;
 }
 
 [[nodiscard]] auto SameEntryList(const std::vector<ShaderEntry>& A, const std::vector<ShaderEntry>& B) -> bool {
@@ -453,7 +458,8 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
                 }
 
                 auto PipelineDesc = RHIComputePipelineDesc{
-                    .Program = std::move(*Program),
+                    .Program                 = std::move(*Program),
+                    .SpecializationConstants = Desc.SpecializationConstants,
                 };
                 auto EnqueueResult = TaskGraph::Get().EnqueueTask(
                     ThreadQueue::RHI,

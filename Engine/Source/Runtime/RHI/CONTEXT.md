@@ -27,6 +27,7 @@ handles and record declarative commands.
 | **Texture usage** | `RHITextureUsage` flags: RenderTarget, DepthStencil, ShaderResource, ShaderStorage, TransferSrc, TransferDst. FrameOutput was removed (ADR 05); sampled textures have fixed backend upload/sampled semantics and no desc usage field. |
 | **Swapchain image** | Backend-private presentation image; never an engine-owned sampled texture or an RHIRef exposed to Renderer. |
 | **Graphics / ray-tracing pipeline** | Backend-polymorphic pipeline payload retained by bind, draw, push-constant, parameter-binding, or trace commands. |
+| **Compute pipeline** | Backend-polymorphic compute pipeline payload. Host-provided specialization constant values are fixed at creation (`VkSpecializationInfo`) and are part of the pipeline identity: two value sets must yield two pipelines. |
 | **Frame-affined task** | A TaskGraph callback tagged with the producer thread's frame ordinal. The RHI queue executes only callbacks matching the current RHI thread ordinal. |
 | **Transient data upload** | A transient RHI resource creation task owns a byte snapshot, allocates the current Vulkan arena after frame reset, writes the data, and publishes a Ready `RHIRef` before command recording. |
 | **Buffer device address** | `RHIVertexBuffer::GetDeviceAddress()` and `RHIIndexBuffer::GetDeviceAddress()` expose the address value used by current shader ABI records. Vulkan implements these values with BDA. |
