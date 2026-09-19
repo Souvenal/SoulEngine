@@ -5,3 +5,4 @@ export import :Logging;
 export import :Config;
 export import :ECS;
 export import :ECS.Transform;
+export import :AssetManager;

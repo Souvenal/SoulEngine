@@ -26,6 +26,18 @@ const scheduler preserves a const system reference.
 _Avoid_: relying on registration order for execution semantics, registering
 systems mid-frame
 
+## Assets
+
+**AssetManager** (`Core:AssetManager`):
+Process-wide asset registry. `Load(Path, ShouldRead)` registers a path
+(relative paths resolve against the current Application root, injected at
+application creation) and returns a stable `AssetHandle`; id 0 is the
+invalid sentinel. `GetContent(AssetHandle)` returns lazily-read, cached,
+read-only bytes as `SPtr<const std::vector<std::byte>>`; content stays in
+memory for the process lifetime. Handles deduplicate by full path.
+_Avoid_: treating `Load` as a file read (it only registers), storing asset
+paths in components (persist the `AssetHandle`)
+
 ## Language
 
 ### Type aliases
