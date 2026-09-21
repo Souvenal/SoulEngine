@@ -553,6 +553,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             DrainRHIDeferredDeletions();
         }
 
+        // The tail below requires a live resource context. It runs at most
+        // once: the destructor re-enters Shutdown() after Destroy() already
+        // released m_ResourceContext, and the failed-Initialize() path can
+        // reach the destructor without a context at all. m_NeedsShutdown is
+        // only set after m_ResourceContext, so no recorded error is dropped
+        // by this early-out.
+        if (!m_ResourceContext)
+            return {};
+
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
         m_Swapchain.Cleanup();
         m_TransientShaderStorageArena = {};

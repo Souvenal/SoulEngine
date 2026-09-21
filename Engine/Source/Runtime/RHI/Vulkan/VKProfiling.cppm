@@ -99,6 +99,19 @@ auto ShutdownGpuProfiling(VulkanResourceContext& ResourceContext) -> void {
 /// Tracy GPU zone for the same region. The label is emitted when debug utils
 /// are enabled (checked at construction and destruction); the zone no-ops
 /// when no Tracy GPU context is available or the name is empty.
+///
+/// @note Validation-layer false positive: every pass zone recorded through
+///       this scope writes its timestamps into a *secondary* command buffer,
+///       while CollectGpu() records the ring-wraparound resets into the
+///       frame's *primary* command buffer. VVL up to Vulkan SDK 1.4.357 (tag
+///       dated 2026-07-27) does not propagate query state across command
+///       buffers within one submission and misreports this as
+///       VUID-vkCmdWriteTimestamp-None-00830 (MessageID 0xeb0b9b05). Fixed
+///       upstream by KhronosGroup/Vulkan-ValidationLayers PR #13116 (merged
+///       2026-09-16, closes #8233); no released SDK ships it yet. Re-test
+///       after an SDK update and drop this note once clean. A zone recorded
+///       on the primary CB (same CB as the resets) was experimentally
+///       confirmed to never trigger the report (2026-09-21).
 class LabelScope final {
   public:
     LabelScope(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer,
