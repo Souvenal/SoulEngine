@@ -73,26 +73,29 @@ A structured, human-readable error chain used as the error type for fallible eng
 _Avoid_: Error string, status code, exception
 
 **Singleton\<T\>**:
-Meyer's singleton CRTP base class. Used by **LogManager**, **ConfigManager**, and other module-level singletons. Provides a static `Get()` accessor and deletes all copy/move operations.
+Meyer's singleton CRTP base class. Used by **LogManager**, **CVarManager**, and other module-level singletons. Provides a static `Get()` accessor and deletes all copy/move operations.
 _Avoid_: Global instance, static instance
 
 **ReadFile**:
 Reads an entire file into a `String` (binary mode) using `ate` to pre-allocate exactly once. Returns `std::expected<String, ErrorMessage>` — success or error message.
 _Avoid_: LoadFile, ReadWholeFile, slurp
 
-### Config system
+### CVar system
 
-**ConfigManager**:
-A singleton that parses TOML config files and populates an `EngineConfig` struct.
-_Avoid_: ConfigParser, SettingsManager, ConfigLoader
+**CVar\<T\>**:
+A console variable: a namespace-scope object (`CVar<bool> CVarRenderUseCSM{"Render.UseCSM", true, "..."};`) that self-registers with CVarManager at static-init time and doubles as a zero-lookup access handle (`Get()`/`Set()`). Supported types: `bool`, `Int32`, `Float32`, `String`. Constructor argument order: name, default value, description. The default lives at the registration site and is the single source of truth.
+_Avoid_: TAutoCVar, AutoCVar, central registration function
 
-**EngineConfig**:
-The root config struct aggregating all subsystem configurations. Each subsystem (Window, Render, Log, Application, Shader) has its own nested struct mirroring the corresponding TOML table.
-_Avoid_: GlobalConfig, AppConfig
+**CVarManager**:
+The singleton registry behind all CVars. String access via `Find<T>(name) -> std::optional<T>` (name not registered under type T → `nullopt`, no logging) and `SetByName<T>(name, value) -> bool`. The registry key is (name, type): the same name may exist under several types. `LoadConfig(path)` flattens the TOML file's nested tables into dotted names and applies each leaf to the matching CVar; unknown keys and type mismatches are logged as warnings and skipped. Every CVar is runtime-mutable from any thread; readers poll, there are no change callbacks.
+_Avoid_: CVarSystem ("System" clashes with ECS System vocabulary), ConsoleVariableManager
 
-**Optional-field config design**:
-All config struct fields are `std::optional`. ConfigManager is a pure I/O layer — it fills what was present in TOML and leaves absent keys as `nullopt`. Each consuming module owns its own default via `value_or(...)`, avoiding a single point of truth drift.
-_Avoid_: Defaults in config layer, non-optional config fields
+**Dotted CVar name**:
+Canonical CVar identifier following the "Module.Feature" dot convention (e.g. `Render.UseCSM`, `RHI.Vulkan.Validation`), isomorphic to the TOML table nesting (`[RHI.Vulkan] Validation`).
+
+**EnginePaths**:
+A singleton answering "where is X" — engine root, Shaders/, Logs/, Configs/, Binaries/, Applications/. Paths are engine-environment facts, not configuration values.
+_Avoid_: ConfigManager (retired: its config-value role moved to CVars, its path role moved here)
 
 ### Logging system
 
@@ -109,15 +112,15 @@ Global template functions that format and dispatch a log message at a given leve
 
 ## Relationships
 
-- **ConfigManager** uses **EngineConfig** as its internal data store; it is the only writer to it.
+- **CVar\<T\>** registrations self-register into **CVarManager** at static-init time; **CVarManager** owns every CVar's storage and is the only TOML reader.
 - **LogManager** dispatches at the granularity of **LogLevel**.
 - **LogDebug / LogInfo / LogWarning / LogError** are convenience callers of **LogManager**.
 
 ## Example dialogue
 
-> **Dev:** "When I load `SoulEngine.example.toml`, the `Render.FramesInFlight` field is `nullopt` — won't the engine crash?"
-> **Domain expert:** "No — ConfigManager is a pure I/O layer. It doesn't know what a reasonable value is. **RenderConfig** just mirrors what was in the TOML file. The RHI module reads `Cfg.Render.FramesInFlight.value_or(2)` and applies its own fallback."
+> **Dev:** "I put `UseCSM = false` under `[Render]` in SoulEngine.toml, but the renderer still adds the CSM pass. Why?"
+> **Domain expert:** "The TOML file is only a startup-time value source for registered **CVars** — it never creates them. If nobody registered a `Render.UseCSM` **CVar**, that key is warned about and ignored. Check the registration site; the default also lives there, not in the file."
 
 ## Flagged ambiguities
 
-- "config" was used to mean both the I/O layer (ConfigManager) and individual subsystem settings — resolved: the former is a type, the latter are nested structs under EngineConfig.
+- "config" was used to mean both the I/O layer (ConfigManager) and individual subsystem settings — superseded: ConfigManager/EngineConfig were removed; runtime-mutable settings are **CVars**, and the TOML file is only their startup-time value source.

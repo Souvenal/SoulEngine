@@ -41,6 +41,7 @@ class ReflectionTest : public ::testing::Test {
             "ReflectionRuntimeParameterBlock.slang",
             "ReflectionStructResourceField.slang",
             "ReflectionNestedParameterBlock.slang",
+            "ReflectionFixedArray.slang",
         };
 
         for (StringView Fixture : Fixtures) {
@@ -256,6 +257,27 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     EXPECT_EQ(It->BindingIndex, 0U);
     EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
 	EXPECT_EQ(It->ArrayCount, kShaderReflectionArrayUnboundedSize);
+}
+
+TEST_F(ReflectionTest, FixedSizeArrayBindingCount) {
+    auto Result = CompileGraphicsForReflection(ShaderPath("ReflectionFixedArray.slang"));
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+
+    const auto& R = Result->Reflection;
+
+    auto It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
+        return B.ParameterPath == "g_params.uFixedTextures";
+    });
+    ASSERT_NE(It, R.Bindings.end());
+    EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
+    EXPECT_EQ(It->ArrayCount, 4U);
+
+    // Scalar members of the same block stay scalar.
+    It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) {
+        return B.ParameterPath == "g_params.frame";
+    });
+    ASSERT_NE(It, R.Bindings.end());
+    EXPECT_EQ(It->ArrayCount, 1U);
 }
 
 TEST_F(ReflectionTest, StructResourceFieldBindingPaths) {

@@ -18,7 +18,8 @@ import :Texture;
 
 namespace SoulEngine {
 
-namespace {
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 [[nodiscard]] auto ToVkDescriptorType(ShaderResourceType Type) -> vk::DescriptorType {
     switch (Type) {
@@ -82,6 +83,40 @@ namespace {
                  Properties.maxDescriptorSetUpdateAfterBindSampledImages));
 }
 
+/// Device-side ceiling for one array binding of the given resource type
+/// (min of per-stage and per-set limits, capped at 4096). Used both to size
+/// unbounded layouts and as the guardrail for fixed arrays (WT2 item 5).
+[[nodiscard]] auto GetMaxDescriptorArrayCount(ShaderResourceType Type) -> Uint32 {
+    const auto& Limits = VulkanCapability::Get().GetProperties().limits;
+    Uint32 PerStage = 0;
+    Uint32 PerSet   = 0;
+    switch (Type) {
+    case ShaderResourceType::SampledTexture:
+        PerStage = Limits.maxPerStageDescriptorSampledImages;
+        PerSet   = Limits.maxDescriptorSetSampledImages;
+        break;
+    case ShaderResourceType::StorageTexture:
+        PerStage = Limits.maxPerStageDescriptorStorageImages;
+        PerSet   = Limits.maxDescriptorSetStorageImages;
+        break;
+    case ShaderResourceType::ConstantBuffer:
+        PerStage = Limits.maxPerStageDescriptorUniformBuffers;
+        PerSet   = Limits.maxDescriptorSetUniformBuffers;
+        break;
+    case ShaderResourceType::StorageBuffer:
+        PerStage = Limits.maxPerStageDescriptorStorageBuffers;
+        PerSet   = Limits.maxDescriptorSetStorageBuffers;
+        break;
+    case ShaderResourceType::Sampler:
+        PerStage = Limits.maxPerStageDescriptorSamplers;
+        PerSet   = Limits.maxDescriptorSetSamplers;
+        break;
+    default:
+        return 1;
+    }
+    return (std::min)(4096U, (std::min)(PerStage, PerSet));
+}
+
 // Slang's default SPIR-V lowering assigns read-only textures to binding 2
 // inside the reflected bindless descriptor space. The descriptor set index is
 // not hard-coded here; it comes from ShaderReflection::BindlessSpace. The
@@ -137,8 +172,6 @@ inline constexpr Uint32 BindlessTextureBinding = 2;
 
     return {};
 }
-
-} // namespace
 
 } // namespace SoulEngine
 
@@ -232,25 +265,81 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
                 if (!Created)
                     return std::unexpected(Created.error());
             } else {
-                // Step 4b: process ordinary set layout
-                for (const auto& Binding : SetBindings) {
-                    auto Type = ToVkDescriptorType(Binding.Info.Type);
+                // Step 4b: process ordinary set layout. Fixed arrays bind with their
+                // reflected count; unbounded arrays become variable descriptor count
+                // bindings. All array bindings get ePartiallyBound so callers may
+                // leave array indices unbound (WT2).
+                std::vector<vk::DescriptorBindingFlags> BindingFlags(SetBindings.size(), {});
+                bool   HasVariableCountBinding = false;
+                Uint32 MaxBindingIndexInSet    = 0;
+                for (const auto& Binding : SetBindings)
+                    MaxBindingIndexInSet = (std::max)(MaxBindingIndexInSet, Binding.Info.BindingIndex);
+
+                for (Uint32 BindingIdx = 0; BindingIdx < SetBindings.size(); ++BindingIdx) {
+                    const auto& Binding = SetBindings[BindingIdx];
+                    auto        Type    = ToVkDescriptorType(Binding.Info.Type);
+
+                    Uint32 DescriptorCount = Binding.Info.ArrayCount;
+                    if (DescriptorCount == kShaderReflectionArrayUnboundedSize) {
+                        // Vulkan requires a variable descriptor count binding to be the
+                        // set's last binding; shader side declares it last in the struct.
+                        if (Binding.Info.BindingIndex != MaxBindingIndexInSet)
+                            return std::unexpected(ErrorMessage(Format(
+                                "Unbounded descriptor array '{}' must be the last binding in set {}; declare it "
+                                "last in the ParameterBlock struct",
+                                Binding.Info.ParameterPath,
+                                SetIndex)));
+                        DescriptorCount = GetMaxDescriptorArrayCount(Binding.Info.Type);
+                        BindingFlags[BindingIdx] =
+                            vk::DescriptorBindingFlagBits::ePartiallyBound |
+                            vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
+                        HasVariableCountBinding                    = true;
+                        SetBindings[BindingIdx].IsVariableCountArray = true;
+                    } else {
+                        const Uint32 MaxCount = GetMaxDescriptorArrayCount(Binding.Info.Type);
+                        if (DescriptorCount > MaxCount)
+                            return std::unexpected(ErrorMessage(Format(
+                                "Fixed descriptor array '{}' requests {} elements, exceeding the device limit of {}",
+                                Binding.Info.ParameterPath,
+                                DescriptorCount,
+                                MaxCount)));
+                        if (DescriptorCount > 1)
+                            BindingFlags[BindingIdx] = vk::DescriptorBindingFlagBits::ePartiallyBound;
+                    }
+                    SetBindings[BindingIdx].ArrayCapacity = DescriptorCount;
+
                     VkBindings.push_back(vk::DescriptorSetLayoutBinding{
                         .binding            = Binding.Info.BindingIndex,
                         .descriptorType     = Type,
-                        .descriptorCount    = 1,
+                        .descriptorCount    = DescriptorCount,
                         .stageFlags         = ShaderStages,
                         .pImmutableSamplers = nullptr,
                     });
                 }
 
-                vk::DescriptorSetLayoutCreateInfo CreateInfo{
-                    .bindingCount = static_cast<Uint32>(VkBindings.size()),
-                    .pBindings    = VkBindings.data(),
-                };
-                auto Created = CreateLayout(CreateInfo);
-                if (!Created)
-                    return std::unexpected(Created.error());
+                if (HasVariableCountBinding) {
+                    vk::DescriptorSetLayoutBindingFlagsCreateInfo FlagsInfo{
+                        .bindingCount  = static_cast<Uint32>(BindingFlags.size()),
+                        .pBindingFlags = BindingFlags.data(),
+                    };
+                    vk::StructureChain<vk::DescriptorSetLayoutCreateInfo,
+                                       vk::DescriptorSetLayoutBindingFlagsCreateInfo>
+                        Chain{vk::DescriptorSetLayoutCreateInfo{
+                                  .bindingCount = static_cast<Uint32>(VkBindings.size()),
+                                  .pBindings    = VkBindings.data(),
+                              },
+                              FlagsInfo};
+                    if (auto R = CreateLayout(Chain.get<vk::DescriptorSetLayoutCreateInfo>()); !R)
+                        return std::unexpected(R.error());
+                } else {
+                    vk::DescriptorSetLayoutCreateInfo CreateInfo{
+                        .bindingCount = static_cast<Uint32>(VkBindings.size()),
+                        .pBindings    = VkBindings.data(),
+                    };
+                    auto Created = CreateLayout(CreateInfo);
+                    if (!Created)
+                        return std::unexpected(Created.error());
+                }
             }
 
         }
@@ -411,6 +500,14 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         for (const auto& Slot : SetBindings) {
             Key.ResourceIds.push_back(Slot.Resource ? Slot.Resource->GetId() : 0);
             Key.ResourceIds.push_back(Slot.IsReadOnly ? 1 : 0);
+            // Array slots: one (index, resource id, mip, kind) tuple per bound
+            // element (WT2). The tuple sequence also pins the variable count.
+            for (const auto& Element : Slot.ArrayElements) {
+                Key.ResourceIds.push_back(Element.ArrayIndex);
+                Key.ResourceIds.push_back(Element.Resource ? Element.Resource->GetId() : 0);
+                Key.ResourceIds.push_back(Element.Mip);
+                Key.ResourceIds.push_back(Element.IsRenderTarget ? 1 : 0);
+            }
         }
         m_SetKeys[SetIndex] = std::move(Key);
         return {};

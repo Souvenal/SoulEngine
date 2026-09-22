@@ -52,7 +52,8 @@ struct VulkanShaderBindingTableLayout {
 
 namespace SoulEngine {
 
-namespace {
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 [[nodiscard]] auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
     if (Alignment == 0)
@@ -315,8 +316,6 @@ struct VulkanRayTracingShaderStates {
         return std::unexpected(R.error());
     return Data;
 }
-
-} // namespace
 
 export auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
                                            Uint32 HandleAlignment,

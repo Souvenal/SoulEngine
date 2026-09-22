@@ -18,6 +18,9 @@ export import std;
 
 namespace SoulEngine {
 
+// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
+CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug info (OpLine/OpString) for RenderDoc"};
+
 /// Build the session-level compiler options vector from the engine config.
 [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry> {
     std::vector<slang::CompilerOptionEntry> Options;
@@ -35,8 +38,7 @@ namespace SoulEngine {
     });
 
     // ── DebugInformation ──────────────────────────────────────────────────
-    const auto& ShaderCfg = ConfigManager::Get().GetConfig().Shader;
-    const bool  WantDebug = ShaderCfg.DebugInfo.value_or(false);
+    const bool WantDebug = CVarShaderDebugInfo.Get();
     if (WantDebug) {
         Options.push_back({
             .name  = slang::CompilerOptionName::DebugInformation,

@@ -16,6 +16,12 @@ _Avoid_: RHIStage (deleted — was a 3-value subset), SlangStage (native Slang t
 **ScalarType**:
 Minimal scalar-type vocabulary for normalized reflection (`Float32`, `Int32`, `Uint32`, `Bool`).
 
+**SpecializationConstant**:
+Reflected `Slang [SpecializationConstant]` global (name, constant id, scalar type, optional
+default). Host code looks values up by name; the constant id only exists in reflection and
+the Vulkan layer. Host-provided values are fixed at pipeline creation; omitted constants
+keep their shader-declared defaults. Float defaults have no Slang SDK getter and stay empty.
+
 **ResourceType**:
 Minimal resource categories (`ConstantBuffer`, `StorageBuffer`, `SampledTexture`, `StorageTexture`, `Sampler`).
 
@@ -36,15 +42,6 @@ asset name, asset cache key, asset path, or backend descriptor object name.
 
 **PushConstantRange**:
 Reflected push-constant byte range (offset, size).
-
-**SpecializationConstant**:
-Reflected shader-global constant declared with Slang `[SpecializationConstant]` (a Vulkan spec
-constant). Its value is fixed at pipeline creation, not compile time: one compiled program
-instantiates any number of pipelines with different values, and the compiled artifact is
-unchanged. The host keys provided values by constant name, under the same uniqueness discipline
-as *Shader binding name*; the reflection entry records name, spec-constant ID, scalar type, and
-optional default value. Distinct from `PushConstantRange` (per-dispatch mutable bytes) and
-constant buffers (per-frame data).
 
 **Runtime constant-buffer ABI**:
 Runtime Slang constant-buffer structs use the default Vulkan `std140` layout.

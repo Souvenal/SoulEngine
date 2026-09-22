@@ -17,8 +17,9 @@ export import std;
 
 namespace SoulEngine {
 
-namespace {
-
+// Module linkage, not an anonymous namespace: this class is named by the
+// exported inline YamlDocument::Create below, and TU-local entities cannot
+// be named from exported code — see Core:CVar's linkage note.
 class YamlParser {
   public:
     [[nodiscard]] static auto Create(std::span<const unsigned char> Source)
@@ -155,18 +156,12 @@ class YamlParser {
     bool          m_Initialized = false;
 };
 
-} // namespace
-
-} // namespace SoulEngine
-
-export namespace SoulEngine {
-
 /// @brief One node of a parsed YAML document tree.
 ///
 /// Heap-allocated through Create() only; scalar, sequence, and mapping values are
 /// distinguished via IsScalar()/IsSequence()/IsMap() and read through As<T>(),
 /// Values(), and Items().
-class YamlNode {
+export class YamlNode {
     friend class YamlDocument;
 
   public:
@@ -386,7 +381,7 @@ class YamlNode {
 ///
 /// Parsing accepts a single-document subset: no anchors, aliases, explicit tags, or
 /// directives, and duplicate mapping keys are rejected with line/column information.
-class YamlDocument {
+export class YamlDocument {
   public:
     [[nodiscard]] static auto Create(const Path& FilePath) -> std::expected<YamlDocument, ErrorMessage> {
         const auto Source = ReadFile(FilePath);
@@ -443,7 +438,7 @@ class YamlDocument {
 ///
 /// The YAML side is untyped; the target type comes from the field's registered meta
 /// type. Fails when the node does not decode as that type or the meta assignment fails.
-[[nodiscard]] inline auto
+export [[nodiscard]] inline auto
 AssignYamlValue(const entt::meta_data& Field, entt::meta_any& Component, const YamlNode& Value)
     -> std::expected<void, ErrorMessage> {
     const auto Type = Field.type().info().hash();

@@ -45,7 +45,7 @@ set_policy("build.c++.modules", true)
 -- end
 
 add_rules("mode.release", "mode.releasedbg", "mode.debug")
-add_rules("plugin.compile_commands.autoupdate", {outputdir = "build"})
+add_rules("plugin.compile_commands.autoupdate")
 
 -- Use right-handed coordinates (OpenGL/Vulkan convention) for hlslpp.
 -- Affects look_at, perspective, rotation functions — all assume z points

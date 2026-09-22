@@ -30,7 +30,7 @@ class PathTracingPass final : public IRHIRayTracingPass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<PathTracingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> RayTracingPipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "RayTracing" / "RayTracing.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "RayTracing" / "RayTracing.slang";
         return RayTracingPipelineRequest{
             .RayGeneration = {.SourcePath = ShaderPath, .EntryPoint = "rayGenMain"},
             .MissEntries =

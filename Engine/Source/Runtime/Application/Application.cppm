@@ -105,7 +105,7 @@ export namespace SoulEngine {
         return std::unexpected(ErrorMessage(Format("Unknown application: '{}'. Available: {}", Name, Supported)));
     }
     App->m_Name = String(Name);
-    App->m_RootDirectory = (ConfigManager::Get().ApplicationsRootDirPath() / Name).lexically_normal();
+    App->m_RootDirectory = (EnginePaths::Get().ApplicationsRootDirPath() / Name).lexically_normal();
     const auto ScenePath = App->m_RootDirectory / "Scene.yaml";
     auto Loaded = Scene::LoadFromFile(ScenePath);
     if (!Loaded)

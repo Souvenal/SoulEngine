@@ -26,15 +26,21 @@ String                                      g_CurrentRendererName = {};
 
 export namespace SoulEngine {
 
-/// @brief Create the renderer configured by `[Render].DefaultRenderer`.
+/// @brief Renderer selected at startup for applications that use the shared
+///        default.  Supported values: "Raster", "RayTracing" (concrete
+///        renderers self-register with RendererFactory in their own partitions).
+CVar<String> CVarRenderDefaultRenderer{"Render.DefaultRenderer",
+                                              "Raster",
+                                              "Renderer selected by applications that support the shared default"};
+
+/// @brief Create the renderer configured by the `Render.DefaultRenderer` CVar.
 ///
-/// @details When the TOML field is absent, `Raster` is selected. Concrete
-/// renderer types self-register with RendererFactory in their own partitions.
+/// @details Concrete renderer types self-register with RendererFactory in
+///          their own partitions.
 /// @return A renderer instance, or an error when the configured name has not
 ///         been registered.
 [[nodiscard]] inline auto CreateDefault() -> std::expected<UPtr<IRenderer>, ErrorMessage> {
-    const auto& RenderCfg = ConfigManager::Get().GetConfig().Render;
-    const auto  Name      = RenderCfg.DefaultRenderer.value_or("Raster");
+    const auto Name = CVarRenderDefaultRenderer.Get();
     LogInfo("Configured default renderer: '{}'", Name);
 
     if (!RendererFactory::Get().Contains(Name)) {

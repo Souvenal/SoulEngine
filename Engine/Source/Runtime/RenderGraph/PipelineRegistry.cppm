@@ -39,8 +39,9 @@ struct GraphicsPipelineRequest {
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
 struct ComputePipelineRequest {
     ShaderEntry ComputeEntry = {};
-    /// Specialization values are part of the pipeline's identity (WT3 Q6):
-    /// two value sets are two pipelines, so the request must carry them.
+    /// Specialization constant values fixed at pipeline creation (WT3).
+    /// They are part of the pipeline identity: two value sets must produce
+    /// two pipelines, so the idempotence predicate compares them.
     std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
@@ -56,7 +57,9 @@ struct RayTracingPipelineRequest {
 } // namespace SoulEngine
 
 namespace SoulEngine {
-namespace {
+
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 /// Idempotence predicate for Register: same key + same descriptor is a no-op.
 /// Requests compare field by field (ShaderEntry paths and entry points are the
@@ -149,7 +152,6 @@ auto PublishPipelineOnRhiThread(RHIRef<PipelineT> PipelineRef,
         PipelineRef.MarkFailed(Publish.error());
 }
 
-} // namespace
 } // namespace SoulEngine
 
 export namespace SoulEngine {
@@ -381,8 +383,7 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         auto Desc          = E.GraphicsDesc;
         auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
             [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
-                const auto&       Cfg = ConfigManager::Get();
-                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+                std::vector<Path> IncludeDirs{EnginePaths::Get().EngineShadersDirPath()};
 
                 auto Program = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
                     .Vertex      = Desc.VertEntry,
@@ -440,8 +441,7 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         auto Desc          = E.ComputeDesc;
         auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
             [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
-                const auto&       Cfg = ConfigManager::Get();
-                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+                std::vector<Path> IncludeDirs{EnginePaths::Get().EngineShadersDirPath()};
 
                 auto Program = ShaderCompiler::Get().CompileCompute(ComputeCompileDesc{
                     .Compute     = Desc.ComputeEntry,
@@ -490,8 +490,7 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         auto Desc          = E.RayTracingDesc;
         auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
             [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
-                const auto&       Cfg = ConfigManager::Get();
-                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+                std::vector<Path> IncludeDirs{EnginePaths::Get().EngineShadersDirPath()};
 
                 auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
                     .RayGeneration = Desc.RayGeneration,

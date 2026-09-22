@@ -21,6 +21,22 @@ import Renderer;
 import TaskGraph;
 export import std;
 
+namespace SoulEngine {
+
+// Boot-time CVars owned by the launch sequence.  Log levels live here rather
+// than in Core:Logging because Core:CVar imports Core:Logging — registering
+// them there would create a module-partition cycle.
+// CVar registrations deliberately use module linkage (plain non-exported
+// declarations), never an anonymous namespace: internal-linkage variables
+// referenced from exported inline code are copied into importing TUs and
+// their initializers run twice (duplicate registration).
+CVar<String> CVarLogConsoleLevel{"Log.ConsoleLevel", "Info", "Minimum level for console log output"};
+CVar<String> CVarLogFileLevel{"Log.FileLevel", "Debug", "Minimum level for file log output"};
+CVar<String> CVarApplicationName{"Application.Name", "Test", "Application opened at startup"};
+CVar<String> CVarRenderRHI{"Render.RHI", "Vulkan", "RHI backend created at startup"};
+
+} // namespace SoulEngine
+
 export namespace SoulEngine {
 
 /// @brief Per-frame slot state in the triple-buffered Game→Render→RHI pipeline.
@@ -91,20 +107,20 @@ class EngineLoop {
             std::exit(1);
         }
 
-        // Initialize ConfigManager with the engine root — infallible, no I/O.
-        ConfigManager::Get().Init(EngineDir);
+        // Initialize EnginePaths with the engine root — infallible, no I/O.
+        EnginePaths::Get().Init(EngineDir);
 
         // Initialize spdlog sinks and logger rooted at Engine/Logs/.
-        LogManager::Get().Init(ConfigManager::Get().LogsDirPath());
+        LogManager::Get().Init(EnginePaths::Get().LogsDirPath());
 
-        // Load the config file from Engine/Configs/SoulEngine.toml.
-        auto LoadResult = ConfigManager::Get().LoadConfig();
+        // Load the config file from Engine/Configs/SoulEngine.toml into the
+        // registered CVars (also flushes static-init registration diagnostics).
+        auto LoadResult = CVarManager::Get().LoadConfig(EnginePaths::Get().ConfigsDirPath() / "SoulEngine.toml");
         if (!LoadResult)
             return std::unexpected(LoadResult.error().Append("Failed to load config file"));
 
         // Apply log-level configuration from the [Log] section.
-        auto& LogCfg = ConfigManager::Get().GetConfig().Log;
-        LogManager::Get().SetSinkLevels(LogCfg.FileLevel, LogCfg.ConsoleLevel);
+        LogManager::Get().SetSinkLevels(CVarLogFileLevel.Get(), CVarLogConsoleLevel.Get());
 
         // LogInfo intentionally deferred to here: LogManager::Init() is
         // called above and must run first so the spdlog logger is ready.
@@ -125,12 +141,8 @@ class EngineLoop {
             return std::unexpected(WinResult.error().Append("Failed to create window system"));
         m_WindowSystem = std::move(*WinResult);
 
-        auto& Cfg = ConfigManager::Get().GetConfig();
-
         // ── RHI context — process-wide singleton ──────────────────────────
-        const auto Backend = Cfg.Render.RHI.value_or("Vulkan");
-        if (!Cfg.Render.RHI.has_value())
-            LogInfo("[Render].RHI not set; falling back to the default '{}' backend", Backend);
+        const auto Backend = CVarRenderRHI.Get();
         if (auto R = RHIRenderDevice::Create(Backend, m_WindowSystem.get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Failed to create RHI context"));
@@ -151,14 +163,14 @@ class EngineLoop {
         // render-target pool, ADR 05)
         RenderGraph::Get().Init();
 
-        const auto InitialRenderer = Cfg.Render.DefaultRenderer.value_or("Raster");
+        const auto InitialRenderer = CVarRenderDefaultRenderer.Get();
         if (auto R = SelectRenderer(InitialRenderer); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Default renderer selection failed"));
         }
         LogInfo("Renderer '{}' initialized successfully", InitialRenderer);
         // ── Create application from config ───────────────────────────────
-        if (auto R = OpenApplication(Cfg.Application.Name.value_or("Test")); !R) {
+        if (auto R = OpenApplication(CVarApplicationName.Get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Application opening failed"));
         }
@@ -168,7 +180,7 @@ class EngineLoop {
             return std::unexpected(ErrorMessage("Application was not available after opening"));
         }
         m_Editor.BindScene(CurrentApplication->GetScene());
-        LogInfo("Application '{}' initialized successfully", Cfg.Application.Name.value_or("Test"));
+        LogInfo("Application '{}' initialized successfully", CVarApplicationName.Get());
 
         return {};
     }

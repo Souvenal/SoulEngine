@@ -373,36 +373,59 @@ class VulkanComputePipeline final : public RHIComputePipeline {
             Context.GetDebugUtils().SetObjectName(*ShaderModule, Name);
         }
 
-        auto ResolvedConstants = ResolveSpecializationConstants(Desc.Program.Reflection, Desc.SpecializationConstants);
-        if (!ResolvedConstants)
-            return std::unexpected(ResolvedConstants.error().Append("Failed to create compute pipeline"));
-
-        // Specialization data must outlive createComputePipeline; local storage
-        // covers the synchronous creation call (no deferred-CI needed here).
-        std::vector<vk::SpecializationMapEntry> SpecEntries;
+        // Specialization constants (WT3): validate host values against the
+        // reflection, then lower them to VkSpecializationInfo. Constants the
+        // host omits keep their shader-declared defaults (Q2). Every value is
+        // 32-bit (Q1), so one word of backing storage per entry suffices.
+        std::vector<vk::SpecializationMapEntry> MapEntries;
         std::vector<Uint32>                     SpecData;
-        SpecEntries.reserve(ResolvedConstants->size());
-        SpecData.reserve(ResolvedConstants->size());
-        for (const auto& Constant : *ResolvedConstants) {
-            SpecEntries.push_back(vk::SpecializationMapEntry{
-                .constantID = Constant.ConstantId,
-                .offset     = static_cast<Uint32>(SpecData.size() * sizeof(Uint32)),
-                .size       = sizeof(Uint32),
-            });
-            SpecData.push_back(Constant.PackedValue);
+        if (!Desc.SpecializationConstants.empty()) {
+            if (auto R = ValidateSpecializationConstants(Desc.SpecializationConstants, Desc.Program.Reflection); !R)
+                return std::unexpected(R.error());
+
+            MapEntries.reserve(Desc.SpecializationConstants.size());
+            for (const auto& Value : Desc.SpecializationConstants) {
+                const auto& Reflection = Desc.Program.Reflection;
+                const auto  It         = std::ranges::find_if(Reflection.SpecializationConstants, [&](const auto& R) {
+                    return R.Name == Value.Name;
+                });
+
+                Uint32 Bits = 0;
+                std::visit(
+                    [&](const auto& Held) {
+                        using HeldType = std::decay_t<decltype(Held)>;
+                        if constexpr (std::same_as<HeldType, bool>)
+                            Bits = Held ? 1U : 0U;
+                        else if constexpr (std::same_as<HeldType, Uint32>)
+                            Bits = Held;
+                        else
+                            Bits = std::bit_cast<Uint32>(static_cast<Int32>(Held));
+                    },
+                    Value.Value);
+
+                MapEntries.push_back(vk::SpecializationMapEntry{
+                    .constantID = It->ConstantId,
+                    .offset     = static_cast<Uint32>(SpecData.size() * sizeof(Uint32)),
+                    .size       = sizeof(Uint32),
+                });
+                SpecData.push_back(Bits);
+            }
         }
+
         vk::SpecializationInfo SpecInfo{
-            .mapEntryCount = static_cast<Uint32>(SpecEntries.size()),
-            .pMapEntries   = SpecEntries.data(),
+            .mapEntryCount = static_cast<Uint32>(MapEntries.size()),
+            .pMapEntries   = MapEntries.data(),
             .dataSize      = SpecData.size() * sizeof(Uint32),
             .pData         = SpecData.data(),
         };
 
+        // VkSpecializationInfo rides the dedicated pSpecializationInfo field;
+        // it is not a pNext-chainable struct (no sType).
         vk::PipelineShaderStageCreateInfo StageCI{
             .stage               = vk::ShaderStageFlagBits::eCompute,
             .module              = *ShaderModule,
             .pName               = Desc.Program.ComputeEntryPointName.c_str(),
-            .pSpecializationInfo = SpecEntries.empty() ? nullptr : &SpecInfo,
+            .pSpecializationInfo = MapEntries.empty() ? nullptr : &SpecInfo,
         };
 
         vk::ComputePipelineCreateInfo PipelineCI{

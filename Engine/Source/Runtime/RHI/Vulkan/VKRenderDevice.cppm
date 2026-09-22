@@ -38,6 +38,15 @@ import :Profiling;
 
 namespace SoulEngine {
 
+// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
+CVar<Int32> CVarRenderFramesInFlight{"Render.FramesInFlight", 2, "Number of frames in flight"};
+CVar<Int32> CVarRhiVulkanConstantArenaBufferSize{"RHI.Vulkan.ConstantArenaBufferSize",
+                                                   4096,
+                                                   "Per-frame dynamic constant arena capacity (bytes)"};
+CVar<Int32> CVarRhiVulkanTransientShaderStorageBufferSize{"RHI.Vulkan.TransientShaderStorageBufferSize",
+                                                            64 * 1024 * 1024,
+                                                            "Per-frame transient shader-storage arena capacity (bytes)"};
+
 // ═════════════════════════════════════════════════════════════════════════════
 // VulkanRenderDevice
 // ═════════════════════════════════════════════════════════════════════════════
@@ -50,9 +59,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     [[nodiscard]] auto Initialize(IWindowSystem* WindowSys) -> std::expected<void, ErrorMessage> override {
-        // Read configuration from engine config
-        const auto& Cfg  = ConfigManager::Get().GetConfig();
-        m_FramesInFlight = Cfg.Render.FramesInFlight.value_or(m_FramesInFlight);
+        // Read configuration from the CVars (TOML values were applied at launch)
+        m_FramesInFlight = static_cast<uint32_t>(CVarRenderFramesInFlight.Get());
 
         auto Resources = VulkanResourceContext::Create(WindowSys, m_FramesInFlight);
         if (!Resources)
@@ -89,7 +97,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         }
 
         // ── Transient constant arena ─────────────────────────────────────
-        const auto ConstantArenaCapacity = Cfg.RhiVulkan.ConstantArenaBufferSize.value_or(4096);
+        const auto ConstantArenaCapacity = static_cast<Uint32>(CVarRhiVulkanConstantArenaBufferSize.Get());
         auto       TransientUniformArena = VulkanTransientUniformArena::Create(
             "Renderer/Transient/UniformArena", ConstantArenaCapacity, *m_ResourceContext, m_FramesInFlight);
         if (!TransientUniformArena)
@@ -97,7 +105,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_TransientUniformArena = std::move(*TransientUniformArena);
 
         const auto TransientShaderStorageArenaCapacity =
-            static_cast<Uint64>(Cfg.RhiVulkan.TransientShaderStorageBufferSize.value_or(64U * 1024U * 1024U));
+            static_cast<Uint64>(CVarRhiVulkanTransientShaderStorageBufferSize.Get());
         auto             TransientShaderStorageArena =
             VulkanTransientShaderStorageArena::Create("Renderer/Transient/ShaderStorageArena",
                                                       TransientShaderStorageArenaCapacity,
@@ -553,6 +561,15 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             DrainRHIDeferredDeletions();
         }
 
+        // The tail below requires a live resource context. It runs at most
+        // once: the destructor re-enters Shutdown() after Destroy() already
+        // released m_ResourceContext, and the failed-Initialize() path can
+        // reach the destructor without a context at all. m_NeedsShutdown is
+        // only set after m_ResourceContext, so no recorded error is dropped
+        // by this early-out.
+        if (!m_ResourceContext)
+            return {};
+
         // Destroy VMA-backed buffers before vmaDestroyAllocator.
         m_Swapchain.Cleanup();
         m_TransientShaderStorageArena = {};
@@ -688,6 +705,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_ResourceContext->GetImageTracker().Transition(
             Buf,
             DstImage,
+            VulkanImageTracker::FullRange(vk::ImageAspectFlagBits::eColor),
             VulkanImageState{
                 .stage  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                 .access = vk::AccessFlagBits2::eColorAttachmentRead |
@@ -927,6 +945,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_ResourceContext->GetImageTracker().Transition(
             Primary,
             m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex()),
+            VulkanImageTracker::FullRange(vk::ImageAspectFlagBits::eColor),
             VulkanImageState{
                 .stage  = vk::PipelineStageFlagBits2::eTransfer,
                 .layout = vk::ImageLayout::ePresentSrcKHR,
