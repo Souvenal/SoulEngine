@@ -24,7 +24,7 @@ class DeferredLightingPass final : public IRHIGraphicsPass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<DeferredLightingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "DeferredLighting.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "DeferredLighting.slang";
         return GraphicsPipelineRequest{
             .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
             .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},

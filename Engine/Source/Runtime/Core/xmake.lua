@@ -12,10 +12,12 @@ target("Core")
     set_kind("moduleonly")
 
     add_deps("CoreLoggingBackend", {public = true})
-    -- Clang's dependency scan compiles Config.cppm in consuming targets. Export its toml++
-    -- configuration and header path so that scan/compile observes the same parser API; see TODO.md.
-    add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0", {public = true})
-    add_packages("toml++", "hlslpp", "entt", "libyaml", {public = true})
+    -- toml++ stays private: only CVar.cppm's global module fragment includes it
+    -- (verified 2026-09-22: consumer-target dependency scans no longer need
+    -- its header path; see TODO.md).  The define must match that TU only.
+    add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0")
+    add_packages("hlslpp", "entt", "libyaml", {public = true})
+    add_packages("toml++")
 
     add_files("**.cppm")
 

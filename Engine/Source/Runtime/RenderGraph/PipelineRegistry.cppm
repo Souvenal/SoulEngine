@@ -382,8 +382,7 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         auto Desc          = E.GraphicsDesc;
         auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
             [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
-                const auto&       Cfg = ConfigManager::Get();
-                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+                std::vector<Path> IncludeDirs{EnginePaths::Get().EngineShadersDirPath()};
 
                 auto Program = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{
                     .Vertex      = Desc.VertEntry,
@@ -441,8 +440,7 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         auto Desc          = E.ComputeDesc;
         auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
             [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
-                const auto&       Cfg = ConfigManager::Get();
-                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+                std::vector<Path> IncludeDirs{EnginePaths::Get().EngineShadersDirPath()};
 
                 auto Program = ShaderCompiler::Get().CompileCompute(ComputeCompileDesc{
                     .Compute     = Desc.ComputeEntry,
@@ -491,8 +489,7 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         auto Desc          = E.RayTracingDesc;
         auto EnqueueResult = TaskGraph::Get().EnqueueBackground(
             [Desc = std::move(Desc), Name = std::move(Name), PipelineRef, BindingSetRef]() mutable {
-                const auto&       Cfg = ConfigManager::Get();
-                std::vector<Path> IncludeDirs{Cfg.EngineShadersDirPath()};
+                std::vector<Path> IncludeDirs{EnginePaths::Get().EngineShadersDirPath()};
 
                 auto Program = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
                     .RayGeneration = Desc.RayGeneration,

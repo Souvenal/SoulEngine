@@ -12,6 +12,13 @@ import std;
 
 import :Capability;
 
+namespace SoulEngine {
+
+// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
+CVar<bool> CVarRhiVulkanDebugUtils{"RHI.Vulkan.DebugUtils", true, "Enable VK_EXT_debug_utils and the debug messenger"};
+
+} // namespace SoulEngine
+
 export namespace SoulEngine {
 
 /// Device-scoped VK_EXT_debug_utils service.
@@ -65,7 +72,7 @@ class VulkanDebugUtils final {
     [[nodiscard]] auto IsEnabled() const noexcept -> bool { return m_Enabled; }
 
     [[nodiscard]] static auto IsConfigEnabled() -> bool {
-        return ConfigManager::Get().GetConfig().RhiVulkan.DebugUtils.value_or(true);
+        return CVarRhiVulkanDebugUtils.Get();
     }
 
   private:

@@ -6,6 +6,9 @@ import std;
 
 namespace SoulEngine {
 
+// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
+CVar<bool> CVarRhiVulkanValidation{"RHI.Vulkan.Validation", true, "Enable VK_LAYER_KHRONOS_validation"};
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Instance and device capability requests
 // ═════════════════════════════════════════════════════════════════════════════
@@ -124,7 +127,7 @@ class VulkanCapability : public Singleton<VulkanCapability> {
     [[nodiscard]] auto ResolveInstanceLayers(vk::raii::Context& Ctx)
         -> std::expected<std::vector<const char*>, ErrorMessage> {
         std::vector<VulkanCapabilityRequest> InstanceLayers;
-        const bool Validation = ConfigManager::Get().GetConfig().RhiVulkan.Validation.value_or(true);
+        const bool Validation = CVarRhiVulkanValidation.Get();
         if (!Validation)
             return {};
         const char* ValidationLayer = "VK_LAYER_KHRONOS_validation";

@@ -91,6 +91,10 @@ auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
 
 } // namespace
 
+// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
+CVar<Int32> CVarWindowResolutionX{"Window.ResolutionX", DefaultWindowWidth, "Window width in logical pixels"};
+CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", DefaultWindowHeight, "Window height in logical pixels"};
+
 /// @brief GLFW implementation of IWindowSystem.
 ///
 /// Owns the GLFW library lifetime and one native window: surface creation,
@@ -127,10 +131,11 @@ export class GlfwWindowSystem final : public IWindowSystem {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-        auto&      Cfg          = ConfigManager::Get().GetConfig();
-        const auto WindowWidth  = Cfg.Window.ResolutionX.value_or(DefaultWindowWidth);
-        const auto WindowHeight = Cfg.Window.ResolutionY.value_or(DefaultWindowHeight);
-        Result->m_Title         = Cfg.Application.Name.value_or("SoulEngine");
+        const auto WindowWidth  = CVarWindowResolutionX.Get();
+        const auto WindowHeight = CVarWindowResolutionY.Get();
+        // Application.Name is registered by the Launch module; the fallback
+        // here only guards against its registration being dead-stripped.
+        Result->m_Title         = CVarManager::Get().Find<String>("Application.Name").value_or("SoulEngine");
 
         Result->m_Window = glfwCreateWindow(WindowWidth, WindowHeight, Result->m_Title.c_str(), nullptr, nullptr);
 

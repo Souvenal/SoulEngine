@@ -29,7 +29,7 @@ class CullingPass final : public IRHIComputePass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<CullingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "CullingCompute.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "CullingCompute.slang";
         return ComputePipelineRequest{
             .ComputeEntry = {.SourcePath = ShaderPath, .EntryPoint = "cullMain"},
         };

@@ -21,7 +21,7 @@ class SelectionFilterPass final : public IRHIComputePass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<SelectionFilterPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Editor" / "SelectionFilter.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionFilter.slang";
         return ComputePipelineRequest{
             .ComputeEntry = {.SourcePath = ShaderPath, .EntryPoint = "filterMain"},
         };

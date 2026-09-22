@@ -21,7 +21,7 @@ class SelectionMaskPass final : public IRHIGraphicsPass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<SelectionMaskPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Editor" / "SelectionMask.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionMask.slang";
         return GraphicsPipelineRequest{
             .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
             .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},

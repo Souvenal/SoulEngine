@@ -20,7 +20,7 @@ class GeometryPass final : public IRHIGraphicsPass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<GeometryPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Raster" / "RasterGeometry.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "RasterGeometry.slang";
         return GraphicsPipelineRequest{
             .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
             .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},

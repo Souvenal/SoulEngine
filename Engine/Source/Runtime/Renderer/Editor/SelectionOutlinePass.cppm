@@ -36,7 +36,7 @@ class SelectionOutlinePass final : public IRHIGraphicsPass {
 
     /// Static pipeline descriptor for PipelineRegistry::Register<SelectionOutlinePass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
-        const auto ShaderPath = ConfigManager::Get().EngineShadersDirPath() / "Editor" / "SelectionOutline.slang";
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionOutline.slang";
         return GraphicsPipelineRequest{
             .VertEntry = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
             .FragEntry = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
