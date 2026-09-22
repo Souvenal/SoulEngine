@@ -14,7 +14,9 @@ import :Pass;
 import :Command;
 
 namespace SoulEngine {
-namespace {
+
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 /// Error for backend methods a concrete device leaves unimplemented. Tests
 /// run a base RHIRenderDevice (or a small override) to keep RenderGraph's
@@ -26,7 +28,6 @@ namespace {
     return Message;
 }
 
-} // namespace
 } // namespace SoulEngine
 
 export namespace SoulEngine {

@@ -9,7 +9,9 @@ import RenderGraph;
 export import std;
 
 namespace SoulEngine {
-namespace {
+
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 struct SelectionOutlinePushConstants {
     Float32 ViewportWidth;
@@ -18,7 +20,6 @@ struct SelectionOutlinePushConstants {
 
 static_assert(sizeof(SelectionOutlinePushConstants) == 8);
 
-} // namespace
 } // namespace SoulEngine
 
 export namespace SoulEngine {

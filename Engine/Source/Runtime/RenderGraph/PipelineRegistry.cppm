@@ -57,7 +57,9 @@ struct RayTracingPipelineRequest {
 } // namespace SoulEngine
 
 namespace SoulEngine {
-namespace {
+
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 /// Idempotence predicate for Register: same key + same descriptor is a no-op.
 /// Requests compare field by field (ShaderEntry paths and entry points are the
@@ -150,7 +152,6 @@ auto PublishPipelineOnRhiThread(RHIRef<PipelineT> PipelineRef,
         PipelineRef.MarkFailed(Publish.error());
 }
 
-} // namespace
 } // namespace SoulEngine
 
 export namespace SoulEngine {

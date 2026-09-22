@@ -10,7 +10,9 @@ import :Types;
 import :Texture;
 
 namespace SoulEngine {
-namespace {
+
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 [[nodiscard]] auto IsRelativeAssetPath(StringView Value) -> bool {
     const Path Asset{String(Value)};
@@ -23,7 +25,6 @@ namespace {
     return true;
 }
 
-} // namespace
 } // namespace SoulEngine
 
 export namespace SoulEngine {

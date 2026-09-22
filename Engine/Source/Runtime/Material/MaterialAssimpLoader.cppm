@@ -15,7 +15,8 @@ import :Texture;
 
 namespace SoulEngine {
 
-namespace {
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 [[nodiscard]] auto ReadColor3(
     const aiMaterial& Source,
@@ -221,8 +222,6 @@ namespace {
         .Flags     = ReadInteger(_AI_MATKEY_TEXFLAGS_BASE, 0),
     };
 }
-
-} // namespace
 
 } // namespace SoulEngine
 

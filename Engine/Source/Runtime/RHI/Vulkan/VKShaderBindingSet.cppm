@@ -18,7 +18,8 @@ import :Texture;
 
 namespace SoulEngine {
 
-namespace {
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 [[nodiscard]] auto ToVkDescriptorType(ShaderResourceType Type) -> vk::DescriptorType {
     switch (Type) {
@@ -171,8 +172,6 @@ inline constexpr Uint32 BindlessTextureBinding = 2;
 
     return {};
 }
-
-} // namespace
 
 } // namespace SoulEngine
 
