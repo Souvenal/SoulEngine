@@ -113,7 +113,8 @@ consteval auto CVarTypeName() -> StringView {
         return "String";
 }
 
-namespace {
+// Module linkage (plain namespace scope), not an anonymous namespace: named by
+// the exported code below — see Core:CVar's linkage note.
 
 /// @brief Convert a TOML leaf to a CVar value.  Integers undergo a range
 ///        check for Int32; Float32 also accepts TOML integers.
@@ -137,8 +138,6 @@ template <CVarValue T>
         return Node.value<String>();
     }
 }
-
-} // namespace
 
 // Forward declaration required for the CVarManager friendship grant;
 // CVar's definition follows CVarManager below.

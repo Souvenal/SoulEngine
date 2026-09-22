@@ -1,23 +1,15 @@
--- Keep spdlog in a conventional translation unit.  MSVC cannot compile a
--- module unit that both includes spdlog's transitive standard-library headers
--- and imports the named std module; Core:Logging uses this private C ABI bridge.
-target("CoreLoggingBackend")
-    set_kind("static")
-    set_languages("c++20")
-
-    add_packages("spdlog")
-    add_files("Logging/LoggingBackend.cpp")
-
 target("Core")
     set_kind("moduleonly")
 
-    add_deps("CoreLoggingBackend", {public = true})
-    -- toml++ stays private: only CVar.cppm's global module fragment includes it
-    -- (verified 2026-09-22: consumer-target dependency scans no longer need
-    -- its header path; see TODO.md).  The define must match that TU only.
-    add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0")
+    -- toml++/spdlog/magic_enum stay private: header-only packages used only in
+    -- CVar.cppm / Logging.cppm / Yaml.cppm; nothing to propagate at link time.
+    -- libyaml is a compiled library: Core's own module objects reference its
+    -- symbols, and xmake does not propagate a private package's links to
+    -- dependents, so it must stay public.
+    -- hlslpp / entt stay public: exported Core API (Types.cppm glue, meta APIs) references them.
     add_packages("hlslpp", "entt", "libyaml", {public = true})
-    add_packages("toml++")
+    add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0")
+    add_packages("toml++", "spdlog", "magic_enum")
 
     add_files("**.cppm")
 
