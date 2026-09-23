@@ -20,6 +20,7 @@ target("RHIVulkan")
     -- vulkan-1.lib out of the link — the engine loads Vulkan dynamically.
     add_defines("TRACY_VK_USE_SYMBOL_TABLE")
 
+    add_packages("volk", {public = true})
     add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw", "magic_enum", "imgui", "imgui-club", "hlslpp", {public = true})
     add_deps("RHI", "VMA", "WindowSystem", "TaskGraph")
     add_files("Vulkan/*.cppm")

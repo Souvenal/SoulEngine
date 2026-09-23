@@ -21,6 +21,10 @@ namespace SoulEngine {
 // Module linkage (plain namespace scope), not an anonymous namespace: named by
 // the exported code below — see Core:CVar's linkage note.
 
+CVar<Int32> CVarRhiVulkanMaxTextures{"RHI.Vulkan.MaxTextures",
+                                       4096,
+                                       "Bindless descriptor array size cap"};
+
 [[nodiscard]] auto ToVkDescriptorType(ShaderResourceType Type) -> vk::DescriptorType {
     switch (Type) {
     case ShaderResourceType::ConstantBuffer:
@@ -77,19 +81,18 @@ namespace SoulEngine {
 
 [[nodiscard]] auto GetMaxRuntimeSampledTextureCount() -> Uint32 {
     const auto& Properties = VulkanCapability::Get().GetProperties<vk::PhysicalDeviceVulkan12Properties>();
-    return std::min(
-        4096U,
-        std::min(Properties.maxPerStageDescriptorUpdateAfterBindSampledImages,
-                 Properties.maxDescriptorSetUpdateAfterBindSampledImages));
+    return std::min(static_cast<Uint32>(CVarRhiVulkanMaxTextures.Get()),
+                    std::min(Properties.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                             Properties.maxDescriptorSetUpdateAfterBindSampledImages));
 }
 
 /// Device-side ceiling for one array binding of the given resource type
-/// (min of per-stage and per-set limits, capped at 4096). Used both to size
+/// (min of per-stage and per-set limits, capped at RHI.Vulkan.MaxTextures). Used both to size
 /// unbounded layouts and as the guardrail for fixed arrays (WT2 item 5).
 [[nodiscard]] auto GetMaxDescriptorArrayCount(ShaderResourceType Type) -> Uint32 {
-    const auto& Limits = VulkanCapability::Get().GetProperties().limits;
-    Uint32 PerStage = 0;
-    Uint32 PerSet   = 0;
+    const auto& Limits   = VulkanCapability::Get().GetProperties().limits;
+    Uint32      PerStage = 0;
+    Uint32      PerSet   = 0;
     switch (Type) {
     case ShaderResourceType::SampledTexture:
         PerStage = Limits.maxPerStageDescriptorSampledImages;
@@ -114,7 +117,7 @@ namespace SoulEngine {
     default:
         return 1;
     }
-    return (std::min)(4096U, (std::min)(PerStage, PerSet));
+    return (std::min)(static_cast<Uint32>(CVarRhiVulkanMaxTextures.Get()), (std::min)(PerStage, PerSet));
 }
 
 // Slang's default SPIR-V lowering assigns read-only textures to binding 2
@@ -126,15 +129,14 @@ inline constexpr Uint32 BindlessTextureBinding = 2;
 
 [[nodiscard]] auto ValidateDescriptorSetIndices(const ShaderReflection& Reflection)
     -> std::expected<void, ErrorMessage> {
-    const Uint32 MaxBoundDescriptorSets =
-        VulkanCapability::Get().GetProperties().limits.maxBoundDescriptorSets;
+    const Uint32 MaxBoundDescriptorSets = VulkanCapability::Get().GetProperties().limits.maxBoundDescriptorSets;
 
     // Validate the optional bindless descriptor set index.
     if (Reflection.BindlessSpace && *Reflection.BindlessSpace >= MaxBoundDescriptorSets)
-        return std::unexpected(ErrorMessage(
-            Format("Shader bindless space {} exceeds the device limit of {} bound descriptor sets",
-                   *Reflection.BindlessSpace,
-                   MaxBoundDescriptorSets)));
+        return std::unexpected(
+            ErrorMessage(Format("Shader bindless space {} exceeds the device limit of {} bound descriptor sets",
+                                *Reflection.BindlessSpace,
+                                MaxBoundDescriptorSets)));
 
     // Validate every reflected binding against the device descriptor-set limit.
     for (const auto& Binding : Reflection.Bindings) {
@@ -155,20 +157,20 @@ inline constexpr Uint32 BindlessTextureBinding = 2;
     if (!Bindings.empty())
         return std::unexpected(ErrorMessage("Bindless descriptor space overlaps ordinary shader bindings"));
 
-    const auto& Properties = VulkanCapability::Get().GetProperties<vk::PhysicalDeviceVulkan12Properties>();
+    const auto&  Properties      = VulkanCapability::Get().GetProperties<vk::PhysicalDeviceVulkan12Properties>();
     const Uint32 DescriptorCount = GetMaxRuntimeSampledTextureCount();
 
     if (DescriptorCount > Properties.maxPerStageDescriptorUpdateAfterBindSampledImages)
-        return std::unexpected(ErrorMessage(Format(
-            "Bindless space declares {} sampled-image descriptors, exceeding the per-stage update-after-bind limit of {}",
-            DescriptorCount,
-            Properties.maxPerStageDescriptorUpdateAfterBindSampledImages)));
+        return std::unexpected(ErrorMessage(Format("Bindless space declares {} sampled-image descriptors, exceeding "
+                                                   "the per-stage update-after-bind limit of {}",
+                                                   DescriptorCount,
+                                                   Properties.maxPerStageDescriptorUpdateAfterBindSampledImages)));
 
     if (DescriptorCount > Properties.maxDescriptorSetUpdateAfterBindSampledImages)
-        return std::unexpected(ErrorMessage(Format(
-            "Bindless space declares {} sampled-image descriptors, exceeding the update-after-bind descriptor-set limit of {}",
-            DescriptorCount,
-            Properties.maxDescriptorSetUpdateAfterBindSampledImages)));
+        return std::unexpected(ErrorMessage(Format("Bindless space declares {} sampled-image descriptors, exceeding "
+                                                   "the update-after-bind descriptor-set limit of {}",
+                                                   DescriptorCount,
+                                                   Properties.maxDescriptorSetUpdateAfterBindSampledImages)));
 
     return {};
 }
@@ -185,9 +187,9 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
     VulkanShaderBindingSet(VulkanShaderBindingSet&&)                         = delete;
     auto operator=(VulkanShaderBindingSet&&) -> VulkanShaderBindingSet&      = delete;
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     VulkanDescriptorManager&      Descriptors,
-                                     StringView                   Name,
+    [[nodiscard]] static auto Create(const VulkanResourceContext&   Context,
+                                     VulkanDescriptorManager&       Descriptors,
+                                     StringView                     Name,
                                      const RHIShaderBindingSetDesc& Desc)
         -> std::expected<UPtr<VulkanShaderBindingSet>, ErrorMessage> {
         auto Result = std::make_unique<VulkanShaderBindingSet>(String(Name), Desc, Descriptors);
@@ -219,16 +221,15 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
             auto& SetBindings = Result->m_BindingsBySet[SetIndex];
 
             std::vector<vk::DescriptorSetLayoutBinding> VkBindings = {};
-            const bool IsBindlessSet = Result->m_BindlessSpace &&
-                                       SetIndex == *Result->m_BindlessSpace;
-            const auto CreateLayout = [&Context, &Result, &Name](const vk::DescriptorSetLayoutCreateInfo& CreateInfo)
-                -> std::expected<void, ErrorMessage> {
+            const bool IsBindlessSet = Result->m_BindlessSpace && SetIndex == *Result->m_BindlessSpace;
+            const auto CreateLayout =
+                [&Context, &Result, &Name](
+                    const vk::DescriptorSetLayoutCreateInfo& CreateInfo) -> std::expected<void, ErrorMessage> {
                 auto Created = Context.GetDevice().createDescriptorSetLayout(CreateInfo);
                 if (Created.result != vk::Result::eSuccess)
                     return std::unexpected(ErrorMessage("Failed to create shader binding descriptor set layout"));
                 Context.GetDebugUtils().SetObjectName(
-                    *Created.value,
-                    Format("Internal/ShaderBindingSet/{}/Set{}", Name, Result->m_SetLayouts.size()));
+                    *Created.value, Format("Internal/ShaderBindingSet/{}/Set{}", Name, Result->m_SetLayouts.size()));
                 Result->m_SetLayouts.push_back(std::move(Created.value));
                 return {};
             };
@@ -245,22 +246,21 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
                     .stageFlags         = ShaderStages,
                     .pImmutableSamplers = nullptr,
                 });
-                auto BindlessFlags = vk::DescriptorBindingFlagBits::ePartiallyBound |
-                                     vk::DescriptorBindingFlagBits::eUpdateAfterBind;
-                if (VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>()
+                auto BindlessFlags =
+                    vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+                if (VulkanCapability::Get()
+                        .GetFeatures<vk::PhysicalDeviceVulkan12Features>()
                         .descriptorBindingUpdateUnusedWhilePending)
                     BindlessFlags |= vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
                 vk::DescriptorSetLayoutBindingFlagsCreateInfo FlagsInfo{
-                    .bindingCount = 1,
+                    .bindingCount  = 1,
                     .pBindingFlags = &BindlessFlags,
                 };
-                vk::StructureChain<vk::DescriptorSetLayoutCreateInfo,
-                                   vk::DescriptorSetLayoutBindingFlagsCreateInfo>
-                    Chain{
-                        {.flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-                         .bindingCount = static_cast<Uint32>(VkBindings.size()),
-                         .pBindings    = VkBindings.data()},
-                        FlagsInfo};
+                vk::StructureChain<vk::DescriptorSetLayoutCreateInfo, vk::DescriptorSetLayoutBindingFlagsCreateInfo>
+                     Chain{{.flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+                            .bindingCount = static_cast<Uint32>(VkBindings.size()),
+                            .pBindings    = VkBindings.data()},
+                           FlagsInfo};
                 auto Created = CreateLayout(Chain.get<vk::DescriptorSetLayoutCreateInfo>());
                 if (!Created)
                     return std::unexpected(Created.error());
@@ -269,9 +269,9 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
                 // reflected count; unbounded arrays become variable descriptor count
                 // bindings. All array bindings get ePartiallyBound so callers may
                 // leave array indices unbound (WT2).
-                std::vector<vk::DescriptorBindingFlags> BindingFlags(SetBindings.size(), {});
-                bool   HasVariableCountBinding = false;
-                Uint32 MaxBindingIndexInSet    = 0;
+                std::vector<vk::DescriptorBindingFlags> BindingFlags(SetBindings.size(), vk::DescriptorBindingFlags{});
+                bool                                    HasVariableCountBinding = false;
+                Uint32                                  MaxBindingIndexInSet    = 0;
                 for (const auto& Binding : SetBindings)
                     MaxBindingIndexInSet = (std::max)(MaxBindingIndexInSet, Binding.Info.BindingIndex);
 
@@ -284,16 +284,15 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
                         // Vulkan requires a variable descriptor count binding to be the
                         // set's last binding; shader side declares it last in the struct.
                         if (Binding.Info.BindingIndex != MaxBindingIndexInSet)
-                            return std::unexpected(ErrorMessage(Format(
-                                "Unbounded descriptor array '{}' must be the last binding in set {}; declare it "
-                                "last in the ParameterBlock struct",
-                                Binding.Info.ParameterPath,
-                                SetIndex)));
-                        DescriptorCount = GetMaxDescriptorArrayCount(Binding.Info.Type);
-                        BindingFlags[BindingIdx] =
-                            vk::DescriptorBindingFlagBits::ePartiallyBound |
-                            vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
-                        HasVariableCountBinding                    = true;
+                            return std::unexpected(ErrorMessage(
+                                Format("Unbounded descriptor array '{}' must be the last binding in set {}; declare it "
+                                       "last in the ParameterBlock struct",
+                                       Binding.Info.ParameterPath,
+                                       SetIndex)));
+                        DescriptorCount          = GetMaxDescriptorArrayCount(Binding.Info.Type);
+                        BindingFlags[BindingIdx] = vk::DescriptorBindingFlagBits::ePartiallyBound |
+                                                   vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
+                        HasVariableCountBinding  = true;
                         SetBindings[BindingIdx].IsVariableCountArray = true;
                     } else {
                         const Uint32 MaxCount = GetMaxDescriptorArrayCount(Binding.Info.Type);
@@ -322,8 +321,7 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
                         .bindingCount  = static_cast<Uint32>(BindingFlags.size()),
                         .pBindingFlags = BindingFlags.data(),
                     };
-                    vk::StructureChain<vk::DescriptorSetLayoutCreateInfo,
-                                       vk::DescriptorSetLayoutBindingFlagsCreateInfo>
+                    vk::StructureChain<vk::DescriptorSetLayoutCreateInfo, vk::DescriptorSetLayoutBindingFlagsCreateInfo>
                         Chain{vk::DescriptorSetLayoutCreateInfo{
                                   .bindingCount = static_cast<Uint32>(VkBindings.size()),
                                   .pBindings    = VkBindings.data(),
@@ -341,7 +339,6 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
                         return std::unexpected(Created.error());
                 }
             }
-
         }
 
         Result->m_SetKeys.resize(Result->m_SetLayouts.size());
@@ -369,8 +366,7 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         return Result;
     }
 
-    [[nodiscard]] auto GetDescriptorSetLayouts() const
-        -> std::span<const vk::raii::DescriptorSetLayout> {
+    [[nodiscard]] auto GetDescriptorSetLayouts() const -> std::span<const vk::raii::DescriptorSetLayout> {
         return m_SetLayouts;
     }
 
@@ -378,8 +374,7 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         return ToVkShaderStageFlags(m_Stages);
     }
 
-    [[nodiscard]] auto GetPushConstantRanges() const
-        -> const std::vector<vk::PushConstantRange>& {
+    [[nodiscard]] auto GetPushConstantRanges() const -> const std::vector<vk::PushConstantRange>& {
         return m_PushConstantRanges;
     }
 
@@ -391,21 +386,19 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
     /// device-wide descriptor cache. Cache hits also refresh the entry LRU.
     struct PipelineBindingState {
         std::vector<vk::DescriptorSet> DescriptorSets = {};
-        std::vector<Uint32> DynamicOffsets = {};
-        std::vector<PushConstantWrite> PushConstants = {};
+        std::vector<Uint32>            DynamicOffsets = {};
+        std::vector<PushConstantWrite> PushConstants  = {};
     };
 
     [[nodiscard]] auto CaptureBindingState() -> std::expected<PipelineBindingState, ErrorMessage> {
         if (HasUnboundBindings())
-            return std::unexpected(ErrorMessage(
-                Format("Shader binding set '{}' has unbound resources", GetName())));
+            return std::unexpected(ErrorMessage(Format("Shader binding set '{}' has unbound resources", GetName())));
 
         PipelineBindingState State;
         State.DescriptorSets.reserve(m_SetKeys.size());
         // Lazily load descriptor sets from cache, and update LRU
         for (Uint32 SetIndex = 0; SetIndex < m_SetKeys.size(); ++SetIndex) {
-            const auto Set = m_Descriptors.AcquireDescriptorSet(
-                m_SetKeys[SetIndex], m_BindingsBySet[SetIndex]);
+            const auto Set = m_Descriptors.AcquireDescriptorSet(m_SetKeys[SetIndex], m_BindingsBySet[SetIndex]);
             if (!Set)
                 return std::unexpected(ErrorMessage(
                     Format("Failed to acquire descriptor set {} for shader binding set '{}'", SetIndex, GetName())));
@@ -414,47 +407,46 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
 
         std::optional<vk::Buffer> UniformBuffer = std::nullopt;
         std::optional<vk::Buffer> StorageBuffer = std::nullopt;
-        std::vector<Uint32> DynamicOffsets;
+        std::vector<Uint32>       DynamicOffsets;
         for (const auto& SetBindings : m_BindingsBySet)
             for (const auto& Slot : SetBindings) {
-            if (Slot.Info.Type == ShaderResourceType::ConstantBuffer) {
-                const auto* Buffer = static_cast<const VulkanTransientConstantBuffer*>(Slot.Resource);
-                if (!Buffer)
-                    return std::unexpected(ErrorMessage(
-                        Format("Shader binding '{}' has no ready transient constant buffer", Slot.Info.ParameterPath)));
-                const auto CurrentBuffer = Buffer->GetArenaBuffer();
-                if (!UniformBuffer)
-                    UniformBuffer = CurrentBuffer;
-                else if (*UniformBuffer != CurrentBuffer)
-                    return std::unexpected(ErrorMessage(
-                        "All transient constant buffers in a binding set must use the same arena buffer"));
-                DynamicOffsets.push_back(Buffer->GetOffset());
-            } else if (Slot.Info.Type == ShaderResourceType::StorageBuffer) {
-                const auto* Buffer = static_cast<const VulkanTransientShaderStorageBuffer*>(Slot.Resource);
-                if (!Buffer)
-                    return std::unexpected(ErrorMessage(
-                        Format("Shader binding '{}' has no ready transient storage buffer", Slot.Info.ParameterPath)));
-                const auto CurrentBuffer = Buffer->GetArenaBuffer();
-                if (!StorageBuffer)
-                    StorageBuffer = CurrentBuffer;
-                else if (*StorageBuffer != CurrentBuffer)
-                    return std::unexpected(ErrorMessage(
-                        "All transient storage buffers in a binding set must use the same arena buffer"));
-                if (Buffer->GetOffset() > std::numeric_limits<Uint32>::max())
-                    return std::unexpected(ErrorMessage(
-                        Format("Shader binding '{}' offset exceeds the dynamic offset range", Slot.Info.ParameterPath)));
-                DynamicOffsets.push_back(Buffer->GetOffset());
+                if (Slot.Info.Type == ShaderResourceType::ConstantBuffer) {
+                    const auto* Buffer = static_cast<const VulkanTransientConstantBuffer*>(Slot.Resource);
+                    if (!Buffer)
+                        return std::unexpected(ErrorMessage(Format(
+                            "Shader binding '{}' has no ready transient constant buffer", Slot.Info.ParameterPath)));
+                    const auto CurrentBuffer = Buffer->GetArenaBuffer();
+                    if (!UniformBuffer)
+                        UniformBuffer = CurrentBuffer;
+                    else if (*UniformBuffer != CurrentBuffer)
+                        return std::unexpected(ErrorMessage(
+                            "All transient constant buffers in a binding set must use the same arena buffer"));
+                    DynamicOffsets.push_back(Buffer->GetOffset());
+                } else if (Slot.Info.Type == ShaderResourceType::StorageBuffer) {
+                    const auto* Buffer = static_cast<const VulkanTransientShaderStorageBuffer*>(Slot.Resource);
+                    if (!Buffer)
+                        return std::unexpected(ErrorMessage(Format(
+                            "Shader binding '{}' has no ready transient storage buffer", Slot.Info.ParameterPath)));
+                    const auto CurrentBuffer = Buffer->GetArenaBuffer();
+                    if (!StorageBuffer)
+                        StorageBuffer = CurrentBuffer;
+                    else if (*StorageBuffer != CurrentBuffer)
+                        return std::unexpected(ErrorMessage(
+                            "All transient storage buffers in a binding set must use the same arena buffer"));
+                    if (Buffer->GetOffset() > std::numeric_limits<Uint32>::max())
+                        return std::unexpected(ErrorMessage(Format(
+                            "Shader binding '{}' offset exceeds the dynamic offset range", Slot.Info.ParameterPath)));
+                    DynamicOffsets.push_back(Buffer->GetOffset());
+                }
             }
-        }
         State.DynamicOffsets = std::move(DynamicOffsets);
-        State.PushConstants = std::move(m_PendingPushConstants);
+        State.PushConstants  = std::move(m_PendingPushConstants);
         m_PendingPushConstants.clear();
         return State;
     }
 
     VulkanShaderBindingSet(String Name, const RHIShaderBindingSetDesc& Desc, VulkanDescriptorManager& Descriptors)
-        : RHIShaderBindingSet(std::move(Name), Desc),
-          m_Descriptors(Descriptors) {}
+        : RHIShaderBindingSet(std::move(Name), Desc), m_Descriptors(Descriptors) {}
 
   protected:
     [[nodiscard]] auto OnBindlessResourceBound() -> std::expected<void, ErrorMessage> override {
@@ -462,7 +454,7 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
             return std::unexpected(ErrorMessage("Bindless resource is not configured"));
 
         const auto SetIndex = *m_BindlessSpace;
-        const auto Set = m_Descriptors.AcquireDescriptorSet(m_SetKeys[SetIndex], m_BindingsBySet[SetIndex]);
+        const auto Set      = m_Descriptors.AcquireDescriptorSet(m_SetKeys[SetIndex], m_BindingsBySet[SetIndex]);
         if (!Set)
             return std::unexpected(ErrorMessage("Failed to acquire bindless descriptor set"));
 
@@ -472,9 +464,8 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         // late-ready uploads permanently. Re-scan the full array on every
         // bind; rewriting ready descriptors is idempotent and self-heals once
         // an upload completes.
-        const auto ElementCount = m_BindlessTextures->GetSize();
-        for (Uint32 Element = RHIRefArray<RHISampledTexture>::FirstResourceSlot; Element < ElementCount;
-             ++Element) {
+        const auto                          ElementCount = m_BindlessTextures->GetSize();
+        for (Uint32 Element = RHIRefArray<RHISampledTexture>::FirstResourceSlot; Element < ElementCount; ++Element) {
             const auto* Texture = m_BindlessTextures->GetElement(Element).TryGet();
             if (!Texture)
                 continue;
@@ -491,11 +482,10 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
     /// calls Pass::Record() immediately before constructing its command visitor,
     /// so replacing this snapshot is intentional: CaptureBindingState() observes
     /// the bindings of the current pass and refreshes their cache LRU entries.
-    [[nodiscard]] auto OnResourcesBound(Uint32 SetIndex)
-        -> std::expected<void, ErrorMessage> override {
+    [[nodiscard]] auto OnResourcesBound(Uint32 SetIndex) -> std::expected<void, ErrorMessage> override {
         // we update descriptor set key, so that `CaptureBindingState()` later
         // fetches the corresponding descriptor set from the manager
-        const auto& SetBindings = m_BindingsBySet[SetIndex];
+        const auto&           SetBindings = m_BindingsBySet[SetIndex];
         DescriptorSetCacheKey Key{.Layout = *m_SetLayouts[SetIndex]};
         for (const auto& Slot : SetBindings) {
             Key.ResourceIds.push_back(Slot.Resource ? Slot.Resource->GetId() : 0);
@@ -514,11 +504,11 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
     }
 
   private:
-    VulkanDescriptorManager&                 m_Descriptors;
-    std::vector<vk::raii::DescriptorSetLayout> m_SetLayouts = {};
-    std::vector<DescriptorSetCacheKey>             m_SetKeys = {};
+    VulkanDescriptorManager&                   m_Descriptors;
+    std::vector<vk::raii::DescriptorSetLayout> m_SetLayouts         = {};
+    std::vector<DescriptorSetCacheKey>         m_SetKeys            = {};
     std::vector<vk::PushConstantRange>         m_PushConstantRanges = {};
-    vk::raii::PipelineLayout                   m_PipelineLayout = nullptr;
+    vk::raii::PipelineLayout                   m_PipelineLayout     = nullptr;
 };
 
 } // namespace SoulEngine

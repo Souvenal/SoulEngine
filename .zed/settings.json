@@ -3,7 +3,7 @@
     "C++": {
       // clangd comflicts with build process on Windows,
       // so we can comment this line when we need lsp
-      "language_servers": ["!clangd"]  
+      // "language_servers": ["!clangd"]  
     }
   }
 }

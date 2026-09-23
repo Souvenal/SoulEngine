@@ -7,9 +7,9 @@ target("Core")
     -- symbols, and xmake does not propagate a private package's links to
     -- dependents, so it must stay public.
     -- hlslpp / entt stay public: exported Core API (Types.cppm glue, meta APIs) references them.
-    add_packages("hlslpp", "entt", "libyaml", {public = true})
+    add_packages("spdlog", "hlslpp", "entt", "libyaml", {public = true})
     add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0")
-    add_packages("toml++", "spdlog", "magic_enum")
+    add_packages("toml++", "magic_enum")
 
     add_files("**.cppm")
 

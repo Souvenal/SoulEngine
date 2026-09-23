@@ -7,6 +7,13 @@ module;
 // <thread>/<stop_token>, which embeds std-internal reference records into
 // Context.ifc that trip MSVC's IFC merge (C1116, VS 2026 14.51). All Tracy
 // knowledge lives in Vulkan:Profiling.
+//
+// volk.h must precede every other Vulkan header in this fragment: it defines
+// VK_NO_PROTOTYPES itself before pulling in vulkan_core.h, and errors out if
+// vulkan.h was already included without it. Dropping the raw C prototypes is
+// safe here — every call goes through Vulkan-Hpp's dynamic dispatcher or
+// VMA's dynamically fetched function table.
+#include <volk.h>
 #include <vk_mem_alloc.h>
 
 export module Vulkan:Context;
@@ -304,11 +311,14 @@ class VulkanResourceContext final {
         // Once an instance is created, the instance will hold `vkGetInstanceProcAddr`,
         // thus the Context can be locally assigned.
         //
-        // A `DynamicLoader` is hidden here, which searches for the loader from variable paths.
-        //
-        // TODO: Seg fault happens when loader is missing.
-        //       Consider using `volk` instead.
-        vk::raii::Context Context;
+        // volk performs step 1 in place of Vulkan-Hpp's `DynamicLoader`: it
+        // searches for the loader from variable paths and reports a missing
+        // loader as VK_ERROR_INITIALIZATION_FAILED instead of seg faulting on
+        // a null vkGetInstanceProcAddr.
+        if (const VkResult VolkResult = volkInitialize(); VolkResult != VK_SUCCESS)
+            return std::unexpected(ErrorMessage(
+                Format("volk failed to load the vulkan loader: {}", vk::to_string(static_cast<vk::Result>(VolkResult)))));
+        vk::raii::Context Context(vkGetInstanceProcAddr);
         if (auto Res = Result->CreateInstance(Context); !Res)
             return std::unexpected(Res.error());
 

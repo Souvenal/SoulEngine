@@ -39,3 +39,7 @@ ConstantArenaBufferSize = 4096
 # This stores geometry, material, light, and indirect-command data.
 # When omitted, the Vulkan backend defaults to 64 MiB.
 TransientShaderStorageBufferSize = 67108864
+
+# Bindless descriptor array size cap.
+# When omitted, the Vulkan backend defaults to 4096.
+MaxTextures = 4096

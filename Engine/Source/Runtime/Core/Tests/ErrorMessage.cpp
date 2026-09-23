@@ -11,7 +11,8 @@ using namespace SoulEngine;
 TEST(ErrorMessageTest, LeafErrorRendersAsIs) {
     const ErrorMessage Error{"Leaf failure"};
 
-    EXPECT_TRUE(Error.ToString().starts_with("Leaf failure"));
+    EXPECT_TRUE(Error.ToString().starts_with("Leaf failure\n[at "));
+    EXPECT_TRUE(Error.ToString().contains(__FILE__));
 }
 
 TEST(ErrorMessageTest, AppendedContextRendersOutermostFirst) {
@@ -19,15 +20,17 @@ TEST(ErrorMessageTest, AppendedContextRendersOutermostFirst) {
                                    .Append("Vertex shader compilation failed")
                                    .Append("Application init failed");
 
-    constexpr std::string_view Expected = "Application init failed\n"
-                                          "  Caused by: Vertex shader compilation failed\n"
-                                          "    Caused by: Slang compile failed";
+    const String Rendered = Error.ToString();
 
-    EXPECT_TRUE(Error.ToString().starts_with(Expected));
+    // Outermost first, then progressively indented causes; every layer's
+    // source location sits on a following line at that layer's indentation.
+    EXPECT_TRUE(Rendered.starts_with("Application init failed\n[at "));
+    EXPECT_TRUE(Rendered.contains("\n  Caused by: Vertex shader compilation failed\n  [at "));
+    EXPECT_TRUE(Rendered.contains("\n    Caused by: Slang compile failed\n    [at "));
 }
 
 TEST(ErrorMessageTest, FormattedMessagesRenderSafely) {
     const ErrorMessage Error{Format("Failed to load '{}'", "Shader.slang")};
 
-    EXPECT_TRUE(Error.ToString().starts_with("Failed to load 'Shader.slang'"));
+    EXPECT_TRUE(Error.ToString().starts_with("Failed to load 'Shader.slang'\n[at "));
 }

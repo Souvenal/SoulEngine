@@ -27,27 +27,6 @@ namespace SoulEngine {
 // Resource-type conversion
 // ═════════════════════════════════════════════════════════════════════════════
 
-[[nodiscard]] auto ToVkDescriptorType(ShaderResourceType ResourceType)
-    -> std::expected<vk::DescriptorType, ErrorMessage> {
-    switch (ResourceType) {
-    case ShaderResourceType::Unknown:
-        return std::unexpected(ErrorMessage("Cannot lower Unknown shader resource type to Vulkan descriptor type"));
-    case ShaderResourceType::ConstantBuffer:
-        return vk::DescriptorType::eUniformBuffer;
-    case ShaderResourceType::StorageBuffer:
-        return vk::DescriptorType::eStorageBuffer;
-    case ShaderResourceType::SampledTexture:
-        return vk::DescriptorType::eSampledImage;
-    case ShaderResourceType::StorageTexture:
-        return vk::DescriptorType::eStorageImage;
-    case ShaderResourceType::Sampler:
-        return vk::DescriptorType::eSampler;
-    case ShaderResourceType::AccelerationStructure:
-        return vk::DescriptorType::eAccelerationStructureKHR;
-    }
-    return std::unexpected(ErrorMessage("Unsupported shader resource type in Vulkan lowering"));
-}
-
 [[nodiscard]] auto ToVkVertexFormat(const ShaderValueType& ValueType) -> std::expected<vk::Format, ErrorMessage> {
     if (ValueType.RowCount != 1) {
         return std::unexpected(

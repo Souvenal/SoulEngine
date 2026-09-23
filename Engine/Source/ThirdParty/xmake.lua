@@ -18,6 +18,10 @@ local vulkan_header_configs = {
     -- which uses `vkGetInstanceProcAddr` to load all vulkan APIs at runtime,
     -- rather than static dispatching, by calling the symbols exported by the library.
     dispatch_loader_dynamic = true,
+    -- drop Vulkan-Hpp's own `DynamicLoader` (dlopen-based loader discovery):
+    -- volk owns loader discovery instead, and `vk::raii::Context` is constructed
+    -- from volk's vkGetInstanceProcAddr (VKContext.cppm).
+    enable_dynamic_loader_tool = false,
     -- ban vulkan_hpp from throwing exceptions
     no_exceptions = true,
     -- enable c++20 designate initializer syntax for aggregate type
@@ -32,13 +36,21 @@ add_requires("vulkan-headers", {
 -- otherwise xmake installs a second `vulkan-headers#1` variant with the
 -- recipe defaults alongside ours.
 add_requireconfs('vulkan-memory-allocator.vulkan-headers', {
+    override = true,
     configs = vulkan_header_configs
 })
 add_requireconfs("imgui.vulkan-headers", {
+    override = true,
+    configs = vulkan_header_configs
+})
+add_requireconfs("volk.vulkan-headers", {
+    override = true,
     configs = vulkan_header_configs
 })
 
 add_requires("vulkan-memory-allocator v3.4.0")
+
+add_requires("volk")
 
 -- TODO: pack vulkan-loader on macOS
 -- add_requires("vulkan-loader 1.4.350+0")
@@ -93,4 +105,7 @@ local imgui_config = {
 }
 add_requires("imgui master", {configs = imgui_config})
 add_requires("imgui-club")
-add_requireconfs("imgui-club.imgui", {configs = imgui_config})
+add_requireconfs("imgui-club.imgui", {
+    override = true,
+    configs = imgui_config
+})
