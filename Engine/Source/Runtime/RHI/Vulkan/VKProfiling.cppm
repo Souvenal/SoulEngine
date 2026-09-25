@@ -1,11 +1,8 @@
 /// @file   Vulkan/VKProfiling.cppm
 /// @brief  RAII command-buffer annotation scope: debug label + Tracy GPU zone.
 ///
-///         This partition is the ONLY place in the Vulkan module that may
-///         include Tracy headers. Tracy's headers transitively pull
-///         <thread>/<stop_token>; keeping them out of Vulkan:Context's global
-///         module fragment keeps Context.ifc free of the std-internal
-///         reference records that trip MSVC's IFC merge (C1116, VS 2026 14.51).
+///         Tracy's Vulkan context is owned by Vulkan:Context; this partition
+///         records GPU zones and debug labels against that typed context.
 ///
 ///         Runtime note: the Tracy VkCtx GPU timestamps cycle through a
 ///         64K-slot query ring; Collect() recycles consumed ranges with a
@@ -36,63 +33,12 @@ import :Debug;
 
 export namespace SoulEngine {
 
-/// Initialize the Tracy GPU profiling context with calibrated timestamps.
-/// No-op when VK_EXT_calibrated_timestamps is unavailable.
-auto InitializeGpuProfiling(VulkanResourceContext& ResourceContext) -> void {
-    if (!VulkanCapability::Get().IsDeviceExtensionEnabled(vk::EXTCalibratedTimestampsExtensionName))
-        return;
-    // TRACY_VK_USE_SYMBOL_TABLE (target define) routes every Tracy Vulkan call
-    // through a symbol table populated from the instance dispatcher below, so
-    // this TU never emits extern loader symbols and vulkan-1.lib stays unlinked.
-    const auto& Dispatcher = *ResourceContext.GetInstance().getDispatcher();
-    const auto  InstanceProc = Dispatcher.vkGetInstanceProcAddr;
-    const auto  DeviceProc   = Dispatcher.vkGetDeviceProcAddr;
-    const auto PDCTD = reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT>(
-        InstanceProc(static_cast<VkInstance>(*ResourceContext.GetInstance()),
-            "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT"));
-    const auto GCT = reinterpret_cast<PFN_vkGetCalibratedTimestampsEXT>(
-        DeviceProc(static_cast<VkDevice>(*ResourceContext.GetDevice()),
-            "vkGetCalibratedTimestampsEXT"));
-    if (!PDCTD || !GCT)
-        return;
-    const vk::CommandPoolCreateInfo PoolCI{
-        .flags            = vk::CommandPoolCreateFlagBits::eTransient,
-        .queueFamilyIndex = ResourceContext.GetGraphicsFamily(),
-    };
-    auto PoolRes = ResourceContext.GetDevice().createCommandPool(PoolCI);
-    if (PoolRes.result != vk::Result::eSuccess)
-        return;
-    const vk::CommandBufferAllocateInfo AllocCI{
-        .commandPool        = *PoolRes.value,
-        .level              = vk::CommandBufferLevel::ePrimary,
-        .commandBufferCount = 1,
-    };
-    auto InitCmdRes = ResourceContext.GetDevice().allocateCommandBuffers(AllocCI);
-    if (InitCmdRes.result != vk::Result::eSuccess)
-        return;
-    ResourceContext.SetTracyCtx(tracy::CreateVkContext(
-        static_cast<VkInstance>(*ResourceContext.GetInstance()),
-        static_cast<VkPhysicalDevice>(*ResourceContext.GetPhysicalDevice()),
-        static_cast<VkDevice>(*ResourceContext.GetDevice()),
-        static_cast<VkQueue>(*ResourceContext.GetGraphicsQueue()),
-        static_cast<VkCommandBuffer>(*InitCmdRes.value[0]), InstanceProc, DeviceProc, true));
-}
-
 /// Collect pending Tracy GPU zone data into the given command buffer.
 auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer) -> void {
-    auto* Ctx = static_cast<tracy::VkCtx*>(ResourceContext.GetTracyCtx());
+    auto* Ctx = ResourceContext.GetTracyCtx();
     if (!Ctx)
         return;
     Ctx->Collect(static_cast<VkCommandBuffer>(*CommandBuffer));
-}
-
-/// Destroy the Tracy GPU profiling context. Must run while the device is alive.
-auto ShutdownGpuProfiling(VulkanResourceContext& ResourceContext) -> void {
-    auto* Ctx = static_cast<tracy::VkCtx*>(ResourceContext.GetTracyCtx());
-    if (!Ctx)
-        return;
-    tracy::DestroyVkContext(Ctx);
-    ResourceContext.SetTracyCtx(nullptr);
 }
 
 /// RAII command-buffer annotation: emits a VK_EXT_debug_utils label and a
@@ -136,8 +82,7 @@ class LabelScope final {
 
   private:
     [[nodiscard]] static auto TracyCtx(VulkanResourceContext& ResourceContext) -> tracy::VkCtx* {
-        // Type-erased on VulkanResourceContext so its TU never sees Tracy headers.
-        return static_cast<tracy::VkCtx*>(ResourceContext.GetTracyCtx());
+        return ResourceContext.GetTracyCtx();
     }
 
     static void BeginLabel(vk::raii::CommandBuffer& CommandBuffer, StringView Name) {

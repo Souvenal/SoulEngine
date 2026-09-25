@@ -70,7 +70,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         m_ResourceContext = std::move(*Resources);
 
         // ── Tracy GPU profiling ─────────────────────────────────────────
-        InitializeGpuProfiling(*m_ResourceContext);
 
         // ── Global descriptor manager ─────────────────────────────────────
         auto Descriptors = VulkanDescriptorManager::Create(
@@ -579,7 +578,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         // Descriptor sets and their pool must be released while VkDevice is alive.
         m_DescriptorManager.Shutdown();
         // Tracy context must die while VkDevice is still alive.
-        ShutdownGpuProfiling(*m_ResourceContext);
+        m_ResourceContext->DestroyTracyCtx();
         m_ResourceContext.reset();
 
         if (ShutdownError)

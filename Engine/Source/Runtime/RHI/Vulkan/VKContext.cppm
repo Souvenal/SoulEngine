@@ -3,11 +3,6 @@
 
 module;
 
-// Keep Tracy headers OUT of this fragment: they transitively pull
-// <thread>/<stop_token>, which embeds std-internal reference records into
-// Context.ifc that trip MSVC's IFC merge (C1116, VS 2026 14.51). All Tracy
-// knowledge lives in Vulkan:Profiling.
-//
 // volk.h must precede every other Vulkan header in this fragment: it defines
 // VK_NO_PROTOTYPES itself before pulling in vulkan_core.h, and errors out if
 // vulkan.h was already included without it. Dropping the raw C prototypes is
@@ -15,6 +10,8 @@ module;
 // VMA's dynamically fetched function table.
 #include <volk.h>
 #include <vk_mem_alloc.h>
+#include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 
 export module Vulkan:Context;
 
@@ -284,6 +281,7 @@ class VulkanResourceContext final {
     VulkanResourceContext() = default;
 
     ~VulkanResourceContext() {
+        DestroyTracyCtx();
         if (m_Allocator)
             vmaDestroyAllocator(m_Allocator);
     }
@@ -355,6 +353,7 @@ class VulkanResourceContext final {
         if (!Immediate)
             return std::unexpected(Immediate.error().Append("VulkanImmediateContext creation failed"));
         Result->m_ImmediateContext = std::move(*Immediate);
+        Result->CreateTracyCtx();
 
         return Result;
     }
@@ -366,10 +365,52 @@ class VulkanResourceContext final {
     }
     [[nodiscard]] auto GetDevice() const -> vk::raii::Device& { return const_cast<vk::raii::Device&>(m_Device); }
     [[nodiscard]] auto GetDebugUtils() const -> VulkanDebugUtils& { return const_cast<VulkanDebugUtils&>(m_DebugUtils); }
-    /// Opaque handle to the Tracy GPU context; owned and interpreted by
-    /// Vulkan:Profiling. Kept type-erased so this TU never sees Tracy headers.
-    [[nodiscard]] auto GetTracyCtx() const noexcept -> void* { return m_TracyCtx; }
-    auto SetTracyCtx(void* Ctx) noexcept -> void { m_TracyCtx = Ctx; }
+    /// Create the Tracy GPU profiling context after the device and queues exist.
+    auto CreateTracyCtx() -> void {
+        if (m_TracyCtx || !VulkanCapability::Get().IsDeviceExtensionEnabled(vk::EXTCalibratedTimestampsExtensionName))
+            return;
+
+        const auto& Dispatcher = *m_Instance.getDispatcher();
+        const auto  InstanceProc = Dispatcher.vkGetInstanceProcAddr;
+        const auto  DeviceProc   = Dispatcher.vkGetDeviceProcAddr;
+        const auto PDCTD = reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT>(
+            InstanceProc(static_cast<VkInstance>(*m_Instance), "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT"));
+        const auto GCT = reinterpret_cast<PFN_vkGetCalibratedTimestampsEXT>(
+            DeviceProc(static_cast<VkDevice>(*m_Device), "vkGetCalibratedTimestampsEXT"));
+        if (!PDCTD || !GCT)
+            return;
+
+        const vk::CommandPoolCreateInfo PoolCI{
+            .flags            = vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = m_GraphicsFamily,
+        };
+        auto PoolRes = m_Device.createCommandPool(PoolCI);
+        if (PoolRes.result != vk::Result::eSuccess)
+            return;
+        const vk::CommandBufferAllocateInfo AllocCI{
+            .commandPool        = *PoolRes.value,
+            .level              = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1,
+        };
+        auto InitCmdRes = m_Device.allocateCommandBuffers(AllocCI);
+        if (InitCmdRes.result != vk::Result::eSuccess)
+            return;
+        m_TracyCtx = tracy::CreateVkContext(
+            static_cast<VkInstance>(*m_Instance),
+            static_cast<VkPhysicalDevice>(*m_PhysicalDevice),
+            static_cast<VkDevice>(*m_Device),
+            static_cast<VkQueue>(*m_GraphicsQueue),
+            static_cast<VkCommandBuffer>(*InitCmdRes.value[0]), InstanceProc, DeviceProc, true);
+    }
+
+    auto DestroyTracyCtx() noexcept -> void {
+        if (!m_TracyCtx)
+            return;
+        tracy::DestroyVkContext(m_TracyCtx);
+        m_TracyCtx = nullptr;
+    }
+
+    [[nodiscard]] auto GetTracyCtx() const noexcept -> tracy::VkCtx* { return m_TracyCtx; }
 
     [[nodiscard]] auto GetGraphicsQueue() const -> vk::raii::Queue& {
         return const_cast<vk::raii::Queue&>(m_GraphicsQueue);
@@ -674,7 +715,7 @@ class VulkanResourceContext final {
     vk::raii::SurfaceKHR             m_Surface         = nullptr;
     vk::raii::PhysicalDevice         m_PhysicalDevice  = nullptr;
     vk::raii::Device                 m_Device          = nullptr;
-    void*                            m_TracyCtx        = nullptr;
+    tracy::VkCtx*                    m_TracyCtx        = nullptr;
     VulkanDebugUtils                 m_DebugUtils;
     Uint32                           m_GraphicsFamily = vk::QueueFamilyIgnored;
     Uint32                           m_ComputeFamily  = vk::QueueFamilyIgnored;
