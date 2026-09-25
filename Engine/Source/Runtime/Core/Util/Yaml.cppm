@@ -13,7 +13,7 @@ export module Core:Util.Yaml;
 export import :Util.Types;
 export import :Util.Error;
 export import :Util.IO;
-export import std;
+import std;
 
 namespace SoulEngine {
 

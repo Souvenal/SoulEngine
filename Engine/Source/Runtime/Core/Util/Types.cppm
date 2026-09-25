@@ -6,7 +6,7 @@ module;
 
 export module Core:Util.Types;
 
-export import std;
+import std;
 
 // hlslpp comparison operators follow HLSL semantics: vector == vector yields a
 // component-wise vector result rather than bool. That return type is a hard

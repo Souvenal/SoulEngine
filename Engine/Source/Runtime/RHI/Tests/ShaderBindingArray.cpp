@@ -11,6 +11,7 @@
 import RHI;
 import Shader;
 import std;
+import Core;
 
 using namespace SoulEngine;
 

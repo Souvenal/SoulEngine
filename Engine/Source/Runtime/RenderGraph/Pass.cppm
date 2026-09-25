@@ -5,7 +5,8 @@ export module RenderGraph:Pass;
 import :Types;
 import RHI;
 
-export import std;
+import std;
+import Core;
 
 export namespace SoulEngine {
 

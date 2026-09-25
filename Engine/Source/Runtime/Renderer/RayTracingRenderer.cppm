@@ -7,6 +7,8 @@ module;
 
 export module Renderer:RayTracingRenderer;
 
+import std;
+
 import Core;
 import EditorTypes;
 import Material;
@@ -17,8 +19,6 @@ import Scene;
 import :IRenderer;
 import :Common;
 import :RayTracing;
-
-export import std;
 
 export namespace SoulEngine {
 

@@ -2,10 +2,10 @@ module;
 
 export module RenderGraph:Types;
 
-export import Core;
+import Core;
 import RHI;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

@@ -21,7 +21,7 @@ import Renderer;
 import Scene;
 import WindowSystem;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

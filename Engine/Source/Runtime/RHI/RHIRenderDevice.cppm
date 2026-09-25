@@ -4,9 +4,9 @@ module;
 
 export module RHI:RenderDevice;
 
-export import Core;
-export import WindowSystem;
-export import std;
+import Core;
+import WindowSystem;
+import std;
 import :Types;
 import :Ref;
 import :Pipeline;

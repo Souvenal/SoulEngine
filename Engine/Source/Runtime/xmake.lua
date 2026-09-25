@@ -90,10 +90,15 @@ function test_module(module_name, opt)
                         })
                     end
 
-                    if gnu_driver then
-                        target:add("ldflags", "-Wl,/WHOLEARCHIVE:gmock_main.lib", {force = true})
-                    else
-                        target:add("ldflags", "/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                    -- Windows-only: Apple/GNU ld pull main() from the archive
+                    -- normally; /WHOLEARCHIVE is a link.exe flag and the .lib
+                    -- name is MSVC-specific.
+                    if target:is_plat("windows") then
+                        if gnu_driver then
+                            target:add("ldflags", "-Wl,/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                        else
+                            target:add("ldflags", "/WHOLEARCHIVE:gmock_main.lib", {force = true})
+                        end
                     end
                 end)
                 if opt.rpath_packages then

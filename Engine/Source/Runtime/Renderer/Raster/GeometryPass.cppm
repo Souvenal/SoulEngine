@@ -9,7 +9,8 @@ import RHI;
 import RenderGraph;
 import :GBuffer;
 
-export import std;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
 

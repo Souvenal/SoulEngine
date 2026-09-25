@@ -7,11 +7,11 @@ module;
 
 export module RHI:Pipeline;
 
-export import Core;
+import Core;
 export import :Types;
 import :Ref;
 import Shader;
-export import std;
+import std;
 
 export namespace SoulEngine {
 

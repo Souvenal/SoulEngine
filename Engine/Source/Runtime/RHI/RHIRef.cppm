@@ -2,9 +2,9 @@ module;
 
 export module RHI:Ref;
 
-export import Core;
+import Core;
 import Shader;
-export import std;
+import std;
 
 export namespace SoulEngine {
 

@@ -5,7 +5,6 @@ module;
 export module WindowSystem:Interface;
 
 import :Types;
-export import std;
 
 export namespace SoulEngine {
 

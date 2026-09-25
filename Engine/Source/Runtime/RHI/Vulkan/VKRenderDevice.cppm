@@ -35,6 +35,9 @@ import :Texture;
 import :Context;
 import :Debug;
 import :Profiling;
+import Core;
+import magic_enum;
+import WindowSystem;
 
 namespace SoulEngine {
 

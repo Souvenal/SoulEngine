@@ -1,7 +1,6 @@
 export module Core:Paths;
 
 export import :Util;
-export import std;
 
 export namespace SoulEngine {
 

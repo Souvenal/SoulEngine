@@ -7,7 +7,7 @@ import Core;
 export import :Types;
 export import :Interface;
 export import :Glfw;
-export import std;
+import std;
 
 export namespace SoulEngine {
 

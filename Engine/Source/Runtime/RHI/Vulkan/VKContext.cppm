@@ -24,6 +24,7 @@ import :Debug;
 import :ImmediateContext;
 import :SurfaceProvider;
 import :Semaphore;
+import WindowSystem;
 
 export namespace SoulEngine {
 

@@ -5,12 +5,12 @@ module;
 export module Renderer:IRenderer;
 
 import Core;
-export import EditorTypes;
+import EditorTypes;
 import RHI;
 import Scene;
 import TaskGraph;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

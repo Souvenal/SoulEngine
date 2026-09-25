@@ -15,6 +15,7 @@ import :Shader;
 import :ShaderBindingSet;
 import :Context;
 import :Debug;
+import Core;
 
 namespace SoulEngine {
 

@@ -27,7 +27,6 @@ import std;
 import Core;
 import Shader;
 
-export import Shader;
 
 export namespace SoulEngine {
 

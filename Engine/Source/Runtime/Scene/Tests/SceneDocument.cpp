@@ -6,6 +6,8 @@
 #include <hlsl++.h>
 
 import Scene;
+import std;
+import Core;
 
 using namespace SoulEngine;
 

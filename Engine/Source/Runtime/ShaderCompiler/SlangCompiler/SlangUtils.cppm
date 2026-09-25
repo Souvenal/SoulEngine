@@ -12,9 +12,9 @@ module;
 
 export module Slang:Utils;
 
-export import Core;
+import Core;
 
-export import std;
+import std;
 
 namespace SoulEngine {
 

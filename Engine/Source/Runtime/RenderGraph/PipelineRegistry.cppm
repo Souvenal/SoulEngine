@@ -7,11 +7,13 @@ module;
 
 export module RenderGraph:PipelineRegistry;
 
-export import Core;
+import Core;
 import RHI;
 import ShaderCompiler;
 import TaskGraph;
-export import std;
+import std;
+import Shader;
+import magic_enum;
 
 export namespace SoulEngine {
 

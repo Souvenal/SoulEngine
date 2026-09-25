@@ -6,7 +6,7 @@ module;
 export module Scene:Camera;
 
 import std;
-export import Core;
+import Core;
 
 export namespace SoulEngine {
 

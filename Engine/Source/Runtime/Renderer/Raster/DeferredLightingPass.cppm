@@ -8,7 +8,8 @@ import Core;
 import RHI;
 import RenderGraph;
 
-export import std;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
 

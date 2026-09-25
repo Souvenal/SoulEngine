@@ -11,7 +11,8 @@ module;
 export module Scene:Light;
 
 import std;
-export import Core;
+import Core;
+import magic_enum;
 
 export namespace SoulEngine {
 

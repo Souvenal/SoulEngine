@@ -12,7 +12,7 @@ import magic_enum;
 import Shader;
 import Core;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

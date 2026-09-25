@@ -39,6 +39,7 @@ import :Reflection;
 import std;
 import Core;
 import ShaderCompiler;
+import Shader;
 
 namespace SoulEngine {
 

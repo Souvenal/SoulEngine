@@ -1,6 +1,5 @@
 export module RHI;
 
-export import Core;
 export import :Types;
 export import :Ref;
 export import :Pipeline;

@@ -10,7 +10,7 @@ import Material;
 import RHI;
 import Scene;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

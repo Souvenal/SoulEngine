@@ -4,7 +4,7 @@ module;
 
 export module Core:Util.IO;
 
-export import std;
+import std;
 export import :Util.Types;
 export import :Util.Error;
 

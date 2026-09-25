@@ -4,12 +4,12 @@ module;
 
 export module RHI:Types;
 
-export import Core;
+import Core;
 import :Ref;
 import Shader;
-export import magic_enum;
+import magic_enum;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

@@ -6,10 +6,11 @@ module;
 export module Vulkan:SurfaceProvider;
 
 import magic_enum;
-export import WindowSystem;
+import WindowSystem;
 import RHI;
 import vulkan;
 import std;
+import Core;
 
 namespace SoulEngine {
 

@@ -3,7 +3,7 @@ module;
 export module WindowSystem:Types;
 
 import magic_enum;
-export import std;
+import std;
 import Core;
 
 export namespace SoulEngine {

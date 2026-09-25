@@ -11,9 +11,10 @@ module;
 
 export module Material:Types;
 
-export import Core;
-export import RHI;
-export import std;
+import Core;
+import RHI;
+import std;
+import magic_enum;
 
 // import magic_enum;
 

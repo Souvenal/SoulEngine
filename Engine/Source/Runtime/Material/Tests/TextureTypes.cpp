@@ -6,6 +6,9 @@
 #include <assimp/GltfMaterial.h>
 
 import Material;
+import std;
+import Core;
+import RHI;
 
 using namespace SoulEngine;
 

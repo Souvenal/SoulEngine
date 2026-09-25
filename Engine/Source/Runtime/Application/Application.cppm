@@ -17,7 +17,7 @@ export module Application;
 import Core;
 import Scene;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

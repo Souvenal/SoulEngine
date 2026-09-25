@@ -5,9 +5,9 @@ module;
 
 export module Material:Texture;
 
-export import Core;
-export import RHI;
-export import std;
+import Core;
+import RHI;
+import std;
 import :Types;
 
 export namespace SoulEngine {

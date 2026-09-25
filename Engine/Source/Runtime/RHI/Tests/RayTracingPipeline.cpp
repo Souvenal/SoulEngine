@@ -9,6 +9,7 @@ import ShaderCompiler;
 import Vulkan;
 import WindowSystem;
 import std;
+import Core;
 
 using namespace SoulEngine;
 

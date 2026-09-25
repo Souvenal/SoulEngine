@@ -4,7 +4,7 @@ module;
 
 export module Core:AssetManager;
 
-export import std;
+import std;
 export import :Util.Types;
 export import :Util.Singleton;
 export import :Logging;

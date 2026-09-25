@@ -19,7 +19,8 @@ import RenderGraph;
 import Scene;
 import Renderer;
 import TaskGraph;
-export import std;
+import std;
+import EditorTypes;
 
 namespace SoulEngine {
 

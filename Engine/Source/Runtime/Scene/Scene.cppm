@@ -9,8 +9,8 @@ module;
 export module Scene;
 
 import std;
-export import Material;
-export import RHI;
+import Core;
+import RHI;
 export import :Camera;
 export import :Mesh;
 export import :Light;

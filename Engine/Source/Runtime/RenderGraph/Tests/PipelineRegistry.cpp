@@ -13,6 +13,8 @@ import RenderGraph;
 import RHI;
 import TaskGraph;
 import std;
+import Core;
+import ShaderCompiler;
 
 using namespace SoulEngine;
 

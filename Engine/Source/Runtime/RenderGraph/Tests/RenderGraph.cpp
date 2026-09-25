@@ -17,6 +17,7 @@ import RenderGraph;
 import RHI;
 import WindowSystem;
 import std;
+import Core;
 
 using namespace SoulEngine;
 

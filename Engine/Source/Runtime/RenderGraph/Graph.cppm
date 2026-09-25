@@ -10,11 +10,9 @@ import :Pass;
 import :PipelineRegistry;
 import :Runtime;
 import RHI;
-export import Core;
-export import std;
-
-export namespace SoulEngine {
-} // namespace SoulEngine
+import Core;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
 

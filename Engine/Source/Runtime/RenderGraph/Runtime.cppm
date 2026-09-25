@@ -6,8 +6,6 @@ import Core;
 import :PipelineRegistry;
 import :RenderTargetPool;
 
-export import std;
-
 export namespace SoulEngine {
 
 /// @brief Module-level RenderGraph singleton (ADR 05).

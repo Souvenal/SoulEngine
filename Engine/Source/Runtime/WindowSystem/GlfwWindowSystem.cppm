@@ -11,7 +11,7 @@ import Core;
 import :Types;
 import :Interface;
 
-export import std;
+import std;
 
 namespace SoulEngine {
 

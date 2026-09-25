@@ -15,6 +15,7 @@ import :Pipeline;
 import :ShaderBindingSet;
 import :Context;
 import :Debug;
+import Core;
 
 export namespace SoulEngine {
 

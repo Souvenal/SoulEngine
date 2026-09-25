@@ -20,7 +20,7 @@ module;
 export module Core:Logging;
 
 export import :Util;
-export import std;
+import std;
 
 import magic_enum;
 

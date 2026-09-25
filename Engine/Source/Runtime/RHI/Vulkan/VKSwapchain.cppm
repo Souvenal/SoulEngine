@@ -14,6 +14,8 @@ import vulkan;
 import :Debug;
 import :Context;
 import :SurfaceProvider;
+import Core;
+import WindowSystem;
 
 namespace SoulEngine {
 

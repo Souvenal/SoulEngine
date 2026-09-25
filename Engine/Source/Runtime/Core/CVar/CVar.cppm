@@ -6,7 +6,7 @@ export module Core:CVar;
 
 export import :Util;
 import :Logging;
-export import std;
+import std;
 
 /// @file
 /// @brief Console variables (CVars): runtime-mutable, globally registered

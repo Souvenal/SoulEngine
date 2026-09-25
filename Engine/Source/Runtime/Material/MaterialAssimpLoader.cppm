@@ -9,7 +9,7 @@ export module Material:AssimpLoader;
 
 import std;
 
-export import Core;
+import Core;
 import :Types;
 import :Texture;
 

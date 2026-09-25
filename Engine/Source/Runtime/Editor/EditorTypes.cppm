@@ -7,6 +7,7 @@ export module EditorTypes;
 import std;
 import RHI;
 import Scene;
+import Core;
 
 export namespace SoulEngine {
 

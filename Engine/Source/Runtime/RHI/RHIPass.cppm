@@ -4,7 +4,7 @@ import Core;
 import :Command;
 import :Pipeline;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

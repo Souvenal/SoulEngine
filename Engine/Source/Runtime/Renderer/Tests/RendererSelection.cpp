@@ -5,6 +5,8 @@ import RHI;
 import Scene;
 import Renderer;
 import TaskGraph;
+import std;
+import EditorTypes;
 
 using namespace SoulEngine;
 

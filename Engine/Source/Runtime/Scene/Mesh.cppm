@@ -10,9 +10,9 @@ module;
 export module Scene:Mesh;
 
 import std;
-export import Core;
-export import Material;
-export import RHI;
+import Core;
+import Material;
+import RHI;
 
 export namespace SoulEngine {
 

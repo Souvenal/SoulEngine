@@ -20,7 +20,8 @@ import :EditorPasses;
 import :GBuffer;
 import :RasterPasses;
 
-export import std;
+import std;
+import magic_enum;
 
 export namespace SoulEngine {
 

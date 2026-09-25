@@ -17,6 +17,7 @@ import :Texture;
 import :Descriptor;
 import :AccelerationStructure;
 import :ShaderBindingSet;
+import Shader;
 
 namespace SoulEngine {
 

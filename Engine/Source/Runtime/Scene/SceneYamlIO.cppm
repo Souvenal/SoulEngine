@@ -5,6 +5,7 @@ module;
 module Scene:YamlIO;
 
 import Scene;
+import Core;
 
 namespace SoulEngine {
 

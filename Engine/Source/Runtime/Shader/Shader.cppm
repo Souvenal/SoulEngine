@@ -18,7 +18,7 @@ export module Shader;
 import Core;
 import magic_enum;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 

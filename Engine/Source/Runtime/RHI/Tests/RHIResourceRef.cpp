@@ -5,6 +5,9 @@
 
 import RHI;
 import std;
+import Core;
+import magic_enum;
+import WindowSystem;
 
 using namespace SoulEngine;
 

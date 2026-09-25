@@ -12,6 +12,7 @@
 
 import RHI;
 import std;
+import Core;
 
 using namespace SoulEngine;
 

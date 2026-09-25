@@ -4,6 +4,7 @@
 
 import Core;
 import Launch;
+import std;
 
 auto main(int argc, char* argv[]) -> int {
     using namespace SoulEngine;

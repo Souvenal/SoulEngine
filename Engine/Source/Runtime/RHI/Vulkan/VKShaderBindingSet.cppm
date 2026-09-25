@@ -15,6 +15,7 @@ import :Debug;
 import :Descriptor;
 import :Sampler;
 import :Texture;
+import Core;
 
 namespace SoulEngine {
 

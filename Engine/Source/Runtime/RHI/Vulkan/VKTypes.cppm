@@ -4,8 +4,7 @@ module;
 
 export module Vulkan:Types;
 
-export import std;
-export import vulkan;
+import vulkan;
 
 import RHI;
 

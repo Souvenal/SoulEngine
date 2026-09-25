@@ -15,6 +15,7 @@ import :RenderDevice;
 export import :RayTracingPipeline;
 
 import RHI;
+import Core;
 
 namespace SoulEngine {
 

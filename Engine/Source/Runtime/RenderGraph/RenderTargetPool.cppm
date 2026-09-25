@@ -5,7 +5,7 @@ export module RenderGraph:RenderTargetPool;
 import Core;
 import RHI;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 
