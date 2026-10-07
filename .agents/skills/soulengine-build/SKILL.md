@@ -1,6 +1,5 @@
 ---
-name: soulengine-build
-description: Diagnose, fix, and document SoulEngine build, configuration, package, compiler, linker, module, and test failures on any supported platform or toolchain. Use when working with Xmake, C++ compilation, C++23 modules, `import std`, third-party packages, linker/runtime mismatches, test executables, or when adding reusable project-specific build knowledge after resolving an issue.
+name: soulengine-build description: Diagnose, fix, and document SoulEngine build, configuration, package, compiler, linker, module, and test failures on any supported platform or toolchain. Use when working with Xmake, C++ compilation, C++23 modules, `import std`, third-party packages, linker/runtime mismatches, test executables, or when adding reusable project-specific build knowledge after resolving an issue.
 ---
 
 # SoulEngine Build
@@ -9,10 +8,7 @@ Use this skill for every project build failure and update it after a verified, r
 
 ## Command output
 
-`rtk` is an optional command-output filter. When it is available on `PATH`,
-all build, run, and test commands in this skill MUST use `rtk err` so the
-relevant diagnostics are retained while routine output is suppressed. When
-`rtk` is unavailable, run the equivalent command directly.
+`rtk` is an optional command-output filter. When it is available on `PATH`, all build, run, and test commands in this skill MUST use `rtk err` so the relevant diagnostics are retained while routine output is suppressed. When `rtk` is unavailable, run the equivalent command directly.
 
 ## Build loop
 
@@ -25,14 +21,7 @@ relevant diagnostics are retained while routine output is suppressed. When
    rtk err xmake -y
    ```
 
-   Note: `xmake f`/`xmake clean` must be plain, not wrapped in `rtk` — rtk
-   resets persisted config values. After a failed incremental link (e.g. an
-   undefined symbol), xmake's file database can wedge: later `xmake -y`
-   reports "build ok" yet skips relinking — outputs stay stale or even
-   missing, and stale test binaries produce phantom runtime crashes far from
-   the offending change. Confirmed by deleting an exe and watching `xmake
-   -y` still succeed without recreating it. Repair: plain `xmake clean
-   --all` + `xmake f` + full rebuild (verified 2026-09-22).
+   Note: `xmake f`/`xmake clean` must be plain, not wrapped in `rtk` — rtk resets persisted config values. After a failed incremental link (e.g. an undefined symbol), xmake's file database can wedge: later `xmake -y` reports "build ok" yet skips relinking — outputs stay stale or even missing, and stale test binaries produce phantom runtime crashes far from the offending change. Confirmed by deleting an exe and watching `xmake -y` still succeed without recreating it. Repair: plain `xmake clean --all` + `xmake f` + full rebuild (verified 2026-09-22).
 
 3. Treat the first compiler or linker error as the active failure. Preserve the command and diagnostic before changing policies, toolchains, scanners, or source.
 4. Make the narrowest repair that explains the failure. Reconfigure and rebuild after changes to module interfaces, compiler/toolchain selection, package configuration, or runtime library settings.
@@ -65,19 +54,11 @@ After a build issue is fixed and verified:
 
 ## xmake package visibility boundary
 
-Diagnostic signature: after moving a compiled third-party package (e.g. libyaml) from
-{public = true} to private in a moduleonly/static Core target, linking any dependent
-executable fails with undefined symbols (yaml_parser_initialize, ...) referenced by
-Core's OWN module objects (build\.objs\Core\...\X.cppm.obj).
+Diagnostic signature: after moving a compiled third-party package (e.g. libyaml) from {public = true} to private in a moduleonly/static Core target, linking any dependent executable fails with undefined symbols (yaml_parser_initialize, ...) referenced by Core's OWN module objects (build\.objs\Core\...\X.cppm.obj).
 
-Root cause: xmake does not propagate a private package's links to dependent targets;
-the private-packages pattern in Core's xmake.lua works for toml++/spdlog/magic_enum
-only because they are header-only (no link-time symbols at all). libyaml is compiled,
-so every dependent exe link needs it on the link line.
+Root cause: xmake does not propagate a private package's links to dependent targets; the private-packages pattern in Core's xmake.lua works for toml++/spdlog/magic_enum only because they are header-only (no link-time symbols at all). libyaml is compiled, so every dependent exe link needs it on the link line.
 
-Rule: header-only third-party used only inside a module's GMF / non-exported code can
-be private; compiled libraries must stay {public = true}. Verify after any visibility
-change with a full rebuild (xmake clean --all + xmake f + xmake).
+Rule: header-only third-party used only inside a module's GMF / non-exported code can be private; compiled libraries must stay {public = true}. Verify after any visibility change with a full rebuild (xmake clean --all + xmake f + xmake).
 
 ## Scope discipline
 

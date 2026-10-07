@@ -19,26 +19,15 @@ Engine startup and the three-thread Game → Render → RHI pipeline.
 
 ## RHI reference lifetime across slots
 
-A normal command list carries RHIRef<T> values rather than raw RHI observers.
-RHILoop borrows Slot.RenderPacket for Execute() and leaves the packet
-in the FrameSlot after EndFrame() returns an RHIFrameCompletion. RenderLoop
-waits for the RHI-consumed flag and that completion token immediately before
-replacing the packet, so slot ownership itself proves the RHIRef lifetime.
+A normal command list carries RHIRef<T> values rather than raw RHI observers. RHILoop borrows Slot.RenderPacket for Execute() and leaves the packet in the FrameSlot after EndFrame() returns an RHIFrameCompletion. RenderLoop waits for the RHI-consumed flag and that completion token immediately before replacing the packet, so slot ownership itself proves the RHIRef lifetime.
 
-The ImGui overlay remains a borrowed Execute-time payload: its snapshot and
-texture queue are valid through Execute() and are cleared with the slot only
-after that call returns.
+The ImGui overlay remains a borrowed Execute-time payload: its snapshot and texture queue are valid through Execute() and are cleared with the slot only after that call returns.
 
 ## Shutdown order
 
 1. Request worker stop and wake slots.
-2. Join RenderLoop and RHILoop while TaskGraph is still running, so a worker
-   caught mid-frame finishes its in-flight slot against live task services
-   instead of failing with spurious "TaskGraph is not running" errors; RHILoop
-   waits for GPU idle on exit. TaskGraph stops only after both workers join.
-3. Close the application; clear slot snapshots/render packets; release Editor,
-   renderer, and PipelineRegistry GPU owners while the render device/deletion
-   queue still exists.
+2. Join RenderLoop and RHILoop while TaskGraph is still running, so a worker caught mid-frame finishes its in-flight slot against live task services instead of failing with spurious "TaskGraph is not running" errors; RHILoop waits for GPU idle on exit. TaskGraph stops only after both workers join.
+3. Close the application; clear slot snapshots/render packets; release Editor, renderer, and PipelineRegistry GPU owners while the render device/deletion queue still exists.
 4. Destroy the RHI device, then the window system and Editor.
 
 No RHI ref that may own a native payload may outlive step 4.

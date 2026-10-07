@@ -78,31 +78,15 @@ GLFW requires `PollEvents()` on window creation thread. Spawning a separate Game
 
 ## Submission-owned command resource lifetime
 
-**Updated August 1, 2026.** FrameSlot remains the CPU handoff record. It is not
-the ownership record that proves submitted GPU work has retired.
+**Updated August 1, 2026.** FrameSlot remains the CPU handoff record. It is not the ownership record that proves submitted GPU work has retired.
 
-- Every normal resource-bearing `RHICommandList` field retains `RHIRef<T>`:
-  attachments, pipelines, vertex/index buffers, shader parameter resources,
-  present source, TLAS, and TLAS-instance BLAS values.
-- RHILoop calls `Execute(std::move(Slot.RenderPacket.CmdList))`, then clears the
-  moved-from slot packet before publishing `RHIDone`. The requested policy to
-  reset the command list only when GameLoop reacquires the slot is not
-  implemented literally.
-- Vulkan signals a graphics timeline value and moves the complete submitted
-  list into `VulkanInFlightSubmission`. It releases that list only after the
-  corresponding timeline value completes. This backend retention, not slot
-  reuse, keeps command refs alive while the GPU can use them.
-- Final `RHIRef` release may happen on any thread, but it transfers the native
-  payload into `RHIDeferredDeletionQueue`. Normal-runtime `RHIRenderDevice::Tick()`
-  drains that queue on RHILoop after backend completion polling.
-- `RHIImGuiPresentationOverlayCmd` is an Execute-time borrowed-pointer bridge
-  for Dear ImGui data. It is not the lifetime pattern for ordinary engine RHI
-  resources.
+- Every normal resource-bearing `RHICommandList` field retains `RHIRef<T>`: attachments, pipelines, vertex/index buffers, shader parameter resources, present source, TLAS, and TLAS-instance BLAS values.
+- RHILoop calls `Execute(std::move(Slot.RenderPacket.CmdList))`, then clears the moved-from slot packet before publishing `RHIDone`. The requested policy to reset the command list only when GameLoop reacquires the slot is not implemented literally.
+- Vulkan signals a graphics timeline value and moves the complete submitted list into `VulkanInFlightSubmission`. It releases that list only after the corresponding timeline value completes. This backend retention, not slot reuse, keeps command refs alive while the GPU can use them.
+- Final `RHIRef` release may happen on any thread, but it transfers the native payload into `RHIDeferredDeletionQueue`. Normal-runtime `RHIRenderDevice::Tick()` drains that queue on RHILoop after backend completion polling.
+- `RHIImGuiPresentationOverlayCmd` is an Execute-time borrowed-pointer bridge for Dear ImGui data. It is not the lifetime pattern for ordinary engine RHI resources.
 
-The Vulkan implementation is safe for normal ref-backed commands, but this
-submission-retention rule is not yet an abstract-RHI contract shared by future
-backends. Device creation and final backend shutdown remain main-thread
-lifecycle exceptions; only normal runtime RHI work is RHI-thread confined.
+The Vulkan implementation is safe for normal ref-backed commands, but this submission-retention rule is not yet an abstract-RHI contract shared by future backends. Device creation and final backend shutdown remain main-thread lifecycle exceptions; only normal runtime RHI work is RHI-thread confined.
 ## Thread lifecycles
 
 ### GameLoop (main thread)

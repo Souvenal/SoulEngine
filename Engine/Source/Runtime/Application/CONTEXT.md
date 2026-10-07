@@ -29,9 +29,7 @@ Application project identity and scene ownership.
 
 ## Architecture
 
-Applications self-register with `ApplicationFactory` via `AutoRegistrar` in
-standalone modules under `Applications/`. The facade (`Application.cppm`)
-never imports or constructs concrete application types.
+Applications self-register with `ApplicationFactory` via `AutoRegistrar` in standalone modules under `Applications/`. The facade (`Application.cppm`) never imports or constructs concrete application types.
 
 | Piece | Location | Purpose |
 |-------|----------|---------|

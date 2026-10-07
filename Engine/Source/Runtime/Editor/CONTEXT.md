@@ -1,7 +1,6 @@
 # Context: Editor
 
-Editor UI subsystem. Dear ImGui is the engine's only UI system — there is no
-UI abstraction layer.
+Editor UI subsystem. Dear ImGui is the engine's only UI system — there is no UI abstraction layer.
 
 **Namespace:** `SoulEngine`
 
@@ -21,14 +20,7 @@ UI abstraction layer.
 
 ## Threading
 
-The ImGui context lives on the engine **main thread**: GLFW callbacks feed
-`ImGuiIO` during `Tick()`, and `Editor::BuildFrame(dt)` runs
-`NewFrame` -> panel callbacks -> `Render` each game tick, publishing a
-`UIDrawFrame` snapshot through a latest-wins mailbox. Editor selection state, including the selected render pixel, is copied into the SceneSnapshot on the game thread. The **render thread**
-is a pure consumer: `OnRender()` takes the newest snapshot and translates it
-into an RHI pass (`TranslateImDrawData`). Backend-native GPU resources (font
-atlas texture, dynamic vertex/index buffers) are created by a one-shot
-RHI-thread task enqueued after `Editor::BindWindowSystem()`.
+The ImGui context lives on the engine **main thread**: GLFW callbacks feed `ImGuiIO` during `Tick()`, and `Editor::BuildFrame(dt)` runs `NewFrame` -> panel callbacks -> `Render` each game tick, publishing a `UIDrawFrame` snapshot through a latest-wins mailbox. Editor selection state, including the selected render pixel, is copied into the SceneSnapshot on the game thread. The **render thread** is a pure consumer: `OnRender()` takes the newest snapshot and translates it into an RHI pass (`TranslateImDrawData`). Backend-native GPU resources (font atlas texture, dynamic vertex/index buffers) are created by a one-shot RHI-thread task enqueued after `Editor::BindWindowSystem()`.
 
 ## Dependencies
 
@@ -40,9 +32,4 @@ RHI-thread task enqueued after `Editor::BindWindowSystem()`.
 
 ## Presentation-overlay lifetime
 
-Editor::AttachPresentationOverlay() writes borrowed ImGui snapshot,
-texture-queue, and mutex pointers into RHIImGuiPresentationOverlayCmd. This is
-an Execute-time bridge for the Dear ImGui backend, not a general RHI resource
-reference: RHILoop clears the slot only after Execute() returns, and Vulkan
-does not access this borrowed overlay payload after submission. Ordinary engine
-GPU resources must use RHIRef<T> in the command list instead.
+Editor::AttachPresentationOverlay() writes borrowed ImGui snapshot, texture-queue, and mutex pointers into RHIImGuiPresentationOverlayCmd. This is an Execute-time bridge for the Dear ImGui backend, not a general RHI resource reference: RHILoop clears the slot only after Execute() returns, and Vulkan does not access this borrowed overlay payload after submission. Ordinary engine GPU resources must use RHIRef<T> in the command list instead.

@@ -1,8 +1,6 @@
 # Context: WindowSystem
 
-Window-system (WIS) abstraction. GLFW is the current implementation behind
-the `IWindowSystem` interface; future backends (Cocoa, WinUI, ...) slot in
-without touching consumers.
+Window-system (WIS) abstraction. GLFW is the current implementation behind the `IWindowSystem` interface; future backends (Cocoa, WinUI, ...) slot in without touching consumers.
 
 **Namespace:** `SoulEngine`
 
@@ -25,22 +23,7 @@ without touching consumers.
 
 ## Input Behavior
 
-`GlfwWindowSystem::Create()` captures and hides the GLFW cursor.
-`Tick()` runs on the GameLoop's main thread: GLFW callbacks append transitions
-to GLFW-specific per-input sequences and accumulate cursor/scroll values, then
-the window system publishes one `KeyboardFrameEvent` and one
-`MouseFrameEvent`. Each input sequence consumes at most one transition per
-tick, so a same-frame press and release exposes `Pressed` first, then
-`Released` on the next frame. When a sequence is empty, `Pressed` settles to
-`Held` and `Released` settles to `Up`. Window focus loss appends `Release` to
-every tracked input sequence. Scroll values are cleared after each mouse frame
-event.
-Framebuffer callbacks update the extent and synchronously trigger a
-`FramebufferResizeEvent`. The ImGui GLFW backend installs its callbacks later
-(Editor init) with chaining, so both the window system and ImGui receive every
-event.
-The editor camera uses `CursorMode::Disabled`; inactive camera input restores
-`CursorMode::Normal`.
+`GlfwWindowSystem::Create()` captures and hides the GLFW cursor. `Tick()` runs on the GameLoop's main thread: GLFW callbacks append transitions to GLFW-specific per-input sequences and accumulate cursor/scroll values, then the window system publishes one `KeyboardFrameEvent` and one `MouseFrameEvent`. Each input sequence consumes at most one transition per tick, so a same-frame press and release exposes `Pressed` first, then `Released` on the next frame. When a sequence is empty, `Pressed` settles to `Held` and `Released` settles to `Up`. Window focus loss appends `Release` to every tracked input sequence. Scroll values are cleared after each mouse frame event. Framebuffer callbacks update the extent and synchronously trigger a `FramebufferResizeEvent`. The ImGui GLFW backend installs its callbacks later (Editor init) with chaining, so both the window system and ImGui receive every event. The editor camera uses `CursorMode::Disabled`; inactive camera input restores `CursorMode::Normal`.
 
 ## Dependencies
 

@@ -67,22 +67,9 @@ Code form and readability only, not behavior.
 
 - Use Doxygen-style comments (`///`) for public API documentation.
 
-- All data member default values SHOULD be written at the declaration site
-  (`Type m_Member = Default;`) so the default is visible at the definition.
-  Use constructor initializer lists for simple, infallible value assignment
-  and dependency injection, including base-class construction. Use a factory
-  returning `std::expected` when construction requires validation, allocation,
-  resource creation, or any other fallible work. For configurable values that
-  may be overridden by a config file, use
-  `m_Member = Cfg.SomeField.value_or(m_Member);` in Init/constructor body;
-  the member's declaration-site default serves as the backup.
+- All data member default values SHOULD be written at the declaration site (`Type m_Member = Default;`) so the default is visible at the definition. Use constructor initializer lists for simple, infallible value assignment and dependency injection, including base-class construction. Use a factory returning `std::expected` when construction requires validation, allocation, resource creation, or any other fallible work. For configurable values that may be overridden by a config file, use `m_Member = Cfg.SomeField.value_or(m_Member);` in Init/constructor body; the member's declaration-site default serves as the backup.
 
-- Every `enum class` must have its first enumerator as `Unknown = 0` (or the
-  equivalent default sentinel). Rationale: zero-initialisation is the
-  default in C++; an explicit `Unknown` sentinel makes it impossible to
-  accidentally treat a default-constructed value as a valid state.
-  Non-negative sentinel names (e.g. `None`) are acceptable when the enum
-  represents a bitmask and zero means "nothing set".
+- Every `enum class` must have its first enumerator as `Unknown = 0` (or the equivalent default sentinel). Rationale: zero-initialisation is the default in C++; an explicit `Unknown` sentinel makes it impossible to accidentally treat a default-constructed value as a valid state. Non-negative sentinel names (e.g. `None`) are acceptable when the enum represents a bitmask and zero means "nothing set".
 
 ## Profiling (Tracy)
 

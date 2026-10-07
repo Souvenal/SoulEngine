@@ -2,9 +2,7 @@
 
 **Namespace:** `SoulEngine` (exposes `TaskGraph` class, `ThreadQueue` enum)
 
-Module `TaskGraph`. Process-global Meyers singleton, thread-safe multi-queue dispatcher for cross-thread work.
-`TaskGraph::Get().Init()` starts its background workers and may be called again after `Shutdown()`, which joins
-workers and clears pending tasks. The engine calls one Init/Shutdown pair; tests may repeat the cycle.
+Module `TaskGraph`. Process-global Meyers singleton, thread-safe multi-queue dispatcher for cross-thread work. `TaskGraph::Get().Init()` starts its background workers and may be called again after `Shutdown()`, which joins workers and clears pending tasks. The engine calls one Init/Shutdown pair; tests may repeat the cycle.
 
 ## Terms
 

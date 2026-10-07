@@ -1,7 +1,6 @@
 # Windows Clang-cl named-module dependency-scan reference
 
-Load this reference for Windows `clang-cl` builds that fail while Xmake runs
-`clang-scan-deps` / P1689 dependency scanning for a C++ module unit.
+Load this reference for Windows `clang-cl` builds that fail while Xmake runs `clang-scan-deps` / P1689 dependency scanning for a C++ module unit.
 
 ## Header-only package visibility during module scanning
 
@@ -17,23 +16,13 @@ Current project instances:
 | `Resource` | `stb_image.h` and `hlsl++.h` | `stb` and `hlslpp` |
 | `ShaderCompiler` | `magic_enum/magic_enum.hpp` | `magic_enum` |
 
-This is specific to the current Windows Xmake + `clang-cl` dependency-scan path.
-The MSVC build path has not required this visibility workaround.  It is a
-build-configuration limitation, not evidence that the package is part of a
-module's public C++ API.
+This is specific to the current Windows Xmake + `clang-cl` dependency-scan path. The MSVC build path has not required this visibility workaround.  It is a build-configuration limitation, not evidence that the package is part of a module's public C++ API.
 
 ## Long-term boundary
 
-Prefer a package-provided named module when it is available and correctly
-integrated with Xmake's module graph.  For example, toml++ provides
-`import tomlplusplus;`, but the current Xmake package does not expose that
-module build.  A proper package module integration can replace the textual
-header include and remove this header-search-path propagation workaround.
+Prefer a package-provided named module when it is available and correctly integrated with Xmake's module graph.  For example, toml++ provides `import tomlplusplus;`, but the current Xmake package does not expose that module build.  A proper package module integration can replace the textual header include and remove this header-search-path propagation workaround.
 
-Alternatively, move third-party-header-dependent definitions out of an exported
-module interface unit and into an implementation unit compiled in the owning
-target.  Do not make that architectural split solely to silence one scanner
-failure without checking lifecycle and module-boundary design first.
+Alternatively, move third-party-header-dependent definitions out of an exported module interface unit and into an implementation unit compiled in the owning target.  Do not make that architectural split solely to silence one scanner failure without checking lifecycle and module-boundary design first.
 
 ## Verification
 
@@ -43,17 +32,14 @@ rtk err xmake f -m release -y
 rtk err xmake -y
 ```
 
-After the repair, confirm that the original `clang-scan-deps` missing-header
-error is gone.  If the full build reaches a different first error, record that
-as a separate failure rather than treating it as a regression of this repair.
+After the repair, confirm that the original `clang-scan-deps` missing-header error is gone.  If the full build reaches a different first error, record that as a separate failure rather than treating it as a regression of this repair.
 
 ## Clang 23.1.1 ICE mangling entt meta across partitions
 
 | Signature | Root cause | Smallest verified state | Do not do |
 | --- | --- | --- | --- |
 | PCM-to-OBJ codegen job of a module partition TU dies with `SEGV 0xC0000005`; stack shows `Per-file LLVM IR generation` → `Mangling declaration 'entt::meta_factory<Type>::data'` (entt `factory.hpp` `template<auto Data> data(const char*)`). The BMI (`--precompile`) job succeeds. Reproduces on `clang-cl` and `clang++` drivers, `-O0`/`-O2`/`-O3`, with and without `-gline-tables-only`. Confirmed on standalone 23.1.1 AND VS-bundled 22.1.3. | Mangler ICE when the instantiated `meta_factory<T>::data<&T::Member>` template argument refers to a member of `T` **imported from another partition of the same module** (`import :Types`). A 3-file minimal repro (type in `:A`, registration in `:B`, entt v4.0.0, two-job `-x c++-module`) crashes; the same registration with `T` local to the single module compiles clean. Function splitting does NOT help — the crash relocates to the first helper containing a `data<>` call (unlike the clang 22.1.x debug-info ICE, which the split does avoid). | Verified repair: keep entt meta registration in the TU that **defines** the type — `MaterialYamlRecord` now registers in `Material:Types` (`MaterialTypes.cppm`), not `Material:YamlLoader`. The block must sit OUTSIDE the `export namespace` (anonymous namespaces cannot be exported from a module unit) while staying in the same partition TU. Build-verified through the Material module on 22.1.3. Alternative: pin standalone LLVM 22.1.8, the one 22.1.x patch observed to lack this bug. The 3-file repro lives in `%TEMP%\entt-ice-probe` for an upstream llvm-project report. | Do not assume `-O0`, `-gline-tables-only`, driver choice, or registration-function splitting fixes it; do not reach for `entt::meta` API rewrites before checking the trigger, and do not diagnose the accompanying `-external:I ... unused` warnings — they are harmless xmake clang-cl codegen-job noise. Upstream-able compiler
-bugs (minimal reproducers, crash signatures, affected-version matrices) live in
-[`../bugs/`](../bugs/README.md). |
+bugs (minimal reproducers, crash signatures, affected-version matrices) live in [`../bugs/`](../bugs/README.md). |
 
 ## Cross-module template instantiation needs exported helpers
 

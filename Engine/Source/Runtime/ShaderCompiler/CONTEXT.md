@@ -2,14 +2,9 @@
 
 **Namespace:** `SoulEngine`
 
-Shader compilation pipeline with a backend-per-language architecture.
-The `ShaderCompiler` facade dispatches pipeline compile requests to internal
-per-language backends. Backend selection is explicit in each shader entry; file
-extensions are warning-only validation.
+Shader compilation pipeline with a backend-per-language architecture. The `ShaderCompiler` facade dispatches pipeline compile requests to internal per-language backends. Backend selection is explicit in each shader entry; file extensions are warning-only validation.
 
-Graphics pipelines use `GraphicsCompileDesc`, which composes and links the
-requested vertex and fragment entry points in one compiler request so reflection
-describes the final pipeline shader interface.
+Graphics pipelines use `GraphicsCompileDesc`, which composes and links the requested vertex and fragment entry points in one compiler request so reflection describes the final pipeline shader interface.
 
 ## Terms
 
@@ -38,17 +33,8 @@ describes the final pipeline shader interface.
 
 ## Test fixture containment
 
-Shader-compiler tests must only compile self-contained fixtures under
-`Tests/Slang/`. They must never load runtime engine or application shaders
-(`Engine/Shaders/`, `Applications/`): runtime shaders move, split into
-modules, and change with renderer work, which breaks tests for unrelated
-reasons. Fixtures model one compiler capability at a time and must not mirror
-the resource surface or entry-point set of a runtime program.
+Shader-compiler tests must only compile self-contained fixtures under `Tests/Slang/`. They must never load runtime engine or application shaders (`Engine/Shaders/`, `Applications/`): runtime shaders move, split into modules, and change with renderer work, which breaks tests for unrelated reasons. Fixtures model one compiler capability at a time and must not mirror the resource surface or entry-point set of a runtime program.
 
 ## Ray-tracing BDA target capability
 
-Ray-tracing Slang sessions enable both `spvRayTracingKHR` and
-`SPV_EXT_physical_storage_buffer`. Physical pointer syntax is confined to the
-small ray-tracing metadata lookup abstraction; ordinary runtime shaders retain
-backend-neutral reflected resource declarations. The fixed metadata
-`ByteAddressBuffer` must remain reflectable as a normal storage-buffer binding.
+Ray-tracing Slang sessions enable both `spvRayTracingKHR` and `SPV_EXT_physical_storage_buffer`. Physical pointer syntax is confined to the small ray-tracing metadata lookup abstraction; ordinary runtime shaders retain backend-neutral reflected resource declarations. The fixed metadata `ByteAddressBuffer` must remain reflectable as a normal storage-buffer binding.

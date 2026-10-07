@@ -31,15 +31,9 @@ Runtime shader rules for SoulEngine. Prefer Slang cross-platform features. Backe
 ## Resource Binding
 
 - Runtime descriptor sets use `ParameterBlock<T>`.
-- Shader code does not prescribe descriptor set organization. Runtime
-  parameter binding is driven by shader reflection and the backend's reflected
-  resource contract.
-- Do not rely on declaration order, imported-module order, or a fixed
-  set-to-purpose convention for `ParameterBlock`s.
-- Bindless resources use Slang's bindless-space handle types. A
-  `DescriptorHandle<T>`, or its shorthand `T.Handle`, implicitly declares a
-  bindless binding in Slang's bindless space; do not add an explicit unbounded
-  texture array solely to implement bindless resources.
+- Shader code does not prescribe descriptor set organization. Runtime parameter binding is driven by shader reflection and the backend's reflected resource contract.
+- Do not rely on declaration order, imported-module order, or a fixed set-to-purpose convention for `ParameterBlock`s.
+- Bindless resources use Slang's bindless-space handle types. A `DescriptorHandle<T>`, or its shorthand `T.Handle`, implicitly declares a bindless binding in Slang's bindless space; do not add an explicit unbounded texture array solely to implement bindless resources.
 - `[[vk::binding]]`, `[[binding]]`, `register(...)` allowed only in `Engine/Source/Runtime/ShaderCompiler/Tests/Slang/` or narrow backend/compiler fixtures.
 
 ## Modules

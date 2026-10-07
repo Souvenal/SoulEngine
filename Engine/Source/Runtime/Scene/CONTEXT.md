@@ -2,8 +2,7 @@
 
 **Namespace:** `SoulEngine::Scene`
 
-Mutable world-state container for runtime and editor logic. Owned by
-Application, read by Renderer through a per-frame `SceneSnapshot`.
+Mutable world-state container for runtime and editor logic. Owned by Application, read by Renderer through a per-frame `SceneSnapshot`.
 
 ## Terms
 
@@ -46,48 +45,15 @@ Application, read by Renderer through a per-frame `SceneSnapshot`.
 
 ## Architecture
 
-`Scene` is the mutable Runtime World owned by Application. Its Scene Registry
-contains Scene Entities only, each with one mandatory Scene Node. Scene Nodes
-form the ordered Document Tree hierarchy and derive world transforms from local
-transforms.
+`Scene` is the mutable Runtime World owned by Application. Its Scene Registry contains Scene Entities only, each with one mandatory Scene Node. Scene Nodes form the ordered Document Tree hierarchy and derive world transforms from local transforms.
 
-`SceneSnapshot` is the immutable render-facing view copied into the frame slot
-at the end of the GameLoop. The renderer consumes `SceneSnapshot` each frame
-via `IRenderer::Render()`. MeshSystem owns Scene-local MeshRecord,
-GeometryRecord, and MaterialRecord caches. MeshSystem expands each
-MeshComponent into one InstanceRecord per asset-node SubMesh reference, pairing
-shared GeometryRecord and MaterialHandle values with the accumulated asset-node
-transform followed by the entity-derived world transform. Scene-authored
-material-name override resolution remains a later migration step. Each renderer
-resolves the material handle into its own draw-instance representation.
-When a Scene record is uploadable, it owns the explicit GPU ABI mirror and
-builder beside its RHI resource fields. The renderer selects and deduplicates
-records for a frame, but does not redefine their address layout.
-Material instances resolve through MeshSystem's Scene-local caches: mesh import
-publishes per-slot asset materials, while a valid mesh material YAML override
-replaces the material for every submesh and falls back to the imported material
-when loading fails. MeshSystem's Editor inspection query rebuilds its material
-handle list on demand; callers retain no result handles across frames.
+`SceneSnapshot` is the immutable render-facing view copied into the frame slot at the end of the GameLoop. The renderer consumes `SceneSnapshot` each frame via `IRenderer::Render()`. MeshSystem owns Scene-local MeshRecord, GeometryRecord, and MaterialRecord caches. MeshSystem expands each MeshComponent into one InstanceRecord per asset-node SubMesh reference, pairing shared GeometryRecord and MaterialHandle values with the accumulated asset-node transform followed by the entity-derived world transform. Scene-authored material-name override resolution remains a later migration step. Each renderer resolves the material handle into its own draw-instance representation. When a Scene record is uploadable, it owns the explicit GPU ABI mirror and builder beside its RHI resource fields. The renderer selects and deduplicates records for a frame, but does not redefine their address layout. Material instances resolve through MeshSystem's Scene-local caches: mesh import publishes per-slot asset materials, while a valid mesh material YAML override replaces the material for every submesh and falls back to the imported material when loading fails. MeshSystem's Editor inspection query rebuilds its material handle list on demand; callers retain no result handles across frames.
 
-`Scene` owns shared Scene model types. Each component family owns one
-`Scene:<Name>` partition and its internal static EnTT meta registration.
-`Scene:YamlIO` resolves component and field names through this metadata, then
-directly emplaces the built-in component types.
+`Scene` owns shared Scene model types. Each component family owns one `Scene:<Name>` partition and its internal static EnTT meta registration. `Scene:YamlIO` resolves component and field names through this metadata, then directly emplaces the built-in component types.
 
-Scene Loading is an internal Scene implementation. It uses a single-document
-YAML subset of mappings, sequences, and scalars without exposing parser-specific
-types through the Scene API. Anchors, aliases, explicit tags, directives, and
-duplicate mapping keys are Structural Errors. V1 loads a complete replacement
-Runtime World, reports Structural Errors for invalid required tree data, and
-reports Component Warnings while retaining runtime defaults for invalid optional
-components.
+Scene Loading is an internal Scene implementation. It uses a single-document YAML subset of mappings, sequences, and scalars without exposing parser-specific types through the Scene API. Anchors, aliases, explicit tags, directives, and duplicate mapping keys are Structural Errors. V1 loads a complete replacement Runtime World, reports Structural Errors for invalid required tree data, and reports Component Warnings while retaining runtime defaults for invalid optional components.
 
-Authoring State and component-private Runtime State may coexist in one
-component type. Each component's explicitly registered EnTT meta data fields
-participate in Scene Document loading. Renderer-owned resource caches retain asset-resource ownership while resolving the
-asset identities in snapshots. CameraViewRecord carries no RHI resources; view render
-targets are renderer-created pooled RenderGraph transients derived from the camera's
-Viewport (ADR 05). The GBuffer is a Renderer-module structure, not a Scene concept.
+Authoring State and component-private Runtime State may coexist in one component type. Each component's explicitly registered EnTT meta data fields participate in Scene Document loading. Renderer-owned resource caches retain asset-resource ownership while resolving the asset identities in snapshots. CameraViewRecord carries no RHI resources; view render targets are renderer-created pooled RenderGraph transients derived from the camera's Viewport (ADR 05). The GBuffer is a Renderer-module structure, not a Scene concept.
 ## Dependencies
 
 - `Core` — types, error handling
@@ -99,10 +65,4 @@ Viewport (ADR 05). The GBuffer is a Renderer-module structure, not a Scene conce
 
 ## RHI ownership boundary
 
-Scene authoring components remain renderer-neutral and must not store backend raw
-pointers. Geometry GPU payloads (ref-backed vertex/index buffers on GeometryRecord)
-are the explicit runtime exception: they carry copyable RHIRef handles, never native
-pointers. View render targets are not Scene state at all — renderers create them per
-frame as pooled RenderGraph transients from the camera's Viewport (ADR 05). Renderers
-record only Ready refs, and command-list copies followed by Vulkan submission
-retention own the GPU-use lifetime.
+Scene authoring components remain renderer-neutral and must not store backend raw pointers. Geometry GPU payloads (ref-backed vertex/index buffers on GeometryRecord) are the explicit runtime exception: they carry copyable RHIRef handles, never native pointers. View render targets are not Scene state at all — renderers create them per frame as pooled RenderGraph transients from the camera's Viewport (ADR 05). Renderers record only Ready refs, and command-list copies followed by Vulkan submission retention own the GPU-use lifetime.

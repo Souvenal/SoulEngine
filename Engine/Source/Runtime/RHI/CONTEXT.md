@@ -2,10 +2,7 @@
 
 **Namespace:** SoulEngine
 
-Render Hardware Interface — abstract GPU layer. Backends register through the
-self-registering factory. The RHI boundary owns native-resource construction,
-submission lifetime, and native destruction; higher layers carry RHIRef<T>
-handles and record declarative commands.
+Render Hardware Interface — abstract GPU layer. Backends register through the self-registering factory. The RHI boundary owns native-resource construction, submission lifetime, and native destruction; higher layers carry RHIRef<T> handles and record declarative commands.
 
 ## Terms
 
@@ -34,31 +31,14 @@ handles and record declarative commands.
 
 ## Submission and destruction contract
 
-1. A caller asks RHIRenderDevice to create a resource and receives an RHIRef.
-   The Vulkan backend queues the native creation closure on ThreadQueue::RHI.
-2. Render code records ready refs. Transient refs are immediately ready logical
-   frame resources; their RHI frame task resolves the arena slice before Vulkan
-   command recording. The command list takes copies/moves of the refs, so
-   command recording does not depend on raw RHI observers.
-3. Vulkan records and submits the borrowed list, then returns an
-   RHIFrameCompletion token containing the graphics timeline value signalled by
-   that submission. The owning FrameSlot retains the list until WaitFinish()
-   reports completion.
-4. Releasing the last RHIRef moves the native object into the module-level
-   deferred deletion queue. RHILoop drains the queue on the RHI thread after
-   Tick() each frame. For a submission-held ref, this cannot happen until the
-   submission is complete.
+1. A caller asks RHIRenderDevice to create a resource and receives an RHIRef. The Vulkan backend queues the native creation closure on ThreadQueue::RHI.
+2. Render code records ready refs. Transient refs are immediately ready logical frame resources; their RHI frame task resolves the arena slice before Vulkan command recording. The command list takes copies/moves of the refs, so command recording does not depend on raw RHI observers.
+3. Vulkan records and submits the borrowed list, then returns an RHIFrameCompletion token containing the graphics timeline value signalled by that submission. The owning FrameSlot retains the list until WaitFinish() reports completion.
+4. Releasing the last RHIRef moves the native object into the module-level deferred deletion queue. RHILoop drains the queue on the RHI thread after Tick() each frame. For a submission-held ref, this cannot happen until the submission is complete.
 
-The command-list lifetime is therefore **FrameSlot-owned**. Execute() borrows
-the slot's list for recording; EndFrame() returns a completion token without
-moving the list. RenderThread waits for both RHI's CPU-side packet consumption
-and the token's GPU completion before replacing the slot's RenderResult.
+The command-list lifetime is therefore **FrameSlot-owned**. Execute() borrows the slot's list for recording; EndFrame() returns a completion token without moving the list. RenderThread waits for both RHI's CPU-side packet consumption and the token's GPU completion before replacing the slot's RenderResult.
 
-RHIImGuiPresentationOverlayCmd is the current exception to ref-backed command
-payloads: it contains non-owning ImGui snapshot/texture-queue/mutex pointers
-that need to remain valid only through Execute(). Its backend texture objects
-are managed by Dear ImGui rather than by RHIRef; do not extend this exception
-to ordinary RHI resources.
+RHIImGuiPresentationOverlayCmd is the current exception to ref-backed command payloads: it contains non-owning ImGui snapshot/texture-queue/mutex pointers that need to remain valid only through Execute(). Its backend texture objects are managed by Dear ImGui rather than by RHIRef; do not extend this exception to ordinary RHI resources.
 
 ## Thread model
 
@@ -72,50 +52,22 @@ to ordinary RHI resources.
 
 ## Relationships
 
-- Scene, Renderer, Editor, and other higher-level owners keep RHIRef values;
-  a recorded command owns the RHI-lifetime portion through copied RHIRef<T>.
-- A caller that owns a borrowed command list must retain every ref-backed
-  command resource until that submission is no longer GPU-visible. The
-  backend returns an RHIFrameCompletion token so the caller can wait at the
-  packet replacement boundary.
-- Payload readiness is separate from submission lifetime: GpuPending means
-  a newly created payload is not recordable; an in-flight submitted Ready
-  payload remains alive through command-list retention.
-- Frame-affined transient creation tasks retain byte snapshots until the RHI
-  thread resets the current arena and allocates/writes the payload. The transient
-  ref is created Ready, but it cannot be retained or rebound after its creation
-  frame. The command list retains the ref while the backend records and submits
-  that frame.
+- Scene, Renderer, Editor, and other higher-level owners keep RHIRef values; a recorded command owns the RHI-lifetime portion through copied RHIRef<T>.
+- A caller that owns a borrowed command list must retain every ref-backed command resource until that submission is no longer GPU-visible. The backend returns an RHIFrameCompletion token so the caller can wait at the packet replacement boundary.
+- Payload readiness is separate from submission lifetime: GpuPending means a newly created payload is not recordable; an in-flight submitted Ready payload remains alive through command-list retention.
+- Frame-affined transient creation tasks retain byte snapshots until the RHI thread resets the current arena and allocates/writes the payload. The transient ref is created Ready, but it cannot be retained or rebound after its creation frame. The command list retains the ref while the backend records and submits that frame.
 
 ## Transient data upload
 
-Uploadable records define a nested `GpuData` ABI and a `BuildGpuData()` member
-that constructs it directly from their RHI buffer members and scalar fields.
-Renderer code creates a transient buffer from the resulting byte snapshot and
-stores the immediately-ready `RHIRef` in shader parameters or commands. The RHI
-frame task allocates and writes the current backend arena after its frame region
-has been reset, then fills the backend transient object's arena offset. Vulkan
-binds that offset directly and emits one
-aggregated host-write visibility barrier for UniformRead, ShaderRead, and
-IndirectCommandRead consumers.
+Uploadable records define a nested `GpuData` ABI and a `BuildGpuData()` member that constructs it directly from their RHI buffer members and scalar fields. Renderer code creates a transient buffer from the resulting byte snapshot and stores the immediately-ready `RHIRef` in shader parameters or commands. The RHI frame task allocates and writes the current backend arena after its frame region has been reset, then fills the backend transient object's arena offset. Vulkan binds that offset directly and emits one aggregated host-write visibility barrier for UniformRead, ShaderRead, and IndirectCommandRead consumers.
 
 ## Current gaps / guardrails
 
-- GDeferredDeletionQueue is a process-wide raw pointer. A payload whose last
-  ref is released after RHIRenderDevice::Destroy() would dereference a null
-  queue; shutdown order must release all refs first.
-- Tick() retains a documented RHI-thread precondition without a runtime
-  thread-affinity assertion; deletion draining is now driven structurally by
-  RHILoop (plus backend Shutdown() for the final flush).
-- The FrameSlot reset point and the backend submission-retention point are
-  deliberately different today. Do not claim slot reuse itself proves GPU
-  completion.
-- The generic RHI interface does not yet expose a backend-independent submission
-  retirement contract; a new backend must provide one before using RHIRef.
-- Current-frame CPU-to-GPU uploads belong in frame-affined transient creation
-  tasks, not individual RHICommand upload variants or scopes. New uploadable
-  data must provide a GPU ABI record and materialize its bytes before calling
-  CreateTransientXXXBuffer().
+- GDeferredDeletionQueue is a process-wide raw pointer. A payload whose last ref is released after RHIRenderDevice::Destroy() would dereference a null queue; shutdown order must release all refs first.
+- Tick() retains a documented RHI-thread precondition without a runtime thread-affinity assertion; deletion draining is now driven structurally by RHILoop (plus backend Shutdown() for the final flush).
+- The FrameSlot reset point and the backend submission-retention point are deliberately different today. Do not claim slot reuse itself proves GPU completion.
+- The generic RHI interface does not yet expose a backend-independent submission retirement contract; a new backend must provide one before using RHIRef.
+- Current-frame CPU-to-GPU uploads belong in frame-affined transient creation tasks, not individual RHICommand upload variants or scopes. New uploadable data must provide a GPU ABI record and materialize its bytes before calling CreateTransientXXXBuffer().
 
 ## Dependencies
 

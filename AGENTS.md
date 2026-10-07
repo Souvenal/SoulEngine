@@ -11,10 +11,7 @@ Guidance for AI agents on this repo.
 - Binary: `Engine/Binaries/SoulEngine`
 - Compiler: Clang 20+
 - C++23 modules enabled (`import std;` throughout)
-- **Agent command output:** `rtk` is an optional command-output filter. When
-  `rtk` is available on `PATH`, build and test commands MUST use `rtk err`
-  (for example, `rtk err xmake -y` and `rtk err xmake test`). When it
-  is unavailable, run the equivalent xmake command directly.
+- **Agent command output:** `rtk` is an optional command-output filter. When `rtk` is available on `PATH`, build and test commands MUST use `rtk err` (for example, `rtk err xmake -y` and `rtk err xmake test`). When it is unavailable, run the equivalent xmake command directly.
 
 ## Project Structure
 
@@ -42,8 +39,7 @@ GitHub defaults: `bug`, `documentation`, `enhancement`. See `Docs/agents/triage-
 
 ### Domain docs
 
-Multi-context — `CONTEXT.md` at root maps to per-module `CONTEXT.md`. See `Docs/Agents/Domain.md`.
-Before reading, modifying, reviewing, or generating project code, read root `CONTEXT.md`, `CONTEXT-MAP.md`, and every per-module `CONTEXT.md` that contains the target files.
+Multi-context — `CONTEXT.md` at root maps to per-module `CONTEXT.md`. See `Docs/Agents/Domain.md`. Before reading, modifying, reviewing, or generating project code, read root `CONTEXT.md`, `CONTEXT-MAP.md`, and every per-module `CONTEXT.md` that contains the target files.
 
 ## Architecture & Design
 
@@ -66,16 +62,12 @@ Before reading, modifying, reviewing, or generating project code, read root `CON
 
 ## Subagent Delegation
 
-Do work inline by default. Spawn a subagent only when it is clearly cheaper:
-broad searches you cannot scope with 1-2 greps, large multi-file batches, or
-independent subtasks that would bloat this conversation.
+Do work inline by default. Spawn a subagent only when it is clearly cheaper: broad searches you cannot scope with 1-2 greps, large multi-file batches, or independent subtasks that would bloat this conversation.
 
 - Cross-module caller/definition mapping → `cavecrew-investigator`
 - Review of a large diff → `cavecrew-reviewer`
 
-Never delegate: lookups answerable by a grep/glob, edits at ≤2 known sites,
-anything needing this conversation's context. Small fix (≤2 files)? Locate,
-edit, and verify inline. Full decision guide: `cavecrew` skill.
+Never delegate: lookups answerable by a grep/glob, edits at ≤2 known sites, anything needing this conversation's context. Small fix (≤2 files)? Locate, edit, and verify inline. Full decision guide: `cavecrew` skill.
 
 ## Vulkan / RHI Conventions
 

@@ -1,7 +1,5 @@
 ---
-name: coding-spec
-description: |-
-  MUST load for any SoulEngine project code work: reading, writing, modifying, reviewing, refactoring, debugging, fixing diagnostics, or generating code in this repository. This skill routes Codex to the authoritative coding rules in .agents/rules before touching code.
+name: coding-spec description: |- MUST load for any SoulEngine project code work: reading, writing, modifying, reviewing, refactoring, debugging, fixing diagnostics, or generating code in this repository. This skill routes Codex to the authoritative coding rules in .agents/rules before touching code.
 
   Applies to project source and shader work, including C++, Slang, Vulkan/RHI code, tests, examples, and code review. Skip only for non-code documentation, issue/project management, or purely conceptual discussion where no repository code is read or changed.
 ---

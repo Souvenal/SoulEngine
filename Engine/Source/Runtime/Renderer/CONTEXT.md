@@ -2,10 +2,7 @@
 
 **Namespace:** SoulEngine
 
-Renderer implementations convert renderer-neutral SceneSnapshot input into a
-move-only RHICommandList. Current renderers are RasterRenderer and
-RayTracingRenderer; the selected renderer is cached by the engine and recorded
-into each FrameSlot.
+Renderer implementations convert renderer-neutral SceneSnapshot input into a move-only RHICommandList. Current renderers are RasterRenderer and RayTracingRenderer; the selected renderer is cached by the engine and recorded into each FrameSlot.
 
 ## Terms
 
@@ -33,52 +30,16 @@ into each FrameSlot.
 
 ## Relationships
 
-- Application owns mutable Scene state. GameLoop makes snapshots and captures
-  the selected shared renderer into a FrameSlot.
-- RenderLoop calls IRenderer::Render(), stores the result, and publishes
-  RenderReady; it does not make Vulkan calls.
-- MeshSystem owns MeshRecord and GeometryRecord loading. GeometryUploader and
-  PipelineRegistry request native RHI payloads directly; buffers and pipelines
-  are created on the RHI thread (EnqueueResourceCreation), while hollow BLAS
-  descriptors are created synchronously (no device calls) and built by the
-  device at frame start.
-- Each renderer filters the frame's instances through its own GeometryUploader
-  gate (buffers for raster, buffers+BLAS for ray tracing) and builds the shared
-  SceneGpuData tables from the accepted values. RayTracingRenderer additionally
-  collects hollow BLAS descriptors plus a freshly created per-frame TLAS into
-  `RenderResult` for the frame-start AS phase; the TLAS desc slot order is the
-  canonical instance order (see Per-frame TLAS).
-- Renderer resolves each draw's material through MaterialManager (scene instance
-  -> mesh-imported asset instance -> built-in default) and PbrMaterialResolver
-  deduplicates GPU entries by (instance ID, HasUV0, HasTangents).
-- A renderer records only ready persistent refs. Transient refs may remain
-  pending until the RHI frame task completes; the command visitor owns the
-  Ready/Failed validation. The command list copies refs for pass attachments,
-  pipelines, vertex/index buffers, shader parameter resources, transient
-  buffers, TLAS/BLAS instances, and the present source. Do not store a raw
-  pointer obtained from TryGet() in a command.
-- Vulkan retains the submitted command list through its graphics timeline. A
-  renderer cache release after submission cannot destroy an ordinary
-  ref-backed resource still visible to the GPU.
-- Renderer creates current-frame transient data through typed
-  `CreateTransientXXXBuffer` calls. The descriptors contain byte spans that are
-  copied by the RHI creation path; renderer code never captures borrowed Scene
-  records or stores upload work on individual scopes.
-- Uploadable records own their `GpuData` ABI mirror and `BuildGpuData()`
-  method. Renderer passes the resulting byte snapshot to a transient RHI
-  creation descriptor and never queries a native Vulkan buffer object.
-- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and presents by appending a BlitToSwapchainPass for SceneColor. LightRecord::GpuData is the shared 48-byte light ABI uploaded by Raster and RayTracing; light resources are bound only by lighting passes.
-  RayTracingRenderer uses ref-backed TLAS/BLAS, output, and renderer-owned
-  accumulation targets (persistent, imported per frame), plus transient
-  geometry/material/view buffers; it writes primary normals/entity IDs to
-  pooled storage-image view targets and blits its accumulation output directly
-  to the swapchain. Renderer never observes a Vulkan device address or
-  descriptor index.
-  RasterRenderer derives per-geometry indirect commands from the shared
-  SceneGpuData tables for vertex pulling. Geometry/instance
-  data is published as frame-affined transient resource creation tasks before
-  scope recording and publishes the required shader-read and
-  indirect-command-read visibility.
+- Application owns mutable Scene state. GameLoop makes snapshots and captures the selected shared renderer into a FrameSlot.
+- RenderLoop calls IRenderer::Render(), stores the result, and publishes RenderReady; it does not make Vulkan calls.
+- MeshSystem owns MeshRecord and GeometryRecord loading. GeometryUploader and PipelineRegistry request native RHI payloads directly; buffers and pipelines are created on the RHI thread (EnqueueResourceCreation), while hollow BLAS descriptors are created synchronously (no device calls) and built by the device at frame start.
+- Each renderer filters the frame's instances through its own GeometryUploader gate (buffers for raster, buffers+BLAS for ray tracing) and builds the shared SceneGpuData tables from the accepted values. RayTracingRenderer additionally collects hollow BLAS descriptors plus a freshly created per-frame TLAS into `RenderResult` for the frame-start AS phase; the TLAS desc slot order is the canonical instance order (see Per-frame TLAS).
+- Renderer resolves each draw's material through MaterialManager (scene instance -> mesh-imported asset instance -> built-in default) and PbrMaterialResolver deduplicates GPU entries by (instance ID, HasUV0, HasTangents).
+- A renderer records only ready persistent refs. Transient refs may remain pending until the RHI frame task completes; the command visitor owns the Ready/Failed validation. The command list copies refs for pass attachments, pipelines, vertex/index buffers, shader parameter resources, transient buffers, TLAS/BLAS instances, and the present source. Do not store a raw pointer obtained from TryGet() in a command.
+- Vulkan retains the submitted command list through its graphics timeline. A renderer cache release after submission cannot destroy an ordinary ref-backed resource still visible to the GPU.
+- Renderer creates current-frame transient data through typed `CreateTransientXXXBuffer` calls. The descriptors contain byte spans that are copied by the RHI creation path; renderer code never captures borrowed Scene records or stores upload work on individual scopes.
+- Uploadable records own their `GpuData` ABI mirror and `BuildGpuData()` method. Renderer passes the resulting byte snapshot to a transient RHI creation descriptor and never queries a native Vulkan buffer object.
+- RasterRenderer owns the raster GBuffer/deferred-lighting path, records separate Geometry and Lighting RHIPass instances, appends editor post-process passes when the snapshot carries selection input, and presents by appending a BlitToSwapchainPass for SceneColor. LightRecord::GpuData is the shared 48-byte light ABI uploaded by Raster and RayTracing; light resources are bound only by lighting passes. RayTracingRenderer uses ref-backed TLAS/BLAS, output, and renderer-owned accumulation targets (persistent, imported per frame), plus transient geometry/material/view buffers; it writes primary normals/entity IDs to pooled storage-image view targets and blits its accumulation output directly to the swapchain. Renderer never observes a Vulkan device address or descriptor index. RasterRenderer derives per-geometry indirect commands from the shared SceneGpuData tables for vertex pulling. Geometry/instance data is published as frame-affined transient resource creation tasks before scope recording and publishes the required shader-read and indirect-command-read visibility.
 
 ## Dependencies
 
