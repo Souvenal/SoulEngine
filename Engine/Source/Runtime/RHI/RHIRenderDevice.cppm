@@ -15,9 +15,10 @@ import :Command;
 
 namespace SoulEngine {
 
-/// Error for backend methods a concrete device leaves unimplemented. Tests run a base RHIRenderDevice (or a
-/// small override) to keep RenderGraph's realize step off the real GPU; reaching this default there is
-/// expected, in production it means a backend missed an override.
+/// @brief Error for backend methods a concrete device leaves unimplemented.
+///
+/// Tests run a base RHIRenderDevice (or a small override) to keep RenderGraph's realize step off the real
+/// GPU; reaching this default there is expected, in production it means a backend missed an override.
 [[nodiscard]] auto NotImplemented(StringView Method) -> ErrorMessage {
     auto Message = ErrorMessage(Format("RHIRenderDevice: '{}' is not implemented by this device", Method));
     LogError("{}", Message.ToString());

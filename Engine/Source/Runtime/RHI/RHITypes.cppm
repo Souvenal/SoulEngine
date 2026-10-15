@@ -49,7 +49,7 @@ struct RHISamplerDesc {
     RHISamplerProfile Profile = RHISamplerProfile::LinearRepeat;
 };
 
-/// Shader-visible sampling state object.
+/// @brief Shader-visible sampling state object.
 ///
 /// Backends own the native sampler handle. Higher-level owners keep RHIRef instances; command lists only
 /// observe them.
@@ -177,8 +177,9 @@ enum class RHIBufferUsage : Uint32 {
     Unknown     = 0,
     Vertex      = 1u << 0,
     Index       = 1u << 1,
-    /// Constant-buffer role (D3D/UE "constant buffer" = Vulkan "uniform buffer"); named Constant to match the
-    /// shader-side vocabulary (ShaderResourceType::ConstantBuffer).
+    /// @brief Constant-buffer role (D3D/UE "constant buffer" = Vulkan "uniform buffer").
+    ///
+    /// Named Constant to match the shader-side vocabulary (ShaderResourceType::ConstantBuffer).
     Constant    = 1u << 2,
     Storage     = 1u << 3,
     Indirect    = 1u << 4,
@@ -211,10 +212,12 @@ struct RHIBufferDesc {
     RHILifetime    Lifetime    = RHILifetime::Unknown;
 };
 
-/// Unified buffer identity. Vertex/index/uniform/storage/indirect are usages, not types — GPU→CPU readback is
-/// not a buffer at all, it is the RHIReadback consumer object below. Lifetime is stored on the identity and
-/// discriminates the backend's per-flavor state (persistent allocation vs transient belt slice), whose
-/// allocation strategy the backend concrete class owns.
+/// @brief Unified buffer identity.
+///
+/// Vertex/index/uniform/storage/indirect are usages, not types — GPU→CPU readback is not a buffer at all, it
+/// is the RHIReadback consumer object below. Lifetime is stored on the identity and discriminates the
+/// backend's per-flavor state (persistent allocation vs transient belt slice), whose allocation strategy the
+/// backend concrete class owns.
 class RHIBuffer : public RHIObject {
   public:
     RHIBuffer(const RHIBuffer&)                    = delete;
@@ -232,13 +235,16 @@ class RHIBuffer : public RHIObject {
     [[nodiscard]] auto GetMemoryUsage() const noexcept -> RHIMemoryUsage {
         return m_MemoryUsage;
     }
-    /// Lifetime is fixed at creation (validated Desc or a hardcoded backend flavor), so a constructed buffer
-    /// never holds Unknown.
+    /// @brief Lifetime of this buffer.
+    ///
+    /// Fixed at creation (validated Desc or a hardcoded backend flavor), so a constructed buffer never holds
+    /// Unknown.
     [[nodiscard]] auto GetLifetime() const noexcept -> RHILifetime {
         return m_Lifetime;
     }
-    /// Buffer device address (Vulkan BDA). Every GpuOnly buffer carries one; host-visible and transient
-    /// flavors return 0.
+    /// @brief Buffer device address (Vulkan BDA).
+    ///
+    /// Every GpuOnly buffer carries one; host-visible and transient flavors return 0.
     [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
         return 0;
     }
@@ -290,21 +296,27 @@ struct RHITextureDesc {
     Uint32          Height      = 1;
     Uint32          MipLevels   = 1;
     RHIFormat       Format      = RHIFormat::B8G8R8A8_UNORM;
-    /// Flags default to None: a role is always an explicit choice (the RenderGraph validates None at
-    /// registration). The RenderGraph rule: creation usage is explicit here; a pass view's declared usage
-    /// must stay a subset of it.
+    /// @brief Flags default to None: a role is always an explicit choice (the RenderGraph validates None at
+    /// registration).
+    ///
+    /// The RenderGraph rule: creation usage is explicit here; a pass view's declared usage must stay a subset
+    /// of it.
     RHITextureUsage Usage       = RHITextureUsage::None;
-    /// Allocation placement, same axis as RHIBufferDesc: GpuOnly derives transfer-dst capability at creation
-    /// and uploads through the frame-start staging batch (UploadTexture); host-visible placements are not
-    /// supported for images. Unknown fails validation — a Desc is explicit.
+    /// @brief Allocation placement, same axis as RHIBufferDesc.
+    ///
+    /// GpuOnly derives transfer-dst capability at creation and uploads through the frame-start staging batch
+    /// (UploadTexture); host-visible placements are not supported for images. Unknown fails validation — a
+    /// Desc is explicit.
     RHIMemoryUsage  MemoryUsage = RHIMemoryUsage::Unknown;
-    /// Texel channel count (bytes per texel for the upload path); UploadTexture validates its byte count
-    /// against Width × Height × Channels.
+    /// @brief Texel channel count (bytes per texel for the upload path).
+    ///
+    /// UploadTexture validates its byte count against Width × Height × Channels.
     Uint32          Channels    = 4;
 };
 
-/// Unified texture identity: merges the old sampled-texture and render-target types. Color vs depth vs
-/// sampled is distinguished by GetFormat()/GetUsage(), never by type.
+/// @brief Unified texture identity: merges the old sampled-texture and render-target types.
+///
+/// Color vs depth vs sampled is distinguished by GetFormat()/GetUsage(), never by type.
 class RHITexture : public RHIObject {
   public:
     RHITexture(const RHITexture&)                    = delete;
@@ -357,9 +369,10 @@ class RHITexture : public RHIObject {
 };
 // Ray-tracing acceleration structures
 
-/// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure. BLAS
-/// triangle inputs. Geometry metadata (counts, stride) is mesh data, carried here by the caller — buffers are
-/// unified identities and do not know vertex semantics.
+/// @brief One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
+///
+/// BLAS triangle inputs. Geometry metadata (counts, stride) is mesh data, carried here by the caller —
+/// buffers are unified identities and do not know vertex semantics.
 struct RHIBottomLevelAccelerationStructureDesc {
     RHIRef<RHIBuffer> VertexBufferRef = nullptr;
     RHIRef<RHIBuffer> IndexBufferRef  = nullptr;
@@ -387,7 +400,7 @@ struct RHITopLevelAccelerationStructureInstance {
     hlslpp::float4x4                            Transform = hlslpp::float4x4::identity();
 };
 
-/// Descriptor for a per-frame TLAS.
+/// @brief Descriptor for a per-frame TLAS.
 ///
 /// Instances slot order is the canonical TLAS instance order: the device packs them 1:1, so Slang
 /// InstanceIndex() indexes the renderer's sorted instance table by the same slot.
@@ -395,8 +408,9 @@ struct RHITopLevelAccelerationStructureDesc {
     std::vector<RHITopLevelAccelerationStructureInstance> Instances = {};
 };
 
-/// Per-frame TLAS handle: instances are packed and storage is materialized at creation; the device builds it
-/// at frame start.
+/// @brief Per-frame TLAS handle.
+///
+/// Instances are packed and storage is materialized at creation; the device builds it at frame start.
 class RHITopLevelAccelerationStructure : public RHIObject {
   public:
     RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;

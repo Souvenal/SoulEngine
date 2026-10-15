@@ -300,7 +300,7 @@ class RHIRefArray {
         return m_Payload == Other.m_Payload;
     }
 
-    /// Begin one GameThread append cycle.
+    /// @brief Begin one GameThread append cycle.
     ///
     /// The GameThread must execute exactly one BeginAppend()/EndAppend() pair per loop. The pair is a
     /// producer-side protocol; the array does not track or validate loop ownership.

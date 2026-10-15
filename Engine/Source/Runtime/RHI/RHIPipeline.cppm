@@ -510,8 +510,9 @@ struct RHISpecializationConstant {
 struct RHIComputePipelineDesc {
     ShaderComputeProgram                   Program                 = {};
     RHIRef<RHIShaderBindingSet>            BindingSet              = nullptr;
-    /// Values fixed at pipeline creation (VkSpecializationInfo). They are part of the pipeline identity: two
-    /// value sets must yield two pipelines.
+    /// @brief Values fixed at pipeline creation (VkSpecializationInfo).
+    ///
+    /// They are part of the pipeline identity: two value sets must yield two pipelines.
     std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
