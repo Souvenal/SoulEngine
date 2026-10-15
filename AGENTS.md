@@ -26,21 +26,21 @@ Guidance for AI agents on this repo.
 - `Engine/Source/Runtime/Launch/` — Engine bootstrap, main loop. Top-level runtime module.
 - `Engine/Source/ThirdParty/` — xmake.lua only. Deps via xrepo (tracy, spdlog, toml++, vulkansdk, glfw, gtest).
 - `Engine/Config/` — `SoulEngine.toml` runtime config, `SoulEngine.example.toml` reference.
-- `CONTEXT.md` (root) — Context map linking to per-module `CONTEXT.md` files.
+- `GLOSSARY-MAP.md` (root) — Index of per-module `GLOSSARY.md` files and their relationships.
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues as GitHub Issues via `gh` CLI. See `Docs/agents/issue-tracker.md`.
+Issues live in this repo's GitHub Issues; all operations use the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-GitHub defaults: `bug`, `documentation`, `enhancement`. See `Docs/agents/triage-labels.md`.
+Five canonical roles, label string equals role name: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Multi-context — `CONTEXT.md` at root maps to per-module `CONTEXT.md`. See `Docs/Agents/Domain.md`. Before reading, modifying, reviewing, or generating project code, read root `CONTEXT.md`, `CONTEXT-MAP.md`, and every per-module `CONTEXT.md` that contains the target files.
+Multi-context — root `GLOSSARY-MAP.md` indexes one `GLOSSARY.md` per module; ADRs live in `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Architecture & Design
 
@@ -53,7 +53,10 @@ Multi-context — `CONTEXT.md` at root maps to per-module `CONTEXT.md`. See `Doc
 
 ## Coding Specs
 
-Path-scoped coding specs live in [`.agents/rules/`](.agents/rules/) (`cpp-coding-spec`, `comment-coding-spec`, `slang-coding-spec`, `vulkan-coding-spec`). Before writing or editing code under a spec's `paths` frontmatter, read that spec. The comment spec fires on ANY comment you add or modify — read it before your first edit, not after review. Mechanical comment rules (110-column width, two legal doc forms) are enforced by `Tools/check_comments.py`.
+- **No exceptions, no RTTI.** Every fallible function returns `std::expected<T, Core::ErrorMessage>` (ADR 01/02); `ErrorMessage` is a human-readable error chain for logging, not programmatic branching.
+- **Runtime constant-buffer ABI:** Slang/Vulkan constant buffers use std140 layout; shader structs declare semantic fields only (never named padding), and CPU mirrors lock reflected offsets with sizeof/offsetof assertions (see the Shader glossary).
+
+Judgement-call standards live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md) (read at review time, not during implementation). Path-scoped coding specs live in [`.agents/rules/`](.agents/rules/) (`cpp-coding-spec`, `comment-coding-spec`, `slang-coding-spec`, `vulkan-coding-spec`). Before writing or editing code under a spec's `paths` frontmatter, read that spec. The comment spec fires on ANY comment you add or modify — read it before your first edit, not after review. Mechanical comment rules (110-column width, two legal doc forms) are enforced by `Tools/check_comments.py`.
 
 ## Code Editing Rules
 

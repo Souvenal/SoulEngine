@@ -83,7 +83,7 @@ xmake              # build
 xmake run          # run SoulEngine
 ```
 
-See [`Docs/platform/`](Docs/platform/) for platform-specific setup notes (e.g. macOS Vulkan driver configuration).
+See [`docs/platform/`](docs/platform/) for platform-specific setup notes (e.g. macOS Vulkan driver configuration).
 
 ## Motivation
 

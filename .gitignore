@@ -32,9 +32,9 @@ Engine/Logs/
 # imgui Configs
 imgui.ini
 
-Docs/Phase
-Docs/Checkpoint
-Docs/Research
+docs/phase
+docs/checkpoint
+docs/research
 
 # dsh
 .agent-teams

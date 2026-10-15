@@ -78,79 +78,40 @@ GLFW requires `PollEvents()` on window creation thread. Spawning a separate Game
 
 ## Submission-owned command resource lifetime
 
-**Updated August 1, 2026.** FrameSlot remains the CPU handoff record. It is not the ownership record that proves submitted GPU work has retired.
+**Updated August 1, 2026; revised 2026-10-15 (two-hop deferred destruction).** FrameSlot remains the CPU handoff record. It is not the ownership record that proves submitted GPU work has retired.
 
 - Every normal resource-bearing `RHICommandList` field retains `RHIRef<T>`: attachments, pipelines, vertex/index buffers, shader parameter resources, present source, TLAS, and TLAS-instance BLAS values.
 - RHILoop calls `Execute(std::move(Slot.RenderPacket.CmdList))`, then clears the moved-from slot packet before publishing `RHIDone`. The requested policy to reset the command list only when GameLoop reacquires the slot is not implemented literally.
 - Vulkan signals a graphics timeline value and moves the complete submitted list into `VulkanInFlightSubmission`. It releases that list only after the corresponding timeline value completes. This backend retention, not slot reuse, keeps command refs alive while the GPU can use them.
-- Final `RHIRef` release may happen on any thread, but it transfers the native payload into `RHIDeferredDeletionQueue`. Normal-runtime `RHIRenderDevice::Tick()` drains that queue on RHILoop after backend completion polling.
+- Final `RHIRef` release may happen on any thread. Destruction is then two hops with distinct jobs. The first hop is the module-level `RHIDeferredDeletionQueue`: the cross-thread transport, drained on RHILoop after the backend Tick() each frame, with a final flush at backend Shutdown(). The second hop is the backend's GPU-retirement queue: the drained destructor does not destroy in place — it hands the native handles to the backend, which stamps destruction as a virtual timeline event above every submitted value, so the next real submission covers it. This is sound because no new command can reference a resource after its last ref is gone, so the destruction frame's own submission upper-bounds the last GPU use. The second hop replaces frame-slot retention for resources referenced outside the command list (upload-batch destinations, device-address-pulled geometry buffers): they need no manual retention.
+- Shutdown boundary: the module-level queue has no post-device fallback, so every `RHIRef` that may own a native payload must be released before `RHIRenderDevice::Destroy()`.
 - `RHIImGuiPresentationOverlayCmd` is an Execute-time borrowed-pointer bridge for Dear ImGui data. It is not the lifetime pattern for ordinary engine RHI resources.
 
 The Vulkan implementation is safe for normal ref-backed commands, but this submission-retention rule is not yet an abstract-RHI contract shared by future backends. Device creation and final backend shutdown remain main-thread lifecycle exceptions; only normal runtime RHI work is RHI-thread confined.
+
 ## Thread lifecycles
 
 ### GameLoop (main thread)
 
-Responsible for: window event polling, game logic tick, scene state capture.
-
-```
-PollEvents → FrameMark → compute dt → wait for Empty/RHIDone → OnTick(dt) → copy Scene → GameReady → notify_all
-```
-
-Details:
-- `PollEvents` must run on main thread (GLFW requirement)
-- `OnTick(dt)` updates application-level scene state (transform, animation, physics)
-- After tick, copies the scene camera (and future: mesh/light/transform lists) into the slot's `Scene::Scene` for the Render thread
-- Blocks when all slots are occupied (RHI thread hasn't freed one yet)
+Responsible for window event polling, game logic tick, and scene state capture. GLFW requires event polling on the window-creation thread, which is why GameLoop is the main thread. After the tick it publishes the captured scene state into the slot and marks it GameReady; it blocks when no slot is free.
 
 ### RenderLoop (`std::jthread`)
 
-Responsible for: draining render-side cross-thread tasks, converting scene data into GPU commands (as variant command lists).
-
-```
-wait for GameReady → drain Render task queue → Render(scene) → store CommandList in slot → RenderReady → notify_all
-```
-
-Details:
-- Drains the Render queue from `TaskGraph` (for tasks enqueued by Game or RHI threads)
-- Calls `IRenderer::Render(scene)` which produces a `RHI::CommandList` — a data structure containing `std::vector<Pass>`, each Pass holding variant `Command` types
-- The CommandList is pure data (no GPU handles beyond SPtr references) — no Vulkan calls happen here
-- On render failure: broadcasts `FatalError` and exits
+Responsible for draining render-side cross-thread tasks and converting scene data into GPU commands. Its output command list is pure data — no Vulkan calls happen on this thread. On render failure it broadcasts FatalError and exits.
 
 ### RHILoop (`std::jthread`)
 
-Responsible for: draining RHI-side cross-thread tasks, uploading command data to GPU (descriptor writes, constant buffer upload), submitting GPU work and presenting.
-
-```
-wait for RenderReady → drain RHI task queue → for each Pass: allocate secondary CB → begin rendering → dispatch commands → end rendering → submit primary CB → present → RHIDone → notify_all
-→ on stop: WaitIdle() → return
-```
-
-Details:
-- Drains the RHI queue from `TaskGraph`
-- Takes the `CommandList` from the slot and calls `RenderDevice::Execute()`:
-  1. **Frame begin:** Wait on timeline semaphore (CPU-GPU sync), acquire swapchain image, begin primary command buffer
-  2. **Per-pass recording:** For each `Pass` in the command list — allocate a secondary command buffer from the frame's SubPool, call `beginRendering`, dispatch variant commands via `CommandVisitor::operator()`, bind draw-scope descriptors from the active pipeline's reflected layout, call `endRendering`, end secondary
-  3. **Submit:** ExecuteCommands from primary, signal timeline semaphore, present
-  4. **Frame end:** Advance `m_CurrentFrame`
-
-- All Vulkan API calls are confined to this thread — no other thread touches vkCmd*, vkQueueSubmit, or vkQueuePresent
-- Per-pass secondary command buffers are stored in `FrameContext::ScratchSecondaries` — freed when the same FrameContext is reused next frame (after timeline wait guarantees GPU completion)
-- On thread stop: calls `WaitIdle()` to drain remaining GPU work before join returns
+Responsible for draining RHI-side cross-thread tasks, recording and submitting the borrowed command list, and presenting. All Vulkan API calls are confined to this thread — no other thread touches command recording, submission, or present. On stop it waits for GPU idle before returning.
 
 ## Shutdown sequence
 
-1. GameLoop exits (window close or FatalError)
-2. `m_FatalError = true`, `notify_all`, `TaskGraph.Shutdown()`
-3. request_stop + join RenderLoop
-4. request_stop + join RHILoop (RHILoop calls WaitIdle before returning)
+1. GameLoop exits (window close or FatalError); `m_FatalError = true`, `notify_all`
+2. request_stop + join RenderLoop
+3. request_stop + join RHILoop (RHILoop calls WaitIdle before returning)
+4. `TaskGraph.Shutdown()` — only after both workers join, so a worker caught mid-frame finishes its in-flight slot against live task services instead of failing spuriously (revised 2026-10-15; previously ordered before the joins)
 5. Release Application, FrameSlot, Editor, Renderer, and PipelineRegistry owners while the render-device deletion queue is valid
 6. RenderDevice::Destroy after GPU idle; backend shutdown drains in-flight submissions and deferred native destruction
-7. WindowDisplay::Shutdown
+7. Window system shutdown
 
 **Error rule:** Any loop reaching a fatal error sets `m_FatalError` + `notify_all`. All loops check `m_FatalError` in their CV predicates. On fatal error, the slot state machine does NOT advance — the remaining loops break immediately without transitioning their current slot.
 
-## Related files
-
-- `Engine/Source/Runtime/Launch/Launch.cppm` — EngineLoop, GameLoop/RenderLoop/RHILoop, FrameSlot, SlotState
-- `Engine/Source/Runtime/TaskGraph/TaskGraph.cppm` — cross-thread task dispatch (3 named queues)
