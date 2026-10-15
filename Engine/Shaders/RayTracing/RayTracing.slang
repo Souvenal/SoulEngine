@@ -195,11 +195,9 @@ void shadowMissMain(inout ShadowPayload payload) {
 
 [shader("closesthit")]
 void closestHitMain(inout PathPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
-    // TLAS slot order matches the instance table: InstanceIndex() is the
-    // zero-based TLAS slot and indexes it directly (InstanceID() would be
-    // the custom index, which is never assigned). The hit's geometry and
-    // material resolve through the instance record — geometry and material
-    // are never bound to each other.
+    // TLAS slot order matches the instance table: InstanceIndex() is the zero-based TLAS slot and indexes it
+    // directly (InstanceID() would be the custom index, which is never assigned). The hit's geometry and
+    // material resolve through the instance record — geometry and material are never bound to each other.
     InstanceRecord instanceData = g_rayTracing.instances[InstanceIndex()];
     uint firstIndex = PrimitiveIndex() * 3;
     VertexInfo vertex0 = g_rayTracing.geometryTable.pullVertex(instanceData.geometryID, firstIndex);

@@ -27,17 +27,17 @@ struct EditorCameraResizeEvent {
 
 /// @brief Editor-only camera component with viewport and selection state.
 ///
-/// Holds no view render targets: the editor view's targets are
-/// renderer-created pooled RenderGraph transients derived from the Viewport.
+/// Holds no view render targets: the editor view's targets are renderer-created pooled RenderGraph transients
+/// derived from the Viewport.
 struct EditorCameraComponent {
-    Float32                       FOV            = 60.0f;
-    Float32                       NearPlane      = 0.1f;
-    Float32                       FarPlane       = 100.0f;
-    Float32                       ExposureEV100  = 15.0f;
-    CameraViewport                Viewport       = {};
-    std::optional<entt::entity>   ReadbackEntity = std::nullopt;
-    std::optional<entt::entity>   SelectedEntity = std::nullopt;
-    RHIRef<RHIReadback>           Readback       = nullptr;
+    Float32                     FOV            = 60.0f;
+    Float32                     NearPlane      = 0.1f;
+    Float32                     FarPlane       = 100.0f;
+    Float32                     ExposureEV100  = 15.0f;
+    CameraViewport              Viewport       = {};
+    std::optional<entt::entity> ReadbackEntity = std::nullopt;
+    std::optional<entt::entity> SelectedEntity = std::nullopt;
+    RHIRef<RHIReadback>         Readback       = nullptr;
 };
 
 /// @brief Editor-owned camera system and editor viewport state owner.
@@ -55,14 +55,16 @@ class EditorCameraSystem final : public ISystem {
 
     /// @brief Subscribe to editor camera resize events.
     auto SetupObservers() -> void override {
-        m_Registry.ctx().get<entt::dispatcher>()
+        m_Registry.ctx()
+            .get<entt::dispatcher>()
             .sink<EditorCameraResizeEvent>()
             .connect<&EditorCameraSystem::OnCameraResize>(*this);
     }
 
     /// @brief Unsubscribe from editor camera resize events.
     auto TeardownObservers() -> void override {
-        m_Registry.ctx().get<entt::dispatcher>()
+        m_Registry.ctx()
+            .get<entt::dispatcher>()
             .sink<EditorCameraResizeEvent>()
             .disconnect<&EditorCameraSystem::OnCameraResize>(*this);
     }
@@ -78,8 +80,8 @@ class EditorCameraSystem final : public ISystem {
 
             const Float32 AspectRatio =
                 static_cast<Float32>(Camera.Viewport.Width) / static_cast<Float32>(Camera.Viewport.Height);
-            const Float32 FovRad = Camera.FOV * (std::numbers::pi_v<Float32> / 180.0f);
-            const auto Projection = hlslpp::float4x4::perspective(hlslpp::projection(
+            const Float32 FovRad     = Camera.FOV * (std::numbers::pi_v<Float32> / 180.0f);
+            const auto    Projection = hlslpp::float4x4::perspective(hlslpp::projection(
                 hlslpp::frustum::field_of_view_y(FovRad, AspectRatio, Camera.NearPlane, Camera.FarPlane),
                 hlslpp::zclip::zero,
                 hlslpp::zdirection::forward,
@@ -89,17 +91,17 @@ class EditorCameraSystem final : public ISystem {
                 Transform.WorldTransform[3].x, Transform.WorldTransform[3].y, Transform.WorldTransform[3].z);
             const auto LocalForward = hlslpp::float4(0.0f, 0.0f, -1.0f, 0.0f);
             const auto WorldForward = hlslpp::mul(LocalForward, Transform.WorldTransform);
-            const auto Forward = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
-            const auto View =
-                hlslpp::float4x4::look_at(Position, Position + Forward, hlslpp::float3(0.0f, 1.0f, 0.0f));
+            const auto Forward      = hlslpp::normalize(hlslpp::float3(WorldForward.x, WorldForward.y, WorldForward.z));
+            const auto View = hlslpp::float4x4::look_at(Position, Position + Forward, hlslpp::float3(0.0f, 1.0f, 0.0f));
 
             Views.emplace_back(EditorViewRecord{
-                .Camera = CameraViewRecord{
-                    .ViewProjection = hlslpp::mul(View, Projection),
-                    .CameraPosition = Position,
-                    .ExposureEV100  = Camera.ExposureEV100,
-                    .Viewport       = Camera.Viewport,
-                },
+                .Camera =
+                    CameraViewRecord{
+                        .ViewProjection = hlslpp::mul(View, Projection),
+                        .CameraPosition = Position,
+                        .ExposureEV100  = Camera.ExposureEV100,
+                        .Viewport       = Camera.Viewport,
+                    },
             });
         }
         return Views;
@@ -109,8 +111,8 @@ class EditorCameraSystem final : public ISystem {
     auto UpdatePerspective(Float32 DeltaTime) -> void {
         if (!ImGui::GetCurrentContext())
             return;
-        const auto& IO = ImGui::GetIO();
-        const bool CameraInputActive = !IO.WantCaptureMouse && ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        const auto& IO                = ImGui::GetIO();
+        const bool  CameraInputActive = !IO.WantCaptureMouse && ImGui::IsMouseDown(ImGuiMouseButton_Right);
         m_Window->SetCursorMode(CameraInputActive ? CursorMode::Disabled : CursorMode::Normal);
         if (!CameraInputActive)
             return;
@@ -162,9 +164,8 @@ class EditorCameraSystem final : public ISystem {
                                                 : std::optional<entt::entity>{static_cast<entt::entity>(EntityId)};
                 }
             }
-            // The click guard mirrors the hover mapping: mouse in logical
-            // coords, viewport in physical pixels — scale by
-            // DisplayFramebufferScale before the rect test (DPI awareness).
+            // The click guard mirrors the hover mapping: mouse in logical coords, viewport in physical pixels
+            // — scale by DisplayFramebufferScale before the rect test (DPI awareness).
             const auto& Vp = Camera.Viewport;
             if (Vp.Width == 0 || Vp.Height == 0)
                 continue;

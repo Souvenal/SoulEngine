@@ -12,9 +12,8 @@ import std;
 /// @brief Console variables (CVars): runtime-mutable, globally registered
 ///        configuration values.
 ///
-/// Modeled on Unreal's TAutoConsoleVariable / the vkguide CVarSystem,
-/// adapted to this codebase's conventions (C++23 modules, no exceptions,
-/// type aliases).
+/// Modeled on Unreal's TAutoConsoleVariable / the vkguide CVarSystem, adapted to this codebase's conventions
+/// (C++23 modules, no exceptions, type aliases).
 ///
 /// @section cvar_design Design decisions
 ///
@@ -68,11 +67,11 @@ namespace SoulEngine {
 
 /// @brief Value types supported by the CVar system.
 export template <typename T>
-concept CVarValue = std::same_as<T, bool> || std::same_as<T, Int32> || std::same_as<T, Float32> ||
-                    std::same_as<T, String>;
+concept CVarValue =
+    std::same_as<T, bool> || std::same_as<T, Int32> || std::same_as<T, Float32> || std::same_as<T, String>;
 
-// ── Registry internals (module linkage: invisible outside Core, reachable
-//    from the exported templates' instantiations in consumer TUs) ───────────
+// Registry internals (module linkage: invisible outside Core, reachable from the exported templates'
+// instantiations in consumer TUs)
 
 /// @brief One registry entry: description plus the value itself.
 /// @details Entries live in unordered_map nodes, whose addresses are stable
@@ -113,8 +112,8 @@ consteval auto CVarTypeName() -> StringView {
         return "String";
 }
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by
-// the exported code below — see Core:CVar's linkage note.
+// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
+// Core:CVar's linkage note.
 
 /// @brief Convert a TOML leaf to a CVar value.  Integers undergo a range
 ///        check for Int32; Float32 also accepts TOML integers.
@@ -139,22 +138,20 @@ template <CVarValue T>
     }
 }
 
-// Forward declaration required for the CVarManager friendship grant;
-// CVar's definition follows CVarManager below.
+// Forward declaration required for the CVarManager friendship grant; CVar's definition follows CVarManager
+// below.
 export template <CVarValue T>
 class CVar;
 
 /// @brief Central registry of all console variables.
 ///
-/// Registration happens implicitly at static-init time via CVar<T>
-/// constructors.  Startup then applies the TOML config through
-/// LoadConfig(): the file's nested tables are flattened into dotted names
-/// (`[RHI.Vulkan] Validation` → "RHI.Vulkan.Validation") and each leaf
-/// value is written to the matching CVar.  Keys with no registered CVar
-/// and values of the wrong type are logged as warnings and skipped.
+/// Registration happens implicitly at static-init time via CVar<T> constructors. Startup then applies the
+/// TOML config through LoadConfig(): the file's nested tables are flattened into dotted names (`[RHI.Vulkan]
+/// Validation` → "RHI.Vulkan.Validation") and each leaf value is written to the matching CVar. Keys with no
+/// registered CVar and values of the wrong type are logged as warnings and skipped.
 ///
-/// Reads are non-const by design: String reads take the shared lock, so a
-/// "read" mutates registry synchronization state.
+/// Reads are non-const by design: String reads take the shared lock, so a "read" mutates registry
+/// synchronization state.
 export class CVarManager final : public Singleton<CVarManager> {
     friend class Singleton<CVarManager>;
     template <CVarValue T>
@@ -192,9 +189,8 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///        CVar whose dotted name matches its table path.
     /// @retval std::unexpected Parse error (e.g. file not found or invalid TOML).
     [[nodiscard]] auto LoadConfig(const Path& FilePath) -> std::expected<void, ErrorMessage> {
-        // Registration diagnostics were queued during static init, before
-        // the logger existed; LoadConfig is the first point where logging
-        // is guaranteed live, so flush them here.
+        // Registration diagnostics were queued during static init, before the logger existed; LoadConfig is
+        // the first point where logging is guaranteed live, so flush them here.
         FlushPendingDiagnostics();
 
         auto Result = toml::parse_file(FilePath.string());
@@ -272,8 +268,7 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///        leaves are applied as CVar values.
     auto ApplyTable(const toml::table& Table, const String& Prefix) -> void {
         for (const auto& [Key, Value] : Table) {
-            const String FullName =
-                Prefix.empty() ? String{Key.str()} : Format("{}.{}", Prefix, StringView{Key.str()});
+            const String FullName = Prefix.empty() ? String{Key.str()} : Format("{}.{}", Prefix, StringView{Key.str()});
             if (const auto* SubTable = Value.as_table())
                 ApplyTable(*SubTable, FullName);
             else
@@ -300,14 +295,11 @@ export class CVarManager final : public Singleton<CVarManager> {
         if (auto Converted = ConvertTomlNode<T>(Node))
             StoreEntry(It->second, *Converted);
         else
-            LogWarning("Config key '{}' value does not match CVar type {}; value ignored",
-                       Name,
-                       CVarTypeName<T>());
+            LogWarning("Config key '{}' value does not match CVar type {}; value ignored", Name, CVarTypeName<T>());
         return true;
     }
 
-    std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>>
-                        m_Registries;
+    std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>> m_Registries;
     std::shared_mutex   m_StringMutex; ///< Guards String entry values; arithmetic values are atomic.
     std::vector<String> m_PendingDiagnostics;
 };
@@ -315,8 +307,7 @@ export class CVarManager final : public Singleton<CVarManager> {
 /// @brief A console variable: namespace-scope registration object and
 ///        zero-lookup access handle.
 ///
-/// Register by constructing at namespace scope in any translation unit:
-/// ~~~{.cpp}
+/// Register by constructing at namespace scope in any translation unit: ~~~{.cpp}
 ///     CVar<bool> CVarRenderUseCSM{ "Render.UseCSM", true,
 ///         "Use cascaded shadow maps instead of a single shadow map" };
 ///
@@ -334,8 +325,7 @@ class CVar {
     ///                     override it at startup.
     /// @param Description  Human-readable explanation for future UI and logs.
     CVar(StringView Name, const T& DefaultValue, StringView Description)
-        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue)),
-          m_Name(Name) {}
+        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue)), m_Name(Name) {}
 
     /// @brief Read the current value.  Safe to call from any thread.
     [[nodiscard]] auto Get() const -> T {

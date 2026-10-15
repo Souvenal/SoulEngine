@@ -1,8 +1,8 @@
 /// @file   SlangCompiler/SlangTypes.cppm
 /// @brief  Slang-to-engine type mapping utilities.
 ///
-/// Pure conversion functions: Slang SDK enums / reflection types ->
-/// engine-side Shader module types.  No state, no I/O, no config access.
+/// Pure conversion functions: Slang SDK enums / reflection types -> engine-side Shader module types. No
+/// state, no I/O, no config access.
 
 module;
 
@@ -70,7 +70,7 @@ struct ShaderBindingShape {
         return ShaderBindingShape{.Type = ShaderResourceType::Sampler};
     case slang::TypeReflection::Kind::Resource: {
         const auto BaseResourceShape = static_cast<SlangResourceShapeIntegral>(TypeLayout->getResourceShape()) &
-            static_cast<SlangResourceShapeIntegral>(SLANG_RESOURCE_BASE_SHAPE_MASK);
+                                       static_cast<SlangResourceShapeIntegral>(SLANG_RESOURCE_BASE_SHAPE_MASK);
         if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_ACCELERATION_STRUCTURE))
             return ShaderBindingShape{.Type = ShaderResourceType::AccelerationStructure};
         auto Access = ToShaderBindingAccess(TypeLayout->getResourceAccess());
@@ -83,8 +83,8 @@ struct ShaderBindingShape {
         return ShaderBindingShape{.Type = ShaderResourceType::Texture, .Access = *Access};
     }
     default:
-        return std::unexpected(ErrorMessage(Format("Unsupported leaf type kind {} in reflection",
-                                                   magic_enum::enum_name(TypeLayout->getKind()))));
+        return std::unexpected(ErrorMessage(
+            Format("Unsupported leaf type kind {} in reflection", magic_enum::enum_name(TypeLayout->getKind()))));
     }
 }
 

@@ -50,4 +50,3 @@ The trade-off is that developers coming from OpenGL/GLM-style column-vector exam
 ## Non-Goals
 
 This ADR is not about general buffer or vertex data layout. It only defines the convention for shader-visible matrices and transform multiplication.
-

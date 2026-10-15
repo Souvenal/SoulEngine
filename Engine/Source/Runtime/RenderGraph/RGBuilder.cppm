@@ -23,7 +23,8 @@ export namespace SoulEngine {
 // module units, and at that instantiation point only exported declarations of this partition are visible.
 // Anonymous namespaces here would make every cross-module AddPass call fail to compile.
 
-// ── Aggregate walk ─────────────────────────────────────────────────────────
+// Aggregate walk
+
 // Hand-rolled aggregate field enumeration (no reflection): probe the aggregate's brace-acceptance arity at
 // compile time, then bind that many names with a structured binding. Fields not deriving from one of the two
 // view records (samplers, bindless arrays, CPU scalars) are passthrough — only views declare access. Cap: 16
@@ -48,7 +49,7 @@ consteval auto AcceptsFieldCount() -> bool {
 }
 
 /// @brief Highest arity the aggregate still accepts.
-/// 
+///
 /// Fields all carry defaults, so the maximum constructible arity is exactly the field count.
 template <typename T>
 consteval auto CountFields() -> std::size_t {
@@ -72,11 +73,10 @@ auto VisitField(FieldT& Field, FnT& On) -> void {
 
 // Boilerplate generator for the structured-binding arities of ForEachView. Defined outside the export block:
 // macros cannot be exported from a module, and this one must never leak to consumers.
-#define RG_FOREACH_VIEW_BRANCH(ARITY, ...)                                                                  \
-    if constexpr (Arity == ARITY) {                                                                         \
-        auto& [__VA_ARGS__] = Value;                                                                        \
-        std::apply([&](auto&... Field) { (VisitField(Field, On), ...); },                                   \
-                   std::forward_as_tuple(__VA_ARGS__));                                                     \
+#define RG_FOREACH_VIEW_BRANCH(ARITY, ...)                                                                             \
+    if constexpr (Arity == ARITY) {                                                                                    \
+        auto& [__VA_ARGS__] = Value;                                                                                   \
+        std::apply([&](auto&... Field) { (VisitField(Field, On), ...); }, std::forward_as_tuple(__VA_ARGS__));         \
     }
 
 export namespace SoulEngine {
@@ -86,23 +86,95 @@ auto ForEachView(ParameterT& Value, FnT&& On) -> void {
     constexpr std::size_t Arity = CountFields<std::remove_cvref_t<ParameterT>>();
     static_assert(Arity > 0, "RenderGraph Parameter must declare at least one field");
     if constexpr (Arity == 0) {
-    } else RG_FOREACH_VIEW_BRANCH(1, M0)
-    else RG_FOREACH_VIEW_BRANCH(2, M0, M1)
-    else RG_FOREACH_VIEW_BRANCH(3, M0, M1, M2)
-    else RG_FOREACH_VIEW_BRANCH(4, M0, M1, M2, M3)
-    else RG_FOREACH_VIEW_BRANCH(5, M0, M1, M2, M3, M4)
-    else RG_FOREACH_VIEW_BRANCH(6, M0, M1, M2, M3, M4, M5)
-    else RG_FOREACH_VIEW_BRANCH(7, M0, M1, M2, M3, M4, M5, M6)
-    else RG_FOREACH_VIEW_BRANCH(8, M0, M1, M2, M3, M4, M5, M6, M7)
-    else RG_FOREACH_VIEW_BRANCH(9, M0, M1, M2, M3, M4, M5, M6, M7, M8)
-    else RG_FOREACH_VIEW_BRANCH(10, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9)
-    else RG_FOREACH_VIEW_BRANCH(11, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10)
-    else RG_FOREACH_VIEW_BRANCH(12, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11)
-    else RG_FOREACH_VIEW_BRANCH(13, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12)
-    else RG_FOREACH_VIEW_BRANCH(14, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13)
-    else RG_FOREACH_VIEW_BRANCH(15, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14)
-    else RG_FOREACH_VIEW_BRANCH(16, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15)
-    else {
+    } else
+        RG_FOREACH_VIEW_BRANCH(1, M0)
+    else RG_FOREACH_VIEW_BRANCH(
+        2, M0, M1) else RG_FOREACH_VIEW_BRANCH(3, M0, M1, M2) else RG_FOREACH_VIEW_BRANCH(4,
+                                                                                          M0,
+                                                                                          M1,
+                                                                                          M2,
+                                                                                          M3) else RG_FOREACH_VIEW_BRANCH(5, M0, M1, M2, M3, M4) else RG_FOREACH_VIEW_BRANCH(6, M0, M1, M2, M3, M4, M5) else RG_FOREACH_VIEW_BRANCH(7, M0, M1, M2, M3, M4, M5, M6) else RG_FOREACH_VIEW_BRANCH(8, M0, M1, M2, M3, M4, M5, M6, M7) else RG_FOREACH_VIEW_BRANCH(9, M0, M1, M2, M3, M4, M5, M6, M7, M8) else RG_FOREACH_VIEW_BRANCH(10, M0, M1, M2, M3, M4, M5, M6, M7, M8, M9) else RG_FOREACH_VIEW_BRANCH(11,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M1,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M2,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M3,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M4,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M5,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M6,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M7,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M8,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M9,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         M10) else RG_FOREACH_VIEW_BRANCH(12,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M1,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M2,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M3,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M4,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M5,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M6,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M7,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M8,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M9,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M10,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          M11) else RG_FOREACH_VIEW_BRANCH(13,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M1,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M2,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M3,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M4,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M5,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M6,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M7,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M8,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M9,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M10,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M11,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           M12) else RG_FOREACH_VIEW_BRANCH(14,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M1,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M2,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M3,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M4,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M5,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M6,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M7,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M8,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M9,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M10,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M11,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M12,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            M13) else RG_FOREACH_VIEW_BRANCH(15,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M1,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M2,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M3,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M4,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M5,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M6,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M7,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M8,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M9,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M10,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M11,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M12,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M13,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             M14) else RG_FOREACH_VIEW_BRANCH(16,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M1,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M2,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M3,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M4,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M5,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M6,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M7,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M8,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M9,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M10,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M11,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M12,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M13,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M14,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              M15) else {
         static_assert(Arity <= 16, "RenderGraph Parameter aggregate walk supports at most 16 fields");
     }
 }
@@ -124,20 +196,20 @@ template <typename ViewT>
 export namespace SoulEngine {
 
 /// @brief Per-frame render graph builder (the UE FRDGBuilder analogue).
-/// 
+///
 /// Registration (Create*/Import/AddPass) records resources and constructs passes; a single Compile()
 /// validates, orders, prunes, realizes live transients, binds surviving pipelines, and assembles the
-/// surviving passes into a RenderPassList. Single-use:
-/// rebuild it every frame. Pooled transient texture refs return to RGTexturePool when the builder is
-/// destroyed (end of Render) — the compiled pass list holds its own copies, and reuse is safe by single-queue
-/// submission ordering plus per-frame image state initialization.
+/// surviving passes into a RenderPassList. Single-use: rebuild it every frame. Pooled transient texture refs
+/// return to RGTexturePool when the builder is destroyed (end of Render) — the compiled pass list holds its
+/// own copies, and reuse is safe by single-queue submission ordering plus per-frame image state
+/// initialization.
 class RenderGraphBuilder {
   public:
-    RenderGraphBuilder()                                       = default;
-    RenderGraphBuilder(const RenderGraphBuilder&)              = delete;
+    RenderGraphBuilder()                                             = default;
+    RenderGraphBuilder(const RenderGraphBuilder&)                    = delete;
     auto operator=(const RenderGraphBuilder&) -> RenderGraphBuilder& = delete;
-    RenderGraphBuilder(RenderGraphBuilder&&)                   = delete;
-    auto operator=(RenderGraphBuilder&&) -> RenderGraphBuilder& = delete;
+    RenderGraphBuilder(RenderGraphBuilder&&)                         = delete;
+    auto operator=(RenderGraphBuilder&&) -> RenderGraphBuilder&      = delete;
 
     ~RenderGraphBuilder() {
         // Return pooled transient textures immediately (RenderThread frame-end semantics). Graph-created
@@ -150,12 +222,11 @@ class RenderGraphBuilder {
     }
 
     /// @brief Transient buffer registration.
-    /// 
+    ///
     /// InitialData is graph-level sugar: the graph owns a copy and realize issues CreateBuffer +
     /// UploadBuffer.
-    [[nodiscard]] auto CreateBuffer(StringView                 Name,
-                                    const RHIBufferDesc&       Desc,
-                                    std::span<const std::byte> InitialData = {}) -> RGBuffer {
+    [[nodiscard]] auto
+    CreateBuffer(StringView Name, const RHIBufferDesc& Desc, std::span<const std::byte> InitialData = {}) -> RGBuffer {
         if (m_Compiled) {
             LogError("RenderGraph: CreateBuffer('{}') called after Compile(); the graph is immutable "
                      "after Compile — rebuild it each frame",
@@ -174,7 +245,9 @@ class RenderGraphBuilder {
         }
         if (!InitialData.empty() && InitialData.size_bytes() != Desc.SizeBytes) {
             LogError("RenderGraph: buffer '{}': InitialData is {} bytes but SizeBytes is {}",
-                     Name, InitialData.size_bytes(), Desc.SizeBytes);
+                     Name,
+                     InitialData.size_bytes(),
+                     Desc.SizeBytes);
             return {};
         }
         // Until the graph grows a cross-frame buffer pool, a graph buffer is an RHI-transient belt slice —
@@ -216,7 +289,7 @@ class RenderGraphBuilder {
     }
 
     /// @brief Import an externally-owned texture.
-    /// 
+    ///
     /// Imported resources are realized by their owner; their RHI identity is available immediately.
     [[nodiscard]] auto Import(const RHIRef<RHITexture>& Target) -> RGTexture {
         if (m_Compiled) {
@@ -242,7 +315,7 @@ class RenderGraphBuilder {
     }
 
     /// @brief Register a typed pass.
-    /// 
+    ///
     /// The Parameter IS the resource declaration: every view-typed field contributes one access to the
     /// ordering chain; non-view fields pass through to the constructor untouched. The pass is constructed
     /// here and lives on its node from then on; a pipeline pass's pipeline is bound at Compile, when
@@ -261,7 +334,7 @@ class RenderGraphBuilder {
 
         const auto PassIndex = static_cast<Uint32>(m_Passes.size());
         auto&      Node      = m_Passes.emplace_back();
-        Node.Name = String(PassName);
+        Node.Name            = String(PassName);
         if constexpr (requires { TPass::NeverPrune; })
             Node.NeverPrune = TPass::NeverPrune;
         // Stage class is known statically from the pass's RHI base type — no reflection, no runtime query.
@@ -273,32 +346,31 @@ class RenderGraphBuilder {
             Node.StageClass = RHIPassType::RayTracing;
         else if constexpr (std::is_base_of_v<IRHITransferPass, TPass>)
             Node.StageClass = RHIPassType::Transfer;
-        
+
         if constexpr (requires { TPass::BuildPipelineRequest(); }) {
             Node.HasPipeline = true;
             Node.PipelineKey = PipelineKeyOf<TPass>();
         }
 
-        // The pass is born here and owns the Parameter from this point on; the view pointers collected
-        // below lead into that Parameter, whose address has been final since allocation.
+        // The pass is born here and owns the Parameter from this point on; the view pointers collected below
+        // lead into that Parameter, whose address has been final since allocation.
         auto  P         = std::make_unique<typename TPass::Parameter>(std::move(In));
         auto* Parameter = P.get();
         Node.Pass       = std::make_unique<TPass>(std::move(P));
 
         ForEachView(*Parameter, [&](auto& Field) {
             const auto ResourceIndex = ViewResourceIndex(Field);
-            if (ResourceIndex == kRGInvalidIndex ||
-                ResourceIndex >= static_cast<Uint32>(m_Resources.size())) {
+            if (ResourceIndex == kRGInvalidIndex || ResourceIndex >= static_cast<Uint32>(m_Resources.size())) {
                 m_PendingError = Format("RenderGraph: pass '{}' touches an invalid resource handle", PassName);
                 return;
             }
             // A view with no role or no access means the field was declared with the erased record type
             // instead of the role-carrying template — roles belong to the pass.
             if (Field.Usage == decltype(Field.Usage){} || Field.Access == RHIAccess::None) {
-                m_PendingError = Format(
-                    "RenderGraph: pass '{}' has a view declaring no usage/access — declare roles in the "
-                    "pass Parameter and assign identities only at the wiring site",
-                    PassName);
+                m_PendingError =
+                    Format("RenderGraph: pass '{}' has a view declaring no usage/access — declare roles in the "
+                           "pass Parameter and assign identities only at the wiring site",
+                           PassName);
                 return;
             }
 
@@ -331,7 +403,7 @@ class RenderGraphBuilder {
     }
 
     /// @brief Validate, order, prune, realize, and assemble the frame's passes in one call.
-    /// 
+    ///
     /// An empty RenderPassList is a valid soft-degrade result (the frame's required pass could not be built);
     /// an unexpected is a hard frame error. Single-use: a graph compiles exactly once.
     [[nodiscard]] auto Compile() -> std::expected<RenderPassList, ErrorMessage> {
@@ -357,8 +429,7 @@ class RenderGraphBuilder {
                 for (Uint32 I = 0; I < PassCount; ++I) {
                     if (Done[I])
                         continue;
-                    const bool Ready = std::ranges::all_of(m_Passes[I].Dependencies,
-                                                           [&](Uint32 D) { return Done[D]; });
+                    const bool Ready = std::ranges::all_of(m_Passes[I].Dependencies, [&](Uint32 D) { return Done[D]; });
                     if (!Ready)
                         continue;
                     Done[I] = true;
@@ -372,8 +443,8 @@ class RenderGraphBuilder {
                         if (!Done[I])
                             Stuck += (Stuck.empty() ? "" : ", ") + m_Passes[I].Name;
                     }
-                    return std::unexpected(ErrorMessage(
-                        Format("RenderGraph: dependency cycle detected among passes: {}", Stuck)));
+                    return std::unexpected(
+                        ErrorMessage(Format("RenderGraph: dependency cycle detected among passes: {}", Stuck)));
                 }
             }
         }
@@ -439,10 +510,10 @@ class RenderGraphBuilder {
                         .Append(Format("RenderGraph: pipeline for pass '{}' failed to compile", m_Passes[I].Name)));
             }
             case RGPipelineState::Unknown:
-                return std::unexpected(ErrorMessage(Format(
-                    "RenderGraph: pipeline pass '{}' was never registered with the PipelineRegistry",
-                    m_Passes[I].Name)));
-            default: {  // Pending
+                return std::unexpected(ErrorMessage(
+                    Format("RenderGraph: pipeline pass '{}' was never registered with the PipelineRegistry",
+                           m_Passes[I].Name)));
+            default: { // Pending
                 std::vector<Uint32> Drop{I};
                 bool                DroppedSideEffect = false;
                 for (std::size_t K = 0; K < Drop.size(); ++K) {
@@ -470,13 +541,13 @@ class RenderGraphBuilder {
         // resource in a way its creation did not allow is a hard frame error, not a validation-layer
         // surprise.
         std::vector<bool> Live(m_Resources.size(), false);
-        // Kind is statically typed per vector — no unwrapping. The creation usage a view is checked
-        // against comes from the registered desc for graph-created resources and from the realized
-        // RHI object for imported ones; an import whose ref is not Ready yet skips the check (the
-        // owner validated its own creation, and the prologue reports the not-ready ref at emission).
+        // Kind is statically typed per vector — no unwrapping. The creation usage a view is checked against
+        // comes from the registered desc for graph-created resources and from the realized RHI object for
+        // imported ones; an import whose ref is not Ready yet skips the check (the owner validated its own
+        // creation, and the prologue reports the not-ready ref at emission).
         const auto CheckBufferUsage = [&](Uint32 I, const RGBufferViewData* V) -> std::expected<void, ErrorMessage> {
-            auto&      Resource = m_Resources[V->Buffer.Index];
-            const auto* Prop    = std::get_if<RGBufferProp>(&Resource.Prop);
+            auto&       Resource = m_Resources[V->Buffer.Index];
+            const auto* Prop     = std::get_if<RGBufferProp>(&Resource.Prop);
             if (!Prop)
                 return {};
             RHIBufferUsage Allowed = RHIBufferUsage::Unknown;
@@ -490,15 +561,16 @@ class RenderGraphBuilder {
                 Allowed               = Prop->Desc.Usage;
             }
             if ((static_cast<Uint32>(V->Usage) & ~static_cast<Uint32>(Allowed)) != 0)
-                return std::unexpected(ErrorMessage(Format(
-                    "RenderGraph: pass '{}' touches buffer '{}' in a way its creation usage does "
-                    "not allow — declare the usage union at creation",
-                    m_Passes[I].Name, Resource.Name)));
+                return std::unexpected(
+                    ErrorMessage(Format("RenderGraph: pass '{}' touches buffer '{}' in a way its creation usage does "
+                                        "not allow — declare the usage union at creation",
+                                        m_Passes[I].Name,
+                                        Resource.Name)));
             return {};
         };
         const auto CheckTextureUsage = [&](Uint32 I, const RGTextureViewData* V) -> std::expected<void, ErrorMessage> {
-            auto&      Resource = m_Resources[V->Texture.Index];
-            const auto* Prop    = std::get_if<RGTextureProp>(&Resource.Prop);
+            auto&       Resource = m_Resources[V->Texture.Index];
+            const auto* Prop     = std::get_if<RGTextureProp>(&Resource.Prop);
             if (!Prop)
                 return {};
             RHITextureUsage Allowed = RHITextureUsage::None;
@@ -512,10 +584,11 @@ class RenderGraphBuilder {
                 Allowed                = Prop->Desc.Usage;
             }
             if ((static_cast<Uint32>(V->Usage) & ~static_cast<Uint32>(Allowed)) != 0)
-                return std::unexpected(ErrorMessage(Format(
-                    "RenderGraph: pass '{}' touches texture '{}' in a way its creation usage does "
-                    "not allow — declare the usage union at creation",
-                    m_Passes[I].Name, Resource.Name)));
+                return std::unexpected(
+                    ErrorMessage(Format("RenderGraph: pass '{}' touches texture '{}' in a way its creation usage does "
+                                        "not allow — declare the usage union at creation",
+                                        m_Passes[I].Name,
+                                        Resource.Name)));
             return {};
         };
         for (Uint32 I = 0; I < PassCount; ++I) {
@@ -542,20 +615,20 @@ class RenderGraphBuilder {
                     continue;
                 if (auto* T = Resource.AsGraphTexture()) {
                     // The registered desc flows through verbatim — usage included (declared at creation).
-                    auto Desc = T->Desc;
+                    auto Desc        = T->Desc;
                     Desc.MemoryUsage = RHIMemoryUsage::GpuOnly;
-                    auto Created = Pool.Acquire(Resource.Name, Desc);
+                    auto Created     = Pool.Acquire(Resource.Name, Desc);
                     if (!Created)
                         return std::unexpected(Created.error().Append(
                             Format("RenderGraph: failed to realize transient texture '{}'", Resource.Name)));
                     T->Resolved = std::move(*Created);
                     T->FromPool = true;
                 } else if (auto* B = Resource.AsGraphBuffer()) {
-                    auto Desc = B->Desc;
+                    auto Desc        = B->Desc;
                     // The graph owns placement: transient buffers are belt slices, hence CpuToGpu by
                     // construction.
                     Desc.MemoryUsage = RHIMemoryUsage::CpuToGpu;
-                    auto Created  = Device.CreateBuffer(Resource.Name, Desc);
+                    auto Created     = Device.CreateBuffer(Resource.Name, Desc);
                     if (!Created)
                         return std::unexpected(Created.error().Append(
                             Format("RenderGraph: failed to realize transient buffer '{}'", Resource.Name)));
@@ -570,9 +643,9 @@ class RenderGraphBuilder {
             }
         }
 
-        // Step 5: resolve every surviving pass's views against the realized table. The pointers lead into
-        // the passes' Parameters, whose addresses have been final since AddPass; this is the single write to
-        // a view after registration.
+        // Step 5: resolve every surviving pass's views against the realized table. The pointers lead into the
+        // passes' Parameters, whose addresses have been final since AddPass; this is the single write to a
+        // view after registration.
         for (Uint32 I = 0; I < PassCount; ++I) {
             if (!Required[I] || Pruned[I])
                 continue;
@@ -582,24 +655,22 @@ class RenderGraphBuilder {
                 const auto* Prop = std::get_if<RGBufferProp>(&m_Resources[V->Buffer.Index].Prop);
                 if (!Prop)
                     return std::unexpected(ErrorMessage(
-                        Format("RenderGraph: pass '{}' views a buffer handle over a texture entry",
-                               m_Passes[I].Name)));
+                        Format("RenderGraph: pass '{}' views a buffer handle over a texture entry", m_Passes[I].Name)));
                 V->Resolved = Prop->Resolved;
             }
             for (auto* V : m_Passes[I].Textures) {
                 const auto* Prop = std::get_if<RGTextureProp>(&m_Resources[V->Texture.Index].Prop);
                 if (!Prop)
                     return std::unexpected(ErrorMessage(
-                        Format("RenderGraph: pass '{}' views a texture handle over a buffer entry",
-                               m_Passes[I].Name)));
+                        Format("RenderGraph: pass '{}' views a texture handle over a buffer entry", m_Passes[I].Name)));
                 V->Resolved = Prop->Resolved;
             }
         }
 
         // Step 6: bind the surviving pipeline passes' Ready pipelines, then move every survivor into the
         // frame list in final order, each paired with its prologue — the dst-only state requirements its
-        // declared accesses map to. Present is an explicit BlitToSwapchainPass (NeverPrune), so no pass
-        // needs any frame-output marking here.
+        // declared accesses map to. Present is an explicit BlitToSwapchainPass (NeverPrune), so no pass needs
+        // any frame-output marking here.
         RenderPassList Result{};
         auto&          Registry = PipelineRegistry::Get();
         for (const auto I : Order) {
@@ -607,14 +678,14 @@ class RenderGraphBuilder {
                 continue;
             auto& Node = m_Passes[I];
             if (Node.HasPipeline) {
-                // Prune already saw Ready; the registry answers again here, and a pipeline gone in
-                // between is a hard frame error.
+                // Prune already saw Ready; the registry answers again here, and a pipeline gone in between is
+                // a hard frame error.
                 const auto Bind = [&](auto* Pass, auto Pipeline) -> std::expected<void, ErrorMessage> {
                     if (!Pipeline)
-                        return std::unexpected(ErrorMessage(Format(
-                            "RenderGraph: pipeline for pass '{}' was Ready at prune time but is gone at "
-                            "bind",
-                            Node.Name)));
+                        return std::unexpected(ErrorMessage(
+                            Format("RenderGraph: pipeline for pass '{}' was Ready at prune time but is gone at "
+                                   "bind",
+                                   Node.Name)));
                     Pass->BindPipeline(std::move(Pipeline));
                     return {};
                 };
@@ -638,8 +709,7 @@ class RenderGraphBuilder {
                 if (!Bound)
                     return std::unexpected(std::move(Bound.error()));
             }
-            Result.Entries.push_back({.Pass     = std::move(Node.Pass),
-                                      .Prologue = BuildPassPrologue(Node, m_Resources)});
+            Result.Entries.push_back({.Pass = std::move(Node.Pass), .Prologue = BuildPassPrologue(Node, m_Resources)});
         }
         return Result;
     }

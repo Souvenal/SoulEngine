@@ -2,9 +2,8 @@
 /// @brief  Slang shader reflection extraction — normalized bindings, push
 ///         constants, vertex inputs.
 ///
-/// Stateless extraction functions that translate Slang reflection API objects
-/// into the engine's uniform ShaderReflection representation.
-/// All Slang SDK dependencies are isolated to this partition.
+/// Stateless extraction functions that translate Slang reflection API objects into the engine's uniform
+/// ShaderReflection representation. All Slang SDK dependencies are isolated to this partition.
 
 module;
 
@@ -23,9 +22,9 @@ namespace SoulEngine {
 
 namespace {
 
-// ── Reflection DFS ───────────────────────────────────────────────────
-// The whole program interface is collected by one depth-first walk over the
-// Slang variable tree.  Two orthogonal dimensions meet at every node:
+// Reflection DFS
+// The whole program interface is collected by one depth-first walk over the Slang variable tree. Two
+// orthogonal dimensions meet at every node:
 //
 //   * Location coordinates accumulate along the path.  Slang reports every
 //     variable's binding space / binding index relative to its enclosing
@@ -37,8 +36,8 @@ namespace {
 //   * The type-layout kind drives recursion: containers (ParameterBlock,
 //     struct) descend into their children, resource leaves emit bindings.
 //
-// Push constants and descriptor bindings are therefore emitted by the same
-// walk instead of two separate extraction passes.
+// Push constants and descriptor bindings are therefore emitted by the same walk instead of two separate
+// extraction passes.
 
 struct ReflectionCursor {
     String Path        = {};
@@ -49,9 +48,9 @@ struct ReflectionCursor {
 };
 
 struct ReflectionSinks {
-    slang::ShaderReflection*                ProgramLayout          = nullptr;
-    std::vector<ShaderBinding>*             Bindings               = nullptr;
-    std::vector<ShaderPushConstantRange>*   PushConstants          = nullptr;
+    slang::ShaderReflection*                   ProgramLayout           = nullptr;
+    std::vector<ShaderBinding>*                Bindings                = nullptr;
+    std::vector<ShaderPushConstantRange>*      PushConstants           = nullptr;
     std::vector<ShaderSpecializationConstant>* SpecializationConstants = nullptr;
 };
 
@@ -67,40 +66,38 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return Prefix.empty() ? Segment : Format("{}.{}", Prefix, Segment);
 }
 
-[[nodiscard]] auto ExtractArrayCount(slang::ShaderReflection* ProgramLayout,
+[[nodiscard]] auto ExtractArrayCount(slang::ShaderReflection*     ProgramLayout,
                                      slang::TypeLayoutReflection* TypeLayout,
                                      StringView ParameterName) -> std::expected<Uint32, ErrorMessage> {
     if (!TypeLayout || !TypeLayout->isArray())
         return 1U;
 
-    // Slang needs the full program layout to resolve array element counts,
-    // especially for arrays whose size is derived after composition/linking.
+    // Slang needs the full program layout to resolve array element counts, especially for arrays whose size
+    // is derived after composition/linking.
     const auto ElementCount = TypeLayout->getElementCount(ProgramLayout);
     if (ElementCount == SLANG_UNKNOWN_SIZE) {
         return std::unexpected(
             ErrorMessage(Format("Shader parameter '{}' has an unsupported array count in reflection", ParameterName)));
     }
 
-    // Normalize runtime-array sentinels into the backend-independent Shader
-    // reflection contract. Slang documents SLANG_UNBOUNDED_SIZE, but the
-    // current SDK can return INT32_MAX for unsized descriptor arrays.
-    if (ElementCount == SLANG_UNBOUNDED_SIZE ||
-        ElementCount == static_cast<size_t>(std::numeric_limits<Int32>::max()))
+    // Normalize runtime-array sentinels into the backend-independent Shader reflection contract. Slang
+    // documents SLANG_UNBOUNDED_SIZE, but the current SDK can return INT32_MAX for unsized descriptor arrays.
+    if (ElementCount == SLANG_UNBOUNDED_SIZE || ElementCount == static_cast<size_t>(std::numeric_limits<Int32>::max()))
         return kShaderReflectionArrayUnboundedSize;
     return static_cast<Uint32>(ElementCount);
 }
 
 [[nodiscard]] auto EmitPushConstantRange(slang::VariableLayoutReflection* Var,
-                                         size_t                          Base,
-                                         slang::ParameterCategory        Category,
-                                         const String&                   Path,
-                                         ReflectionSinks&                Sinks) -> std::expected<void, ErrorMessage> {
+                                         size_t                           Base,
+                                         slang::ParameterCategory         Category,
+                                         const String&                    Path,
+                                         ReflectionSinks&                 Sinks) -> std::expected<void, ErrorMessage> {
     auto* TypeLayout = Var->getTypeLayout();
     if (!TypeLayout)
         return {};
 
-    // Push constants are not descriptor bindings.  Keep them as byte ranges
-    // so the Vulkan backend can build pipeline-layout push-constant ranges.
+    // Push constants are not descriptor bindings. Keep them as byte ranges so the Vulkan backend can build
+    // pipeline-layout push-constant ranges.
     const auto Offset = Var->getOffset(Category);
     const auto Size   = TypeLayout->getSize(Category);
     if (Offset == SLANG_UNKNOWN_SIZE || Size == SLANG_UNKNOWN_SIZE || Size == SLANG_UNBOUNDED_SIZE) {
@@ -117,16 +114,14 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
 [[nodiscard]] auto EmitSpecializationConstant(slang::VariableLayoutReflection* Var,
                                               const String&                    Path,
-                                              ReflectionSinks&                 Sinks)
-    -> std::expected<void, ErrorMessage> {
+                                              ReflectionSinks& Sinks) -> std::expected<void, ErrorMessage> {
     auto* TypeLayout = Var->getTypeLayout();
     if (!TypeLayout)
         return {};
 
     const auto ConstantId = Var->getOffset(slang::ParameterCategory::SpecializationConstant);
     if (ConstantId == SLANG_UNKNOWN_SIZE)
-        return std::unexpected(
-            ErrorMessage(Format("Specialization constant '{}' is missing a constant id", Path)));
+        return std::unexpected(ErrorMessage(Format("Specialization constant '{}' is missing a constant id", Path)));
 
     const auto ScalarType = ToShaderScalarType(TypeLayout->getScalarType());
     if (ScalarType == ShaderScalarType::Unknown)
@@ -155,19 +150,16 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
                                  const ReflectionCursor&          Parent,
                                  ReflectionSinks&                 Sinks,
                                  ReflectionVisitMode              Mode,
-                                 bool                             bAllowParameterBlock)
-    -> std::expected<void, ErrorMessage> {
+                                 bool bAllowParameterBlock) -> std::expected<void, ErrorMessage> {
     if (!Var)
         return {};
 
     const String Path = AppendPath(Parent.Path, Var->getName());
 
-    // Push constants live on the category axis, independent of the type kind.
-    // Slang lowers ordinary-data `uniform` entry-point parameters to SPIR-V
-    // push constants and reports them under the Uniform category, while
-    // explicitly attributed global push-constant parameters use
-    // PushConstantBuffer.  A variable that occupies push-constant space holds
-    // ordinary data only, so the walk never descends past it.
+    // Push constants live on the category axis, independent of the type kind. Slang lowers ordinary-data
+    // `uniform` entry-point parameters to SPIR-V push constants and reports them under the Uniform category,
+    // while explicitly attributed global push-constant parameters use PushConstantBuffer. A variable that
+    // occupies push-constant space holds ordinary data only, so the walk never descends past it.
     if (Mode == ReflectionVisitMode::PushConstantsOnly) {
         if (!HasCategory(Var, slang::ParameterCategory::Uniform))
             return {};
@@ -178,7 +170,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     }
 
     // Slang [SpecializationConstant] globals live on the SpecializationConstant category axis: the offset is
-    // the Vulkan constant id.  They occupy no descriptor slot.
+    // the Vulkan constant id. They occupy no descriptor slot.
     if (HasCategory(Var, slang::ParameterCategory::SpecializationConstant))
         return EmitSpecializationConstant(Var, Path, Sinks);
 
@@ -186,31 +178,27 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!TypeLayout)
         return {};
 
-    // Slang reports a variable's register-space (set) and descriptor-slot
-    // (binding) coordinates relative to its enclosing scope; both come back
-    // as UnknownBindingIndex when the variable does not occupy that axis.
+    // Slang reports a variable's register-space (set) and descriptor-slot (binding) coordinates relative to
+    // its enclosing scope; both come back as UnknownBindingIndex when the variable does not occupy that axis.
     const auto SpaceIndex = Var->getBindingSpace();
     const auto SlotIndex  = Var->getBindingIndex();
 
-    // A descriptor array occupies one binding as a whole, so array layers are
-    // peeled only to classify the element kind; the count is extracted from
-    // the un-stripped layout at leaf emission.
+    // A descriptor array occupies one binding as a whole, so array layers are peeled only to classify the
+    // element kind; the count is extracted from the un-stripped layout at leaf emission.
     auto* LeafLayout = StripArrayTypeLayout(TypeLayout);
     if (!LeafLayout)
         return {};
 
     switch (LeafLayout->getKind()) {
     case slang::TypeReflection::Kind::ParameterBlock: {
-        // A ParameterBlock owns an entire descriptor set: the block variable
-        // carries the set on the RegisterSpace axis and its element-struct
-        // fields bind from slot zero inside that set.
+        // A ParameterBlock owns an entire descriptor set: the block variable carries the set on the
+        // RegisterSpace axis and its element-struct fields bind from slot zero inside that set.
         if (!bAllowParameterBlock) {
-            return std::unexpected(ErrorMessage(Format(
-                "Nested ParameterBlock '{}' is not supported; flatten shader parameter groups instead",
-                Path)));
+            return std::unexpected(ErrorMessage(
+                Format("Nested ParameterBlock '{}' is not supported; flatten shader parameter groups instead", Path)));
         }
-        // A ParameterBlock reports its descriptor set through its binding
-        // index rather than a register-space coordinate.
+        // A ParameterBlock reports its descriptor set through its binding index rather than a register-space
+        // coordinate.
         if (SlotIndex == UnknownBindingIndex) {
             return std::unexpected(
                 ErrorMessage(Format("Shader parameter '{}' is missing a concrete descriptor set location", Path)));
@@ -240,13 +228,11 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         return {};
     }
     case slang::TypeReflection::Kind::Struct: {
-        // A plain struct is a resource facade or aggregate (e.g.
-        // GeometryRecordTable): its descriptor bindings live on the inner
-        // fields, so descend instead of treating the struct itself as a leaf.
+        // A plain struct is a resource facade or aggregate (e.g. GeometryRecordTable): its descriptor
+        // bindings live on the inner fields, so descend instead of treating the struct itself as a leaf.
         if (TypeLayout->isArray()) {
             return std::unexpected(ErrorMessage(Format(
-                "Shader parameter '{}' is an array of structs with resource members, which is not supported",
-                Path)));
+                "Shader parameter '{}' is an array of structs with resource members, which is not supported", Path)));
         }
         const ReflectionCursor StructScope{
             .Path        = Path,
@@ -267,14 +253,13 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         return {};
     }
     default: {
-        // Ordinary data (scalars, vectors, matrices) occupies no descriptor
-        // slot; it lives in an implicit constant buffer and never becomes an
-        // engine binding.
+        // Ordinary data (scalars, vectors, matrices) occupies no descriptor slot; it lives in an implicit
+        // constant buffer and never becomes an engine binding.
         if (!HasCategory(Var, slang::ParameterCategory::DescriptorTableSlot))
             return {};
         if (SlotIndex == UnknownBindingIndex) {
-            return std::unexpected(ErrorMessage(
-                Format("Shader parameter '{}' is missing a concrete descriptor binding location", Path)));
+            return std::unexpected(
+                ErrorMessage(Format("Shader parameter '{}' is missing a concrete descriptor binding location", Path)));
         }
 
         auto ArrayCount = ExtractArrayCount(Sinks.ProgramLayout, TypeLayout, Path);
@@ -283,29 +268,27 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
         auto Shape = ToShaderBindingShapeFromLeafLayout(LeafLayout);
         if (!Shape) {
-            return std::unexpected(
-                Shape.error().Append(Format("Failed to normalize shader parameter '{}'", Path)));
+            return std::unexpected(Shape.error().Append(Format("Failed to normalize shader parameter '{}'", Path)));
         }
 
         Sinks.Bindings->emplace_back(ShaderBinding{
             .ParameterPath = Path,
-            .Set           = static_cast<Uint32>(SpaceIndex != UnknownBindingIndex ? Parent.Set + SpaceIndex
-                                                                                   : Parent.Set),
-            .BindingIndex  = static_cast<Uint32>(Parent.BindingBase + SlotIndex),
-            .Type          = Shape->Type,
-            .Access        = Shape->Access,
-            .ArrayCount    = *ArrayCount,
+            .Set = static_cast<Uint32>(SpaceIndex != UnknownBindingIndex ? Parent.Set + SpaceIndex : Parent.Set),
+            .BindingIndex = static_cast<Uint32>(Parent.BindingBase + SlotIndex),
+            .Type         = Shape->Type,
+            .Access       = Shape->Access,
+            .ArrayCount   = *ArrayCount,
         });
         return {};
     }
     }
 }
 
-[[nodiscard]] auto CollectProgramInterface(slang::ShaderReflection*                       ProgramLayout,
+[[nodiscard]] auto CollectProgramInterface(slang::ShaderReflection*                      ProgramLayout,
                                            std::span<slang::EntryPointReflection* const> EntryPoints,
-                                           std::vector<ShaderBinding>&                    Bindings,
-                                           std::vector<ShaderPushConstantRange>&          PushConstants,
-                                           std::vector<ShaderSpecializationConstant>&     SpecializationConstants)
+                                           std::vector<ShaderBinding>&                   Bindings,
+                                           std::vector<ShaderPushConstantRange>&         PushConstants,
+                                           std::vector<ShaderSpecializationConstant>&    SpecializationConstants)
     -> std::expected<void, ErrorMessage> {
     if (!ProgramLayout)
         return {};
@@ -317,8 +300,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         .SpecializationConstants = &SpecializationConstants,
     };
 
-    // Global parameters carry every descriptor binding plus explicitly
-    // attributed push-constant blocks.
+    // Global parameters carry every descriptor binding plus explicitly attributed push-constant blocks.
     for (unsigned Index = 0; Index < ProgramLayout->getParameterCount(); ++Index) {
         if (auto R = VisitVariable(ProgramLayout->getParameterByIndex(Index),
                                    ReflectionCursor{},
@@ -345,8 +327,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return {};
 }
 
-[[nodiscard]] auto ExtractBindlessSpace(slang::ShaderReflection* ProgramLayout)
-    -> std::optional<Uint32> {
+[[nodiscard]] auto ExtractBindlessSpace(slang::ShaderReflection* ProgramLayout) -> std::optional<Uint32> {
     if (!ProgramLayout)
         return std::nullopt;
     const auto Space = ProgramLayout->getBindlessSpaceIndex();
@@ -387,7 +368,7 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     return Merged;
 }
 
-[[nodiscard]] auto ExtractVertexInputsFromVarLayout(slang::VariableLayoutReflection*           VarLayout,
+[[nodiscard]] auto ExtractVertexInputsFromVarLayout(slang::VariableLayoutReflection*         VarLayout,
                                                     std::vector<ShaderVertexInputAttribute>& VertexInputs)
     -> std::expected<void, ErrorMessage> {
     if (!VarLayout || HasCategory(VarLayout, slang::ParameterCategory::Uniform))
@@ -397,9 +378,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!TypeLayout)
         return {};
 
-    // Entry-point inputs are often reflected as a single struct parameter.
-    // Flatten it into individual vertex attributes so RHI vertex input
-    // validation can reason about locations and formats directly.
+    // Entry-point inputs are often reflected as a single struct parameter. Flatten it into individual vertex
+    // attributes so RHI vertex input validation can reason about locations and formats directly.
     if (TypeLayout->getKind() == slang::TypeReflection::Kind::Struct) {
         for (unsigned int FieldIndex = 0; FieldIndex < TypeLayout->getFieldCount(); ++FieldIndex) {
             if (auto R = ExtractVertexInputsFromVarLayout(TypeLayout->getFieldByIndex(FieldIndex), VertexInputs); !R) {
@@ -410,13 +390,13 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     }
 
     StringView SemanticName = VarLayout->getSemanticName() ? StringView(VarLayout->getSemanticName()) : StringView{};
-    // System-value semantics such as SV_VertexID are generated by the pipeline
-    // and must not be matched against CPU vertex-buffer layout.
+    // System-value semantics such as SV_VertexID are generated by the pipeline and must not be matched
+    // against CPU vertex-buffer layout.
     if (IsSystemValueSemantic(SemanticName))
         return {};
 
-    std::optional<Uint32> Location            = std::nullopt;
-    const auto            BindingIndex        = VarLayout->getBindingIndex();
+    std::optional<Uint32> Location     = std::nullopt;
+    const auto            BindingIndex = VarLayout->getBindingIndex();
     if (BindingIndex != static_cast<unsigned>(SLANG_UNKNOWN_SIZE))
         Location = static_cast<Uint32>(BindingIndex);
 
@@ -454,14 +434,13 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!ProgramLayout || !VertexEntryPoint || !FragmentEntryPoint)
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
-    // Bindings and push constants come from the linked program layout so they
-    // include all graphics stages.  Vertex inputs come specifically from the
-    // vertex entry point because fragment inputs are interpolants, not CPU
-    // vertex-buffer attributes.
-    std::vector<ShaderBinding>               Bindings;
-    std::vector<ShaderPushConstantRange>     PushConstants;
+    // Bindings and push constants come from the linked program layout so they include all graphics stages.
+    // Vertex inputs come specifically from the vertex entry point because fragment inputs are interpolants,
+    // not CPU vertex-buffer attributes.
+    std::vector<ShaderBinding>                Bindings;
+    std::vector<ShaderPushConstantRange>      PushConstants;
     std::vector<ShaderSpecializationConstant> SpecializationConstants;
-    const std::array                         EntryPoints{VertexEntryPoint, FragmentEntryPoint};
+    const std::array                          EntryPoints{VertexEntryPoint, FragmentEntryPoint};
     if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants, SpecializationConstants);
         !R)
         return std::unexpected(std::move(R.error()));
@@ -485,10 +464,10 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     if (!ProgramLayout || !ComputeEntryPoint)
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
-    std::vector<ShaderBinding>               Bindings;
-    std::vector<ShaderPushConstantRange>     PushConstants;
+    std::vector<ShaderBinding>                Bindings;
+    std::vector<ShaderPushConstantRange>      PushConstants;
     std::vector<ShaderSpecializationConstant> SpecializationConstants;
-    const std::array                         EntryPoints{ComputeEntryPoint};
+    const std::array                          EntryPoints{ComputeEntryPoint};
     if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants, SpecializationConstants);
         !R)
         return std::unexpected(std::move(R.error()));
@@ -502,14 +481,14 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
     };
 }
 
-[[nodiscard]] auto BuildRayTracingShaderReflection(
-    slang::ShaderReflection* ProgramLayout, std::span<slang::EntryPointReflection* const> EntryPoints)
+[[nodiscard]] auto BuildRayTracingShaderReflection(slang::ShaderReflection*                      ProgramLayout,
+                                                   std::span<slang::EntryPointReflection* const> EntryPoints)
     -> std::expected<ShaderReflection, ErrorMessage> {
     if (!ProgramLayout || EntryPoints.empty())
         return std::unexpected(ErrorMessage("Shader reflection is incomplete for a compiled entry point"));
 
-    std::vector<ShaderBinding>               Bindings;
-    std::vector<ShaderPushConstantRange>     PushConstants;
+    std::vector<ShaderBinding>                Bindings;
+    std::vector<ShaderPushConstantRange>      PushConstants;
     std::vector<ShaderSpecializationConstant> SpecializationConstants;
     if (auto R = CollectProgramInterface(ProgramLayout, EntryPoints, Bindings, PushConstants, SpecializationConstants);
         !R)

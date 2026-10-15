@@ -3,8 +3,8 @@
 
 module;
 
-// Required while Scene exposes entt::registry in its object layout. SponzaApplication's
-// Application base can instantiate Scene lifetime operations in this module.
+// Required while Scene exposes entt::registry in its object layout. SponzaApplication's Application base can
+// instantiate Scene lifetime operations in this module.
 #include <entt/entt.hpp>
 
 export module SponzaApp;

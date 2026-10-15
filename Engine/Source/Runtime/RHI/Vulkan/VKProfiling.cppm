@@ -41,10 +41,9 @@ auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer&
     Ctx->Collect(static_cast<VkCommandBuffer>(*CommandBuffer));
 }
 
-/// RAII command-buffer annotation: emits a VK_EXT_debug_utils label and a
-/// Tracy GPU zone for the same region. The label is emitted when debug utils
-/// are enabled (checked at construction and destruction); the zone no-ops
-/// when no Tracy GPU context is available or the name is empty.
+/// RAII command-buffer annotation: emits a VK_EXT_debug_utils label and a Tracy GPU zone for the same region.
+/// The label is emitted when debug utils are enabled (checked at construction and destruction); the zone
+/// no-ops when no Tracy GPU context is available or the name is empty.
 ///
 /// @note Validation-layer false positive: every pass zone recorded through
 ///       this scope writes its timestamps into a *secondary* command buffer,
@@ -60,12 +59,16 @@ auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer&
 ///       confirmed to never trigger the report (2026-09-21).
 class LabelScope final {
   public:
-    LabelScope(const VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer,
-               StringView Name, std::source_location SourceLocation = std::source_location::current())
-        : m_ResourceContext(ResourceContext)
-        , m_CommandBuffer(CommandBuffer)
-        , m_Zone(TracyCtx(ResourceContext), &GetZoneSourceLocation(Name, SourceLocation),
-            static_cast<VkCommandBuffer>(*CommandBuffer), TracyCtx(ResourceContext) != nullptr && !Name.empty()) {
+    LabelScope(const VulkanResourceContext& ResourceContext,
+               vk::raii::CommandBuffer&     CommandBuffer,
+               StringView                   Name,
+               std::source_location         SourceLocation = std::source_location::current())
+        : m_ResourceContext(ResourceContext),
+          m_CommandBuffer(CommandBuffer),
+          m_Zone(TracyCtx(ResourceContext),
+                 &GetZoneSourceLocation(Name, SourceLocation),
+                 static_cast<VkCommandBuffer>(*CommandBuffer),
+                 TracyCtx(ResourceContext) != nullptr && !Name.empty()) {
         if (m_ResourceContext.GetDebugUtils().IsEnabled())
             BeginLabel(CommandBuffer, Name);
     }
@@ -92,15 +95,20 @@ class LabelScope final {
         });
     }
 
-    static const tracy::SourceLocationData& GetZoneSourceLocation(StringView Name, const std::source_location& SourceLocation) {
+    static const tracy::SourceLocationData& GetZoneSourceLocation(StringView                  Name,
+                                                                  const std::source_location& SourceLocation) {
         static const tracy::SourceLocationData Empty{"", "", "", 0, 0};
         struct StringHash {
             using is_transparent = void;
-            auto operator()(StringView Value) const -> Uint64 { return std::hash<StringView>{}(Value); }
+            auto operator()(StringView Value) const -> Uint64 {
+                return std::hash<StringView>{}(Value);
+            }
         };
         struct StringEqual {
             using is_transparent = void;
-            auto operator()(StringView Lhs, StringView Rhs) const -> bool { return Lhs == Rhs; }
+            auto operator()(StringView Lhs, StringView Rhs) const -> bool {
+                return Lhs == Rhs;
+            }
         };
         static std::unordered_map<String, tracy::SourceLocationData, StringHash, StringEqual> ZoneSourceLocations;
         if (Name.empty())
@@ -109,8 +117,11 @@ class LabelScope final {
             return It->second;
         auto [Iterator, Inserted] = ZoneSourceLocations.try_emplace(String{Name});
         if (Inserted)
-            Iterator->second = tracy::SourceLocationData{ Iterator->first.c_str(), SourceLocation.function_name(),
-                SourceLocation.file_name(), SourceLocation.line(), 0 };
+            Iterator->second = tracy::SourceLocationData{Iterator->first.c_str(),
+                                                         SourceLocation.function_name(),
+                                                         SourceLocation.file_name(),
+                                                         SourceLocation.line(),
+                                                         0};
         return Iterator->second;
     }
 

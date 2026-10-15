@@ -14,10 +14,10 @@ Geometry:
     Measure Seven Colored Lights:
     - 1,288,249 vertices
     - 1,294,894 triangles
-    - 10,989 emissive triangles 
+    - 10,989 emissive triangles
 
 Textures (compressed .DDS):
-- BaseColor 
+- BaseColor
     RGB channels: BaseColor value
     Alpha channel: Opacity
 

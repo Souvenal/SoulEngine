@@ -19,7 +19,9 @@ inline constexpr Uint32 kRGInvalidIndex = 0xFFFFFFFF;
 struct RGTexture {
     Uint32 Index = kRGInvalidIndex;
 
-    [[nodiscard]] auto IsValid() const noexcept -> bool { return Index != kRGInvalidIndex; }
+    [[nodiscard]] auto IsValid() const noexcept -> bool {
+        return Index != kRGInvalidIndex;
+    }
     [[nodiscard]] auto operator==(const RGTexture&) const noexcept -> bool = default;
 };
 
@@ -29,7 +31,9 @@ struct RGTexture {
 struct RGBuffer {
     Uint32 Index = kRGInvalidIndex;
 
-    [[nodiscard]] auto IsValid() const noexcept -> bool { return Index != kRGInvalidIndex; }
+    [[nodiscard]] auto IsValid() const noexcept -> bool {
+        return Index != kRGInvalidIndex;
+    }
     [[nodiscard]] auto operator==(const RGBuffer&) const noexcept -> bool = default;
 };
 
@@ -42,7 +46,7 @@ struct RGTextureViewData {
     RHITextureUsage     Usage    = RHITextureUsage::None;
     RHISubresourceRange Range    = {};
     RHIAccess           Access   = {};
-    RHIRef<RHITexture>  Resolved = {};  ///< Graph-resolved resource; valid from pass execution time on.
+    RHIRef<RHITexture>  Resolved = {}; ///< Graph-resolved resource; valid from pass execution time on.
 
     /// @brief The ready RHI view over Resolved, built from the declared usage, range, and access.
     [[nodiscard]] auto ResolvedView() const -> RHITextureView {
@@ -54,15 +58,20 @@ struct RGTextureViewData {
 /// site assigns the resource identity only.
 ///
 /// The pass alone knows how it consumes the resource. With role and access in the field type, the Parameter
-/// stays an aggregate and the wiring site initializes each field by name with the identity alone
-/// (`{.Output = Target}`); assigning a whole record to a field is ill-formed, so the declared role cannot
-/// be reset. At Compile the graph fills `.Resolved` with the realized (or imported) resource; pass execution
-/// builds the ready RHI view from the declared usage, range, and access on demand via ResolvedView().
+/// stays an aggregate and the wiring site initializes each field by name with the identity alone (`{.Output =
+/// Target}`); assigning a whole record to a field is ill-formed, so the declared role cannot be reset. At
+/// Compile the graph fills `.Resolved` with the realized (or imported) resource; pass execution builds the
+/// ready RHI view from the declared usage, range, and access on demand via ResolvedView().
 template <RHITextureUsage U, RHIAccess A>
 struct RGTextureView : RGTextureViewData {
     // Base members take no declaration-site defaults from here, so the declared role lands in the ctor body.
-    RGTextureView() { Usage = U; Access = A; }
-    RGTextureView(RGTexture In) : RGTextureView() { Texture = In; }
+    RGTextureView() {
+        Usage  = U;
+        Access = A;
+    }
+    RGTextureView(RGTexture In) : RGTextureView() {
+        Texture = In;
+    }
 };
 
 /// @brief Type-erased buffer view record: identity, role, access, and the graph-resolved resource.
@@ -73,7 +82,7 @@ struct RGBufferViewData {
     RGBuffer          Buffer   = {};
     RHIBufferUsage    Usage    = RHIBufferUsage::Unknown;
     RHIAccess         Access   = {};
-    RHIRef<RHIBuffer> Resolved = {};  ///< Graph-resolved resource; valid from pass execution time on.
+    RHIRef<RHIBuffer> Resolved = {}; ///< Graph-resolved resource; valid from pass execution time on.
 
     /// @brief The ready RHI view over Resolved, built from the declared usage and access.
     [[nodiscard]] auto ResolvedView() const -> RHIBufferView {
@@ -88,8 +97,13 @@ struct RGBufferViewData {
 template <RHIBufferUsage U, RHIAccess A>
 struct RGBufferView : RGBufferViewData {
     // Base members take no declaration-site defaults from here, so the declared role lands in the ctor body.
-    RGBufferView() { Usage = U; Access = A; }
-    RGBufferView(RGBuffer In) : RGBufferView() { Buffer = In; }
+    RGBufferView() {
+        Usage  = U;
+        Access = A;
+    }
+    RGBufferView(RGBuffer In) : RGBufferView() {
+        Buffer = In;
+    }
 };
 
 /// @brief One registered pass.
@@ -102,8 +116,8 @@ struct RGPassNode {
     String Name = {};
 
     // Pass-type static markers, read from TPass at AddPass.
-    bool NeverPrune    = false;  ///< TPass::NeverPrune — pruning must never drop this pass
-    bool HasPipeline   = false;  ///< TPass declares BuildPipelineRequest()
+    bool NeverPrune  = false; ///< TPass::NeverPrune — pruning must never drop this pass
+    bool HasPipeline = false; ///< TPass declares BuildPipelineRequest()
 
     /// @brief The pass, constructed at registration.
     ///
@@ -135,13 +149,13 @@ struct RGPassNode {
 /// `Desc` and `OwnedInitialData` carry graph-created state that realize consumes at Compile; imported entries
 /// hold `Resolved` alone.
 struct RGBufferProp {
-    RHIBufferDesc          Desc = {};  ///< creation desc; graph-created entries only
+    RHIBufferDesc          Desc             = {}; ///< creation desc; graph-created entries only
     /// @brief Graph-owned copy of CreateBuffer's InitialData.
     ///
     /// Callers may hand in spans over temporaries that die before Compile (realize forwards the bytes to the
     /// RHI), so the graph copies them at registration.
     std::vector<std::byte> OwnedInitialData = {};
-    RHIRef<RHIBuffer>      Resolved = nullptr;  ///< imported at AddPass; realized at Compile
+    RHIRef<RHIBuffer>      Resolved         = nullptr; ///< imported at AddPass; realized at Compile
 };
 
 /// @brief Texture-kind payload of a resource entry.
@@ -155,7 +169,7 @@ struct RGTextureProp {
     /// The builder destructor keys the pool return on this, not on ref readiness — a just-created ref may
     /// still be pending (or a null mock handle) when the builder dies.
     bool               FromPool = false;
-    RHIRef<RHITexture> Resolved = nullptr;  ///< imported at AddPass; acquired from the pool at Compile
+    RHIRef<RHITexture> Resolved = nullptr; ///< imported at AddPass; acquired from the pool at Compile
 };
 
 /// @brief One registered resource.
@@ -170,8 +184,7 @@ struct RGResourceEntry {
     RGResourceEntry(String Name, RHIRef<RHIBuffer> Imported)
         : Name(std::move(Name)), IsImported(true), Prop(RGBufferProp{.Resolved = std::move(Imported)}) {}
     // Graph-created entries carry the creation desc; realize consumes it at Compile.
-    RGResourceEntry(String Name, RHITextureDesc Desc)
-        : Name(std::move(Name)), Prop(RGTextureProp{.Desc = Desc}) {}
+    RGResourceEntry(String Name, RHITextureDesc Desc) : Name(std::move(Name)), Prop(RGTextureProp{.Desc = Desc}) {}
     RGResourceEntry(String Name, RHIBufferDesc Desc, std::vector<std::byte> OwnedInitialData)
         : Name(std::move(Name)), Prop(RGBufferProp{.Desc = Desc, .OwnedInitialData = std::move(OwnedInitialData)}) {}
 
@@ -199,8 +212,8 @@ struct RGResourceEntry {
     std::variant<RGBufferProp, RGTextureProp> Prop = {};
 
     // Registration-time ordering bookkeeping (last-writer chain).
-    Uint32              LastWriter        = kRGInvalidIndex;  ///< pass index of the latest writer
-    std::vector<Uint32> ReadersSinceWrite = {};               ///< readers of the latest written state
+    Uint32              LastWriter        = kRGInvalidIndex; ///< pass index of the latest writer
+    std::vector<Uint32> ReadersSinceWrite = {};              ///< readers of the latest written state
 };
 
 } // namespace SoulEngine

@@ -7,14 +7,12 @@ import Shader;
 import std;
 
 export namespace SoulEngine {
-
-// ── Deferred Deletion Queue ───────────────────────────────────────────────
+// Deferred Deletion Queue
 
 /// @brief Thread-safe queue of destruction callbacks drained on the RHI thread.
 ///
-/// When an RHI resource's last reference is released, its destructor is
-/// captured in a lambda and enqueued here.  The RHI thread calls Drain()
-/// each frame to reclaim GPU resources safely.
+/// When an RHI resource's last reference is released, its destructor is captured in a lambda and enqueued
+/// here. The RHI thread calls Drain() each frame to reclaim GPU resources safely.
 class RHIDeferredDeletionQueue {
   public:
     RHIDeferredDeletionQueue()                                                   = default;
@@ -29,11 +27,10 @@ class RHIDeferredDeletionQueue {
 
     /// @brief Destroy all pending resources. Must run on the RHI thread.
     ///
-    /// Destruction cascades: running one destructor can release further
-    /// RHIRef payloads that enqueue their own destructors (e.g. a pipeline
-    /// releases its shader binding set, which then releases bound textures).
-    /// Drain in batches until the queue is empty so the final shutdown flush
-    /// cannot leave cascade-enqueued destructors behind.
+    /// Destruction cascades: running one destructor can release further RHIRef payloads that enqueue their
+    /// own destructors (e.g. a pipeline releases its shader binding set, which then releases bound textures).
+    /// Drain in batches until the queue is empty so the final shutdown flush cannot leave cascade-enqueued
+    /// destructors behind.
     auto Drain() -> void {
         for (;;) {
             std::vector<std::function<void()>> Batch;
@@ -49,14 +46,14 @@ class RHIDeferredDeletionQueue {
     }
 
   private:
-    std::mutex                                            m_Mutex;
+    std::mutex                         m_Mutex;
     std::vector<std::function<void()>> m_Pending;
 };
 
 /// @brief Module-owned default deferred deletion queue storage.
 ///
-/// RHIRenderDevice::Create() points GDeferredDeletionQueue here; tests may
-/// temporarily redirect the pointer to a local queue instance.
+/// RHIRenderDevice::Create() points GDeferredDeletionQueue here; tests may temporarily redirect the pointer
+/// to a local queue instance.
 RHIDeferredDeletionQueue GDeferredDeletionQueueStorage = {};
 
 /// @brief Process-wide deferred deletion queue. Set by RHIRenderDevice::Create().
@@ -64,18 +61,16 @@ RHIDeferredDeletionQueue* GDeferredDeletionQueue = nullptr;
 
 /// @brief Drain the process-wide deferred deletion queue; no-op while no device is alive.
 ///
-/// Driven by RHILoop on the RHI thread once per frame after
-/// RHIRenderDevice::Tick(), and by backend Shutdown() for the final flush.
+/// Driven by RHILoop on the RHI thread once per frame after RHIRenderDevice::Tick(), and by backend
+/// Shutdown() for the final flush.
 inline auto DrainRHIDeferredDeletions() -> void {
     if (GDeferredDeletionQueue)
         GDeferredDeletionQueue->Drain();
 }
-
-// ── RHI Ref State ─────────────────────────────────────────────────────────
+// RHI Ref State
 
 enum class RHIRefState : Uint8 { Unknown = 0, RhiCommitting, Ready, Failed };
-
-// ── RHI Ref Payload ───────────────────────────────────────
+// RHI Ref Payload
 
 template <typename T>
 class RHIRefPayload final {
@@ -90,8 +85,7 @@ class RHIRefPayload final {
         if (!m_Object)
             return;
 
-        GDeferredDeletionQueue->Enqueue(
-            [Object = std::make_shared<UPtr<T>>(std::move(m_Object))]() noexcept {});
+        GDeferredDeletionQueue->Enqueue([Object = std::make_shared<UPtr<T>>(std::move(m_Object))]() noexcept {});
     }
 
     [[nodiscard]] auto GetState() const -> RHIRefState {
@@ -123,8 +117,8 @@ class RHIRefPayload final {
     }
 
     auto Publish(RHIRefPayload& Source, RHIRefState State) -> bool {
-        if (this == &Source || State != RHIRefState::Ready || GetState() != RHIRefState::RhiCommitting ||
-            m_Object || Source.GetState() != RHIRefState::Ready || !Source.m_Object)
+        if (this == &Source || State != RHIRefState::Ready || GetState() != RHIRefState::RhiCommitting || m_Object ||
+            Source.GetState() != RHIRefState::Ready || !Source.m_Object)
             return false;
 
         m_Object = std::move(Source.m_Object);
@@ -143,7 +137,7 @@ class RHIRef {
   public:
     /// @brief Create an empty resource handle.
     RHIRef() noexcept = default;
-    
+
     /// @brief Create an explicitly empty resource handle.
     RHIRef(std::nullptr_t) noexcept {}
 
@@ -209,17 +203,17 @@ class RHIRef {
 
 /// @brief Shared CPU payload for an append-only bindless resource array.
 ///
-/// This payload owns the resource list and append-cycle state without
-/// participating in the RHI deferred-deletion queue.
+/// This payload owns the resource list and append-cycle state without participating in the RHI
+/// deferred-deletion queue.
 template <typename T>
 class RHIRefArrayPayload final {
   public:
     static constexpr Uint32 FrameSlotCount = 3;
 
-    // Descriptor slot 0 is the null-handle sentinel used by the material GPU
-    // ABI. All descriptor-facing resource indices therefore start at 1.
-    static constexpr Uint32 NullDescriptorSlot  = 0;
-    static constexpr Uint32 FirstResourceSlot   = 1;
+    // Descriptor slot 0 is the null-handle sentinel used by the material GPU ABI. All descriptor-facing
+    // resource indices therefore start at 1.
+    static constexpr Uint32 NullDescriptorSlot = 0;
+    static constexpr Uint32 FirstResourceSlot  = 1;
 
     auto BeginAppend() -> void {
         std::scoped_lock Lock(m_Mutex);
@@ -229,12 +223,9 @@ class RHIRefArrayPayload final {
 
     [[nodiscard]] auto Append(RHIRef<T> Resource) -> std::expected<void, ErrorMessage> {
         if (Resource.GetState() == RHIRefState::Unknown)
-            return std::unexpected(
-                ErrorMessage("Cannot append an invalid resource to bindless array"));
+            return std::unexpected(ErrorMessage("Cannot append an invalid resource to bindless array"));
         std::scoped_lock Lock(m_Mutex);
-        if (std::ranges::any_of(m_Resources, [&Resource](const RHIRef<T>& Existing) {
-                return Existing == Resource;
-            }))
+        if (std::ranges::any_of(m_Resources, [&Resource](const RHIRef<T>& Existing) { return Existing == Resource; }))
             return {};
         // m_Resources[0] is permanently reserved for the null descriptor.
         const Uint32 Index = static_cast<Uint32>(m_Resources.size());
@@ -245,9 +236,8 @@ class RHIRefArrayPayload final {
 
     auto EndAppend() -> void {}
 
-    [[nodiscard]] auto GetChangedElements() const
-        -> std::vector<std::pair<Uint32, RHIRef<T>>> {
-        std::scoped_lock Lock(m_Mutex);
+    [[nodiscard]] auto GetChangedElements() const -> std::vector<std::pair<Uint32, RHIRef<T>>> {
+        std::scoped_lock                          Lock(m_Mutex);
         std::vector<std::pair<Uint32, RHIRef<T>>> Changed;
         for (Uint32 Cycle = 0; Cycle < FrameSlotCount; ++Cycle) {
             Changed.append_range(m_AppendCycles[Cycle]);
@@ -277,21 +267,21 @@ class RHIRefArrayPayload final {
     }
 
   private:
-    mutable std::mutex     m_Mutex       = {};
+    mutable std::mutex                                                    m_Mutex              = {};
     // Keep slot 0 empty so a zeroed shader handle never aliases a live resource.
-    std::vector<RHIRef<T>> m_Resources   = {RHIRef<T>{}};
-    std::array<std::vector<std::pair<Uint32, RHIRef<T>>>, FrameSlotCount> m_AppendCycles = {};
-    Uint32                 m_CurrentAppendCycle = 0;
+    std::vector<RHIRef<T>>                                                m_Resources          = {RHIRef<T>{}};
+    std::array<std::vector<std::pair<Uint32, RHIRef<T>>>, FrameSlotCount> m_AppendCycles       = {};
+    Uint32                                                                m_CurrentAppendCycle = 0;
 };
 
 /// @brief Copyable handle to a shared append-only bindless resource array.
 ///
-/// The array is a CPU-side object. Its payload owns the resource list and the
-/// three FrameSlot append-cycle buffers; copied handles share that state.
+/// The array is a CPU-side object. Its payload owns the resource list and the three FrameSlot append-cycle
+/// buffers; copied handles share that state.
 template <typename T>
 class RHIRefArray {
   public:
-    static constexpr Uint32 FrameSlotCount = RHIRefArrayPayload<T>::FrameSlotCount;
+    static constexpr Uint32 FrameSlotCount     = RHIRefArrayPayload<T>::FrameSlotCount;
     static constexpr Uint32 NullDescriptorSlot = RHIRefArrayPayload<T>::NullDescriptorSlot;
     static constexpr Uint32 FirstResourceSlot  = RHIRefArrayPayload<T>::FirstResourceSlot;
 
@@ -312,9 +302,8 @@ class RHIRefArray {
 
     /// Begin one GameThread append cycle.
     ///
-    /// The GameThread must execute exactly one BeginAppend()/EndAppend() pair
-    /// per loop. The pair is a producer-side protocol; the array does not
-    /// track or validate loop ownership.
+    /// The GameThread must execute exactly one BeginAppend()/EndAppend() pair per loop. The pair is a
+    /// producer-side protocol; the array does not track or validate loop ownership.
     auto BeginAppend() -> void {
         if (m_Payload)
             m_Payload->BeginAppend();
@@ -334,8 +323,7 @@ class RHIRefArray {
     }
 
     /// Return all appended elements from the retained FrameSlot cycles.
-    [[nodiscard]] auto GetChangedElements() const
-        -> std::vector<std::pair<Uint32, RHIRef<T>>> {
+    [[nodiscard]] auto GetChangedElements() const -> std::vector<std::pair<Uint32, RHIRef<T>>> {
         if (!m_Payload)
             return {};
         return m_Payload->GetChangedElements();

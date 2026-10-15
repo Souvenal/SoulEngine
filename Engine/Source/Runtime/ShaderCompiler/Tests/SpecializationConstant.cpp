@@ -1,7 +1,7 @@
 /// @file   SpecializationConstant.cpp
 /// @brief  Tests for Slang [SpecializationConstant] reflection:
-/// reflected entries (name / constant id / scalar type / default) plus a
-/// SPIR-V byte-level assertion that the constants lower to OpSpecConstant*.
+/// reflected entries (name / constant id / scalar type / default) plus a SPIR-V byte-level assertion that the
+/// constants lower to OpSpecConstant*.
 
 #include <gtest/gtest.h>
 
@@ -15,12 +15,12 @@ using namespace SoulEngine;
 namespace {
 
 // SPIR-V opcodes/decoration needed by the byte-level assertions.
-inline constexpr Uint32 SpvOpSpecConstantTrue       = 48;
-inline constexpr Uint32 SpvOpSpecConstantFalse      = 49;
-inline constexpr Uint32 SpvOpSpecConstant           = 50;
-inline constexpr Uint32 SpvOpSpecConstantComposite  = 51;
-inline constexpr Uint32 SpvOpDecorate               = 71;
-inline constexpr Uint32 SpvDecorationSpecId         = 1;
+inline constexpr Uint32 SpvOpSpecConstantTrue      = 48;
+inline constexpr Uint32 SpvOpSpecConstantFalse     = 49;
+inline constexpr Uint32 SpvOpSpecConstant          = 50;
+inline constexpr Uint32 SpvOpSpecConstantComposite = 51;
+inline constexpr Uint32 SpvOpDecorate              = 71;
+inline constexpr Uint32 SpvDecorationSpecId        = 1;
 
 [[nodiscard]] auto ContainsSpecConstantInstruction(std::span<const Uint32> Code) -> bool {
     // Walk the instruction stream: word 0 packs (word count << 16) | opcode.
@@ -72,7 +72,8 @@ class SpecializationConstantTest : public ::testing::Test {
 
 TEST_F(SpecializationConstantTest, ReflectsSpecializationConstants) {
     auto Result = ShaderCompiler::Get().CompileCompute(ComputeCompileDesc{
-        .Compute = ShaderEntry{.SourcePath = m_ShaderPath, .EntryPoint = "ComputeMain", .Backend = ShaderBackend::Slang},
+        .Compute =
+            ShaderEntry{.SourcePath = m_ShaderPath, .EntryPoint = "ComputeMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 
@@ -105,7 +106,8 @@ TEST_F(SpecializationConstantTest, ReflectsSpecializationConstants) {
 
 TEST_F(SpecializationConstantTest, LowersToSpirvSpecConstants) {
     auto Result = ShaderCompiler::Get().CompileCompute(ComputeCompileDesc{
-        .Compute = ShaderEntry{.SourcePath = m_ShaderPath, .EntryPoint = "ComputeMain", .Backend = ShaderBackend::Slang},
+        .Compute =
+            ShaderEntry{.SourcePath = m_ShaderPath, .EntryPoint = "ComputeMain", .Backend = ShaderBackend::Slang},
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
 

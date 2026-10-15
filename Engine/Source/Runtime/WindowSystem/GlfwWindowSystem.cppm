@@ -15,8 +15,8 @@ import std;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by
-// the exported code below — see Core:CVar's linkage note.
+// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
+// Core:CVar's linkage note.
 
 constexpr Int32 DefaultWindowWidth  = 1280;
 constexpr Int32 DefaultWindowHeight = 720;
@@ -96,13 +96,11 @@ CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", DefaultWindowHeight, "Wi
 
 /// @brief GLFW implementation of IWindowSystem.
 ///
-/// Owns the GLFW library lifetime and one native window: surface creation,
-/// event polling, input state tracking, scroll accumulation, and relative
-/// cursor accumulation. Non-copyable and non-movable.
+/// Owns the GLFW library lifetime and one native window: surface creation, event polling, input state
+/// tracking, scroll accumulation, and relative cursor accumulation. Non-copyable and non-movable.
 ///
-/// Backend-native consumers (Vulkan surface creation, the ImGui GLFW
-/// backend) obtain the raw GLFWwindow* via GetNativeHandle() after
-/// dispatching on IWindowSystem::GetType().
+/// Backend-native consumers (Vulkan surface creation, the ImGui GLFW backend) obtain the raw GLFWwindow* via
+/// GetNativeHandle() after dispatching on IWindowSystem::GetType().
 export class GlfwWindowSystem final : public IWindowSystem {
   public:
     GlfwWindowSystem() = default;
@@ -125,15 +123,14 @@ export class GlfwWindowSystem final : public IWindowSystem {
             return std::unexpected(ErrorMessage(Format("glfwInit failed: {}", Desc ? Desc : "unknown error")));
         }
 
-        // GLFW was originally designed to create an OpenGL context,
-        // and we need to tell it not to do so.
+        // GLFW was originally designed to create an OpenGL context, and we need to tell it not to do so.
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         const auto WindowWidth  = CVarWindowResolutionX.Get();
         const auto WindowHeight = CVarWindowResolutionY.Get();
-        // Application.Name is registered by the Launch module; the fallback
-        // here only guards against its registration being dead-stripped.
+        // Application.Name is registered by the Launch module; the fallback here only guards against its
+        // registration being dead-stripped.
         Result->m_Title         = CVarManager::Get().Find<String>("Application.Name").value_or("SoulEngine");
 
         Result->m_Window = glfwCreateWindow(WindowWidth, WindowHeight, Result->m_Title.c_str(), nullptr, nullptr);
@@ -153,9 +150,9 @@ export class GlfwWindowSystem final : public IWindowSystem {
         glfwSetCursorPosCallback(Result->m_Window, &GlfwWindowSystem::OnCursorPosition);
         glfwSetMouseButtonCallback(Result->m_Window, &GlfwWindowSystem::OnMouseButton);
 
-        // Use framebuffer size rather than window size because Vulkan renders
-        // to drawable pixels. GLFW window size is logical screen coordinates
-        // and can be smaller than the framebuffer on HiDPI/Retina displays.
+        // Use framebuffer size rather than window size because Vulkan renders to drawable pixels. GLFW window
+        // size is logical screen coordinates and can be smaller than the framebuffer on HiDPI/Retina
+        // displays.
         glfwGetFramebufferSize(Result->m_Window, &Result->m_Extent.Width, &Result->m_Extent.Height);
 
         Result->m_bInitialized = true;
@@ -215,22 +212,17 @@ export class GlfwWindowSystem final : public IWindowSystem {
     [[nodiscard]] auto Tick() -> bool override {
         glfwPollEvents();
 
-        // GLFW can invoke both press and release callbacks before one engine
-        // tick. Consuming at most one transition per tick preserves both
-        // frame-visible states instead of allowing the later release to
-        // overwrite the press. When a sequence is empty, transient states
-        // settle into their stable states: Pressed becomes Held and Released
-        // becomes Up.
+        // GLFW can invoke both press and release callbacks before one engine tick. Consuming at most one
+        // transition per tick preserves both frame-visible states instead of allowing the later release to
+        // overwrite the press. When a sequence is empty, transient states settle into their stable states:
+        // Pressed becomes Held and Released becomes Up.
         const auto UpdateInputState = [](InputState& State, std::queue<InputTransition>& Sequence) -> void {
-            // A queued transition represents an input callback that occurred
-            // during the previous platform-event pump. It has priority over
-            // the normal state progression, and exactly one transition is
-            // consumed per tick so Press and Release remain observable on
-            // separate frames.
+            // A queued transition represents an input callback that occurred during the previous
+            // platform-event pump. It has priority over the normal state progression, and exactly one
+            // transition is consumed per tick so Press and Release remain observable on separate frames.
             if (Sequence.empty()) {
-                // No callback occurred for this input. Pressed and Released
-                // are one-frame edge states, so they settle only after a tick
-                // in which there is no newer transition to consume.
+                // No callback occurred for this input. Pressed and Released are one-frame edge states, so
+                // they settle only after a tick in which there is no newer transition to consume.
                 if (State == InputState::Pressed)
                     State = InputState::Held;
                 else if (State == InputState::Released)
@@ -243,22 +235,21 @@ export class GlfwWindowSystem final : public IWindowSystem {
             const auto Transition = Sequence.front();
             Sequence.pop();
             if (Transition == InputTransition::Press) {
-                // A press always starts a new Pressed frame, even if the
-                // previous state was Held, Released, or Up.
+                // A press always starts a new Pressed frame, even if the previous state was Held, Released,
+                // or Up.
                 State = InputState::Pressed;
                 return;
             }
 
-            // Release is meaningful only while the input is currently down.
-            // This prevents a focus-loss release appended to an already-up
-            // input from producing a second, artificial Released frame.
+            // Release is meaningful only while the input is currently down. This prevents a focus-loss
+            // release appended to an already-up input from producing a second, artificial Released frame.
             if (State == InputState::Pressed || State == InputState::Held) {
                 State = InputState::Released;
                 return;
             }
 
-            // The release was stale, but it was still consumed. Do not run
-            // the no-transition decay above in this tick.
+            // The release was stale, but it was still consumed. Do not run the no-transition decay above in
+            // this tick.
         };
 
         for (std::size_t Index = 1; Index < magic_enum::enum_count<WindowKey>(); ++Index)
@@ -327,9 +318,8 @@ export class GlfwWindowSystem final : public IWindowSystem {
         if (!Self || Focused)
             return;
 
-        // Focus loss invalidates every platform-held input. Append releases
-        // after existing transitions so the original callback order remains
-        // observable before the forced release is consumed.
+        // Focus loss invalidates every platform-held input. Append releases after existing transitions so the
+        // original callback order remains observable before the forced release is consumed.
         for (std::size_t Index = 1; Index < Self->m_KeySequences.size(); ++Index)
             Self->m_KeySequences[Index].emplace(InputTransition::Release);
         for (std::size_t Index = 1; Index < Self->m_MouseButtonSequences.size(); ++Index)

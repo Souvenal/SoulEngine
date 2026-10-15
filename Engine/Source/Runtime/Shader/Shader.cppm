@@ -1,17 +1,14 @@
 /// @file   Shader.cppm
 /// @brief  Shader module — owns types describing compiled shader artifacts.
 ///
-/// This module is the data contract between ShaderCompiler (produces)
-/// and RHI (consumes).  It is deliberately independent of both:
-/// the types here describe *what a compiled shader is*, not how it
-/// is compiled or bound.
+/// This module is the data contract between ShaderCompiler (produces) and RHI (consumes). It is deliberately
+/// independent of both: the types here describe *what a compiled shader is*, not how it is compiled or bound.
 ///
 /// ShaderReflection model
-/// ────────────────
+///
 /// ShaderReflection is normalized here into backend-agnostic data structures.
-/// ShaderCompiler extracts that reflection from native compiler APIs,
-/// while RHI/backends consume it to derive pipeline resource layouts,
-/// vertex input requirements, and later binding interfaces.
+/// ShaderCompiler extracts that reflection from native compiler APIs, while RHI/backends consume it to derive
+/// pipeline resource layouts, vertex input requirements, and later binding interfaces.
 
 export module Shader;
 
@@ -27,11 +24,9 @@ inline constexpr Uint32 kShaderReflectionArrayUnboundedSize = std::numeric_limit
 
 /// @brief Canonical pipeline stage flags.
 ///
-/// Used by the compiler to describe what stage to compile for, by the
-/// RHI to select pipeline bind points, and by reflection to label entry
-/// points.  Backends (Slang, Vulkan) map to/from their native stage
-/// types.  Values are bit flags so multi-stage sets (e.g. a graphics
-/// program's vertex+fragment) compose with operator|.
+/// Used by the compiler to describe what stage to compile for, by the RHI to select pipeline bind points, and
+/// by reflection to label entry points. Backends (Slang, Vulkan) map to/from their native stage types. Values
+/// are bit flags so multi-stage sets (e.g. a graphics program's vertex+fragment) compose with operator|.
 enum class ShaderStage : Uint16 {
     Unknown       = 0,
     Vertex        = 1 << 0,
@@ -52,8 +47,8 @@ enum class ShaderStage : Uint16 {
 
 /// @brief Minimal scalar-type vocabulary needed by normalized reflection.
 ///
-/// TODO: Extend this if/when reflection must describe additional scalar
-/// categories such as 16-bit types or normalized integer encodings.
+/// TODO: Extend this if/when reflection must describe additional scalar categories such as 16-bit types or
+/// normalized integer encodings.
 enum class ShaderScalarType : Uint8 {
     Unknown = 0,
     Float32 = 1,
@@ -68,15 +63,15 @@ enum class ShaderScalarType : Uint8 {
 /// storage bindings (the access axis below carries that direction), while constant and storage buffers stay
 /// distinct because the backends type their descriptors differently.
 ///
-/// TODO: Extend this to cover more native resource kinds once the engine needs them (texel buffers,
-/// immutable samplers, combined image samplers, etc.).
+/// TODO: Extend this to cover more native resource kinds once the engine needs them (texel buffers, immutable
+/// samplers, combined image samplers, etc.).
 enum class ShaderResourceType : Uint8 {
-    Unknown        = 0,
-    ConstantBuffer = 1,
-    StorageBuffer  = 2,
+    Unknown               = 0,
+    ConstantBuffer        = 1,
+    StorageBuffer         = 2,
     /// Texture image descriptor of any access direction (DX: SRV or UAV).
-    Texture        = 3,
-    Sampler        = 4,
+    Texture               = 3,
+    Sampler               = 4,
     /// Top-level acceleration structure used for hardware ray traversal.
     AccelerationStructure = 5,
 };
@@ -124,18 +119,17 @@ struct ShaderPushConstantRange {
 /// Host code looks values up by Name; ConstantId only exists in reflection and the Vulkan layer. Defaults
 /// come from Slang's integer getter: bool/int/uint are populated, float has no SDK getter and stays nullopt.
 struct ShaderSpecializationConstant {
-    String                Name         = {};
-    Uint32                ConstantId   = 0;
-    ShaderScalarType      ScalarType   = ShaderScalarType::Unknown;
-    std::optional<Int64>  DefaultValue = std::nullopt;
+    String               Name         = {};
+    Uint32               ConstantId   = 0;
+    ShaderScalarType     ScalarType   = ShaderScalarType::Unknown;
+    std::optional<Int64> DefaultValue = std::nullopt;
 };
 
 /// @brief Reflected shader-side vertex attribute requirement.
 ///
-/// This describes what the shader consumes.  It intentionally does not
-/// describe how CPU-side vertex buffers are packed or streamed.
-/// TODO: introduce a distinct vertex-buffer stream-layout abstraction later
-/// if multi-stream, per-instance, or packed/custom vertex formats require it.
+/// This describes what the shader consumes. It intentionally does not describe how CPU-side vertex buffers
+/// are packed or streamed. TODO: introduce a distinct vertex-buffer stream-layout abstraction later if
+/// multi-stream, per-instance, or packed/custom vertex formats require it.
 struct ShaderVertexInputAttribute {
     String                SemanticName  = {};
     Uint32                SemanticIndex = 0;
@@ -145,17 +139,17 @@ struct ShaderVertexInputAttribute {
 
 /// @brief Normalized pipeline reflection data.
 struct ShaderReflection {
-    std::vector<ShaderBinding>                 Bindings                 = {};
-    std::vector<ShaderPushConstantRange>       PushConstants            = {};
-    std::vector<ShaderVertexInputAttribute>    VertexInputs             = {};
-    std::vector<ShaderSpecializationConstant>  SpecializationConstants  = {};
-    std::optional<Uint32>                      BindlessSpace            = std::nullopt;
+    std::vector<ShaderBinding>                Bindings                = {};
+    std::vector<ShaderPushConstantRange>      PushConstants           = {};
+    std::vector<ShaderVertexInputAttribute>   VertexInputs            = {};
+    std::vector<ShaderSpecializationConstant> SpecializationConstants = {};
+    std::optional<Uint32>                     BindlessSpace           = std::nullopt;
 };
 
 /// @brief Compiled shader artifact for one graphics pipeline shader combination.
 struct ShaderGraphicsProgram {
-    /// SPIR-V binary is defined as 32-bit words, and Vulkan consumes shader
-    /// module code through a uint32_t pointer rather than a byte buffer.
+    /// SPIR-V binary is defined as 32-bit words, and Vulkan consumes shader module code through a uint32_t
+    /// pointer rather than a byte buffer.
     std::vector<Uint32> Code                   = {};
     String              VertexEntryPointName   = {};
     String              FragmentEntryPointName = {};
@@ -164,7 +158,7 @@ struct ShaderGraphicsProgram {
 
 /// @brief Compiled shader artifact for one compute pipeline.
 struct ShaderComputeProgram {
-    std::vector<Uint32> Code                 = {};
+    std::vector<Uint32> Code                  = {};
     String              ComputeEntryPointName = {};
     ShaderReflection    Reflection            = {};
 };

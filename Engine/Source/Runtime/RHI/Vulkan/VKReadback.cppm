@@ -22,10 +22,7 @@ export namespace SoulEngine {
 /// queue. The device (resource context) must outlive the object.
 class VulkanReadback final : public RHIReadback {
   public:
-    VulkanReadback(String                  Name,
-                   Uint64                  SizeBytes,
-                   VulkanTimelineSemaphore& CompletedTimeline,
-                   Uint32                   RingSize)
+    VulkanReadback(String Name, Uint64 SizeBytes, VulkanTimelineSemaphore& CompletedTimeline, Uint32 RingSize)
         : RHIReadback(std::move(Name), SizeBytes),
           m_CompletedTimeline(&CompletedTimeline),
           m_RingSize(RingSize),
@@ -48,19 +45,17 @@ class VulkanReadback final : public RHIReadback {
 
     /// Synchronous creation (VMA locks internally, vkCreateBuffer is device-level thread-safe): the caller
     /// publishes Ready at return.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     StringView                   Name,
-                                     Uint64                       SizeBytes,
-                                     Uint32                       RingSize)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, Uint64 SizeBytes, Uint32 RingSize)
         -> std::expected<UPtr<VulkanReadback>, ErrorMessage> {
         if (SizeBytes == 0 || RingSize == 0)
             return std::unexpected(ErrorMessage("VulkanReadback::Create: size and ring size must be non-zero"));
 
         auto Result = std::make_unique<VulkanReadback>(String(Name), SizeBytes, Context.GetTimeline(), RingSize);
-        Result->m_Allocator = Context.GetAllocator();
+        Result->m_Allocator     = Context.GetAllocator();
         Result->m_DeferredQueue = &Context.GetDeferredDeletionQueue();
 
-        const Uint64 Size = SizeBytes * RingSize;
+        const Uint64         Size = SizeBytes * RingSize;
         vk::BufferCreateInfo BufCI{
             .size        = Size,
             .usage       = vk::BufferUsageFlagBits::eTransferDst,
@@ -81,9 +76,7 @@ class VulkanReadback final : public RHIReadback {
                             &AllocationInfo) != VK_SUCCESS)
             return std::unexpected(ErrorMessage("VulkanReadback::Create: VMA buffer creation failed"));
         if (!AllocationInfo.pMappedData) {
-            vmaDestroyBuffer(Context.GetAllocator(),
-                             static_cast<VkBuffer>(Result->m_Buffer),
-                             Result->m_Allocation);
+            vmaDestroyBuffer(Context.GetAllocator(), static_cast<VkBuffer>(Result->m_Buffer), Result->m_Allocation);
             Result->m_Buffer     = nullptr;
             Result->m_Allocation = nullptr;
             return std::unexpected(ErrorMessage("VulkanReadback::Create: allocation is not mapped"));
@@ -141,7 +134,7 @@ class VulkanReadback final : public RHIReadback {
             return {};
 
         std::vector<std::byte> Out(GetSize());
-        const Uint64       Offset = GetSlotOffset(BestSlot);
+        const Uint64           Offset = GetSlotOffset(BestSlot);
         if (!m_Coherent)
             vmaInvalidateAllocation(m_Allocator, m_Allocation, Offset, Out.size());
         std::memcpy(Out.data(), m_Mapped + Offset, Out.size());
@@ -149,15 +142,15 @@ class VulkanReadback final : public RHIReadback {
     }
 
   private:
-    VmaAllocator                 m_Allocator         = nullptr;
-    VulkanDeferredDeletionQueue* m_DeferredQueue     = nullptr; // borrowed; owned by the resource context
-    vk::Buffer                   m_Buffer            = nullptr;
-    VmaAllocation                m_Allocation        = nullptr;
-    std::byte*                   m_Mapped            = nullptr;
-    VulkanTimelineSemaphore*     m_CompletedTimeline = nullptr; // borrowed; device outlives this readback
-    Uint32                   m_RingSize          = 0;
-    std::vector<std::atomic<Uint64>> m_WriteValues = {};
-    bool                     m_Coherent          = false;
+    VmaAllocator                     m_Allocator         = nullptr;
+    VulkanDeferredDeletionQueue*     m_DeferredQueue     = nullptr; // borrowed; owned by the resource context
+    vk::Buffer                       m_Buffer            = nullptr;
+    VmaAllocation                    m_Allocation        = nullptr;
+    std::byte*                       m_Mapped            = nullptr;
+    VulkanTimelineSemaphore*         m_CompletedTimeline = nullptr; // borrowed; device outlives this readback
+    Uint32                           m_RingSize          = 0;
+    std::vector<std::atomic<Uint64>> m_WriteValues       = {};
+    bool                             m_Coherent          = false;
 };
 
 } // namespace SoulEngine

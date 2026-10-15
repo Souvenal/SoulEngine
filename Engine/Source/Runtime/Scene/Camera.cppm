@@ -30,8 +30,8 @@ struct CameraResizeEvent {
 
 /// @brief Immutable render data for one camera/view.
 ///
-/// Carries no RHI resources: renderers create the view's render
-/// targets as pooled RenderGraph transients derived from the Viewport.
+/// Carries no RHI resources: renderers create the view's render targets as pooled RenderGraph transients
+/// derived from the Viewport.
 struct CameraViewRecord {
     hlslpp::float4x4 ViewProjection = hlslpp::float4x4::identity();
     hlslpp::float3   CameraPosition = hlslpp::float3(0.0f, 0.0f, 0.0f);
@@ -52,15 +52,14 @@ struct CameraViewRecord {
 /// @brief CameraComponent persists only the camera lens parameters and the
 /// viewport rectangle.
 ///
-/// Viewport is Runtime State driven by CameraResizeEvent, not authoring data;
-/// it is intentionally absent from the EnTT meta registration below. View
-/// render targets are not component state.
+/// Viewport is Runtime State driven by CameraResizeEvent, not authoring data; it is intentionally absent from
+/// the EnTT meta registration below. View render targets are not component state.
 struct CameraComponent {
-    float          FOV            = 60.0f;
-    float          NearPlane      = 0.1f;
-    float          FarPlane       = 100.0f;
-    Float32        ExposureEV100  = 15.0f;
-    CameraViewport Viewport       = {};
+    float          FOV           = 60.0f;
+    float          NearPlane     = 0.1f;
+    float          FarPlane      = 100.0f;
+    Float32        ExposureEV100 = 15.0f;
+    CameraViewport Viewport      = {};
 
     /// @brief Return whether this camera can produce a render view record.
     [[nodiscard]] auto IsValid() const -> bool {
@@ -158,9 +157,9 @@ class CameraSystem : public ISystem {
 
 namespace SoulEngine {
 
-// Note: this namespace must stay named. In a named module, clang 23 silently
-// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
-// which would skip this entt meta registration at program startup.
+// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
+// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
+// startup.
 namespace MetaRegistration {
 
 using namespace entt::literals;

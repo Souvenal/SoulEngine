@@ -15,9 +15,7 @@ import :Capability;
 
 namespace SoulEngine {
 
-// ═════════════════════════════════════════════════════════════════════════════
 // Conversion helpers
-// ═════════════════════════════════════════════════════════════════════════════
 
 [[nodiscard]] auto ToVkFormat(RHIFormat Fmt) -> vk::Format {
     switch (Fmt) {
@@ -54,16 +52,16 @@ namespace SoulEngine {
 /// Access picks the direction.
 ///
 /// Direction participates only for bidirectional mechanisms (Storage — RMW arrives as Read|Write);
-/// unidirectional usages carry an implied direction and ignore Access. Accumulates over the usage
-/// union, so both the creation union (upload batch) and single-role view declarations (pass prologue)
-/// map correctly. The declared direction translates faithfully — a read-modify-writing shader
-/// declares Read|Write on the view.
+/// unidirectional usages carry an implied direction and ignore Access. Accumulates over the usage union, so
+/// both the creation union (upload batch) and single-role view declarations (pass prologue) map correctly.
+/// The declared direction translates faithfully — a read-modify-writing shader declares Read|Write on the
+/// view.
 ///
-/// Not a pure flag mapping: vertex/index buffers additionally feed acceleration structure builds when
-/// ray tracing is available (mirrors ToVkBufferUsage).
+/// Not a pure flag mapping: vertex/index buffers additionally feed acceleration structure builds when ray
+/// tracing is available (mirrors ToVkBufferUsage).
 [[nodiscard]] inline auto ToVkBufferAccess(RHIBufferUsage Usage, RHIAccess Access) -> vk::AccessFlags2 {
-    const bool R  = magic_enum::enum_flags_test(Access, RHIAccess::Read);
-    const bool W  = magic_enum::enum_flags_test(Access, RHIAccess::Write);
+    const bool R   = magic_enum::enum_flags_test(Access, RHIAccess::Read);
+    const bool W   = magic_enum::enum_flags_test(Access, RHIAccess::Write);
     auto       Out = vk::AccessFlags2{};
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex))
         Out |= vk::AccessFlagBits2::eVertexAttributeRead;
@@ -80,8 +78,8 @@ namespace SoulEngine {
         Out |= vk::AccessFlagBits2::eTransferRead;
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::TransferDst))
         Out |= vk::AccessFlagBits2::eTransferWrite;
-    // Geometry inputs feed acceleration-structure builds (ToVkBufferUsage adds the matching usage
-    // bit unconditionally when ray tracing is available).
+    // Geometry inputs feed acceleration-structure builds (ToVkBufferUsage adds the matching usage bit
+    // unconditionally when ray tracing is available).
     if ((magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
          magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index)) &&
         VulkanCapability::Get().IsRayTracingAvailable())
@@ -90,10 +88,10 @@ namespace SoulEngine {
 }
 
 /// @brief Texture counterpart of ToVkBufferAccess. RenderTarget/Storage are bidirectional and
-/// participate in direction; Sampled and the transfer usages carry an implied direction and ignore
-/// Access. DepthStencil attachment coverage is always Read|Write — a load reads the previous depth
-/// and the store writes, regardless of the declared direction. Accumulates over the usage union:
-/// merged prologue views arrive as multi-role unions and every role contributes its mask.
+/// participate in direction; Sampled and the transfer usages carry an implied direction and ignore Access.
+/// DepthStencil attachment coverage is always Read|Write — a load reads the previous depth and the store
+/// writes, regardless of the declared direction. Accumulates over the usage union: merged prologue views
+/// arrive as multi-role unions and every role contributes its mask.
 [[nodiscard]] inline auto ToVkTextureAccess(RHITextureUsage Usage, RHIAccess Access) -> vk::AccessFlags2 {
     const bool R   = magic_enum::enum_flags_test(Access, RHIAccess::Read);
     const bool W   = magic_enum::enum_flags_test(Access, RHIAccess::Write);
@@ -102,8 +100,7 @@ namespace SoulEngine {
         Out |= (R ? vk::AccessFlagBits2::eColorAttachmentRead : vk::AccessFlags2{}) |
                (W ? vk::AccessFlagBits2::eColorAttachmentWrite : vk::AccessFlags2{});
     if (magic_enum::enum_flags_test(Usage, RHITextureUsage::DepthStencil))
-        Out |= vk::AccessFlagBits2::eDepthStencilAttachmentRead |
-               vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        Out |= vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
     if (magic_enum::enum_flags_test(Usage, RHITextureUsage::Storage))
         Out |= (R ? vk::AccessFlagBits2::eShaderStorageRead : vk::AccessFlags2{}) |
                (W ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlags2{});
@@ -117,9 +114,9 @@ namespace SoulEngine {
 }
 
 /// @brief Image layout for a view's declared role and direction. A single-role usage maps to its
-/// optimal layout; storage and every multi-role union share only General; a depth/stencil view
-/// without Write is a read-only attachment. This is the single place where layout exists: the RHI
-/// vocabulary carries no layout axis.
+/// optimal layout; storage and every multi-role union share only General; a depth/stencil view without Write
+/// is a read-only attachment. This is the single place where layout exists: the RHI vocabulary carries no
+/// layout axis.
 [[nodiscard]] inline auto ToVkImageLayout(RHITextureUsage Usage, RHIAccess Access) -> vk::ImageLayout {
     const auto Bits = static_cast<Uint32>(Usage);
     if (Bits == 0)
@@ -130,9 +127,8 @@ namespace SoulEngine {
     case RHITextureUsage::RenderTarget:
         return vk::ImageLayout::eColorAttachmentOptimal;
     case RHITextureUsage::DepthStencil:
-        return magic_enum::enum_flags_test(Access, RHIAccess::Write)
-                   ? vk::ImageLayout::eDepthAttachmentOptimal
-                   : vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+        return magic_enum::enum_flags_test(Access, RHIAccess::Write) ? vk::ImageLayout::eDepthAttachmentOptimal
+                                                                     : vk::ImageLayout::eDepthStencilReadOnlyOptimal;
     case RHITextureUsage::Sampled:
         return vk::ImageLayout::eShaderReadOnlyOptimal;
     case RHITextureUsage::TransferSrc:

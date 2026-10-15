@@ -33,7 +33,7 @@ enum class ThreadQueue {
 
 /// @brief Thread-safe pair of unbound and frame-affined task queues.
 struct TaskQueue {
-    std::mutex                       Mutex;
+    std::mutex                        Mutex;
     std::queue<std::function<void()>> Tasks;
     std::deque<FrameTask>             FrameTasks;
     Uint64                            NextFrameTaskSequence = 0;
@@ -41,9 +41,8 @@ struct TaskQueue {
 
 /// @brief Thread-safe multi-queue task dispatcher.
 ///
-/// 3 queues keyed by ThreadQueue. Each internal queue contains unbound tasks
-/// and frame-affined tasks. Drain methods release the queue mutex before
-/// invoking user callbacks.
+/// 3 queues keyed by ThreadQueue. Each internal queue contains unbound tasks and frame-affined tasks. Drain
+/// methods release the queue mutex before invoking user callbacks.
 class TaskGraph final : public Singleton<TaskGraph> {
     friend class Singleton<TaskGraph>;
 
@@ -66,12 +65,11 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Push an unbound task onto the target thread's queue.
     /// Thread-safe. May be called from any thread.
-    [[nodiscard]] auto EnqueueTask(ThreadQueue Q, std::function<void()> Task)
-        -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto EnqueueTask(ThreadQueue Q, std::function<void()> Task) -> std::expected<void, ErrorMessage> {
         if (!m_Running.load(std::memory_order_acquire))
             return std::unexpected(ErrorMessage("TaskGraph is not running"));
 
-        auto& Queue = m_Queues[std::to_underlying(Q)];
+        auto&            Queue = m_Queues[std::to_underlying(Q)];
         std::scoped_lock Lock(Queue.Mutex);
         if (!m_Running.load(std::memory_order_relaxed))
             return std::unexpected(ErrorMessage("TaskGraph is not running"));
@@ -82,11 +80,10 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Push a task bound to the submitting thread's current frame.
     ///
-    /// Game, Render, and RHI loops maintain independent thread-local frame
-    /// counters. They do not read one another's TLS values; because each loop
-    /// advances once per pipeline frame, the ordinal captured by the producer
-    /// matches the ordinal consumed by the target thread when it catches up.
-    /// Background workers must use the explicit-frame overload below.
+    /// Game, Render, and RHI loops maintain independent thread-local frame counters. They do not read one
+    /// another's TLS values; because each loop advances once per pipeline frame, the ordinal captured by the
+    /// producer matches the ordinal consumed by the target thread when it catches up. Background workers must
+    /// use the explicit-frame overload below.
     [[nodiscard]] auto EnqueueFrameTask(ThreadQueue Q, std::function<void()> Task)
         -> std::expected<void, ErrorMessage> {
         const auto FrameIndex = GetThreadFrameIndex();
@@ -102,13 +99,13 @@ class TaskGraph final : public Singleton<TaskGraph> {
         if (!m_Running.load(std::memory_order_acquire))
             return std::unexpected(ErrorMessage("TaskGraph is not running"));
 
-        auto& Queue = m_Queues[std::to_underlying(Q)];
+        auto&            Queue = m_Queues[std::to_underlying(Q)];
         std::scoped_lock Lock(Queue.Mutex);
         if (!m_Running.load(std::memory_order_relaxed))
             return std::unexpected(ErrorMessage("TaskGraph is not running"));
 
-        // Sequence is assigned while holding the queue mutex, so concurrent producers
-        // receive a unique FIFO order for tasks targeting the same frame.
+        // Sequence is assigned while holding the queue mutex, so concurrent producers receive a unique FIFO
+        // order for tasks targeting the same frame.
         Queue.FrameTasks.push_back(FrameTask{
             .FrameIndex = FrameIndex,
             .Sequence   = Queue.NextFrameTaskSequence++,
@@ -120,8 +117,8 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Advance this thread's frame ordinal and return the new value.
     ///
-    /// The three engine loops intentionally own independent TLS counters.
-    /// This is an ordinal local to the loop, not a shared global frame ID.
+    /// The three engine loops intentionally own independent TLS counters. This is an ordinal local to the
+    /// loop, not a shared global frame ID.
     auto IncreaseThreadFrameIndex() -> void {
         ++ThreadFrameIndex;
     }
@@ -152,7 +149,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
         while (true) {
             std::queue<std::function<void()>> PendingTasks;
             {
-                auto& Queue = m_Queues[std::to_underlying(Q)];
+                auto&            Queue = m_Queues[std::to_underlying(Q)];
                 std::scoped_lock Lock(Queue.Mutex);
                 PendingTasks.swap(Queue.Tasks);
             }
@@ -170,32 +167,30 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     /// @brief Execute frame tasks matching this thread's current frame ordinal.
     auto DrainFrameTasks(ThreadQueue Q) -> void {
-        // The consumer uses its own TLS ordinal. It is intentionally independent
-        // from the producer's ordinal captured by EnqueueFrameTask.
+        // The consumer uses its own TLS ordinal. It is intentionally independent from the producer's ordinal
+        // captured by EnqueueFrameTask.
         const auto FrameIndex = GetThreadFrameIndex();
         while (true) {
             std::deque<FrameTask> PendingTasks;
             {
-                auto& Queue = m_Queues[std::to_underlying(Q)];
+                auto&            Queue = m_Queues[std::to_underlying(Q)];
                 std::scoped_lock Lock(Queue.Mutex);
 
-                // FrameTasks is a min-heap. Only the heap front can be eligible:
-                // older tasks are stale, the current frame is executable, and a
-                // larger frame must remain queued until the consumer catches up.
+                // FrameTasks is a min-heap. Only the heap front can be eligible: older tasks are stale, the
+                // current frame is executable, and a larger frame must remain queued until the consumer
+                // catches up.
                 while (!Queue.FrameTasks.empty()) {
                     if (Queue.FrameTasks.front().FrameIndex > FrameIndex)
                         break;
 
-                    // pop_heap moves the smallest (FrameIndex, Sequence) entry to
-                    // the back, where it can be moved out without copying its task.
-                    std::pop_heap(Queue.FrameTasks.begin(),
-                                  Queue.FrameTasks.end(),
-                                  std::greater<FrameTask>{});
+                    // pop_heap moves the smallest (FrameIndex, Sequence) entry to the back, where it can be
+                    // moved out without copying its task.
+                    std::pop_heap(Queue.FrameTasks.begin(), Queue.FrameTasks.end(), std::greater<FrameTask>{});
                     auto Task = std::move(Queue.FrameTasks.back());
                     Queue.FrameTasks.pop_back();
 
-                    // A producer may have fallen behind the consumer. Such work
-                    // missed its frame and is discarded rather than executed late.
+                    // A producer may have fallen behind the consumer. Such work missed its frame and is
+                    // discarded rather than executed late.
                     if (Task.FrameIndex == FrameIndex)
                         PendingTasks.push_back(std::move(Task));
                 }
@@ -204,9 +199,8 @@ class TaskGraph final : public Singleton<TaskGraph> {
             if (PendingTasks.empty())
                 return;
 
-            // Never invoke user callbacks while holding Queue.Mutex. A task may
-            // enqueue more work, and newly enqueued current-frame tasks are picked
-            // up by the next iteration of this drain.
+            // Never invoke user callbacks while holding Queue.Mutex. A task may enqueue more work, and newly
+            // enqueued current-frame tasks are picked up by the next iteration of this drain.
             for (auto& Task : PendingTasks)
                 Task.Task();
         }
@@ -251,8 +245,8 @@ class TaskGraph final : public Singleton<TaskGraph> {
     }
 
     auto WorkerLoop(std::size_t WorkerIndex, std::stop_token Stop) -> void {
-        // SetThreadName copies the string, so a formatted local is fine here;
-        // pointer identity only matters for names embedded in events
+        // SetThreadName copies the string, so a formatted local is fine here; pointer identity only matters
+        // for names embedded in events
         const String ThreadName = Format("WorkerThread{}", WorkerIndex);
         tracy::SetThreadName(ThreadName.c_str());
         SetLogThreadRole(LogThreadRole::Worker);
@@ -278,11 +272,10 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     std::array<TaskQueue, magic_enum::enum_count<ThreadQueue>()> m_Queues = {};
 
-    // Each fixed engine loop advances its own ordinal once per frame. TLS is
-    // intentionally not synchronized across threads; Enqueue copies the
-    // producer's ordinal into FrameTask, while Drain reads the consumer's
-    // ordinal. The pipeline's ordered frame progression makes matching
-    // ordinals refer to the same logical frame when the consumer catches up.
+    // Each fixed engine loop advances its own ordinal once per frame. TLS is intentionally not synchronized
+    // across threads; Enqueue copies the producer's ordinal into FrameTask, while Drain reads the consumer's
+    // ordinal. The pipeline's ordered frame progression makes matching ordinals refer to the same logical
+    // frame when the consumer catches up.
     inline static thread_local Uint64 ThreadFrameIndex = 0;
 
     // Serializes complete Init/Shutdown cycles so a restart cannot overlap teardown.

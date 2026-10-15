@@ -114,4 +114,3 @@ Responsible for draining RHI-side cross-thread tasks, recording and submitting t
 7. Window system shutdown
 
 **Error rule:** Any loop reaching a fatal error sets `m_FatalError` + `notify_all`. All loops check `m_FatalError` in their CV predicates. On fatal error, the slot state machine does NOT advance — the remaining loops break immediately without transitioning their current slot.
-

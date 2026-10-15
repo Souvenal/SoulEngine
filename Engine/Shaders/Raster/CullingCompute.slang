@@ -11,9 +11,9 @@ public struct RasterIndirectCommand {
 };
 
 /// @brief Culling pass I/O contract.
-/// Current implementation copies scene instances and indirect commands one-to-one.
-/// Future: frustum-culls into viewInstances via viewCounter atomic append and
-/// regenerates viewIndirectCommands grouped by geometryID on the GPU.
+/// Current implementation copies scene instances and indirect commands one-to-one. Future: frustum-culls into
+/// viewInstances via viewCounter atomic append and regenerates viewIndirectCommands grouped by geometryID on
+/// the GPU.
 public struct CullPassResources {
     public StructuredBuffer<InstanceRecord>        sceneInstances;
     public StructuredBuffer<RasterIndirectCommand> sceneIndirectCommands;

@@ -19,6 +19,10 @@ auto Register() -> void {
 } // namespace
 
 namespace MetaRegistration {
-struct Registration { Registration() { Register(); } };
+struct Registration {
+    Registration() {
+        Register();
+    }
+};
 Registration g_Registration = {};
 } // namespace MetaRegistration

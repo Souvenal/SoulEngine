@@ -1,9 +1,9 @@
 module;
 
 // For VMA loading procedure, see:
-// https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/quick_start.html
-// Because we use `DynamicLoader` from vulkan headers, we define:
-// dynamically fetching pointers using `vkGetInstanceProcAddr` and `vkGetDeviceProcAddr`
+// https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/quick_start.html Because we use
+// `DynamicLoader` from vulkan headers, we define: dynamically fetching pointers using `vkGetInstanceProcAddr`
+// and `vkGetDeviceProcAddr`
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -83,26 +83,24 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         auto Resources = VulkanResourceContext::Create(WindowSys, m_FramesInFlight);
         if (!Resources)
             return std::unexpected(Resources.error().Append("VulkanResourceContext creation failed"));
-        // VulkanResourceContext owns shared Vulkan services and is borrowed by
-        // resource factories through this RenderDevice-held pointer.
+        // VulkanResourceContext owns shared Vulkan services and is borrowed by resource factories through
+        // this RenderDevice-held pointer.
         m_ResourceContext = std::move(*Resources);
+        // Tracy GPU profiling
 
-        // ── Tracy GPU profiling ─────────────────────────────────────────
-
-        // ── Global descriptor manager ─────────────────────────────────────
-        auto Descriptors = VulkanDescriptorManager::Create(
-            m_ResourceContext->GetDevice(), m_ResourceContext->GetDebugUtils());
+        // Global descriptor manager
+        auto Descriptors =
+            VulkanDescriptorManager::Create(m_ResourceContext->GetDevice(), m_ResourceContext->GetDebugUtils());
         if (!Descriptors)
             return std::unexpected(Descriptors.error().Append("VulkanDescriptorManager creation failed"));
         m_DescriptorManager = std::move(*Descriptors);
 
-        // ── VulkanSwapchain ───────────────────────────────────────────────
         auto Swapchain = VulkanSwapchain::Create(*m_ResourceContext);
         if (!Swapchain)
             return std::unexpected(Swapchain.error());
         m_Swapchain = std::move(*Swapchain);
+        // VulkanFrameContext
 
-        // ── VulkanFrameContext ───────────────────────────────────────────────────
         // Each frame slot gets its own Pool, PrimaryBuffer, and SubPool.
         m_FrameContext.clear();
         m_FrameContext.reserve(m_FramesInFlight);
@@ -113,14 +111,14 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             m_FrameContext.push_back(std::move(*FCRes));
         }
 
-        // ── Staging belt: the shared frame-start upload staging, borrowed by both managers ──
-        auto Staging =
-            VulkanStagingBelt::Create(*m_ResourceContext, static_cast<Uint64>(CVarRhiVulkanStagingRingBufferSize.Get()));
+        // Staging belt: the shared frame-start upload staging, borrowed by both managers
+        auto Staging = VulkanStagingBelt::Create(*m_ResourceContext,
+                                                 static_cast<Uint64>(CVarRhiVulkanStagingRingBufferSize.Get()));
         if (!Staging)
             return std::unexpected(Staging.error().Append("VulkanStagingBelt creation failed"));
         m_StagingBelt = std::move(*Staging);
 
-        // ── Buffer manager: transient belts, upload front-end, creation dispatch ──
+        // Buffer manager: transient belts, upload front-end, creation dispatch
         auto Buffers = VulkanBufferManager::Create(*m_ResourceContext,
                                                    static_cast<Uint64>(CVarRhiVulkanUniformBeltSize.Get()),
                                                    static_cast<Uint64>(CVarRhiVulkanShaderStorageBeltSize.Get()),
@@ -129,17 +127,17 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(Buffers.error().Append("VulkanBufferManager creation failed"));
         m_BufferManager = std::move(*Buffers);
 
-        // ── Texture manager: creation dispatch and the upload front-end ──
+        // Texture manager: creation dispatch and the upload front-end
         auto Textures = VulkanTextureManager::Create(*m_ResourceContext, m_StagingBelt);
         if (!Textures)
             return std::unexpected(Textures.error().Append("VulkanTextureManager creation failed"));
         m_TextureManager = std::move(*Textures);
 
-        // ── AS manager: creation, the frame-start build batch, the AS rings ──
-        auto AccelerationStructures = VulkanAccelerationStructureManager::Create(
-            *m_ResourceContext,
-            static_cast<Uint64>(CVarRhiVulkanASScratchRingSize.Get()),
-            static_cast<Uint64>(CVarRhiVulkanASInstanceRingSize.Get()));
+        // AS manager: creation, the frame-start build batch, the AS rings
+        auto AccelerationStructures =
+            VulkanAccelerationStructureManager::Create(*m_ResourceContext,
+                                                       static_cast<Uint64>(CVarRhiVulkanASScratchRingSize.Get()),
+                                                       static_cast<Uint64>(CVarRhiVulkanASInstanceRingSize.Get()));
         if (!AccelerationStructures)
             return std::unexpected(
                 AccelerationStructures.error().Append("VulkanAccelerationStructureManager creation failed"));
@@ -155,15 +153,14 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto GetBackendType() const -> RHIBackendType override {
         return RHIBackendType::Vulkan;
     }
-
-    // ── Frame lifecycle — private ─────────────────────────────────────
+    // Frame lifecycle — private
 
     [[nodiscard]] auto BeginFrame() -> std::expected<void, ErrorMessage> override {
-        // Publish the executing frame slot so frame-slotted payloads (TLAS)
-        // resolve their internal slot during this frame's command recording.
+        // Publish the executing frame slot so frame-slotted payloads (TLAS) resolve their internal slot
+        // during this frame's command recording.
         m_ResourceContext->SetCurrentFrameIndex(m_CurrentFrame);
-        // CPU-GPU sync: wait for the timeline semaphore to reach the value
-        // from N frames ago (when this slot was last signalled).
+        // CPU-GPU sync: wait for the timeline semaphore to reach the value from N frames ago (when this slot
+        // was last signalled).
         uint64_t WaitValue = m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue;
         m_ResourceContext->GetTimeline().Wait(WaitValue);
 
@@ -189,7 +186,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 Format("AcquireNextImage failed after swapchain recreation: {}", vk::to_string(AcquireRes))));
         }
 
-        // ── Begin primary command buffer (AS phase, the frame's pass secondary, present) ──
+        // Begin primary command buffer (AS phase, the frame's pass secondary, present)
         auto& Primary = m_FrameContext[m_CurrentFrame].PrimaryBuffer;
         Primary.reset({});
         vk::CommandBufferBeginInfo PrimaryBegin{
@@ -199,10 +196,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(ErrorMessage(Format("BeginFrame: primary CB begin failed: {}", vk::to_string(R))));
         CollectGpu(*m_ResourceContext, Primary);
 
-        // Transient slices recycle per frame; drop last frame's buffer access
-        // states so every range starts untracked (the frame-slot fence already
-        // guarantees the previous occupant's GPU work has completed).
-        // 
+        // Transient slices recycle per frame; drop last frame's buffer access states so every range starts
+        // untracked (the frame-slot fence already guarantees the previous occupant's GPU work has completed).
+        //
         // TODO: might be a issue when we need barrier for a non-transient buffer.
         m_ResourceContext->GetBufferTracker().Reset();
 
@@ -213,8 +209,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_CurrentFrame;
     }
 
-    /// Thin forward: all buffer concerns — Desc validation, creation
-    /// dispatch, uploads, transient belts — live in VulkanBufferManager (:Buffer).
+    /// Thin forward: all buffer concerns — Desc validation, creation dispatch, uploads, transient belts —
+    /// live in VulkanBufferManager (:Buffer).
     [[nodiscard]] auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
         -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> override {
         return m_BufferManager.CreateBuffer(Name, Desc);
@@ -235,8 +231,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return Resource;
     }
 
-    /// Thin forward: upload validation, snapshotting, and the frame-affined
-    /// task live in VulkanBufferManager (:Buffer).
+    /// Thin forward: upload validation, snapshotting, and the frame-affined task live in VulkanBufferManager
+    /// (:Buffer).
     [[nodiscard]] auto UploadBuffer(RHIRef<RHIBuffer> Buffer, std::span<const std::byte> Data)
         -> std::expected<void, ErrorMessage> override {
         return m_BufferManager.Upload(std::move(Buffer), Data);
@@ -256,8 +252,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             });
     }
 
-    /// Thin forward: all texture concerns — creation dispatch and the upload
-    /// front-end — live in VulkanTextureManager (:Texture).
+    /// Thin forward: all texture concerns — creation dispatch and the upload front-end — live in
+    /// VulkanTextureManager (:Texture).
     [[nodiscard]] auto CreateTexture(StringView Name, const RHITextureDesc& Desc)
         -> std::expected<RHIRef<RHITexture>, ErrorMessage> override {
         return m_TextureManager.CreateTexture(Name, Desc);
@@ -273,8 +269,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_DescriptorManager.FindBindlessTextureIndex(Texture);
     }
 
-    /// Thin forward: upload validation, snapshotting, and the frame-affined
-    /// task live in VulkanTextureManager (:Texture).
+    /// Thin forward: upload validation, snapshotting, and the frame-affined task live in VulkanTextureManager
+    /// (:Texture).
     [[nodiscard]] auto UploadTexture(RHIRef<RHITexture> Texture, std::span<const std::byte> Data)
         -> std::expected<void, ErrorMessage> override {
         return m_TextureManager.Upload(std::move(Texture), Data);
@@ -289,8 +285,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         if (!Created)
             return std::unexpected(Created.error());
 
-        auto Resource = RHIRef<RHIShaderBindingSet>::Create();
-        UPtr<RHIShaderBindingSet> Payload = std::move(*Created);
+        auto                      Resource = RHIRef<RHIShaderBindingSet>::Create();
+        UPtr<RHIShaderBindingSet> Payload  = std::move(*Created);
         if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
             return std::unexpected(Publish.error());
         return Resource;
@@ -335,31 +331,31 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return Resource;
     }
 
-    /// Thin forward: validation and materialization live in
-    /// VulkanAccelerationStructureManager (:AccelerationStructure).
+    /// Thin forward: validation and materialization live in VulkanAccelerationStructureManager
+    /// (:AccelerationStructure).
     [[nodiscard]] auto CreateBottomLevelAccelerationStructure(StringView                                     Name,
                                                               const RHIBottomLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHIBottomLevelAccelerationStructure>, ErrorMessage> override {
         return m_AccelerationStructureManager.CreateBlas(Name, Desc);
     }
 
-    /// Thin forward: validation and materialization live in
-    /// VulkanAccelerationStructureManager (:AccelerationStructure).
+    /// Thin forward: validation and materialization live in VulkanAccelerationStructureManager
+    /// (:AccelerationStructure).
     [[nodiscard]] auto CreateTopLevelAccelerationStructure(StringView                                  Name,
                                                            const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> override {
         return m_AccelerationStructureManager.CreateTlas(Name, Desc);
     }
 
-    /// Thin forward: validation and the frame-affined task live in
-    /// VulkanAccelerationStructureManager (:AccelerationStructure).
+    /// Thin forward: validation and the frame-affined task live in VulkanAccelerationStructureManager
+    /// (:AccelerationStructure).
     [[nodiscard]] auto BuildBlas(RHIRef<RHIBottomLevelAccelerationStructure> Blas)
         -> std::expected<void, ErrorMessage> override {
         return m_AccelerationStructureManager.BuildBlas(std::move(Blas));
     }
 
-    /// Thin forward: validation and the frame-affined task live in
-    /// VulkanAccelerationStructureManager (:AccelerationStructure).
+    /// Thin forward: validation and the frame-affined task live in VulkanAccelerationStructureManager
+    /// (:AccelerationStructure).
     [[nodiscard]] auto BuildTlas(RHIRef<RHITopLevelAccelerationStructure> Tlas)
         -> std::expected<void, ErrorMessage> override {
         return m_AccelerationStructureManager.BuildTlas(std::move(Tlas));
@@ -367,11 +363,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
     [[nodiscard]] auto Tick() -> std::expected<void, ErrorMessage> override {
         m_DescriptorManager.Tick();
-        // Frame begin: reserve the frame-begin timeline value ahead of this
-        // frame's submissions; the buffer chain retires what the device
-        // timeline has passed, then seals the previous frame's pending
-        // uploads against it (the next real submission covers the reserved
-        // value).
+        // Frame begin: reserve the frame-begin timeline value ahead of this frame's submissions; the buffer
+        // chain retires what the device timeline has passed, then seals the previous frame's pending uploads
+        // against it (the next real submission covers the reserved value).
         const Uint64 FrameBeginTimelineValue = m_ResourceContext->GetTimeline().IncreaseHostValue();
         m_BufferManager.Tick(FrameBeginTimelineValue);
         m_StagingBelt.Tick(FrameBeginTimelineValue);
@@ -389,8 +383,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     }
 
     [[nodiscard]] auto Shutdown() -> std::expected<void, ErrorMessage> override {
-        std::optional<ErrorMessage> ShutdownError = std::nullopt;
-        const auto RecordShutdownError = [&ShutdownError](const ErrorMessage& Error) {
+        std::optional<ErrorMessage> ShutdownError       = std::nullopt;
+        const auto                  RecordShutdownError = [&ShutdownError](const ErrorMessage& Error) {
             if (!ShutdownError)
                 ShutdownError = Error;
         };
@@ -404,12 +398,10 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             DrainRHIDeferredDeletions();
         }
 
-        // The tail below requires a live resource context. It runs at most
-        // once: the destructor re-enters Shutdown() after Destroy() already
-        // released m_ResourceContext, and the failed-Initialize() path can
-        // reach the destructor without a context at all. m_NeedsShutdown is
-        // only set after m_ResourceContext, so no recorded error is dropped
-        // by this early-out.
+        // The tail below requires a live resource context. It runs at most once: the destructor re-enters
+        // Shutdown() after Destroy() already released m_ResourceContext, and the failed-Initialize() path can
+        // reach the destructor without a context at all. m_NeedsShutdown is only set after m_ResourceContext,
+        // so no recorded error is dropped by this early-out.
         if (!m_ResourceContext)
             return {};
 
@@ -423,10 +415,9 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         // Descriptor sets and their pool must be released while VkDevice is alive.
         m_DescriptorManager.Shutdown();
-        // Managers released RHIRef owners above; their Vulkan resource payloads
-        // are now pending in the process-wide RHI deferred queue. Drain after
-        // releasing those owners so their VkImage/VkBuffer allocations enter
-        // the backend queue before the final unconditional flush.
+        // Managers released RHIRef owners above; their Vulkan resource payloads are now pending in the
+        // process-wide RHI deferred queue. Drain after releasing those owners so their VkImage/VkBuffer
+        // allocations enter the backend queue before the final unconditional flush.
         DrainRHIDeferredDeletions();
         m_ResourceContext->GetDeferredDeletionQueue().Flush();
         // Tracy context must die while VkDevice is still alive.
@@ -453,8 +444,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             return std::unexpected(ErrorMessage("Vulkan Dear ImGui renderer does not support this window system"));
         }
 
-        // Dear ImGui exposes a C Vulkan API. These raw values are confined to
-        // this third-party adapter boundary.
+        // Dear ImGui exposes a C Vulkan API. These raw values are confined to this third-party adapter
+        // boundary.
         const VkFormat                ColorAttachmentFormat = static_cast<VkFormat>(m_Swapchain.GetFormat().format);
         VkPipelineRenderingCreateInfo PipelineRenderingCI{
             .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
@@ -468,8 +459,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         InitInfo.Device              = static_cast<VkDevice>(*m_ResourceContext->GetDevice());
         InitInfo.QueueFamily         = m_ResourceContext->GetGraphicsFamily();
         InitInfo.Queue               = static_cast<VkQueue>(*m_ResourceContext->GetGraphicsQueue());
-        InitInfo.DescriptorPool =
-            static_cast<VkDescriptorPool>(m_DescriptorManager.GetDescriptorPool());
+        InitInfo.DescriptorPool      = static_cast<VkDescriptorPool>(m_DescriptorManager.GetDescriptorPool());
         InitInfo.MinImageCount       = m_Swapchain.GetImageCount();
         InitInfo.ImageCount          = m_Swapchain.GetImageCount();
         InitInfo.UseDynamicRendering = true;
@@ -516,8 +506,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto RecordImGuiPresentationOverlay(vk::raii::CommandBuffer&              Buf,
                                                       const RHIImGuiPresentationOverlayCmd& Overlay)
         -> std::expected<void, ErrorMessage> {
-        const LabelScope OverlayLabel{
-            *m_ResourceContext, Buf, "ImGuiOverlay"};
+        const LabelScope OverlayLabel{*m_ResourceContext, Buf, "ImGuiOverlay"};
         if (!Overlay.Snapshot || !Overlay.TextureQueue || !Overlay.TextureMutex)
             return std::unexpected(ErrorMessage("ImGui presentation overlay has incomplete state"));
         {
@@ -526,8 +515,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         }
 
         const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
-        // The overlay follows the blit and alpha-blends over the scene, so it
-        // must load and preserve the existing swapchain color.
+        // The overlay follows the blit and alpha-blends over the scene, so it must load and preserve the
+        // existing swapchain color.
         m_ResourceContext->GetImageTracker().Transition(
             Buf,
             DstImage,
@@ -538,8 +527,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                                       .layerCount     = 1},
             VulkanImageState{
                 .stage  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                .access = vk::AccessFlagBits2::eColorAttachmentRead |
-                          vk::AccessFlagBits2::eColorAttachmentWrite,
+                .access = vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite,
                 .layout = vk::ImageLayout::eColorAttachmentOptimal,
             });
 
@@ -563,22 +551,19 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return {};
     }
 
-    /// Materialize one pass's prologue: every dst-only state requirement is
-    /// diffed against the emission-side trackers, and only state changes emit
-    /// a native barrier. Recorded into the primary so each barrier sits
+    /// Materialize one pass's prologue: every dst-only state requirement is diffed against the emission-side
+    /// trackers, and only state changes emit a native barrier. Recorded into the primary so each barrier sits
     /// between the producer's and this pass's commands in submission order.
-    [[nodiscard]] auto EmitPassPrologue(vk::raii::CommandBuffer& Primary,
-                                        const RHIBarrierList&    Prologue)
+    [[nodiscard]] auto EmitPassPrologue(vk::raii::CommandBuffer& Primary, const RHIBarrierList& Prologue)
         -> std::expected<void, ErrorMessage> {
         for (const auto& Transition : Prologue.Buffers) {
             const auto* Buffer = Transition.View.Buffer.TryGet();
             if (!Buffer)
                 return std::unexpected(ErrorMessage("Execute: prologue references an invalid buffer"));
-            const auto& VulkanBuf = static_cast<const VulkanBuffer&>(*Buffer);
-            // Belt slices track at their allocation offset; persistent
-            // (imported) buffers track at offset 0.
-            const auto* Prop        = VulkanBuf.GetProp<TransientBufferProp>();
-            const Uint64 Offset     = Prop ? Prop->Allocation.Offset : 0;
+            const auto&  VulkanBuf = static_cast<const VulkanBuffer&>(*Buffer);
+            // Belt slices track at their allocation offset; persistent (imported) buffers track at offset 0.
+            const auto*  Prop      = VulkanBuf.GetProp<TransientBufferProp>();
+            const Uint64 Offset    = Prop ? Prop->Allocation.Offset : 0;
             m_ResourceContext->GetBufferTracker().Transition(
                 Primary,
                 VulkanBuf.GetVkBuffer(),
@@ -596,18 +581,18 @@ class VulkanRenderDevice final : public RHIRenderDevice {
                 return std::unexpected(ErrorMessage("Execute: prologue references an invalid texture"));
             const auto& VulkanTarget = static_cast<const VulkanTexture&>(*Target);
             const auto  Aspect       = ToVkImageAspect(VulkanTarget.GetFormat());
-            // Ranges are always concrete for the tracker: a whole-chain view
-            // resolves against the payload's own mip count here.
+            // Ranges are always concrete for the tracker: a whole-chain view resolves against the payload's
+            // own mip count here.
             const auto  Range        = vk::ImageSubresourceRange{
-                          .aspectMask     = Aspect,
-                          .baseMipLevel   = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                                ? 0
-                                                : Transition.View.Range.BaseMipLevel,
-                          .levelCount     = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                                ? VulkanTarget.GetMipLevelCount()
-                                                : Transition.View.Range.MipLevelCount,
-                          .baseArrayLayer = 0,
-                          .layerCount     = 1};
+                .aspectMask     = Aspect,
+                .baseMipLevel   = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
+                                      ? 0
+                                      : Transition.View.Range.BaseMipLevel,
+                .levelCount     = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
+                                      ? VulkanTarget.GetMipLevelCount()
+                                      : Transition.View.Range.MipLevelCount,
+                .baseArrayLayer = 0,
+                .layerCount     = 1};
             m_ResourceContext->GetImageTracker().Transition(
                 Primary,
                 VulkanTarget.GetVkImage(),
@@ -622,17 +607,14 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return {};
     }
 
-    /// Record the frame-start upload batch into its own dedicated secondary
-    /// appended to the primary ahead of every pass — entries were produced by
-    /// the frame-affined UploadBuffer/UploadTexture tasks drained earlier this
-    /// frame (staging allocation and host copy already done there); the belt
-    /// records one copy per entry, the buffer lane sealed by a single
-    /// aggregated transfer-write → consumer-read barrier. Runs first in the
-    /// frame-start phase because the BLAS batch reads geometry buffers.
-    /// Recorded unconditionally — an empty batch simply yields an empty
-    /// secondary.
+    /// Record the frame-start upload batch into its own dedicated secondary appended to the primary ahead of
+    /// every pass — entries were produced by the frame-affined UploadBuffer/UploadTexture tasks drained
+    /// earlier this frame (staging allocation and host copy already done there); the belt records one copy
+    /// per entry, the buffer lane sealed by a single aggregated transfer-write → consumer-read barrier. Runs
+    /// first in the frame-start phase because the BLAS batch reads geometry buffers. Recorded unconditionally
+    /// — an empty batch simply yields an empty secondary.
     [[nodiscard]] auto RecordUploadWork(vk::raii::CommandBuffer& Primary) -> std::expected<void, ErrorMessage> {
-        auto&                        FC = m_FrameContext[m_CurrentFrame];
+        auto&                         FC = m_FrameContext[m_CurrentFrame];
         vk::CommandBufferAllocateInfo Alloc{
             .commandPool        = *FC.SubPool,
             .level              = vk::CommandBufferLevel::eSecondary,
@@ -667,23 +649,20 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         auto& FC      = m_FrameContext[m_CurrentFrame];
         auto& Primary = FC.PrimaryBuffer;
 
-        // Frame-start phase: the buffer upload batch first, then the BLAS
-        // batch, then each TLAS build, so the pass list consumes uploads and
-        // builds in submission order. Each phase records into its own
-        // secondary — the primary stays a pure skeleton. The upload batch
-        // records unconditionally; an empty batch costs one empty secondary.
-        // The AS phase drains the manager's pending lists (filled by the
+        // Frame-start phase: the buffer upload batch first, then the BLAS batch, then each TLAS build, so the
+        // pass list consumes uploads and builds in submission order. Each phase records into its own
+        // secondary — the primary stays a pure skeleton. The upload batch records unconditionally; an empty
+        // batch costs one empty secondary. The AS phase drains the manager's pending lists (filled by the
         // frame-affined BuildBlas/BuildTlas tasks) and early-outs when empty.
         if (auto R = RecordUploadWork(Primary); !R)
             return std::unexpected(R.error().Append("Execute: upload batch failed"));
         if (auto R = m_AccelerationStructureManager.RecordBuildBatch(FC, m_CurrentFrame, Primary); !R)
             return std::unexpected(R.error().Append("Execute: AS build work failed"));
 
-        // All passes record into ONE frame secondary: the pass producer's
-        // writes, each pass's prologue barrier, and the pass's reads stay in
-        // a single command-buffer context so synchronization validation
-        // resolves hazards at record time (syncval does not resolve
-        // cross-secondary boundary hazards against barriers).
+        // All passes record into ONE frame secondary: the pass producer's writes, each pass's prologue
+        // barrier, and the pass's reads stay in a single command-buffer context so synchronization validation
+        // resolves hazards at record time (syncval does not resolve cross-secondary boundary hazards against
+        // barriers).
         vk::raii::CommandBuffer* SecBuf = nullptr;
         if (!Result.CmdList.Entries.empty()) {
             vk::CommandBufferAllocateInfo Alloc{
@@ -695,10 +674,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             if (AllocResult.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Execute: failed to allocate secondary CB"));
             m_ResourceContext->GetDebugUtils().SetObjectName(
-                *AllocResult.value[0],
-                Format("Internal/CommandBuffer/Secondary/Frame{}/Passes", m_CurrentFrame));
-            SecBuf = &m_FrameContext[m_CurrentFrame].ScratchSecondaries.emplace_back(
-                std::move(AllocResult.value[0]));
+                *AllocResult.value[0], Format("Internal/CommandBuffer/Secondary/Frame{}/Passes", m_CurrentFrame));
+            SecBuf = &m_FrameContext[m_CurrentFrame].ScratchSecondaries.emplace_back(std::move(AllocResult.value[0]));
 
             vk::CommandBufferInheritanceInfo Inheritance{
                 .renderPass           = nullptr,
@@ -719,27 +696,22 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             const auto& Entry = Result.CmdList.Entries[PassIndex];
             const auto& Pass  = Entry.Pass;
             if (!Pass)
-                return std::unexpected(ErrorMessage(
-                    Format("Execute: pass {} is null", PassIndex)));
+                return std::unexpected(ErrorMessage(Format("Execute: pass {} is null", PassIndex)));
             auto* Pipeline = Pass->GetPipeline();
             // Transfer passes have no pipeline; all other passes must have one.
             if (Pass->GetType() != RHIPassType::Transfer && !Pipeline)
-                return std::unexpected(ErrorMessage(
-                    Format("Execute: pass {} has no pipeline", Pass->GetName())));
+                return std::unexpected(ErrorMessage(Format("Execute: pass {} has no pipeline", Pass->GetName())));
             if (auto R = Pass->Record(); !R)
-                return std::unexpected(
-                    R.error().Append(Format("Execute: pass {} recording failed", Pass->GetName())));
+                return std::unexpected(R.error().Append(Format("Execute: pass {} recording failed", Pass->GetName())));
 
-            // The graph-declared prologue is materialized ahead of the pass's
-            // commands inside the shared frame secondary.
+            // The graph-declared prologue is materialized ahead of the pass's commands inside the shared
+            // frame secondary.
             if (auto R = EmitPassPrologue(*SecBuf, Entry.Prologue); !R)
-                return std::unexpected(
-                    R.error().Append(Format("Execute: pass {} prologue failed", Pass->GetName())));
+                return std::unexpected(R.error().Append(Format("Execute: pass {} prologue failed", Pass->GetName())));
 
             {
-                const LabelScope PassLabel{
-                    *m_ResourceContext, *SecBuf, Pass->GetName()};
-                const auto RecordCommands = [&](auto& Visitor) -> std::expected<void, ErrorMessage> {
+                const LabelScope PassLabel{*m_ResourceContext, *SecBuf, Pass->GetName()};
+                const auto       RecordCommands = [&](auto& Visitor) -> std::expected<void, ErrorMessage> {
                     if (Visitor.GetError())
                         return std::unexpected(*Visitor.GetError());
                     for (const auto& Cmd : Pass->GetCommands()) {
@@ -752,51 +724,51 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
                 std::expected<void, ErrorMessage> RecordResult;
                 switch (Pass->GetType()) {
-                    case RHIPassType::Graphics: {
-                        const auto& GraphicsPass = static_cast<const IRHIGraphicsPass&>(*Pass);
-                        auto* GfxPipeline = static_cast<VulkanGraphicsPipeline*>(Pipeline);
-                        if (!GfxPipeline)
-                            return std::unexpected(ErrorMessage("Execute: graphics pass has no pipeline"));
-                        VulkanGraphicsCmdVisitor Visitor{
-                            *GfxPipeline,
-                            GraphicsPass.GetAttachments(),
-                            *SecBuf,
-                            *m_ResourceContext,
-                        };
-                        RecordResult = RecordCommands(Visitor);
-                        break;
-                    }
-                    case RHIPassType::Compute: {
-                        auto* CompPipeline = static_cast<VulkanComputePipeline*>(Pipeline);
-                        if (!CompPipeline)
-                            return std::unexpected(ErrorMessage("Execute: compute pass has no pipeline"));
-                        VulkanComputeCmdVisitor Visitor{
-                            *CompPipeline,
-                            *SecBuf,
-                            *m_ResourceContext,
-                        };
-                        RecordResult = RecordCommands(Visitor);
-                        break;
-                    }
-                    case RHIPassType::RayTracing: {
-                        auto* RtPipeline = static_cast<VulkanRayTracingPipeline*>(Pipeline);
-                        if (!RtPipeline)
-                            return std::unexpected(ErrorMessage("Execute: ray-tracing pass has no pipeline"));
-                        VulkanRayTracingCmdVisitor Visitor{
-                            *RtPipeline,
-                            *SecBuf,
-                            *m_ResourceContext,
-                        };
-                        RecordResult = RecordCommands(Visitor);
-                        break;
-                    }
-                    case RHIPassType::Transfer: {
-                        VulkanTransferCmdVisitor Visitor{*SecBuf, *m_ResourceContext, m_Swapchain};
-                        RecordResult = RecordCommands(Visitor);
-                        break;
-                    }
-                    default:
-                        return std::unexpected(ErrorMessage("Execute: unknown pass type"));
+                case RHIPassType::Graphics: {
+                    const auto& GraphicsPass = static_cast<const IRHIGraphicsPass&>(*Pass);
+                    auto*       GfxPipeline  = static_cast<VulkanGraphicsPipeline*>(Pipeline);
+                    if (!GfxPipeline)
+                        return std::unexpected(ErrorMessage("Execute: graphics pass has no pipeline"));
+                    VulkanGraphicsCmdVisitor Visitor{
+                        *GfxPipeline,
+                        GraphicsPass.GetAttachments(),
+                        *SecBuf,
+                        *m_ResourceContext,
+                    };
+                    RecordResult = RecordCommands(Visitor);
+                    break;
+                }
+                case RHIPassType::Compute: {
+                    auto* CompPipeline = static_cast<VulkanComputePipeline*>(Pipeline);
+                    if (!CompPipeline)
+                        return std::unexpected(ErrorMessage("Execute: compute pass has no pipeline"));
+                    VulkanComputeCmdVisitor Visitor{
+                        *CompPipeline,
+                        *SecBuf,
+                        *m_ResourceContext,
+                    };
+                    RecordResult = RecordCommands(Visitor);
+                    break;
+                }
+                case RHIPassType::RayTracing: {
+                    auto* RtPipeline = static_cast<VulkanRayTracingPipeline*>(Pipeline);
+                    if (!RtPipeline)
+                        return std::unexpected(ErrorMessage("Execute: ray-tracing pass has no pipeline"));
+                    VulkanRayTracingCmdVisitor Visitor{
+                        *RtPipeline,
+                        *SecBuf,
+                        *m_ResourceContext,
+                    };
+                    RecordResult = RecordCommands(Visitor);
+                    break;
+                }
+                case RHIPassType::Transfer: {
+                    VulkanTransferCmdVisitor Visitor{*SecBuf, *m_ResourceContext, m_Swapchain};
+                    RecordResult = RecordCommands(Visitor);
+                    break;
+                }
+                default:
+                    return std::unexpected(ErrorMessage("Execute: unknown pass type"));
                 }
                 if (!RecordResult)
                     return std::unexpected(RecordResult.error());
@@ -810,11 +782,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             Primary.executeCommands({static_cast<vk::CommandBuffer>(**SecBuf)});
         }
 
-        // Present is explicit: BlitToSwapchain transfer passes already recorded
-        // their blits as pass commands above; nothing implicit here.
+        // Present is explicit: BlitToSwapchain transfer passes already recorded their blits as pass commands
+        // above; nothing implicit here.
 
-        // Primary CB was already prepared in BeginFrame. Presentation overlays
-        // follow all pass-local output blits and preserve the final swapchain contents.
+        // Primary CB was already prepared in BeginFrame. Presentation overlays follow all pass-local output
+        // blits and preserve the final swapchain contents.
         if (Result.CmdList.ImGuiPresentationOverlay) {
             if (auto R = RecordImGuiPresentationOverlay(Primary, *Result.CmdList.ImGuiPresentationOverlay); !R)
                 return std::unexpected(R.error());
@@ -837,15 +809,14 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto EndFrame() -> std::expected<RHIFrameCompletion, ErrorMessage> override {
         auto& FC      = m_FrameContext[m_CurrentFrame];
         auto& Primary = FC.PrimaryBuffer;
+        // End primary
 
-        // ── End primary ─────────────────────────────────────────────────
         if (auto R = Primary.end(); R != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage(Format("EndFrame: primary CB end failed: {}", vk::to_string(R))));
 
-        // ── Submit ──────────────────────────────────────────────────────────
         vk::CommandBufferSubmitInfo PrimarySubmitInfo{.commandBuffer = *Primary};
 
-        vk::SemaphoreSubmitInfo     PresentCompleteSema{
+        vk::SemaphoreSubmitInfo PresentCompleteSema{
             .semaphore = *m_FrameContext[m_CurrentFrame].PresentComplete,
             .stageMask = vk::PipelineStageFlagBits2::eTransfer,
         };
@@ -875,7 +846,6 @@ class VulkanRenderDevice final : public RHIRenderDevice {
 
         m_FrameContext[m_CurrentFrame].SubmissionCompleteTimelineValue = TimelineSignalSema.value;
 
-        // ── Present ────────────────────────────────────────────────────────
         auto PresentRes = m_Swapchain.Present(m_ResourceContext->GetGraphicsQueue());
         if (PresentRes == vk::Result::eErrorOutOfDateKHR || PresentRes == vk::Result::eSuboptimalKHR) {
             if (auto R = m_Swapchain.Recreate(); !R)
@@ -888,44 +858,38 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return RHIFrameCompletion{.Value = TimelineSignalSema.value};
     }
 
-    [[nodiscard]] auto WaitFinish(const RHIFrameCompletion& Completion)
-        -> std::expected<void, ErrorMessage> override {
-        // This is a read-only host wait on an immutable timeline value. It
-        // does not touch command buffers or frame ownership, so RenderThread
-        // may call it while RHIThread performs normal submission work.
+    [[nodiscard]] auto WaitFinish(const RHIFrameCompletion& Completion) -> std::expected<void, ErrorMessage> override {
+        // This is a read-only host wait on an immutable timeline value. It does not touch command buffers or
+        // frame ownership, so RenderThread may call it while RHIThread performs normal submission work.
         if (Completion.Value == 0)
             return {};
         m_ResourceContext->GetTimeline().Wait(Completion.Value);
         return {};
     }
-
-    // ── RAII resources ─────────────────────────────────────────────────────
+    // RAII resources
 
     uint32_t m_FramesInFlight = 2;
     uint32_t m_CurrentFrame   = 0;
 
-    // ── VulkanSwapchain & sync ──────────────────────────────────────────────────
+    // VulkanSwapchain & sync
 
-    VulkanSwapchain         m_Swapchain;
-    UPtr<VulkanResourceContext> m_ResourceContext = nullptr;
-    VulkanDescriptorManager m_DescriptorManager = {};
+    VulkanSwapchain             m_Swapchain;
+    UPtr<VulkanResourceContext> m_ResourceContext   = nullptr;
+    VulkanDescriptorManager     m_DescriptorManager = {};
 
-    std::vector<VulkanFrameContext>   m_FrameContext;
-    /// The shared frame-start upload staging (buffer and image lanes); both
-    /// resource managers borrow it. Destroyed ahead of the resource context's
-    /// allocator in Shutdown().
-    VulkanStagingBelt m_StagingBelt = {};
-    /// All buffer-flavor concerns (creation dispatch, uploads, transient
-    /// belts). The device never moves after creation, so frame-affined tasks
-    /// safely capture the member's address.
-    VulkanBufferManager m_BufferManager = {};
+    std::vector<VulkanFrameContext>    m_FrameContext;
+    /// The shared frame-start upload staging (buffer and image lanes); both resource managers borrow it.
+    /// Destroyed ahead of the resource context's allocator in Shutdown().
+    VulkanStagingBelt                  m_StagingBelt                  = {};
+    /// All buffer-flavor concerns (creation dispatch, uploads, transient belts). The device never moves after
+    /// creation, so frame-affined tasks safely capture the member's address.
+    VulkanBufferManager                m_BufferManager                = {};
     /// All texture concerns (creation dispatch, upload front-end).
-    VulkanTextureManager m_TextureManager = {};
-    /// All acceleration-structure concerns (creation, the frame-start build
-    /// batch, the scratch and instance rings).
+    VulkanTextureManager               m_TextureManager               = {};
+    /// All acceleration-structure concerns (creation, the frame-start build batch, the scratch and instance
+    /// rings).
     VulkanAccelerationStructureManager m_AccelerationStructureManager = {};
-    bool m_NeedsShutdown = false;
-
+    bool                               m_NeedsShutdown                = false;
 };
 
 } // namespace SoulEngine

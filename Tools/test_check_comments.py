@@ -352,4 +352,3 @@ class GlobFallbackTest(CheckerCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,12 +1,11 @@
 /// @file   Core/Util/Error.cppm
 /// @brief  Structured error chain type for std::expected error propagation.
 ///
-/// Replaces bare `String` in `std::expected<T, String>` throughout the engine.
-/// Each ErrorMessage holds an ordered chain of error messages from the
-/// innermost error cause to the outermost context, with a source location
-/// recorded per layer.  Call `.Append()` at each layer to add context, then
-/// call `.ToString()` at the terminal to render the chain as a progressively
-/// indented "Caused by:" tree with per-layer source locations.
+/// Replaces bare `String` in `std::expected<T, String>` throughout the engine. Each ErrorMessage holds an
+/// ordered chain of error messages from the innermost error cause to the outermost context, with a source
+/// location recorded per layer. Call `.Append()` at each layer to add context, then call `.ToString()` at the
+/// terminal to render the chain as a progressively indented "Caused by:" tree with per-layer source
+/// locations.
 
 export module Core:Util.Error;
 

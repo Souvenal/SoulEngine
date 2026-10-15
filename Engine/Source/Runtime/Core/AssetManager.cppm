@@ -13,24 +13,25 @@ export namespace SoulEngine {
 
 /// @brief Opaque reference to a registered asset. Value type; copy freely.
 ///
-/// `Id == 0` is the invalid sentinel: default-constructed handles and failed
-/// loads both produce it, and `GetContent` returns null for it. `Generation`
-/// is reserved for future ABA detection and is always zero for now.
+/// `Id == 0` is the invalid sentinel: default-constructed handles and failed loads both produce it, and
+/// `GetContent` returns null for it. `Generation` is reserved for future ABA detection and is always zero for
+/// now.
 struct AssetHandle {
-    Uint64 Id        = 0;
+    Uint64 Id         = 0;
     Uint64 Generation = 0;
 
-    [[nodiscard]] explicit operator bool() const noexcept { return Id != 0; }
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return Id != 0;
+    }
     [[nodiscard]] auto operator==(const AssetHandle&) const -> bool = default;
 };
 
 /// @brief Process-wide asset registry keyed by stable handles.
 ///
-/// `Load` registers a path (relative paths resolve against the current
-/// application root, injected at application creation) and returns a handle.
-/// Content is read lazily: `ShouldRead` only prefetches; `GetContent` reads
-/// and caches on first use. Handles stay valid for the process lifetime —
-/// entries are never evicted, so the handle needs no generation checks yet.
+/// `Load` registers a path (relative paths resolve against the current application root, injected at
+/// application creation) and returns a handle. Content is read lazily: `ShouldRead` only prefetches;
+/// `GetContent` reads and caches on first use. Handles stay valid for the process lifetime — entries are
+/// never evicted, so the handle needs no generation checks yet.
 class AssetManager : public Singleton<AssetManager> {
     friend class Singleton<AssetManager>;
 
@@ -43,10 +44,9 @@ class AssetManager : public Singleton<AssetManager> {
 
     /// @brief Register an asset path and return its stable handle.
     ///
-    /// Relative paths resolve against the application root. A path that was
-    /// already registered returns the existing handle, so repeated loads of
-    /// one asset share content. A missing `ShouldRead` prefetch is not an
-    /// error — reading happens lazily in `GetContent`.
+    /// Relative paths resolve against the application root. A path that was already registered returns the
+    /// existing handle, so repeated loads of one asset share content. A missing `ShouldRead` prefetch is not
+    /// an error — reading happens lazily in `GetContent`.
     [[nodiscard]] auto Load(const Path& AssetPath, bool ShouldRead = false) -> AssetHandle {
         if (AssetPath.empty()) {
             LogWarning("AssetManager::Load: empty asset path");
@@ -54,16 +54,15 @@ class AssetManager : public Singleton<AssetManager> {
         }
 
         std::scoped_lock Lock(m_Mutex);
-        const auto FullPath = ResolvePath(AssetPath);
+        const auto       FullPath = ResolvePath(AssetPath);
         if (const auto It = m_PathsToHandles.find(FullPath); It != m_PathsToHandles.end()) {
             if (ShouldRead)
                 ReadContentLocked(m_Entries.at(It->second));
             return MakeHandle(It->second);
         }
 
-        const auto Id = m_NextId++;
-        auto [It, Inserted] = m_Entries.try_emplace(Id,
-            Entry{.FullPath = FullPath, .Generation = 0, .Data = nullptr});
+        const auto Id       = m_NextId++;
+        auto [It, Inserted] = m_Entries.try_emplace(Id, Entry{.FullPath = FullPath, .Generation = 0, .Data = nullptr});
         m_PathsToHandles.emplace(FullPath, Id);
         if (ShouldRead)
             ReadContentLocked(It->second);
@@ -76,23 +75,20 @@ class AssetManager : public Singleton<AssetManager> {
         if (!Handle)
             return {};
         std::scoped_lock Lock(m_Mutex);
-        const auto It = m_Entries.find(Handle.Id);
-        return It == m_Entries.end() || It->second.Generation != Handle.Generation
-                   ? Path{}
-                   : It->second.FullPath;
+        const auto       It = m_Entries.find(Handle.Id);
+        return It == m_Entries.end() || It->second.Generation != Handle.Generation ? Path{} : It->second.FullPath;
     }
 
     /// @brief Return the asset's bytes, reading from disk on first access.
     ///
-    /// Returns null for invalid handles or unreadable files. The returned
-    /// pointer borrows from the manager's cache and stays valid for the
-    /// process lifetime.
+    /// Returns null for invalid handles or unreadable files. The returned pointer borrows from the manager's
+    /// cache and stays valid for the process lifetime.
     [[nodiscard]] auto GetContent(AssetHandle Handle) -> SPtr<const std::vector<std::byte>> {
         if (!Handle)
             return nullptr;
 
         std::scoped_lock Lock(m_Mutex);
-        const auto It = m_Entries.find(Handle.Id);
+        const auto       It = m_Entries.find(Handle.Id);
         if (It == m_Entries.end() || It->second.Generation != Handle.Generation)
             return nullptr;
         ReadContentLocked(It->second);
@@ -104,8 +100,8 @@ class AssetManager : public Singleton<AssetManager> {
     ~AssetManager() = default;
 
     struct Entry {
-        Path                        FullPath   = {};
-        Uint64                      Generation = 0;
+        Path                         FullPath   = {};
+        Uint64                       Generation = 0;
         SPtr<std::vector<std::byte>> Data       = nullptr;
     };
 
@@ -113,17 +109,16 @@ class AssetManager : public Singleton<AssetManager> {
         return AssetHandle{.Id = Id, .Generation = m_Entries.at(Id).Generation};
     }
 
-    /// Resolve an asset path against the application root. Absolute paths
-    /// pass through normalized; callers without a set root must pass
-    /// absolute paths.
+    /// Resolve an asset path against the application root. Absolute paths pass through normalized; callers
+    /// without a set root must pass absolute paths.
     [[nodiscard]] auto ResolvePath(const Path& AssetPath) const -> Path {
         if (AssetPath.is_absolute() || m_ApplicationRoot.empty())
             return AssetPath.lexically_normal();
         return (m_ApplicationRoot / AssetPath).lexically_normal();
     }
 
-    /// Read the entry's file into the cache if not cached yet. Caller holds
-    /// the mutex. Read failures log a warning and leave Data null.
+    /// Read the entry's file into the cache if not cached yet. Caller holds the mutex. Read failures log a
+    /// warning and leave Data null.
     auto ReadContentLocked(Entry& Entry) -> void {
         if (Entry.Data)
             return;
@@ -147,11 +142,11 @@ class AssetManager : public Singleton<AssetManager> {
         Entry.Data = std::move(Data);
     }
 
-    std::mutex                                       m_Mutex;
-    Path                                             m_ApplicationRoot = {};
-    std::unordered_map<Uint64, Entry>                m_Entries         = {};
-    std::unordered_map<Path, Uint64>                 m_PathsToHandles  = {};
-    Uint64                                           m_NextId          = 1;
+    std::mutex                        m_Mutex;
+    Path                              m_ApplicationRoot = {};
+    std::unordered_map<Uint64, Entry> m_Entries         = {};
+    std::unordered_map<Path, Uint64>  m_PathsToHandles  = {};
+    Uint64                            m_NextId          = 1;
 };
 
 } // namespace SoulEngine

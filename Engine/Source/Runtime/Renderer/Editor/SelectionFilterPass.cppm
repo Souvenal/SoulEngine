@@ -18,7 +18,9 @@ export namespace SoulEngine {
 class SelectionFilterPass final : public IRHIComputePass {
   public:
     static constexpr StringView Name = "SelectionFilterPass";
-    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<SelectionFilterPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
@@ -29,18 +31,17 @@ class SelectionFilterPass final : public IRHIComputePass {
     }
 
     struct Parameter {
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  ViewInstances;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  ViewIndirect;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> SelectedInstances;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> SelectedIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>                    ViewInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>                    ViewIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write>                   SelectedInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write>                   SelectedIndirect;
         /// @brief Per-command selected counts.
         ///
-        /// Created with zero-initialized InitialData (historical crash fix):
-        /// the filter accumulates per-command counts via InterlockedAdd — an
-        /// RMW, hence the declared Read|Write.
+        /// Created with zero-initialized InitialData (historical crash fix): the filter accumulates
+        /// per-command counts via InterlockedAdd — an RMW, hence the declared Read|Write.
         RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read | RHIAccess::Write> SelectedCounters;
-        Uint32 CommandCount     = 0;
-        Uint32 SelectedEntityId = 0;
+        Uint32                                                                    CommandCount     = 0;
+        Uint32                                                                    SelectedEntityId = 0;
     };
 
     SelectionFilterPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
@@ -55,11 +56,16 @@ class SelectionFilterPass final : public IRHIComputePass {
 
         if (auto R = BindResources(std::array{
                 RHIShaderBindingRequest{"g_selectionFilter.sceneInstances", m_Parameter->ViewInstances.ResolvedView()},
-                RHIShaderBindingRequest{"g_selectionFilter.sceneIndirectCommands", m_Parameter->ViewIndirect.ResolvedView()},
-                RHIShaderBindingRequest{"g_selectionFilter.selectedInstances", m_Parameter->SelectedInstances.ResolvedView()},
-                RHIShaderBindingRequest{"g_selectionFilter.selectedIndirectCommands", m_Parameter->SelectedIndirect.ResolvedView()},
-                RHIShaderBindingRequest{"g_selectionFilter.commandCounters", m_Parameter->SelectedCounters.ResolvedView()},
-            }); !R)
+                RHIShaderBindingRequest{"g_selectionFilter.sceneIndirectCommands",
+                                        m_Parameter->ViewIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.selectedInstances",
+                                        m_Parameter->SelectedInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.selectedIndirectCommands",
+                                        m_Parameter->SelectedIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.commandCounters",
+                                        m_Parameter->SelectedCounters.ResolvedView()},
+            });
+            !R)
             return std::unexpected(R.error());
 
         if (auto R = PushConstants(0, m_Parameter->SelectedEntityId); !R)

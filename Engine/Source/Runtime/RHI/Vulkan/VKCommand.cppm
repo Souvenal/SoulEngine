@@ -51,10 +51,9 @@ class VulkanCmdVisitor {
         Error = ErrorMessage("Command is not supported by this Vulkan pass visitor");
     }
 
-    /// Bind a pipeline-owned shader binding set and apply the committed
-    /// dynamic-offset and push-constant snapshot for the current pass.
-    auto BindShaderBindingSet(VulkanShaderBindingSet& BindingSet,
-                              vk::PipelineBindPoint BindPoint) -> void {
+    /// Bind a pipeline-owned shader binding set and apply the committed dynamic-offset and push-constant
+    /// snapshot for the current pass.
+    auto BindShaderBindingSet(VulkanShaderBindingSet& BindingSet, vk::PipelineBindPoint BindPoint) -> void {
         const vk::PipelineLayout Layout = BindingSet.GetPipelineLayout();
 
         auto State = BindingSet.CaptureBindingState();
@@ -78,15 +77,12 @@ class VulkanCmdVisitor {
     }
 
   protected:
-    VulkanCmdVisitor(
-        vk::raii::CommandBuffer&  InBuffer,
-        VulkanResourceContext&    InResourceContext)
-        : Buf(InBuffer),
-          ResourceContext(InResourceContext) {}
+    VulkanCmdVisitor(vk::raii::CommandBuffer& InBuffer, VulkanResourceContext& InResourceContext)
+        : Buf(InBuffer), ResourceContext(InResourceContext) {}
 
-    vk::raii::CommandBuffer&                         Buf;
-    VulkanResourceContext&                           ResourceContext;
-    std::optional<ErrorMessage>                      Error                         = std::nullopt;
+    vk::raii::CommandBuffer&    Buf;
+    VulkanResourceContext&      ResourceContext;
+    std::optional<ErrorMessage> Error = std::nullopt;
 };
 
 class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
@@ -98,19 +94,15 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             Buf.endRendering();
     }
 
-    VulkanGraphicsCmdVisitor(
-        VulkanGraphicsPipeline&                          Pipeline,
-        const RHIGraphicsAttachments&                    Attachments,
-        vk::raii::CommandBuffer&                         InBuffer,
-        VulkanResourceContext&                           InResourceContext)
-        : VulkanCmdVisitor(InBuffer,
-                           InResourceContext),
-          m_Pipeline(Pipeline) {
+    VulkanGraphicsCmdVisitor(VulkanGraphicsPipeline&       Pipeline,
+                             const RHIGraphicsAttachments& Attachments,
+                             vk::raii::CommandBuffer&      InBuffer,
+                             VulkanResourceContext&        InResourceContext)
+        : VulkanCmdVisitor(InBuffer, InResourceContext), m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eGraphics, Pipeline.Get());
         auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
         if (BindingSet)
-            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
-                                 vk::PipelineBindPoint::eGraphics);
+            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet), vk::PipelineBindPoint::eGraphics);
         BeginRendering(Attachments);
     }
 
@@ -123,8 +115,8 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
         m_CurrentColorFormats.clear();
         m_CurrentColorFormats.reserve(Attachments.ColorAttachments.size());
         m_CurrentDepthFormat = RHIFormat::Unknown;
-        Uint32 RenderWidth = 0;
-        Uint32 RenderHeight = 0;
+        Uint32 RenderWidth   = 0;
+        Uint32 RenderHeight  = 0;
 
         for (const auto& AttachmentDesc : Attachments.ColorAttachments) {
             auto* ColorTarget = AttachmentDesc.View.Texture.TryGet();
@@ -159,25 +151,25 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
                 Error = ErrorMessage("Rendering pass depth attachment is not ready");
                 return;
             }
-            auto& VkDepthRT = static_cast<const VulkanTexture&>(*DepthTarget);
+            auto& VkDepthRT      = static_cast<const VulkanTexture&>(*DepthTarget);
             m_CurrentDepthFormat = VkDepthRT.GetFormat();
-            DepthAttachment = vk::RenderingAttachmentInfo{
-                .imageView = Attachments.DepthAttachment->View.Range.MipLevelCount == kRHIRemainingSubresources
-                                 ? VkDepthRT.GetVkImageView()
-                                 : VkDepthRT.GetVkImageView(Attachments.DepthAttachment->View.Range.BaseMipLevel),
+            DepthAttachment      = vk::RenderingAttachmentInfo{
+                .imageView   = Attachments.DepthAttachment->View.Range.MipLevelCount == kRHIRemainingSubresources
+                                   ? VkDepthRT.GetVkImageView()
+                                   : VkDepthRT.GetVkImageView(Attachments.DepthAttachment->View.Range.BaseMipLevel),
                 .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-                .loadOp = Attachments.DepthAttachment->Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
+                .loadOp =
+                    Attachments.DepthAttachment->Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
                 .storeOp = vk::AttachmentStoreOp::eStore,
-                .clearValue = vk::ClearValue{.depthStencil =
-                                                  vk::ClearDepthStencilValue{
-                                                      Attachments.DepthAttachment->ClearValue.Depth,
-                                                      Attachments.DepthAttachment->ClearValue.Stencil}},
+                .clearValue =
+                    vk::ClearValue{.depthStencil =
+                                       vk::ClearDepthStencilValue{Attachments.DepthAttachment->ClearValue.Depth,
+                                                                  Attachments.DepthAttachment->ClearValue.Stencil}},
             };
-            // Clamp render area to smallest attachment dimension.  Vulkan
-            // requires every attachment imageView extent ≥ renderArea, so if
-            // the depth RT is smaller than the color RT (or vice versa) we
-            // must shrink renderArea to fit the minimum.
-            m_CurrentRenderExtent.width = (std::min)(m_CurrentRenderExtent.width, VkDepthRT.GetWidth());
+            // Clamp render area to smallest attachment dimension. Vulkan requires every attachment imageView
+            // extent ≥ renderArea, so if the depth RT is smaller than the color RT (or vice versa) we must
+            // shrink renderArea to fit the minimum.
+            m_CurrentRenderExtent.width  = (std::min)(m_CurrentRenderExtent.width, VkDepthRT.GetWidth());
             m_CurrentRenderExtent.height = (std::min)(m_CurrentRenderExtent.height, VkDepthRT.GetHeight());
         }
 
@@ -199,8 +191,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
 
     auto operator()(const RHISetViewportCmd& Cmd) -> void {
         Buf.setViewport(0,
-                        {vk::Viewport{
-                            Cmd.X, Cmd.Y + Cmd.Height, Cmd.Width, -Cmd.Height, Cmd.MinDepth, Cmd.MaxDepth}});
+                        {vk::Viewport{Cmd.X, Cmd.Y + Cmd.Height, Cmd.Width, -Cmd.Height, Cmd.MinDepth, Cmd.MaxDepth}});
     }
 
     auto operator()(const RHISetScissorCmd& Cmd) -> void {
@@ -232,35 +223,29 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             Error = ErrorMessage("Indirect draw buffer has no transient state");
             return;
         }
-        Buf.drawIndirect(Indirect.GetVkBuffer(),
-                         Prop->Allocation.Offset + Cmd.Offset,
-                         Cmd.DrawCount,
-                         Cmd.Stride);
+        Buf.drawIndirect(Indirect.GetVkBuffer(), Prop->Allocation.Offset + Cmd.Offset, Cmd.DrawCount, Cmd.Stride);
     }
 
   private:
     VulkanGraphicsPipeline& m_Pipeline;
-    bool                    m_IsRendering = false;
-    vk::Extent2D             m_CurrentRenderExtent = {1, 1};
-    std::vector<RHIFormat>   m_CurrentColorFormats = {};
-    RHIFormat                m_CurrentDepthFormat = RHIFormat::Unknown;
+    bool                    m_IsRendering         = false;
+    vk::Extent2D            m_CurrentRenderExtent = {1, 1};
+    std::vector<RHIFormat>  m_CurrentColorFormats = {};
+    RHIFormat               m_CurrentDepthFormat  = RHIFormat::Unknown;
 };
 
 class VulkanComputeCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
-    VulkanComputeCmdVisitor(
-        VulkanComputePipeline&                                                          Pipeline,
-        vk::raii::CommandBuffer&                                                        InBuffer,
-        VulkanResourceContext&                                                          InResourceContext)
-        : VulkanCmdVisitor(InBuffer, InResourceContext),
-          m_Pipeline(Pipeline) {
+    VulkanComputeCmdVisitor(VulkanComputePipeline&   Pipeline,
+                            vk::raii::CommandBuffer& InBuffer,
+                            VulkanResourceContext&   InResourceContext)
+        : VulkanCmdVisitor(InBuffer, InResourceContext), m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eCompute, Pipeline.Get());
         auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
         if (BindingSet)
-            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
-                                 vk::PipelineBindPoint::eCompute);
+            BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet), vk::PipelineBindPoint::eCompute);
     }
 
     auto operator()(const RHIDispatchCmd& Cmd) -> void {
@@ -275,13 +260,10 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
-    VulkanRayTracingCmdVisitor(
-        VulkanRayTracingPipeline&                                                      Pipeline,
-        vk::raii::CommandBuffer&                                                        InBuffer,
-        VulkanResourceContext&                                                          InResourceContext)
-        : VulkanCmdVisitor(InBuffer,
-                           InResourceContext),
-          m_Pipeline(Pipeline) {
+    VulkanRayTracingCmdVisitor(VulkanRayTracingPipeline& Pipeline,
+                               vk::raii::CommandBuffer&  InBuffer,
+                               VulkanResourceContext&    InResourceContext)
+        : VulkanCmdVisitor(InBuffer, InResourceContext), m_Pipeline(Pipeline) {
         Buf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, Pipeline.Get());
         auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
         if (BindingSet)
@@ -297,9 +279,8 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
                          Cmd.Width,
                          Cmd.Height,
                          Cmd.Depth);
-        // Cross-frame hazard: the TLAS is a single structure, so the next
-        // frame's TLAS build must not start while this frame's trace may
-        // still be reading it. Same-queue submissions may overlap without an
+        // Cross-frame hazard: the TLAS is a single structure, so the next frame's TLAS build must not start
+        // while this frame's trace may still be reading it. Same-queue submissions may overlap without an
         // explicit barrier.
         const vk::MemoryBarrier2 TraceBarrier{
             .srcStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
@@ -314,14 +295,13 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
     VulkanRayTracingPipeline& m_Pipeline;
 };
 
-
 class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
-    VulkanTransferCmdVisitor(vk::raii::CommandBuffer&  InBuffer,
-                             VulkanResourceContext&    InResourceContext,
-                             VulkanSwapchain&          InSwapchain)
+    VulkanTransferCmdVisitor(vk::raii::CommandBuffer& InBuffer,
+                             VulkanResourceContext&   InResourceContext,
+                             VulkanSwapchain&         InSwapchain)
         : VulkanCmdVisitor(InBuffer, InResourceContext), m_Swapchain(InSwapchain) {}
 
     auto operator()(const RHIBlitToSwapchainCmd& Cmd) -> void {
@@ -338,9 +318,8 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
         const auto SrcImage = Src.GetVkImage();
         const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
 
-        // step 1: transition the swapchain image to transfer-dst; it stays
-        // backend-private (the graph-declared source is transitioned by the
-        // pass's prologue)
+        // step 1: transition the swapchain image to transfer-dst; it stays backend-private (the
+        // graph-declared source is transitioned by the pass's prologue)
         ResourceContext.GetImageTracker().Transition(
             Buf,
             DstImage,
@@ -362,18 +341,19 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
                                .mipLevel       = 0,
                                .baseArrayLayer = 0,
                                .layerCount     = 1},
-            .srcOffsets     = std::array<vk::Offset3D, 2>{
+            .srcOffsets =
+                std::array<vk::Offset3D, 2>{
                     vk::Offset3D{0, 0, 0},
                     vk::Offset3D{static_cast<Int32>(Src.GetWidth()), static_cast<Int32>(Src.GetHeight()), 1}},
             .dstSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
                                .mipLevel       = 0,
                                .baseArrayLayer = 0,
                                .layerCount     = 1},
-            .dstOffsets     = std::array<vk::Offset3D, 2>{
-                    vk::Offset3D{static_cast<Int32>(Cmd.DstX), static_cast<Int32>(Cmd.DstY), 0},
-                    vk::Offset3D{static_cast<Int32>(Cmd.DstX + Cmd.DstWidth),
-                                 static_cast<Int32>(Cmd.DstY + Cmd.DstHeight),
-                                 1}},
+            .dstOffsets =
+                std::array<vk::Offset3D, 2>{vk::Offset3D{static_cast<Int32>(Cmd.DstX), static_cast<Int32>(Cmd.DstY), 0},
+                                            vk::Offset3D{static_cast<Int32>(Cmd.DstX + Cmd.DstWidth),
+                                                         static_cast<Int32>(Cmd.DstY + Cmd.DstHeight),
+                                                         1}},
         };
         Buf.blitImage(SrcImage,
                       vk::ImageLayout::eTransferSrcOptimal,
@@ -396,8 +376,7 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
             Error = ErrorMessage("Texture-readback source region exceeds the source target");
             return;
         }
-        // The picking contract keeps payloads at one 32-bit texel; larger
-        // regions must stay within the slot.
+        // The picking contract keeps payloads at one 32-bit texel; larger regions must stay within the slot.
         const Uint64 PayloadBytes = static_cast<Uint64>(Cmd.SrcWidth) * Cmd.SrcHeight * sizeof(Uint32);
         if (PayloadBytes > Dst.GetSize()) {
             Error = ErrorMessage("Texture-readback payload exceeds the target size");
@@ -416,10 +395,7 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
             .imageOffset       = {static_cast<Int32>(Cmd.SrcX), static_cast<Int32>(Cmd.SrcY), 0},
             .imageExtent       = {Cmd.SrcWidth, Cmd.SrcHeight, 1},
         };
-        Buf.copyImageToBuffer(Src.GetVkImage(),
-                              vk::ImageLayout::eTransferSrcOptimal,
-                              Dst.GetVkBuffer(),
-                              {Region});
+        Buf.copyImageToBuffer(Src.GetVkImage(), vk::ImageLayout::eTransferSrcOptimal, Dst.GetVkBuffer(), {Region});
     }
 
   private:

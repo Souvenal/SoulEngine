@@ -38,7 +38,7 @@ namespace SoulEngine {
 /// event keeps it valid until the submission that referenced it has drained.
 class VulkanNativeAccelerationStructure final {
   public:
-    VulkanNativeAccelerationStructure() = default;
+    VulkanNativeAccelerationStructure()                                                            = default;
     VulkanNativeAccelerationStructure(const VulkanNativeAccelerationStructure&)                    = delete;
     auto operator=(const VulkanNativeAccelerationStructure&) -> VulkanNativeAccelerationStructure& = delete;
     VulkanNativeAccelerationStructure(VulkanNativeAccelerationStructure&&)                         = delete;
@@ -80,17 +80,17 @@ class VulkanNativeAccelerationStructure final {
         auto [CreateResult, RHIAccelerationStructure] =
             Context.GetDevice().createAccelerationStructureKHR(AccelerationStructureCI, nullptr);
         if (CreateResult != vk::Result::eSuccess) {
-            // The storage buffer retires through the deferred queue when the failed Result payload dies —
-            // it was never GPU-visible.
-            return std::unexpected(
-                ErrorMessage(Format("Failed to create Vulkan acceleration structure: {}", vk::to_string(CreateResult))));
+            // The storage buffer retires through the deferred queue when the failed Result payload dies — it
+            // was never GPU-visible.
+            return std::unexpected(ErrorMessage(
+                Format("Failed to create Vulkan acceleration structure: {}", vk::to_string(CreateResult))));
         }
 
         Context.GetDebugUtils().SetObjectName(*RHIAccelerationStructure, Name);
         Result->m_AccelerationStructure = std::move(RHIAccelerationStructure);
         // The device address is immutable for the AS's lifetime; query it once here instead of once per
         // referencing TLAS instance.
-        Result->m_Address = Context.GetDevice().getAccelerationStructureAddressKHR(
+        Result->m_Address               = Context.GetDevice().getAccelerationStructureAddressKHR(
             vk::AccelerationStructureDeviceAddressInfoKHR{.accelerationStructure = Result->Get()});
         return Result;
     }
@@ -104,9 +104,9 @@ class VulkanNativeAccelerationStructure final {
     }
 
   private:
-    VulkanDeferredDeletionQueue*       m_DeferredQueue     = nullptr;  ///< borrowed; owned by the resource context
-    vk::Buffer                         m_Storage           = nullptr;
-    VmaAllocation                      m_StorageAllocation = nullptr;
+    VulkanDeferredDeletionQueue*       m_DeferredQueue         = nullptr; ///< borrowed; owned by the resource context
+    vk::Buffer                         m_Storage               = nullptr;
+    VmaAllocation                      m_StorageAllocation     = nullptr;
     vk::raii::AccelerationStructureKHR m_AccelerationStructure = nullptr;
     vk::DeviceAddress                  m_Address               = 0;
 };
@@ -117,11 +117,11 @@ class VulkanNativeAccelerationStructure final {
 /// emission, never a payload re-resolution or a device call. The ref carries retention and the recorded-flag
 /// guard.
 struct VulkanBlasBuildEntry {
-    RHIRef<RHIBottomLevelAccelerationStructure> Blas        = {};       ///< retention plus the recorded flag
-    vk::AccelerationStructureKHR                Dst         = nullptr;  ///< native handle, fixed at creation
-    vk::AccelerationStructureGeometryKHR        Geometry    = {};       ///< baked triangles geometry
-    vk::AccelerationStructureBuildRangeInfoKHR  Range       = {};       ///< baked build range
-    Uint64                                      ScratchSize = 0;        ///< buildScratchSize, creation-time query
+    RHIRef<RHIBottomLevelAccelerationStructure> Blas        = {};      ///< retention plus the recorded flag
+    vk::AccelerationStructureKHR                Dst         = nullptr; ///< native handle, fixed at creation
+    vk::AccelerationStructureGeometryKHR        Geometry    = {};      ///< baked triangles geometry
+    vk::AccelerationStructureBuildRangeInfoKHR  Range       = {};      ///< baked build range
+    Uint64                                      ScratchSize = 0;       ///< buildScratchSize, creation-time query
 };
 
 /// @brief One baked TLAS build request for the AS manager's frame-start batch.
@@ -129,11 +129,11 @@ struct VulkanBlasBuildEntry {
 /// Instances are packed at descriptor creation (BLAS addresses are immutable once their payloads are
 /// created). BlasRefs is parallel to Instances and exists only for the recorded-flag guard at record time.
 struct VulkanTlasBuildEntry {
-    RHIRef<RHITopLevelAccelerationStructure>                 Tlas        = {};      ///< retention
-    vk::AccelerationStructureKHR                             Dst         = nullptr; ///< native handle, fixed at creation
-    std::vector<vk::AccelerationStructureInstanceKHR>        Instances   = {};      ///< packed at creation
-    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> BlasRefs    = {};      ///< parallel to Instances
-    Uint64                                                   ScratchSize = 0;       ///< buildScratchSize, creation-time query
+    RHIRef<RHITopLevelAccelerationStructure>                 Tlas      = {};      ///< retention
+    vk::AccelerationStructureKHR                             Dst       = nullptr; ///< native handle, fixed at creation
+    std::vector<vk::AccelerationStructureInstanceKHR>        Instances = {};      ///< packed at creation
+    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> BlasRefs  = {};      ///< parallel to Instances
+    Uint64                                                   ScratchSize = 0; ///< buildScratchSize, creation-time query
 };
 
 /// @brief Vulkan GPU payload for reusable object-space triangle geometry.
@@ -184,16 +184,18 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
 
         Result->m_Geometry = vk::AccelerationStructureGeometryKHR{
             .geometryType = vk::GeometryTypeKHR::eTriangles,
-            .geometry     = vk::AccelerationStructureGeometryDataKHR{
-                .triangles = vk::AccelerationStructureGeometryTrianglesDataKHR{
-                    .vertexFormat  = vk::Format::eR32G32B32Sfloat,
-                    .vertexData    = vk::DeviceOrHostAddressConstKHR{.deviceAddress = VertexAddress},
-                    .vertexStride  = Desc.VertexStride,
-                    .maxVertex     = static_cast<Uint32>(Desc.VertexCount - 1),
-                    .indexType     = vk::IndexType::eUint32,
-                    .indexData     = vk::DeviceOrHostAddressConstKHR{.deviceAddress = IndexAddress},
-                    .transformData = vk::DeviceOrHostAddressConstKHR{.deviceAddress = 0},
-                }},
+            .geometry =
+                vk::AccelerationStructureGeometryDataKHR{
+                    .triangles =
+                        vk::AccelerationStructureGeometryTrianglesDataKHR{
+                            .vertexFormat  = vk::Format::eR32G32B32Sfloat,
+                            .vertexData    = vk::DeviceOrHostAddressConstKHR{.deviceAddress = VertexAddress},
+                            .vertexStride  = Desc.VertexStride,
+                            .maxVertex     = static_cast<Uint32>(Desc.VertexCount - 1),
+                            .indexType     = vk::IndexType::eUint32,
+                            .indexData     = vk::DeviceOrHostAddressConstKHR{.deviceAddress = IndexAddress},
+                            .transformData = vk::DeviceOrHostAddressConstKHR{.deviceAddress = 0},
+                        }},
             .flags = vk::GeometryFlagBitsKHR::eOpaque,
         };
         const Uint32 PrimitiveCount = static_cast<Uint32>(Desc.IndexCount / 3);
@@ -212,7 +214,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
             .pGeometries   = &Result->m_Geometry,
         };
         const std::array<Uint32, 1> PrimitiveCounts{PrimitiveCount};
-        const auto Sizes = Context.GetDevice().getAccelerationStructureBuildSizesKHR(
+        const auto                  Sizes = Context.GetDevice().getAccelerationStructureBuildSizesKHR(
             vk::AccelerationStructureBuildTypeKHR::eDevice, SizeQueryCI, PrimitiveCounts);
         auto Native = VulkanNativeAccelerationStructure::Create(
             Context, vk::AccelerationStructureTypeKHR::eBottomLevel, Sizes.accelerationStructureSize, Name);
@@ -225,8 +227,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
 
     /// @brief Bake this BLAS's build entry for the manager's pending batch; the ref fills retention and the
     /// recorded-flag guard.
-    [[nodiscard]] auto BakeBuildEntry(RHIRef<RHIBottomLevelAccelerationStructure> Self) const
-        -> VulkanBlasBuildEntry {
+    [[nodiscard]] auto BakeBuildEntry(RHIRef<RHIBottomLevelAccelerationStructure> Self) const -> VulkanBlasBuildEntry {
         return VulkanBlasBuildEntry{
             .Blas        = std::move(Self),
             .Dst         = m_Native->Get(),
@@ -256,11 +257,11 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
     }
 
   private:
-    UPtr<VulkanNativeAccelerationStructure>   m_Native          = nullptr;
-    vk::AccelerationStructureGeometryKHR      m_Geometry        = {};  ///< baked triangles geometry
-    vk::AccelerationStructureBuildRangeInfoKHR m_Range          = {};  ///< baked build range
-    Uint64                                    m_ScratchSize     = 0;   ///< buildScratchSize, creation-time query
-    bool                                      m_IsBuildRecorded = false;
+    UPtr<VulkanNativeAccelerationStructure>    m_Native          = nullptr;
+    vk::AccelerationStructureGeometryKHR       m_Geometry        = {}; ///< baked triangles geometry
+    vk::AccelerationStructureBuildRangeInfoKHR m_Range           = {}; ///< baked build range
+    Uint64                                     m_ScratchSize     = 0;  ///< buildScratchSize, creation-time query
+    bool                                       m_IsBuildRecorded = false;
 };
 
 /// @brief Per-frame TLAS: Create packs the instances and materializes native storage sized to the instance
@@ -340,8 +341,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
     }
 
     /// @brief Bake this TLAS's build entry for the manager's pending batch; the ref fills retention.
-    [[nodiscard]] auto BakeBuildEntry(RHIRef<RHITopLevelAccelerationStructure> Self) const
-        -> VulkanTlasBuildEntry {
+    [[nodiscard]] auto BakeBuildEntry(RHIRef<RHITopLevelAccelerationStructure> Self) const -> VulkanTlasBuildEntry {
         return VulkanTlasBuildEntry{
             .Tlas        = std::move(Self),
             .Dst         = m_Native->Get(),
@@ -357,9 +357,9 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 
   private:
     UPtr<VulkanNativeAccelerationStructure>                  m_Native      = nullptr;
-    std::vector<vk::AccelerationStructureInstanceKHR>        m_Instances   = {};  ///< packed at creation
-    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> m_BlasRefs    = {};  ///< parallel to m_Instances
-    Uint64                                                   m_ScratchSize = 0;   ///< creation-time query
+    std::vector<vk::AccelerationStructureInstanceKHR>        m_Instances   = {}; ///< packed at creation
+    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> m_BlasRefs    = {}; ///< parallel to m_Instances
+    Uint64                                                   m_ScratchSize = 0;  ///< creation-time query
 };
 
 /// @brief The single home of acceleration-structure concerns.
@@ -367,14 +367,14 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 /// CreateBlas/CreateTlas validate, bake, and materialize the payloads synchronously on the calling thread
 /// (VMA and the device-level calls are thread-safe); BuildBlas/BuildTlas enqueue frame-affined tasks
 /// (callable from any thread) that append a baked build entry to the manager's pending lists at the RHI
-/// thread's frame-task drain. RecordBuildBatch runs the frame-start AS phase — the BLAS batch, then each
-/// TLAS build — into its own secondary, carving scratch and instance ranges out of the manager's two rings:
-/// a device-local scratch ring and a host-mapped instance ring, both retiring through the ring frame-seal
+/// thread's frame-task drain. RecordBuildBatch runs the frame-start AS phase — the BLAS batch, then each TLAS
+/// build — into its own secondary, carving scratch and instance ranges out of the manager's two rings: a
+/// device-local scratch ring and a host-mapped instance ring, both retiring through the ring frame-seal
 /// timeline markers. The render device owns one instance and forwards; the pending lists and the build phase
 /// are RHI-thread confined.
 class VulkanAccelerationStructureManager final {
   public:
-    VulkanAccelerationStructureManager() = default;
+    VulkanAccelerationStructureManager()                                                             = default;
     VulkanAccelerationStructureManager(const VulkanAccelerationStructureManager&)                    = delete;
     auto operator=(const VulkanAccelerationStructureManager&) -> VulkanAccelerationStructureManager& = delete;
     VulkanAccelerationStructureManager(VulkanAccelerationStructureManager&&)                         = default;
@@ -382,24 +382,23 @@ class VulkanAccelerationStructureManager final {
 
     /// @brief Create the manager with its scratch and instance rings.
     ///
-    /// The rings materialize only when hardware ray tracing is available; without it every BLAS/TLAS
-    /// creation is rejected at the descriptor level, so the build phase can never run.
+    /// The rings materialize only when hardware ray tracing is available; without it every BLAS/TLAS creation
+    /// is rejected at the descriptor level, so the build phase can never run.
     /// @param Context               resource context providing the VMA allocator, device, and debug utils.
     /// @param ScratchRingCapacity   initial scratch ring capacity in bytes (RHI.Vulkan.ASScratchRingSize).
     /// @param InstanceRingCapacity  initial instance ring capacity in bytes (RHI.Vulkan.ASInstanceRingSize).
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     Uint64                       ScratchRingCapacity,
-                                     Uint64                       InstanceRingCapacity)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, Uint64 ScratchRingCapacity, Uint64 InstanceRingCapacity)
         -> std::expected<VulkanAccelerationStructureManager, ErrorMessage> {
         VulkanAccelerationStructureManager Manager;
         Manager.m_Context = &Context;
         if (!VulkanCapability::Get().IsRayTracingAvailable())
             return Manager;
-        const Uint64 ScratchAlignment = std::max<Uint64>(
-            VulkanCapability::Get()
-                .GetProperties<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()
-                .minAccelerationStructureScratchOffsetAlignment,
-            1);
+        const Uint64 ScratchAlignment =
+            std::max<Uint64>(VulkanCapability::Get()
+                                 .GetProperties<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()
+                                 .minAccelerationStructureScratchOffsetAlignment,
+                             1);
         auto ScratchRing = VulkanRingBuffer::Create(Context,
                                                     "Internal/Buffer/ASScratchRing",
                                                     vk::BufferUsageFlagBits::eStorageBuffer |
@@ -411,18 +410,18 @@ class VulkanAccelerationStructureManager final {
             return std::unexpected(
                 ScratchRing.error().Append("VulkanAccelerationStructureManager: scratch ring creation failed"));
         Manager.m_ScratchRing = std::move(*ScratchRing);
-        auto InstanceRing     = VulkanRingBuffer::Create(
-            Context,
-            "Internal/Buffer/ASInstanceRing",
-            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                vk::BufferUsageFlagBits::eShaderDeviceAddress,
-            InstanceRingCapacity,
-            kTlasInstanceDataAlignment);
+        auto InstanceRing =
+            VulkanRingBuffer::Create(Context,
+                                     "Internal/Buffer/ASInstanceRing",
+                                     vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                                         vk::BufferUsageFlagBits::eShaderDeviceAddress,
+                                     InstanceRingCapacity,
+                                     kTlasInstanceDataAlignment);
         if (!InstanceRing)
             return std::unexpected(
                 InstanceRing.error().Append("VulkanAccelerationStructureManager: instance ring creation failed"));
-        Manager.m_InstanceRing         = std::move(*InstanceRing);
-        Manager.m_IsRayTracingEnabled  = true;
+        Manager.m_InstanceRing        = std::move(*InstanceRing);
+        Manager.m_IsRayTracingEnabled = true;
         return Manager;
     }
 
@@ -430,15 +429,15 @@ class VulkanAccelerationStructureManager final {
     ///
     /// Device shutdown ordering requires this to run before the allocator is destroyed.
     auto Shutdown() -> void {
-        m_ScratchRing          = {};
-        m_InstanceRing         = {};
-        m_Context              = nullptr;
-        m_IsRayTracingEnabled  = false;
+        m_ScratchRing         = {};
+        m_InstanceRing        = {};
+        m_Context             = nullptr;
+        m_IsRayTracingEnabled = false;
     }
 
     /// @brief Create and materialize a BLAS synchronously on the calling thread: validation, geometry
-    /// baking, the build-size query, and native storage/handle/address allocation are all thread-safe.
-    /// The ref publishes Ready at return; the build rides BuildBlas.
+    /// baking, the build-size query, and native storage/handle/address allocation are all thread-safe. The
+    /// ref publishes Ready at return; the build rides BuildBlas.
     /// @param Name  logical RHI name; becomes the debug-utils object name.
     /// @param Desc  BLAS description; the referenced geometry buffers must be Ready.
     [[nodiscard]] auto CreateBlas(StringView Name, const RHIBottomLevelAccelerationStructureDesc& Desc)
@@ -483,8 +482,8 @@ class VulkanAccelerationStructureManager final {
         -> std::expected<void, ErrorMessage> {
         if (!Blas.TryGet())
             return std::unexpected(ErrorMessage("BuildBlas: BLAS ref is not Ready"));
-        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
-            ThreadQueue::RHI, [this, Blas = std::move(Blas)]() mutable {
+        auto EnqueueResult =
+            TaskGraph::Get().EnqueueFrameTask(ThreadQueue::RHI, [this, Blas = std::move(Blas)]() mutable {
                 auto* Payload = Blas.TryGet();
                 if (!Payload) {
                     LogWarning("BuildBlas: BLAS ref is not Ready when the build task ran");
@@ -502,20 +501,18 @@ class VulkanAccelerationStructureManager final {
     /// @brief Build a per-frame TLAS: hand a frame-affined task carrying the ref to the RHI thread. Same
     /// contract as BuildBlas; the build is recorded after the BLAS batch, ahead of every pass.
     /// @param Tlas  TLAS ref; must be Ready at the call site.
-    [[nodiscard]] auto BuildTlas(RHIRef<RHITopLevelAccelerationStructure> Tlas)
-        -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto BuildTlas(RHIRef<RHITopLevelAccelerationStructure> Tlas) -> std::expected<void, ErrorMessage> {
         if (!Tlas.TryGet())
             return std::unexpected(ErrorMessage("BuildTlas: TLAS ref is not Ready"));
-        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
-            ThreadQueue::RHI, [this, Tlas = std::move(Tlas)]() mutable {
+        auto EnqueueResult =
+            TaskGraph::Get().EnqueueFrameTask(ThreadQueue::RHI, [this, Tlas = std::move(Tlas)]() mutable {
                 auto* Payload = Tlas.TryGet();
                 if (!Payload) {
                     LogWarning("BuildTlas: TLAS ref is not Ready when the build task ran");
                     return;
                 }
                 m_PendingTlasBuilds.push_back(
-                    static_cast<const VulkanTopLevelAccelerationStructure&>(*Payload).BakeBuildEntry(
-                        std::move(Tlas)));
+                    static_cast<const VulkanTopLevelAccelerationStructure&>(*Payload).BakeBuildEntry(std::move(Tlas)));
             });
         if (!EnqueueResult)
             return std::unexpected(EnqueueResult.error().Append("BuildTlas: frame task enqueue failed"));
@@ -533,9 +530,7 @@ class VulkanAccelerationStructureManager final {
     /// @param FC          executing frame slot's context; the secondary rides its ScratchSecondaries.
     /// @param FrameIndex  executing frame slot index, for the secondary's debug name.
     /// @param Primary     the frame's primary command buffer.
-    [[nodiscard]] auto RecordBuildBatch(VulkanFrameContext&      FC,
-                                        Uint32                   FrameIndex,
-                                        vk::raii::CommandBuffer& Primary)
+    [[nodiscard]] auto RecordBuildBatch(VulkanFrameContext& FC, Uint32 FrameIndex, vk::raii::CommandBuffer& Primary)
         -> std::expected<void, ErrorMessage> {
         if (m_PendingBlasBuilds.empty() && m_PendingTlasBuilds.empty())
             return {};
@@ -571,8 +566,8 @@ class VulkanAccelerationStructureManager final {
             return std::unexpected(
                 ErrorMessage(Format("AS build batch: secondary CB begin failed: {}", vk::to_string(R))));
 
-        // step 1: the BLAS lane — ONE batched build call for the whole lane, sealed by a single
-        // build-write to build-read barrier so the TLAS lane can consume the results.
+        // step 1: the BLAS lane — ONE batched build call for the whole lane, sealed by a single build-write
+        // to build-read barrier so the TLAS lane can consume the results.
         if (!Blases.empty()) {
             const LabelScope BlasLabel{*m_Context, SecBuf, "BLASBatch"};
             RecordBlasLane(SecBuf, Blases);
@@ -617,8 +612,7 @@ class VulkanAccelerationStructureManager final {
             }
             auto& Blas = static_cast<VulkanBottomLevelAccelerationStructure&>(*Payload);
             if (Blas.IsBuildRecorded()) {
-                LogError("BLAS batch: '{}' build requested twice; a static BLAS is built exactly once",
-                         Blas.GetName());
+                LogError("BLAS batch: '{}' build requested twice; a static BLAS is built exactly once", Blas.GetName());
                 continue;
             }
             auto Scratch = m_ScratchRing.Allocate(Entry.ScratchSize);
@@ -660,8 +654,8 @@ class VulkanAccelerationStructureManager final {
     }
 
     /// @brief TLAS lane of the frame-start batch: per entry, validate the referenced BLAS builds (the
-    /// recorded flag — the BLAS lane runs first, so a flag set this frame means submission order covers
-    /// this build), carve scratch and instance ranges, copy the packed instances, build, and seal with a
+    /// recorded flag — the BLAS lane runs first, so a flag set this frame means submission order covers this
+    /// build), carve scratch and instance ranges, copy the packed instances, build, and seal with a
     /// build-write to ray-tracing-shader-read barrier. Fail-soft per entry.
     auto RecordTlasLane(vk::raii::CommandBuffer& CmdBuffer, std::span<VulkanTlasBuildEntry> Entries) -> void {
         for (auto& Entry : Entries) {
@@ -712,7 +706,7 @@ class VulkanAccelerationStructureManager final {
                 .dstAccelerationStructure = Entry.Dst,
                 .geometryCount            = 1,
                 .pGeometries              = &BuildGeometry,
-                .scratchData = vk::DeviceOrHostAddressKHR{.deviceAddress = Scratch->DeviceAddress},
+                .scratchData              = vk::DeviceOrHostAddressKHR{.deviceAddress = Scratch->DeviceAddress},
             };
             const vk::AccelerationStructureBuildRangeInfoKHR  Range{.primitiveCount =
                                                                         static_cast<Uint32>(Entry.Instances.size())};
@@ -725,22 +719,21 @@ class VulkanAccelerationStructureManager final {
                 .dstStageMask  = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
                 .dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR,
             };
-            CmdBuffer.pipelineBarrier2(
-                vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &BuildBarrier});
+            CmdBuffer.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &BuildBarrier});
         }
     }
 
     /// @brief vkCmdBuildAccelerationStructuresKHR requires the instance-data address to be 16-byte aligned.
     static constexpr Uint64 kTlasInstanceDataAlignment = 16;
 
-    const VulkanResourceContext* m_Context              = nullptr;  ///< borrowed; outlives the manager
-    VulkanRingBuffer             m_ScratchRing          = {};       ///< device-local build scratch ring
-    VulkanRingBuffer             m_InstanceRing         = {};       ///< host-mapped TLAS instance ring
-    bool                         m_IsRayTracingEnabled  = false;    ///< rings materialize only when RT is available
+    const VulkanResourceContext*      m_Context             = nullptr; ///< borrowed; outlives the manager
+    VulkanRingBuffer                  m_ScratchRing         = {};      ///< device-local build scratch ring
+    VulkanRingBuffer                  m_InstanceRing        = {};      ///< host-mapped TLAS instance ring
+    bool                              m_IsRayTracingEnabled = false;   ///< rings materialize only when RT is available
     /// @brief Baked BLAS build entries queued by frame-affined tasks; drained by RecordBuildBatch.
-    std::vector<VulkanBlasBuildEntry> m_PendingBlasBuilds = {};
+    std::vector<VulkanBlasBuildEntry> m_PendingBlasBuilds   = {};
     /// @brief Baked TLAS build entries queued by frame-affined tasks; drained by RecordBuildBatch.
-    std::vector<VulkanTlasBuildEntry> m_PendingTlasBuilds = {};
+    std::vector<VulkanTlasBuildEntry> m_PendingTlasBuilds   = {};
 };
 
 } // namespace SoulEngine

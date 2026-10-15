@@ -43,7 +43,7 @@ class RGTexturePool {
     /// @brief Acquire a texture for the descriptor; creates one on a miss.
     [[nodiscard]] auto Acquire(StringView Name, const RHITextureDesc& Desc)
         -> std::expected<RHIRef<RHITexture>, ErrorMessage> {
-        const auto Key = RGTexturePoolKeyOf(Desc);
+        const auto Key  = RGTexturePoolKeyOf(Desc);
         auto&      Free = m_Free[Key];
         // step 1: reuse — pop the most recently returned entry. Native creation is async, so a ref released
         // while pending can turn Failed inside the free list; drop those and fall through to re-create.
@@ -70,9 +70,8 @@ class RGTexturePool {
     auto Tick() -> void {
         ++m_CurrentFrame;
         for (auto& [Key, Entries] : m_Free) {
-            std::erase_if(Entries, [&](const Entry& E) {
-                return m_CurrentFrame - E.LastUsedFrame >= kRGEvictIdleFrames;
-            });
+            std::erase_if(Entries,
+                          [&](const Entry& E) { return m_CurrentFrame - E.LastUsedFrame >= kRGEvictIdleFrames; });
         }
     }
 
@@ -105,12 +104,12 @@ class RGTexturePool {
   private:
     struct Entry {
         RHIRef<RHITexture> Ref;
-        Uint64                  LastUsedFrame = 0;
+        Uint64             LastUsedFrame = 0;
     };
 
     std::map<RGTexturePoolKey, std::vector<Entry>> m_Free         = {};
-    Uint64                            m_CurrentFrame = 0;
-    bool                              m_Accepting    = true;
+    Uint64                                         m_CurrentFrame = 0;
+    bool                                           m_Accepting    = true;
 };
 
 } // namespace SoulEngine

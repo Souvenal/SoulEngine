@@ -30,9 +30,9 @@ inline constexpr Uint32 BindlessTextureBinding = 2;
 }
 
 struct DescriptorSetCacheKey {
-    vk::DescriptorSetLayout Layout = nullptr;
-    std::vector<Uint64> ResourceIds = {};
-    auto operator==(const DescriptorSetCacheKey&) const -> bool = default;
+    vk::DescriptorSetLayout Layout                                                 = nullptr;
+    std::vector<Uint64>     ResourceIds                                            = {};
+    auto                    operator==(const DescriptorSetCacheKey&) const -> bool = default;
 };
 
 struct DescriptorSetCacheKeyHash {
@@ -44,18 +44,18 @@ struct DescriptorSetCacheKeyHash {
     }
 };
 
-// ── Descriptor write construction ───────────────────────────────────────────
-// Descriptor writes are a binding-layer concern: resources expose native
-// accessors, and these helpers compose each write from the bound view (role,
-// range, direction) plus the slot's reflected (type, access) descriptor kind.
+// Descriptor write construction
+// Descriptor writes are a binding-layer concern: resources expose native accessors, and these helpers compose
+// each write from the bound view (role, range, direction) plus the slot's reflected (type, access) descriptor
+// kind.
 
 [[nodiscard]] auto ToVkDescriptorType(ShaderResourceType Type, ShaderBindingAccess Access) -> vk::DescriptorType {
     switch (Type) {
     case ShaderResourceType::ConstantBuffer:
         return vk::DescriptorType::eUniformBufferDynamic;
     case ShaderResourceType::StorageBuffer:
-        // Descriptor-bound storage buffers are always transient belt slices;
-        // persistent buffers use vertex input or device addresses instead.
+        // Descriptor-bound storage buffers are always transient belt slices; persistent buffers use vertex
+        // input or device addresses instead.
         return vk::DescriptorType::eStorageBufferDynamic;
     case ShaderResourceType::Texture:
         // The image descriptor kind follows the binding's shader-declared access: read-only bindings take
@@ -87,50 +87,66 @@ struct VulkanDescriptorWriteBatch {
             Device.updateDescriptorSets(Writes, {});
     }
 
-    auto AppendTextureWrite(vk::DescriptorSet Set, Uint32 BindingIndex, Uint32 ArrayElement,
-                            const VulkanTexture& Texture, const RHITextureView& View,
-                            vk::DescriptorType Type) -> void {
+    auto AppendTextureWrite(vk::DescriptorSet     Set,
+                            Uint32                BindingIndex,
+                            Uint32                ArrayElement,
+                            const VulkanTexture&  Texture,
+                            const RHITextureView& View,
+                            vk::DescriptorType    Type) -> void {
         const bool IsStorage = View.Usage == RHITextureUsage::Storage;
-        auto& Info = ImageInfos.emplace_back(vk::DescriptorImageInfo{
-            .sampler = nullptr,
-            .imageView = View.Range.MipLevelCount == kRHIRemainingSubresources ? Texture.GetVkImageView()
-                                                                                : Texture.GetVkImageView(View.Range.BaseMipLevel),
+        auto&      Info      = ImageInfos.emplace_back(vk::DescriptorImageInfo{
+            .sampler     = nullptr,
+            .imageView   = View.Range.MipLevelCount == kRHIRemainingSubresources
+                               ? Texture.GetVkImageView()
+                               : Texture.GetVkImageView(View.Range.BaseMipLevel),
             .imageLayout = IsStorage ? vk::ImageLayout::eGeneral : vk::ImageLayout::eShaderReadOnlyOptimal,
         });
-        Writes.push_back(vk::WriteDescriptorSet{.dstSet = Set, .dstBinding = BindingIndex,
-                                                .dstArrayElement = ArrayElement, .descriptorCount = 1,
-                                                .descriptorType = Type, .pImageInfo = &Info});
+        Writes.push_back(vk::WriteDescriptorSet{.dstSet          = Set,
+                                                .dstBinding      = BindingIndex,
+                                                .dstArrayElement = ArrayElement,
+                                                .descriptorCount = 1,
+                                                .descriptorType  = Type,
+                                                .pImageInfo      = &Info});
     }
 
-    auto AppendBufferWrite(vk::DescriptorSet Set, Uint32 BindingIndex, const VulkanBuffer& Buffer,
-                           vk::DescriptorType Type) -> void {
-        auto& Info = BufferInfos.emplace_back(vk::DescriptorBufferInfo{.buffer = Buffer.GetVkBuffer(), .offset = 0,
-                                                                        .range = Buffer.GetSize()});
-        Writes.push_back(vk::WriteDescriptorSet{.dstSet = Set, .dstBinding = BindingIndex, .descriptorCount = 1,
-                                                .descriptorType = Type, .pBufferInfo = &Info});
+    auto
+    AppendBufferWrite(vk::DescriptorSet Set, Uint32 BindingIndex, const VulkanBuffer& Buffer, vk::DescriptorType Type)
+        -> void {
+        auto& Info = BufferInfos.emplace_back(
+            vk::DescriptorBufferInfo{.buffer = Buffer.GetVkBuffer(), .offset = 0, .range = Buffer.GetSize()});
+        Writes.push_back(vk::WriteDescriptorSet{.dstSet          = Set,
+                                                .dstBinding      = BindingIndex,
+                                                .descriptorCount = 1,
+                                                .descriptorType  = Type,
+                                                .pBufferInfo     = &Info});
     }
 
     auto AppendSamplerWrite(vk::DescriptorSet Set, Uint32 BindingIndex, const VulkanSampler& Sampler) -> void {
         auto& Info = ImageInfos.emplace_back(vk::DescriptorImageInfo{.sampler = Sampler.GetVkSampler()});
-        Writes.push_back(vk::WriteDescriptorSet{.dstSet = Set, .dstBinding = BindingIndex, .descriptorCount = 1,
-                                                .descriptorType = vk::DescriptorType::eSampler, .pImageInfo = &Info});
+        Writes.push_back(vk::WriteDescriptorSet{.dstSet          = Set,
+                                                .dstBinding      = BindingIndex,
+                                                .descriptorCount = 1,
+                                                .descriptorType  = vk::DescriptorType::eSampler,
+                                                .pImageInfo      = &Info});
     }
 
-    auto AppendAccelerationStructureWrite(vk::DescriptorSet Set, Uint32 BindingIndex,
+    auto AppendAccelerationStructureWrite(vk::DescriptorSet                          Set,
+                                          Uint32                                     BindingIndex,
                                           const VulkanTopLevelAccelerationStructure& Tlas) -> void {
-        auto& AsHandle = AsHandles.emplace_back(Tlas.GetAccelerationStructure());
-        auto& AsInfo = AsInfos.emplace_back(vk::WriteDescriptorSetAccelerationStructureKHR{
+        auto&                  AsHandle = AsHandles.emplace_back(Tlas.GetAccelerationStructure());
+        auto&                  AsInfo   = AsInfos.emplace_back(vk::WriteDescriptorSetAccelerationStructureKHR{
             .accelerationStructureCount = 1, .pAccelerationStructures = &AsHandle});
-        vk::WriteDescriptorSet Write{.dstSet = Set, .dstBinding = BindingIndex, .descriptorCount = 1,
-                                     .descriptorType = vk::DescriptorType::eAccelerationStructureKHR};
+        vk::WriteDescriptorSet Write{.dstSet          = Set,
+                                     .dstBinding      = BindingIndex,
+                                     .descriptorCount = 1,
+                                     .descriptorType  = vk::DescriptorType::eAccelerationStructureKHR};
         Write.pNext = &AsInfo;
         Writes.push_back(Write);
     }
 };
 
-/// Owns the global descriptor pool, persistent descriptor set allocation, and
-/// descriptor write primitives. Descriptor set layouts and pipeline layouts are
-/// created from shader reflection by VulkanShaderBindingSet.
+/// Owns the global descriptor pool, persistent descriptor set allocation, and descriptor write primitives.
+/// Descriptor set layouts and pipeline layouts are created from shader reflection by VulkanShaderBindingSet.
 class VulkanDescriptorManager {
   public:
     VulkanDescriptorManager() = default;
@@ -176,23 +192,22 @@ class VulkanDescriptorManager {
 
     /// @param Device           Vulkan device handle.
     [[nodiscard]] static auto Create(vk::raii::Device& Device, VulkanDebugUtils& DebugUtils)
+        // Verify descriptor indexing features are supported
         -> std::expected<VulkanDescriptorManager, ErrorMessage> {
-        // ── Verify descriptor indexing features are supported ───────────
         const auto& V12 = VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>();
-        if (!V12.descriptorIndexing || !V12.descriptorBindingPartiallyBound ||
-            !V12.runtimeDescriptorArray || !V12.descriptorBindingSampledImageUpdateAfterBind ||
-            !V12.descriptorBindingVariableDescriptorCount)
-            return std::unexpected(
-                ErrorMessage("VulkanDescriptorManager: required Vulkan 1.2 descriptor indexing features not supported by device"));
+        if (!V12.descriptorIndexing || !V12.descriptorBindingPartiallyBound || !V12.runtimeDescriptorArray ||
+            !V12.descriptorBindingSampledImageUpdateAfterBind || !V12.descriptorBindingVariableDescriptorCount)
+            return std::unexpected(ErrorMessage(
+                "VulkanDescriptorManager: required Vulkan 1.2 descriptor indexing features not supported by device"));
 
         VulkanDescriptorManager Mgr;
-        Mgr.m_Device         = &Device;
-        Mgr.m_DebugUtils     = &DebugUtils;
+        Mgr.m_Device     = &Device;
+        Mgr.m_DebugUtils = &DebugUtils;
 
-        // ── Descriptor pool ─────────────────────────────────────────────
-        constexpr Uint32 ScratchDescriptorCount           = 4096;
-        constexpr Uint32 ImGuiDescriptorCount             = 4096;
-        constexpr Uint32 SharedDescriptorCount            = ScratchDescriptorCount + ImGuiDescriptorCount;
+        // Descriptor pool
+        constexpr Uint32 ScratchDescriptorCount          = 4096;
+        constexpr Uint32 ImGuiDescriptorCount            = 4096;
+        constexpr Uint32 SharedDescriptorCount           = ScratchDescriptorCount + ImGuiDescriptorCount;
         constexpr Uint32 PersistentSampledImageSetBudget = 4;
         constexpr Uint32 SampledImageDescriptorCount =
             ScratchDescriptorCount * (PersistentSampledImageSetBudget + 1) + ImGuiDescriptorCount;
@@ -211,10 +226,10 @@ class VulkanDescriptorManager {
         };
         if (VulkanCapability::Get().IsRayTracingAvailable())
             PoolSizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, ScratchDescriptorCount);
-        Uint32 MaxSets = SharedDescriptorCount + 2;
+        Uint32                       MaxSets = SharedDescriptorCount + 2;
         vk::DescriptorPoolCreateInfo PoolCI{
-            // eFreeDescriptorSet is required because allocated sets are
-            // vk::raii::DescriptorSet, whose destructors call vkFreeDescriptorSets.
+            // eFreeDescriptorSet is required because allocated sets are vk::raii::DescriptorSet, whose
+            // destructors call vkFreeDescriptorSets.
             .flags         = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
                              vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets       = MaxSets,
@@ -227,7 +242,7 @@ class VulkanDescriptorManager {
         DebugUtils.SetObjectName(*PoolRes.value, "Internal/DescriptorPool/Global");
         Mgr.m_Pool = std::move(PoolRes.value);
 
-        const Uint32 DescriptorCount = GetBindlessDescriptorCount();
+        const Uint32                   DescriptorCount = GetBindlessDescriptorCount();
         vk::DescriptorSetLayoutBinding BindlessBinding{
             .binding            = BindlessTextureBinding,
             .descriptorType     = vk::DescriptorType::eSampledImage,
@@ -235,8 +250,8 @@ class VulkanDescriptorManager {
             .stageFlags         = vk::ShaderStageFlagBits::eAll,
             .pImmutableSamplers = nullptr,
         };
-        auto BindlessFlags = vk::DescriptorBindingFlagBits::ePartiallyBound |
-                             vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+        auto BindlessFlags =
+            vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind;
         if (V12.descriptorBindingUpdateUnusedWhilePending)
             BindlessFlags |= vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
         vk::DescriptorSetLayoutBindingFlagsCreateInfo FlagsInfo{
@@ -244,25 +259,27 @@ class VulkanDescriptorManager {
             .pBindingFlags = &BindlessFlags,
         };
         vk::StructureChain<vk::DescriptorSetLayoutCreateInfo, vk::DescriptorSetLayoutBindingFlagsCreateInfo>
-            LayoutChain{
-                vk::DescriptorSetLayoutCreateInfo{
-                    .flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-                    .bindingCount = 1,
-                    .pBindings    = &BindlessBinding,
-                },
-                FlagsInfo,
-            };
+             LayoutChain{
+                 vk::DescriptorSetLayoutCreateInfo{
+                     .flags        = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+                     .bindingCount = 1,
+                     .pBindings    = &BindlessBinding,
+                 },
+                 FlagsInfo,
+        };
         auto BindlessLayout = Device.createDescriptorSetLayout(LayoutChain.get<vk::DescriptorSetLayoutCreateInfo>());
         if (BindlessLayout.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to create bindless descriptor set layout"));
+            return std::unexpected(
+                ErrorMessage("VulkanDescriptorManager: failed to create bindless descriptor set layout"));
         DebugUtils.SetObjectName(*BindlessLayout.value, "Internal/DescriptorSetLayout/Bindless");
         Mgr.m_BindlessSetLayout = std::move(BindlessLayout.value);
 
         auto BindlessSets = Mgr.AllocateDescriptorSets(
             std::span<const vk::DescriptorSetLayout>{&*Mgr.m_BindlessSetLayout, 1}, std::nullopt);
         if (!BindlessSets || BindlessSets->size() != 1)
-            return std::unexpected(BindlessSets ? ErrorMessage("VulkanDescriptorManager: invalid bindless set allocation")
-                                                : BindlessSets.error());
+            return std::unexpected(BindlessSets
+                                       ? ErrorMessage("VulkanDescriptorManager: invalid bindless set allocation")
+                                       : BindlessSets.error());
         Mgr.m_BindlessSets = std::move(*BindlessSets);
         DebugUtils.SetObjectName(*Mgr.m_BindlessSets.front(), "Internal/DescriptorSet/Bindless");
         return Mgr;
@@ -280,9 +297,9 @@ class VulkanDescriptorManager {
         m_BindlessTextures.clear();
         m_BindlessSets.clear();
         m_BindlessSetLayout = nullptr;
-        m_Pool = nullptr;
-        m_Device = nullptr;
-        m_DebugUtils = nullptr;
+        m_Pool              = nullptr;
+        m_Device            = nullptr;
+        m_DebugUtils        = nullptr;
     }
 
   public:
@@ -291,16 +308,16 @@ class VulkanDescriptorManager {
         if (Textures.empty())
             return {};
         std::vector<RHIRef<RHITexture>> Snapshot{Textures.begin(), Textures.end()};
-        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
-            ThreadQueue::RHI,
-            [this, Textures = std::move(Snapshot)]() mutable { RegisterBindlessTexturesOnRhiThread(Textures); });
+        auto                            EnqueueResult =
+            TaskGraph::Get().EnqueueFrameTask(ThreadQueue::RHI, [this, Textures = std::move(Snapshot)]() mutable {
+                RegisterBindlessTexturesOnRhiThread(Textures);
+            });
         if (!EnqueueResult)
             return std::unexpected(EnqueueResult.error().Append("Bindless texture registration task enqueue failed"));
         return {};
     }
 
-    [[nodiscard]] auto FindBindlessTextureIndex(const RHIRef<RHITexture>& Texture) const
-        -> std::optional<Uint32> {
+    [[nodiscard]] auto FindBindlessTextureIndex(const RHIRef<RHITexture>& Texture) const -> std::optional<Uint32> {
         if (!Texture)
             return std::nullopt;
         std::scoped_lock Lock(m_BindlessMutex);
@@ -311,7 +328,7 @@ class VulkanDescriptorManager {
 
   private:
     auto RegisterBindlessTexturesOnRhiThread(std::span<const RHIRef<RHITexture>> Textures) -> void {
-        VulkanDescriptorWriteBatch Batch = {};
+        VulkanDescriptorWriteBatch             Batch     = {};
         std::vector<std::pair<Uint64, Uint32>> Published = {};
         {
             std::scoped_lock Lock(m_BindlessMutex);
@@ -329,8 +346,12 @@ class VulkanDescriptorManager {
                 const Uint32 Index = m_NextBindlessTexture++;
                 m_BindlessPendingIds.insert(Id);
                 RHITextureView View{.Texture = Texture, .Usage = RHITextureUsage::Sampled};
-                Batch.AppendTextureWrite(GetBindlessDescriptorSet(), BindlessTextureBinding, Index,
-                                   static_cast<const VulkanTexture&>(*Payload), View, vk::DescriptorType::eSampledImage);
+                Batch.AppendTextureWrite(GetBindlessDescriptorSet(),
+                                         BindlessTextureBinding,
+                                         Index,
+                                         static_cast<const VulkanTexture&>(*Payload),
+                                         View,
+                                         vk::DescriptorType::eSampledImage);
                 m_BindlessTextures.emplace(Id, Texture);
                 Published.emplace_back(Id, Index);
             }
@@ -351,32 +372,30 @@ class VulkanDescriptorManager {
     /// VariableCount (when set) feeds VkDescriptorSetVariableDescriptorCountAllocateInfo for layouts whose
     /// last binding is an unbounded array.
     [[nodiscard]] auto AllocateDescriptorSets(std::span<const vk::DescriptorSetLayout> Layouts,
-                                              std::optional<Uint32>                       VariableCount)
+                                              std::optional<Uint32>                    VariableCount)
         -> std::expected<std::vector<vk::raii::DescriptorSet>, ErrorMessage> {
         if (Layouts.empty())
             return std::unexpected(ErrorMessage("VulkanDescriptorManager: descriptor set layout list is empty"));
 
-        // Pool allocation requires external synchronization; binding sets may be
-        // created on the render thread (per-view sets) while the RHI thread
-        // allocates for pipeline binding sets.
-        std::scoped_lock Lock(m_PoolMutex);
+        // Pool allocation requires external synchronization; binding sets may be created on the render thread
+        // (per-view sets) while the RHI thread allocates for pipeline binding sets.
+        std::scoped_lock              Lock(m_PoolMutex);
         vk::DescriptorSetAllocateInfo AllocateInfo{
             .descriptorPool     = *m_Pool,
             .descriptorSetCount = static_cast<Uint32>(Layouts.size()),
             .pSetLayouts        = Layouts.data(),
         };
-        std::expected<std::vector<vk::raii::DescriptorSet>, ErrorMessage> Result = std::unexpected(
-            ErrorMessage("VulkanDescriptorManager: failed to allocate descriptor sets"));
+        std::expected<std::vector<vk::raii::DescriptorSet>, ErrorMessage> Result =
+            std::unexpected(ErrorMessage("VulkanDescriptorManager: failed to allocate descriptor sets"));
 
         if (VariableCount) {
-            const Uint32 Counts[] = {*VariableCount};
+            const Uint32                                         Counts[] = {*VariableCount};
             vk::DescriptorSetVariableDescriptorCountAllocateInfo VariableCountsInfo{
                 .descriptorSetCount = 1,
                 .pDescriptorCounts  = Counts,
             };
-            vk::StructureChain<vk::DescriptorSetAllocateInfo,
-                               vk::DescriptorSetVariableDescriptorCountAllocateInfo>
-                Chain{AllocateInfo, VariableCountsInfo};
+            vk::StructureChain<vk::DescriptorSetAllocateInfo, vk::DescriptorSetVariableDescriptorCountAllocateInfo>
+                 Chain{AllocateInfo, VariableCountsInfo};
             auto Res = m_Device->allocateDescriptorSets(Chain.get<vk::DescriptorSetAllocateInfo>());
             if (Res.result == vk::Result::eSuccess && Res.value.size() == Layouts.size())
                 Result = std::move(Res.value);
@@ -392,29 +411,28 @@ class VulkanDescriptorManager {
         Sets.reserve(Result->size());
         for (auto& Set : *Result) {
             if (m_DebugUtils)
-                m_DebugUtils->SetObjectName(
-                    *Set, Format("Internal/DescriptorSet/Persistent/Set{}", m_NextPersistentSet++));
+                m_DebugUtils->SetObjectName(*Set,
+                                            Format("Internal/DescriptorSet/Persistent/Set{}", m_NextPersistentSet++));
             Sets.push_back(std::move(Set));
         }
         return Sets;
     }
 
   public:
-    /// Applies descriptor writes to already allocated descriptor sets.
-    /// Returns the cached descriptor set for `Key`, allocating it on a miss.
-    /// The returned handle is owned by the descriptor cache and remains valid
+    /// Applies descriptor writes to already allocated descriptor sets. Returns the cached descriptor set for
+    /// `Key`, allocating it on a miss. The returned handle is owned by the descriptor cache and remains valid
     /// until the entry is removed by `Tick()`.
-    [[nodiscard]] auto AcquireDescriptorSet(const DescriptorSetCacheKey& Key,
-                                             std::span<const RHIShaderBindingSet::Slot> Bindings) -> vk::DescriptorSet {
+    [[nodiscard]] auto AcquireDescriptorSet(const DescriptorSetCacheKey&               Key,
+                                            std::span<const RHIShaderBindingSet::Slot> Bindings) -> vk::DescriptorSet {
         // Step 1: Check cache for existing set. Refresh LRU and return if found
         if (const auto It = m_SetCache.find(Key); It != m_SetCache.end()) {
             It->second.LruAge = 0;
             return *It->second.Set;
         }
 
-        // Step 2: Cache miss, so allocate a new descriptor set and write all bindings.
-        // Unbounded array layouts allocate with a variable descriptor count equal to
-        // the highest bound element index + 1 (partially bound covers the rest).
+        // Step 2: Cache miss, so allocate a new descriptor set and write all bindings. Unbounded array
+        // layouts allocate with a variable descriptor count equal to the highest bound element index + 1
+        // (partially bound covers the rest).
         std::optional<Uint32> VariableCount = std::nullopt;
         for (const auto& Binding : Bindings) {
             if (!Binding.IsVariableCountArray)
@@ -425,17 +443,17 @@ class VulkanDescriptorManager {
             VariableCount = Count;
             break;
         }
-        const auto Layout = Key.Layout;
-        auto Allocated = AllocateDescriptorSets(std::span{&Layout, 1}, VariableCount);
+        const auto Layout    = Key.Layout;
+        auto       Allocated = AllocateDescriptorSets(std::span{&Layout, 1}, VariableCount);
         if (!Allocated) {
             LogError("{}", Allocated.error().ToString());
             return nullptr;
         }
 
-        // Step 3: Write the new descriptor sets. The batch owns every payload
-        // its writes point at until updateDescriptorSets consumes them.
-        auto Set = std::move((*Allocated)[0]);
-        const auto Handle = *Set;
+        // Step 3: Write the new descriptor sets. The batch owns every payload its writes point at until
+        // updateDescriptorSets consumes them.
+        auto                       Set    = std::move((*Allocated)[0]);
+        const auto                 Handle = *Set;
         VulkanDescriptorWriteBatch Batch;
         Batch.Writes.reserve(Bindings.size());
         for (Uint32 Index = 0; Index < Bindings.size(); ++Index) {
@@ -447,8 +465,8 @@ class VulkanDescriptorManager {
                     switch (Binding.Info.Type) {
                     case ShaderResourceType::Texture:
                         if (const auto* Texture = static_cast<const VulkanTexture*>(Element.View.Texture.TryGet()))
-                            Batch.AppendTextureWrite(Handle, Binding.Info.BindingIndex, Element.ArrayIndex,
-                                               *Texture, Element.View, Type);
+                            Batch.AppendTextureWrite(
+                                Handle, Binding.Info.BindingIndex, Element.ArrayIndex, *Texture, Element.View, Type);
                         break;
                     default:
                         // Arrays of buffers/samplers are not used yet; extend here.
@@ -485,10 +503,11 @@ class VulkanDescriptorManager {
         }
         if (!Batch.Writes.empty())
             Batch.Apply(*m_Device);
-        m_SetCache.emplace(Key, CacheEntry{
-                                     .Set = std::move(Set),
-                                     .LruAge = 0,
-                                 });
+        m_SetCache.emplace(Key,
+                           CacheEntry{
+                               .Set    = std::move(Set),
+                               .LruAge = 0,
+                           });
         return Handle;
     }
 
@@ -501,29 +520,28 @@ class VulkanDescriptorManager {
                 ++It;
         }
     }
+    // Members
 
-    // ── Members ─────────────────────────────────────────────────────────
-
-    vk::raii::Device* m_Device              = nullptr;
-    VulkanDebugUtils* m_DebugUtils          = nullptr;
-    Uint32            m_NextPersistentSet   = 0;
+    vk::raii::Device* m_Device            = nullptr;
+    VulkanDebugUtils* m_DebugUtils        = nullptr;
+    Uint32            m_NextPersistentSet = 0;
 
     struct CacheEntry {
-        vk::raii::DescriptorSet Set = nullptr;
-        Uint64 LruAge = 0;
+        vk::raii::DescriptorSet Set    = nullptr;
+        Uint64                  LruAge = 0;
     };
 
-    vk::raii::DescriptorPool m_Pool = nullptr;
-    vk::raii::DescriptorSetLayout m_BindlessSetLayout = nullptr;
-    std::vector<vk::raii::DescriptorSet> m_BindlessSets = {};
-    std::mutex                    m_PoolMutex = {};
-    mutable std::mutex            m_BindlessMutex = {};
-    Uint32                        m_NextBindlessTexture = 1;
-    std::unordered_map<Uint64, Uint32> m_BindlessTextureIndices = {};
-    std::unordered_set<Uint64>         m_BindlessPendingIds = {};
-    std::unordered_map<Uint64, RHIRef<RHITexture>> m_BindlessTextures = {};
-    std::unordered_map<DescriptorSetCacheKey, CacheEntry, DescriptorSetCacheKeyHash> m_SetCache = {};
-    static constexpr Uint64 s_CacheLifetimeTicks = 10;
+    vk::raii::DescriptorPool                                                         m_Pool                   = nullptr;
+    vk::raii::DescriptorSetLayout                                                    m_BindlessSetLayout      = nullptr;
+    std::vector<vk::raii::DescriptorSet>                                             m_BindlessSets           = {};
+    std::mutex                                                                       m_PoolMutex              = {};
+    mutable std::mutex                                                               m_BindlessMutex          = {};
+    Uint32                                                                           m_NextBindlessTexture    = 1;
+    std::unordered_map<Uint64, Uint32>                                               m_BindlessTextureIndices = {};
+    std::unordered_set<Uint64>                                                       m_BindlessPendingIds     = {};
+    std::unordered_map<Uint64, RHIRef<RHITexture>>                                   m_BindlessTextures       = {};
+    std::unordered_map<DescriptorSetCacheKey, CacheEntry, DescriptorSetCacheKeyHash> m_SetCache               = {};
+    static constexpr Uint64                                                          s_CacheLifetimeTicks     = 10;
 };
 
 } // namespace SoulEngine

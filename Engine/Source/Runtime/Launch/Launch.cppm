@@ -2,8 +2,8 @@ module;
 
 #include <tracy/Tracy.hpp>
 
-// Required while Scene exposes entt::registry in its object layout. EngineLoop owns
-// Application and can instantiate the Scene lifetime chain when replacing applications.
+// Required while Scene exposes entt::registry in its object layout. EngineLoop owns Application and can
+// instantiate the Scene lifetime chain when replacing applications.
 #include <entt/entt.hpp>
 #include <imgui_threaded_rendering.h>
 
@@ -24,13 +24,11 @@ import EditorTypes;
 
 namespace SoulEngine {
 
-// Boot-time CVars owned by the launch sequence.  Log levels live here rather
-// than in Core:Logging because Core:CVar imports Core:Logging — registering
-// them there would create a module-partition cycle.
-// CVar registrations deliberately use module linkage (plain non-exported
-// declarations), never an anonymous namespace: internal-linkage variables
-// referenced from exported inline code are copied into importing TUs and
-// their initializers run twice (duplicate registration).
+// Boot-time CVars owned by the launch sequence. Log levels live here rather than in Core:Logging because
+// Core:CVar imports Core:Logging — registering them there would create a module-partition cycle. CVar
+// registrations deliberately use module linkage (plain non-exported declarations), never an anonymous
+// namespace: internal-linkage variables referenced from exported inline code are copied into importing TUs
+// and their initializers run twice (duplicate registration).
 CVar<String> CVarLogConsoleLevel{"Log.ConsoleLevel", "Info", "Minimum level for console log output"};
 CVar<String> CVarLogFileLevel{"Log.FileLevel", "Debug", "Minimum level for file log output"};
 CVar<String> CVarApplicationName{"Application.Name", "Test", "Application opened at startup"};
@@ -50,29 +48,27 @@ enum class SlotState {
 
 /// @brief One element of the triple buffer.
 struct FrameSlot {
-    std::mutex              Mutex;
-    std::condition_variable Cv;
-    SlotState               State = SlotState::Empty;
-    GameSnapshot            GameData;
-    EditorSnapshot          EditorData;
-    SPtr<IRenderer>         Renderer = nullptr;
-    RenderResult            RenderPacket;
-    UPtr<ImDrawDataSnapshot> ImGuiSnapshot = nullptr;
-    // Zero means this slot has not submitted GPU work yet, so its first
-    // RenderPacket does not need a timeline wait before replacement.
-    RHIFrameCompletion      Completion = {};
-    // RHIThread flips this false only while it may still read RenderPacket.
-    // RenderThread must observe true before replacing that packet.
-    bool                    RhiConsumedRenderPacket = true;
+    std::mutex               Mutex;
+    std::condition_variable  Cv;
+    SlotState                State = SlotState::Empty;
+    GameSnapshot             GameData;
+    EditorSnapshot           EditorData;
+    SPtr<IRenderer>          Renderer = nullptr;
+    RenderResult             RenderPacket;
+    UPtr<ImDrawDataSnapshot> ImGuiSnapshot           = nullptr;
+    // Zero means this slot has not submitted GPU work yet, so its first RenderPacket does not need a timeline
+    // wait before replacement.
+    RHIFrameCompletion       Completion              = {};
+    // RHIThread flips this false only while it may still read RenderPacket. RenderThread must observe true
+    // before replacing that packet.
+    bool                     RhiConsumedRenderPacket = true;
 };
 
 constexpr Uint32 kSlotCount = 3;
 
-// Tracy identifies instrumented strings by pointer address, not content
-// (see Tracy manual, "Unique pointers"): identical literals are not
-// guaranteed to pool to one address, and a mismatched pointer silently
-// splits frame sources. Always pass these named constants instead of
-// fresh literals.
+// Tracy identifies instrumented strings by pointer address, not content (see Tracy manual, "Unique
+// pointers"): identical literals are not guaranteed to pool to one address, and a mismatched pointer silently
+// splits frame sources. Always pass these named constants instead of fresh literals.
 inline constexpr const char* kGameThreadName   = "GameThread";
 inline constexpr const char* kRenderThreadName = "RenderThread";
 inline constexpr const char* kRHIThreadName    = "RHIThread";
@@ -94,17 +90,15 @@ class EngineLoop {
         //       SoulEngine         <- binary (CmdLineArgs[0])
         auto EngineDir = Path(CmdLineArgs.front()).parent_path().parent_path();
 
-        // Validate the directory layout before proceeding.  If the binary
-        // has been moved, the hard-coded parent_path chain yields garbage.
-        // Logging isn't initialized yet, so we write directly to stderr.
+        // Validate the directory layout before proceeding. If the binary has been moved, the hard-coded
+        // parent_path chain yields garbage. Logging isn't initialized yet, so we write directly to stderr.
         if (EngineDir.filename() != "Engine") {
             std::println(stderr, "FATAL: Invalid engine directory layout.");
             std::println(stderr, "  Expected root directory name: Engine");
             std::println(stderr, "  Resolved root:               {}", EngineDir.string());
             std::println(stderr, "  Binary path:                 {}", CmdLineArgs.front());
-            // Exit directly: the logging system hasn't been initialized yet,
-            // so returning an error would end up in LogError with no logger.
-            // No resources have been allocated at this point, so exit is safe.
+            // Exit directly: the logging system hasn't been initialized yet, so returning an error would end
+            // up in LogError with no logger. No resources have been allocated at this point, so exit is safe.
             std::exit(1);
         }
 
@@ -114,8 +108,8 @@ class EngineLoop {
         // Initialize spdlog sinks and logger rooted at Engine/Logs/.
         LogManager::Get().Init(EnginePaths::Get().LogsDirPath());
 
-        // Load the config file from Engine/Configs/SoulEngine.toml into the
-        // registered CVars (also flushes static-init registration diagnostics).
+        // Load the config file from Engine/Configs/SoulEngine.toml into the registered CVars (also flushes
+        // static-init registration diagnostics).
         auto LoadResult = CVarManager::Get().LoadConfig(EnginePaths::Get().ConfigsDirPath() / "SoulEngine.toml");
         if (!LoadResult)
             return std::unexpected(LoadResult.error().Append("Failed to load config file"));
@@ -123,10 +117,9 @@ class EngineLoop {
         // Apply log-level configuration from the [Log] section.
         LogManager::Get().SetSinkLevels(CVarLogFileLevel.Get(), CVarLogConsoleLevel.Get());
 
-        // LogInfo intentionally deferred to here: LogManager::Init() is
-        // called above and must run first so the spdlog logger is ready.
-        // Any log calls before that point silently produce no output
-        // (Log() returns early when the logger is null).
+        // LogInfo intentionally deferred to here: LogManager::Init() is called above and must run first so
+        // the spdlog logger is ready. Any log calls before that point silently produce no output (Log()
+        // returns early when the logger is null).
         LogInfo("Soul Engine PreInitializing... ({} args)", CmdLineArgs.size());
         Platform::InstallCrashHandler();
         return {};
@@ -141,8 +134,8 @@ class EngineLoop {
         if (!WinResult)
             return std::unexpected(WinResult.error().Append("Failed to create window system"));
         m_WindowSystem = std::move(*WinResult);
+        // RHI context — process-wide singleton
 
-        // ── RHI context — process-wide singleton ──────────────────────────
         const auto Backend = CVarRenderRHI.Get();
         if (auto R = RHIRenderDevice::Create(Backend, m_WindowSystem.get()); !R) {
             Shutdown();
@@ -150,8 +143,8 @@ class EngineLoop {
         }
         LogInfo("RHI context created successfully");
 
-        // TaskGraph must be running before Editor binds its presentation: the
-        // editor world creates RHI resources through the queued RHI path.
+        // TaskGraph must be running before Editor binds its presentation: the editor world creates RHI
+        // resources through the queued RHI path.
         auto WorkerCount = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 3);
         TaskGraph::Get().Init(WorkerCount);
 
@@ -160,8 +153,7 @@ class EngineLoop {
             return std::unexpected(R.error().Append("Editor presentation binding failed"));
         }
 
-        // Cross-frame render-graph facilities (pipeline registry + transient
-        // render-target pool)
+        // Cross-frame render-graph facilities (pipeline registry + transient render-target pool)
         RenderGraph::Get().Init();
 
         const auto InitialRenderer = CVarRenderDefaultRenderer.Get();
@@ -169,8 +161,8 @@ class EngineLoop {
             Shutdown();
             return std::unexpected(R.error().Append("Default renderer selection failed"));
         }
+        // Create application from config
         LogInfo("Renderer '{}' initialized successfully", InitialRenderer);
-        // ── Create application from config ───────────────────────────────
         if (auto R = OpenApplication(CVarApplicationName.Get()); !R) {
             Shutdown();
             return std::unexpected(R.error().Append("Application opening failed"));
@@ -201,10 +193,8 @@ class EngineLoop {
     auto Shutdown() -> void {
         LogInfo("Shutting down...");
 
-        // Request stop BEFORE notifying CVs — otherwise threads wake,
-        // check stop_requested() == false, go back to sleep, and never
-        // wake again because request_stop() does not notify condition
-        // variables.
+        // Request stop BEFORE notifying CVs — otherwise threads wake, check stop_requested() == false, go
+        // back to sleep, and never wake again because request_stop() does not notify condition variables.
         if (m_RenderThread.joinable())
             m_RenderThread.request_stop();
         if (m_RHIThread.joinable())
@@ -213,10 +203,9 @@ class EngineLoop {
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
 
-        // Join the workers before stopping TaskGraph: a worker caught
-        // mid-frame finishes its in-flight slot against live task services
-        // instead of failing with spurious "TaskGraph is not running"
-        // errors during an otherwise clean shutdown.
+        // Join the workers before stopping TaskGraph: a worker caught mid-frame finishes its in-flight slot
+        // against live task services instead of failing with spurious "TaskGraph is not running" errors
+        // during an otherwise clean shutdown.
         if (m_RenderThread.joinable())
             m_RenderThread.join();
         if (m_RHIThread.joinable())
@@ -227,8 +216,7 @@ class EngineLoop {
         m_Editor.UnbindScene();
         CloseApplication();
 
-        // Release frame slot snapshots and command observers before
-        // RenderDevice::Destroy() tears down VMA.
+        // Release frame slot snapshots and command observers before RenderDevice::Destroy() tears down VMA.
         for (auto& Slot : m_Slots) {
             Slot.GameData     = {};
             Slot.EditorData   = {};
@@ -241,9 +229,8 @@ class EngineLoop {
 
         CloseRenderers();
 
-        // Release cross-frame render-graph state (pool + pipeline refs) while
-        // the deferred-deletion queue and native device are still alive —
-        // MUST precede RHIRenderDevice::Destroy()
+        // Release cross-frame render-graph state (pool + pipeline refs) while the deferred-deletion queue and
+        // native device are still alive — MUST precede RHIRenderDevice::Destroy()
         RenderGraph::Get().Shutdown();
 
         if (auto R = RHIRenderDevice::Destroy(); !R)
@@ -263,8 +250,7 @@ class EngineLoop {
         for (auto& Slot : m_Slots)
             Slot.Cv.notify_all();
     }
-
-    // ── Loops ────────────────────────────────────────────────────────────────
+    // Loops
 
     auto GameLoop() -> void {
         tracy::SetThreadName(kGameThreadName);
@@ -282,9 +268,8 @@ class EngineLoop {
             {
                 std::unique_lock Lock(Slot.Mutex);
                 Slot.Cv.wait(Lock, [this, &Slot] {
-                    // RenderReady means RenderThread consumed the previous
-                    // SceneData; GameThread may prepare the next snapshot even
-                    // while the old RenderPacket remains GPU-owned.
+                    // RenderReady means RenderThread consumed the previous SceneData; GameThread may prepare
+                    // the next snapshot even while the old RenderPacket remains GPU-owned.
                     return Slot.State == SlotState::Empty || Slot.State == SlotState::RenderReady ||
                            m_FatalError.load(std::memory_order_relaxed);
                 });
@@ -294,16 +279,15 @@ class EngineLoop {
 
             FrameMarkStart(kGameFrameName);
 
-            // Each engine loop owns an independent ordinal. Render/RHI tasks
-            // carry the producer's ordinal and execute when the consumer
-            // reaches the same pipeline position.
+            // Each engine loop owns an independent ordinal. Render/RHI tasks carry the producer's ordinal and
+            // execute when the consumer reaches the same pipeline position.
             TaskGraph::Get().IncreaseThreadFrameIndex();
 
-            // UI builds on the main thread so ImGui input stays on the same
-            // thread as event polling; the render thread consumes snapshots.
+            // UI builds on the main thread so ImGui input stays on the same thread as event polling; the
+            // render thread consumes snapshots.
             //
-            // Every published render packet owns its snapshot until GPU
-            // completion, so the next game tick must render into a fresh one.
+            // Every published render packet owns its snapshot until GPU completion, so the next game tick
+            // must render into a fresh one.
             Slot.ImGuiSnapshot = std::make_unique<ImDrawDataSnapshot>();
             m_Editor.Tick(Delta, *Slot.ImGuiSnapshot);
 
@@ -322,7 +306,7 @@ class EngineLoop {
             auto& AppScene = CurrentApplication->GetScene();
             AppScene.UpdateTime();
             AppScene.Tick(Delta);
-            Slot.GameData = AppScene.BuildSnapshot();
+            Slot.GameData   = AppScene.BuildSnapshot();
             Slot.EditorData = m_Editor.BuildSnapshot();
 
             {
@@ -351,13 +335,11 @@ class EngineLoop {
 
             FrameMarkStart(kRenderFrameName);
 
-            // Advance RenderThread's local frame ordinal before draining or
-            // publishing tasks for this frame.
+            // Advance RenderThread's local frame ordinal before draining or publishing tasks for this frame.
             TaskGraph::Get().IncreaseThreadFrameIndex();
             TaskGraph::Get().DrainTasks(ThreadQueue::Render);
 
-            // Pool maintenance (LRU eviction) runs before this frame's
-            // Compile acquires.
+            // Pool maintenance (LRU eviction) runs before this frame's Compile acquires.
             RenderGraph::Get().Tick();
 
             if (!Slot.Renderer) {
@@ -372,17 +354,15 @@ class EngineLoop {
                 break;
             }
 
-            // Move the UI snapshot into the pending render result before
-            // publishing RenderReady. The shared object remains alive through
-            // GPU completion even if this slot is reused immediately.
+            // Move the UI snapshot into the pending render result before publishing RenderReady. The shared
+            // object remains alive through GPU completion even if this slot is reused immediately.
             RenderResult->ImGuiSnapshot = std::move(Slot.ImGuiSnapshot);
             Slot.ImGuiSnapshot.reset();
 
             {
                 std::lock_guard Lock(Slot.Mutex);
-                // RenderThread has finished reading SceneData. Publish this
-                // handoff before waiting on the old packet so GameThread can
-                // prepare the next SceneData independently.
+                // RenderThread has finished reading SceneData. Publish this handoff before waiting on the old
+                // packet so GameThread can prepare the next SceneData independently.
                 Slot.State = SlotState::RenderReady;
             }
             Slot.Cv.notify_all();
@@ -391,8 +371,8 @@ class EngineLoop {
             {
                 std::unique_lock Lock(Slot.Mutex);
                 Slot.Cv.wait(Lock, [this, &Slot, &Stop] {
-                    // RHIThread must finish its CPU-side read before this
-                    // thread overwrites the slot-owned RenderPacket.
+                    // RHIThread must finish its CPU-side read before this thread overwrites the slot-owned
+                    // RenderPacket.
                     return Slot.RhiConsumedRenderPacket || Stop.stop_requested() ||
                            m_FatalError.load(std::memory_order_relaxed);
                 });
@@ -401,9 +381,9 @@ class EngineLoop {
                 PreviousCompletion = Slot.Completion;
             }
 
-            // This is the exact replacement boundary: CPU-side RHI access has
-            // ended above, and this wait proves the GPU no longer executes the
-            // old packet before its RHIRefs are released by replacement.
+            // This is the exact replacement boundary: CPU-side RHI access has ended above, and this wait
+            // proves the GPU no longer executes the old packet before its RHIRefs are released by
+            // replacement.
             if (auto R = RHIRenderDevice::Get().WaitFinish(PreviousCompletion); !R) {
                 LogError("Render loop GPU completion wait failed:\n{}", R.error().ToString());
                 SignalFatalError();
@@ -413,17 +393,15 @@ class EngineLoop {
             {
                 std::lock_guard Lock(Slot.Mutex);
                 Slot.RenderPacket = std::move(*RenderResult);
-                // Attach after the move so the borrowed pointer names the
-                // packet-owned snapshot retained through GPU completion.
+                // Attach after the move so the borrowed pointer names the packet-owned snapshot retained
+                // through GPU completion.
                 if (Slot.RenderPacket.ImGuiSnapshot)
-                    m_Editor.AttachPresentationOverlay(Slot.RenderPacket.CmdList,
-                                                        *Slot.RenderPacket.ImGuiSnapshot);
-                // The newly published packet is now pending RHIThread
-                // consumption. RHIThread waits on this false value.
+                    m_Editor.AttachPresentationOverlay(Slot.RenderPacket.CmdList, *Slot.RenderPacket.ImGuiSnapshot);
+                // The newly published packet is now pending RHIThread consumption. RHIThread waits on this
+                // false value.
                 Slot.RhiConsumedRenderPacket = false;
             }
-            // Wake RHIThread after the complete packet and its RHIRefs are
-            // visible under the slot mutex.
+            // Wake RHIThread after the complete packet and its RHIRefs are visible under the slot mutex.
             Slot.Cv.notify_all();
 
             m_RenderSlotIndex = (m_RenderSlotIndex + 1) % kSlotCount;
@@ -441,10 +419,9 @@ class EngineLoop {
             {
                 std::unique_lock Lock(Slot.Mutex);
                 Slot.Cv.wait(Lock, [&] {
-                    // RenderThread clears this flag only after waiting for the
-                    // old GPU work and publishing a complete new packet.
-                    // RHIThread can therefore consume the packet without
-                    // racing RenderThread's replacement.
+                    // RenderThread clears this flag only after waiting for the old GPU work and publishing a
+                    // complete new packet. RHIThread can therefore consume the packet without racing
+                    // RenderThread's replacement.
                     return !Slot.RhiConsumedRenderPacket || Stop.stop_requested() ||
                            m_FatalError.load(std::memory_order_relaxed);
                 });
@@ -460,15 +437,14 @@ class EngineLoop {
                 break;
             }
 
-            // Advance RHIThread's local frame ordinal before matching its
-            // frame-affined tasks. This intentionally does not read another
-            // thread's TLS value.
+            // Advance RHIThread's local frame ordinal before matching its frame-affined tasks. This
+            // intentionally does not read another thread's TLS value.
             TaskGraph::Get().IncreaseThreadFrameIndex();
             TaskGraph::Get().DrainTasks(ThreadQueue::RHI);
             TaskGraph::Get().DrainFrameTasks(ThreadQueue::RHI);
 
-            // Publish completed sampled-texture uploads here on the RHI thread
-            // before the next command list can observe them.
+            // Publish completed sampled-texture uploads here on the RHI thread before the next command list
+            // can observe them.
             if (auto R = RHIRenderDevice::Get().Tick(); !R) {
                 LogError("RHI Tick fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
@@ -477,8 +453,8 @@ class EngineLoop {
             // Retire native resources whose last RHIRef was released since the previous frame.
             DrainRHIDeferredDeletions();
 
-            // Execute borrows the slot-owned packet. RhiConsumedRenderPacket
-            // remains false while this call and EndFrame() read it.
+            // Execute borrows the slot-owned packet. RhiConsumedRenderPacket remains false while this call
+            // and EndFrame() read it.
             if (auto R = RHIRenderDevice::Get().Execute(Slot.RenderPacket); !R) {
                 LogError("RHI Execute fatal error:\n{}", R.error().ToString());
                 SignalFatalError();
@@ -491,47 +467,44 @@ class EngineLoop {
                 SignalFatalError();
                 break;
             }
-            
+
             {
                 std::lock_guard Lock(Slot.Mutex);
-                Slot.Completion = *CompletionResult;
-                // RHIThread is done with all CPU-side packet reads. GPU
-                // completion is tracked separately by the immutable token.
+                Slot.Completion              = *CompletionResult;
+                // RHIThread is done with all CPU-side packet reads. GPU completion is tracked separately by
+                // the immutable token.
                 Slot.RhiConsumedRenderPacket = true;
             }
-            // RenderThread may be waiting to replace this packet; notify it
-            // even when the GPU timeline has already completed the work.
+            // RenderThread may be waiting to replace this packet; notify it even when the GPU timeline has
+            // already completed the work.
             Slot.Cv.notify_all();
 
             m_RHISlotIndex = (m_RHISlotIndex + 1) % kSlotCount;
             FrameMarkEnd(kRHIFrameName);
 
-            // Unnamed master frame mark: feeds the GUI's default numbered
-            // frame set (framerate, frame images). The named continuous
-            // spans above carry the per-stage intervals.
+            // Unnamed master frame mark: feeds the GUI's default numbered frame set (framerate, frame
+            // images). The named continuous spans above carry the per-stage intervals.
             FrameMark;
         }
 
-        // GPU must finish all in-flight work before resources are destroyed.
-        // Application resources (VertexBuffer, etc.) are freed when the app
-        // resets; their DeviceBuffer destructors call vmaDestroyBuffer, which
-        // fails if the GPU still references them.
+        // GPU must finish all in-flight work before resources are destroyed. Application resources
+        // (VertexBuffer, etc.) are freed when the app resets; their DeviceBuffer destructors call
+        // vmaDestroyBuffer, which fails if the GPU still references them.
         if (auto R = RHIRenderDevice::Get().WaitIdle(); !R) {
             LogError("RHI WaitIdle fatal error:\n{}", R.error().ToString());
             SignalFatalError();
         }
     }
-
-    // ── State ───────────────────────────────────────────────────────────────
+    // State
 
     Editor                                m_Editor;
     UPtr<IWindowSystem>                   m_WindowSystem;
     std::chrono::steady_clock::time_point m_LastTickTime;
 
-    std::array<FrameSlot, kSlotCount> m_Slots = {};
-    Uint32 m_GameSlotIndex   = 0;
-    Uint32 m_RenderSlotIndex = 0;
-    Uint32 m_RHISlotIndex    = 0;
+    std::array<FrameSlot, kSlotCount> m_Slots           = {};
+    Uint32                            m_GameSlotIndex   = 0;
+    Uint32                            m_RenderSlotIndex = 0;
+    Uint32                            m_RHISlotIndex    = 0;
 
     std::atomic<bool> m_FatalError = false;
 

@@ -2,8 +2,8 @@ implementing Common;
 
 /// @brief Shared GPU light record used by raster and ray-tracing lighting.
 ///
-/// The three float4 values are intentionally kept semantic and match the
-/// std430 storage-buffer layout produced by the runtime record builder.
+/// The three float4 values are intentionally kept semantic and match the std430 storage-buffer layout
+/// produced by the runtime record builder.
 public struct LightRecord {
     public float4 colorIntensity;
     public float4 positionRange;

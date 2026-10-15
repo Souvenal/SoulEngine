@@ -22,8 +22,8 @@ TEST(ErrorMessageTest, AppendedContextRendersOutermostFirst) {
 
     const String Rendered = Error.ToString();
 
-    // Outermost first, then progressively indented causes; every layer's
-    // source location sits on a following line at that layer's indentation.
+    // Outermost first, then progressively indented causes; every layer's source location sits on a following
+    // line at that layer's indentation.
     EXPECT_TRUE(Rendered.starts_with("Application init failed\n[at "));
     EXPECT_TRUE(Rendered.contains("\n  Caused by: Vertex shader compilation failed\n  [at "));
     EXPECT_TRUE(Rendered.contains("\n    Caused by: Slang compile failed\n    [at "));
