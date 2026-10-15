@@ -5,6 +5,8 @@ IndentWidth: 4
 TabWidth: 4
 UseTab: Never
 ColumnLimit: 120
+# Comment text is owned by Tools/check_comments.py (hard 110 ceiling); clang-format must not rewrap it
+ReflowComments: Never
 
 # Braces: LLVM default K&R (Attach). Control-statement braces stay on the same line.
 BreakBeforeBraces: Attach
