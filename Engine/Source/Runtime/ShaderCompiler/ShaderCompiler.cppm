@@ -158,8 +158,9 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
                        magic_enum::enum_name(Entry.Backend));
     }
 
-    /// Create a new backend instance via the factory. The factory registry is populated by AutoRegistrar
-    /// instances in each backend's translation unit.
+    /// @brief Create a new backend instance via the factory.
+    ///
+    /// The factory registry is populated by AutoRegistrar instances in each backend's translation unit.
     [[nodiscard]] auto CreateBackend(ShaderBackend Kind) -> std::expected<UPtr<IShaderBackend>, ErrorMessage> {
         auto Name = magic_enum::enum_name(Kind);
         auto Inst = ShaderBackendFactory::Get().Create(Name);

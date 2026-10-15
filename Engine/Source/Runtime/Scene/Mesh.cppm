@@ -46,6 +46,8 @@ struct GeometryRecord {
     RHIRef<RHIBuffer>                           TangentBuffer  = nullptr;
     RHIRef<RHIBuffer>                           TexCoordBuffer = nullptr;
     RHIRef<RHIBuffer>                           IndexBuffer    = nullptr;
+    /// @brief Geometry metadata for the mesh's vertex and index streams.
+    ///
     /// Geometry metadata is mesh data, not buffer data: filled by GeometryUploader from the CPU streams,
     /// consumed by the BLAS desc and the indirect-command derivation. IndexCount already lives below with the
     /// CPU streams.

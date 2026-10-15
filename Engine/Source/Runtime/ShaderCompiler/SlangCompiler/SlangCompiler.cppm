@@ -625,8 +625,9 @@ class SlangBackend final : public IShaderBackend {
 
     bool                                    m_bInitialized = false;
     Slang::ComPtr<slang::IGlobalSession>    m_GlobalSession;
-    /// Pre-built compiler options, populated once by ResolveCompilerOptions() during Init() and reused across
-    /// all pipeline compile calls.
+    /// @brief Pre-built compiler options reused across all pipeline compile calls.
+    ///
+    /// Populated once by ResolveCompilerOptions() during Init().
     std::vector<slang::CompilerOptionEntry> m_CompilerOptions;
 };
 

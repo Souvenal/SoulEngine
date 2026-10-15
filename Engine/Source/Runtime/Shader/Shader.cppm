@@ -148,6 +148,8 @@ struct ShaderReflection {
 
 /// @brief Compiled shader artifact for one graphics pipeline shader combination.
 struct ShaderGraphicsProgram {
+    /// @brief SPIR-V binary as 32-bit words.
+    ///
     /// SPIR-V binary is defined as 32-bit words, and Vulkan consumes shader module code through a uint32_t
     /// pointer rather than a byte buffer.
     std::vector<Uint32> Code                   = {};
