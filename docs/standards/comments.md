@@ -26,7 +26,7 @@ Rules for where comments live and what they document. Language-specific behavior
 
 ## Form and Width
 
-- Comment lines wrap at ~110 characters; the 80-column habit is banned.
+- Comment lines have a hard ceiling of 110 characters; no line may exceed it, and wrapping a comment paragraph earlier than the ceiling allows is equally a violation. The 80-column habit is banned.
 - Exactly two documentation forms exist. Short: a single `/// @brief ...` line. Long: full Doxygen structure — `@brief` summary, a blank `///` separator, detail paragraphs, `@param`/`@return` as needed. The intermediate form (multi-line prose without `@brief`) is banned.
 - Short member notes use trailing `///< ...`; multi-line explanations go above the member as `///` blocks.
 
