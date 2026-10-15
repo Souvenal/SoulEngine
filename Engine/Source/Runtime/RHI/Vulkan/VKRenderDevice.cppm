@@ -209,6 +209,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_CurrentFrame;
     }
 
+    /// @brief Create a buffer; forwards to the buffer manager.
+    ///
     /// Thin forward: all buffer concerns — Desc validation, creation dispatch, uploads, transient belts —
     /// live in VulkanBufferManager (:Buffer).
     [[nodiscard]] auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
@@ -231,6 +233,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return Resource;
     }
 
+    /// @brief Upload initial data into a buffer; forwards to the buffer manager.
+    ///
     /// Thin forward: upload validation, snapshotting, and the frame-affined task live in VulkanBufferManager
     /// (:Buffer).
     [[nodiscard]] auto UploadBuffer(RHIRef<RHIBuffer> Buffer, std::span<const std::byte> Data)
@@ -252,6 +256,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
             });
     }
 
+    /// @brief Create a texture; forwards to the texture manager.
+    ///
     /// Thin forward: all texture concerns — creation dispatch and the upload front-end — live in
     /// VulkanTextureManager (:Texture).
     [[nodiscard]] auto CreateTexture(StringView Name, const RHITextureDesc& Desc)
@@ -269,6 +275,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_DescriptorManager.FindBindlessTextureIndex(Texture);
     }
 
+    /// @brief Upload initial data into a texture; forwards to the texture manager.
+    ///
     /// Thin forward: upload validation, snapshotting, and the frame-affined task live in VulkanTextureManager
     /// (:Texture).
     [[nodiscard]] auto UploadTexture(RHIRef<RHITexture> Texture, std::span<const std::byte> Data)
@@ -331,6 +339,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return Resource;
     }
 
+    /// @brief Create a BLAS; forwards to the acceleration-structure manager.
+    ///
     /// Thin forward: validation and materialization live in VulkanAccelerationStructureManager
     /// (:AccelerationStructure).
     [[nodiscard]] auto CreateBottomLevelAccelerationStructure(StringView                                     Name,
@@ -339,6 +349,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_AccelerationStructureManager.CreateBlas(Name, Desc);
     }
 
+    /// @brief Create a TLAS; forwards to the acceleration-structure manager.
+    ///
     /// Thin forward: validation and materialization live in VulkanAccelerationStructureManager
     /// (:AccelerationStructure).
     [[nodiscard]] auto CreateTopLevelAccelerationStructure(StringView                                  Name,
@@ -347,6 +359,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_AccelerationStructureManager.CreateTlas(Name, Desc);
     }
 
+    /// @brief Enqueue a BLAS build for the frame-start batch; forwards to the acceleration-structure manager.
+    ///
     /// Thin forward: validation and the frame-affined task live in VulkanAccelerationStructureManager
     /// (:AccelerationStructure).
     [[nodiscard]] auto BuildBlas(RHIRef<RHIBottomLevelAccelerationStructure> Blas)
@@ -354,6 +368,8 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return m_AccelerationStructureManager.BuildBlas(std::move(Blas));
     }
 
+    /// @brief Enqueue a TLAS build for the frame-start batch; forwards to the acceleration-structure manager.
+    ///
     /// Thin forward: validation and the frame-affined task live in VulkanAccelerationStructureManager
     /// (:AccelerationStructure).
     [[nodiscard]] auto BuildTlas(RHIRef<RHITopLevelAccelerationStructure> Tlas)
@@ -551,9 +567,11 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return {};
     }
 
-    /// Materialize one pass's prologue: every dst-only state requirement is diffed against the emission-side
-    /// trackers, and only state changes emit a native barrier. Recorded into the primary so each barrier sits
-    /// between the producer's and this pass's commands in submission order.
+    /// @brief Materialize one pass's prologue barriers into the primary command buffer.
+    ///
+    /// Every dst-only state requirement is diffed against the emission-side trackers, and only state changes
+    /// emit a native barrier. Recorded into the primary so each barrier sits between the producer's and this
+    /// pass's commands in submission order.
     [[nodiscard]] auto EmitPassPrologue(vk::raii::CommandBuffer& Primary, const RHIBarrierList& Prologue)
         -> std::expected<void, ErrorMessage> {
         for (const auto& Transition : Prologue.Buffers) {
@@ -607,12 +625,13 @@ class VulkanRenderDevice final : public RHIRenderDevice {
         return {};
     }
 
-    /// Record the frame-start upload batch into its own dedicated secondary appended to the primary ahead of
-    /// every pass — entries were produced by the frame-affined UploadBuffer/UploadTexture tasks drained
-    /// earlier this frame (staging allocation and host copy already done there); the belt records one copy
-    /// per entry, the buffer lane sealed by a single aggregated transfer-write → consumer-read barrier. Runs
-    /// first in the frame-start phase because the BLAS batch reads geometry buffers. Recorded unconditionally
-    /// — an empty batch simply yields an empty secondary.
+    /// @brief Record the frame-start upload batch into a dedicated secondary appended ahead of every pass.
+    ///
+    /// Entries were produced by the frame-affined UploadBuffer/UploadTexture tasks drained earlier this frame
+    /// (staging allocation and host copy already done there); the belt records one copy per entry, the buffer
+    /// lane sealed by a single aggregated transfer-write → consumer-read barrier. Runs first in the
+    /// frame-start phase because the BLAS batch reads geometry buffers. Recorded unconditionally — an empty
+    /// batch simply yields an empty secondary.
     [[nodiscard]] auto RecordUploadWork(vk::raii::CommandBuffer& Primary) -> std::expected<void, ErrorMessage> {
         auto&                         FC = m_FrameContext[m_CurrentFrame];
         vk::CommandBufferAllocateInfo Alloc{
@@ -878,16 +897,18 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     VulkanDescriptorManager     m_DescriptorManager = {};
 
     std::vector<VulkanFrameContext>    m_FrameContext;
-    /// The shared frame-start upload staging (buffer and image lanes); both resource managers borrow it.
-    /// Destroyed ahead of the resource context's allocator in Shutdown().
+    /// @brief The shared frame-start upload staging (buffer and image lanes).
+    ///
+    /// Both resource managers borrow it. Destroyed ahead of the resource context's allocator in Shutdown().
     VulkanStagingBelt                  m_StagingBelt                  = {};
-    /// All buffer-flavor concerns (creation dispatch, uploads, transient belts). The device never moves after
-    /// creation, so frame-affined tasks safely capture the member's address.
+    /// @brief All buffer-flavor concerns (creation dispatch, uploads, transient belts).
+    ///
+    /// The device never moves after creation, so frame-affined tasks safely capture the member's address.
     VulkanBufferManager                m_BufferManager                = {};
-    /// All texture concerns (creation dispatch, upload front-end).
+    /// @brief All texture concerns (creation dispatch, upload front-end).
     VulkanTextureManager               m_TextureManager               = {};
-    /// All acceleration-structure concerns (creation, the frame-start build batch, the scratch and instance
-    /// rings).
+    /// @brief All acceleration-structure concerns (creation, the frame-start build batch, the scratch and
+    /// instance rings).
     VulkanAccelerationStructureManager m_AccelerationStructureManager = {};
     bool                               m_NeedsShutdown                = false;
 };

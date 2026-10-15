@@ -69,10 +69,11 @@ class VulkanImageTracker {
   public:
     VulkanImageTracker() = default;
 
-    /// Seed every (color, mip, layer) subresource with State. Only for images whose initial state is not
-    /// Undefined (swapchain images seed their transfer stage); a default-constructed state needs no seeding —
-    /// Transition's missing-key default is already Undefined. Depth/stencil aspect keys are created lazily by
-    /// Transition.
+    /// @brief Seed every (color, mip, layer) subresource with State.
+    ///
+    /// Only for images whose initial state is not Undefined (swapchain images seed their transfer stage); a
+    /// default-constructed state needs no seeding — Transition's missing-key default is already Undefined.
+    /// Depth/stencil aspect keys are created lazily by Transition.
     auto Seed(vk::Image Image, Uint32 MipLevels, Uint32 ArrayLayers, VulkanImageState State) -> void {
         for (Uint32 Mip = 0; Mip < MipLevels; ++Mip)
             for (Uint32 Layer = 0; Layer < ArrayLayers; ++Layer)
@@ -81,9 +82,11 @@ class VulkanImageTracker {
                     State;
     }
 
-    /// Drop a destroyed image's tracked state. Without this, a driver-reused VkImage handle would make the
-    /// new image inherit a stale layout and emit an invalid oldLayout barrier (pool era: eviction destroys
-    /// idle images while their entries would otherwise linger).
+    /// @brief Drop a destroyed image's tracked state.
+    ///
+    /// Without this, a driver-reused VkImage handle would make the new image inherit a stale layout and emit
+    /// an invalid oldLayout barrier (pool era: eviction destroys idle images while their entries would
+    /// otherwise linger).
     auto Forget(vk::Image Image) -> void {
         for (auto It = m_SubresourceStates.begin(); It != m_SubresourceStates.end();) {
             if (It->first.Image == Image)
@@ -93,9 +96,10 @@ class VulkanImageTracker {
         }
     }
 
-    /// Drive every subresource in Range to DesiredState, emitting one image memory barrier per subresource
-    /// whose tracked state differs (or after a prior write). Range must be concrete — no
-    /// vk::RemainingMipLevels/vk::RemainingArrayLayers.
+    /// @brief Drive every subresource in Range to DesiredState.
+    ///
+    /// Emits one image memory barrier per subresource whose tracked state differs (or after a prior write).
+    /// Range must be concrete — no vk::RemainingMipLevels/vk::RemainingArrayLayers.
     auto Transition(const vk::raii::CommandBuffer&  CmdBuf,
                     vk::Image                       Image,
                     const vk::ImageSubresourceRange Range,
@@ -184,15 +188,17 @@ class VulkanBufferTracker {
   public:
     VulkanBufferTracker() = default;
 
-    /// Drop all tracked range states. Must be called once per frame before new transient allocations are
-    /// recorded.
+    /// @brief Drop all tracked range states.
+    ///
+    /// Must be called once per frame before new transient allocations are recorded.
     auto Reset() -> void {
         m_BufferStates.clear();
     }
 
-    /// Drive the buffer range [Offset, Offset+Size) to DesiredState, emitting a buffer memory barrier when
-    /// the tracked state differs. A WAR hazard (read -> write) needs an execution dependency, and any
-    /// previous write (WAW/RAW) forces a barrier just like the image tracker.
+    /// @brief Drive the buffer range [Offset, Offset+Size) to DesiredState.
+    ///
+    /// Emits a buffer memory barrier when the tracked state differs. A WAR hazard (read -> write) needs an
+    /// execution dependency, and any previous write (WAW/RAW) forces a barrier just like the image tracker.
     auto Transition(vk::raii::CommandBuffer& CmdBuf,
                     vk::Buffer               Buffer,
                     vk::DeviceSize           Offset,
@@ -513,9 +519,10 @@ class VulkanResourceContext final {
     [[nodiscard]] auto GetFramesInFlight() const -> Uint32 {
         return m_FramesInFlight;
     }
-    /// Current frame slot being executed, written by the render device in BeginFrame. RHI-thread confined:
-    /// written and read only while executing that thread's frame, so a plain value suffices. Frame-slotted
-    /// payloads (e.g. the TLAS) resolve their internal slot from it.
+    /// @brief Current frame slot being executed, written by the render device in BeginFrame.
+    ///
+    /// RHI-thread confined: written and read only while executing that thread's frame, so a plain value
+    /// suffices. Frame-slotted payloads (e.g. the TLAS) resolve their internal slot from it.
     [[nodiscard]] auto GetCurrentFrameIndex() const -> Uint32 {
         return m_CurrentFrameIndex;
     }
