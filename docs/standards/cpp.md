@@ -1,11 +1,3 @@
----
-paths:
-  - "Engine/Source/**/*.h"
-  - "Engine/Source/**/*.hpp"
-  - "Engine/Source/**/*.cpp"
-  - "Engine/Source/**/*.cppm"
----
-
 # C++ Coding Specifications
 
 ## Behavior-Changing Rules
@@ -67,7 +59,7 @@ Code form and readability only, not behavior.
 
 - Module partition naming: allow exactly one colon separator in the form `A:B`. To express logical nesting beyond one level, use a single dot inside the partition name, for example `A:B.C`. Treat the dot as part of the partition identifier and ensure build tools map `A:B.C` to a single module partition name.
 
-- Comment placement and content rules (Doxygen `///` usage, per-member vs type-level comments) live in `.agents/rules/comment-coding-spec.md`.
+- Comment placement and content rules (Doxygen `///` usage, per-member vs type-level comments) live in [`comments.md`](comments.md).
 
 - All data member default values SHOULD be written at the declaration site (`Type m_Member = Default;`) so the default is visible at the definition. Use constructor initializer lists for simple, infallible value assignment and dependency injection, including base-class construction. Use a factory returning `std::expected` when construction requires validation, allocation, resource creation, or any other fallible work. For configurable values that may be overridden by a config file, use `m_Member = Cfg.SomeField.value_or(m_Member);` in Init/constructor body; the member's declaration-site default serves as the backup.
 

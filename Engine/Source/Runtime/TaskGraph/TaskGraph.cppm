@@ -252,8 +252,7 @@ class TaskGraph final : public Singleton<TaskGraph> {
 
     auto WorkerLoop(std::size_t WorkerIndex, std::stop_token Stop) -> void {
         // SetThreadName copies the string, so a formatted local is fine here;
-        // pointer identity only matters for names embedded in events (see the
-        // Profiling rule in .agents/rules/cpp-coding-spec.md).
+        // pointer identity only matters for names embedded in events
         const String ThreadName = Format("WorkerThread{}", WorkerIndex);
         tracy::SetThreadName(ThreadName.c_str());
         SetLogThreadRole(LogThreadRole::Worker);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical comment-style check for .agents/rules/comment-coding-spec.md.
+"""Mechanical comment-style check for docs/standards/comments.md.
 
 Errors (exit 1):
   - pure comment lines longer than 110 characters

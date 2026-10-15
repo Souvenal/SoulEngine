@@ -1,9 +1,3 @@
----
-paths:
-  - "Engine/Shaders/**/*.slang"
-  - "Applications/*/Shaders/**/*.slang"
----
-
 # Slang Shader Coding Specifications
 
 ## Scope
@@ -26,7 +20,7 @@ Runtime shader rules for SoulEngine. Prefer Slang cross-platform features. Backe
 - Shader transform order: `mul(vector, matrix)`.
 - Do not CPU-transpose normal constant-buffer matrices.
 - Do not add `column_major` / `row_major` in runtime shaders to patch transform bugs.
-- Decision/rationale: see `Docs/ADR/04-row-major-host-to-shader-matrix-convention.md`.
+- Decision/rationale: see [`docs/adr/04-row-major-host-to-shader-matrix-convention.md`](../adr/04-row-major-host-to-shader-matrix-convention.md).
 
 ## Resource Binding
 

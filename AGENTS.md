@@ -56,7 +56,7 @@ Multi-context — root `GLOSSARY-MAP.md` indexes one `GLOSSARY.md` per module; A
 - **No exceptions, no RTTI.** Every fallible function returns `std::expected<T, Core::ErrorMessage>` (ADR 01/02); `ErrorMessage` is a human-readable error chain for logging, not programmatic branching.
 - **Runtime constant-buffer ABI:** Slang/Vulkan constant buffers use std140 layout; shader structs declare semantic fields only (never named padding), and CPU mirrors lock reflected offsets with sizeof/offsetof assertions (see the Shader glossary).
 
-Judgement-call standards live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md) (read at review time, not during implementation). Path-scoped coding specs live in [`.agents/rules/`](.agents/rules/) (`cpp-coding-spec`, `comment-coding-spec`, `slang-coding-spec`, `vulkan-coding-spec`). Before writing or editing code under a spec's `paths` frontmatter, read that spec. The comment spec fires on ANY comment you add or modify — read it before your first edit, not after review. Mechanical comment rules (110-column width, two legal doc forms) are enforced by `Tools/check_comments.py`.
+Coding standards live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md), which indexes the per-language specs in `docs/standards/`; they are consumed at review time by /code-review. One exception fires at implementation time: before writing or modifying ANY comment, read [`docs/standards/comments.md`](docs/standards/comments.md) — its mechanical rules are enforced by `Tools/check_comments.py`.
 
 ## Code Editing Rules
 

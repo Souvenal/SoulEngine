@@ -1,13 +1,3 @@
----
-paths:
-  - "Engine/Source/**/*.h"
-  - "Engine/Source/**/*.hpp"
-  - "Engine/Source/**/*.cpp"
-  - "Engine/Source/**/*.cppm"
-  - "Engine/Shaders/**/*.slang"
-  - "Applications/*/Shaders/**/*.slang"
----
-
 # Comment Specifications
 
 Rules for where comments live and what they document. Language-specific behavior and code-form rules stay in their own specs; this file owns only comment placement and content.

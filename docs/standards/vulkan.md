@@ -1,9 +1,3 @@
----
-paths:
-  - "Engine/Source/Runtime/RHI/Vulkan/**/*.cpp"
-  - "Engine/Source/Runtime/RHI/Vulkan/**/*.cppm"
----
-
 # Vulkan Coding Specifications
 
 ## pNext
