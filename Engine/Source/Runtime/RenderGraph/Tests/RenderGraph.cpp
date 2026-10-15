@@ -35,8 +35,9 @@ class MockRenderDevice final : public RHIRenderDevice {
     Uint32                 CreatedConstantBuffers = 0;
     /// Usage bits of the last realized render target — lets tests assert the graph's derived usage.
     RHITextureUsage        LastTargetUsage        = RHITextureUsage::None;
-    /// Bytes the last transient upload carried — lets tests assert what realize actually forwarded to the
-    /// RHI.
+    /// @brief Bytes the last transient upload carried.
+    ///
+    /// Lets tests assert what realize actually forwarded to the RHI.
     std::vector<std::byte> LastUpload             = {};
 
     [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override {
@@ -64,8 +65,9 @@ class MockRenderDevice final : public RHIRenderDevice {
     }
 };
 
-/// Minimal window system: satisfies the non-null check in RHIRenderDevice::Create; the mock device never
-/// touches it.
+/// @brief Minimal window system: satisfies the non-null check in RHIRenderDevice::Create.
+///
+/// The mock device never touches it.
 class MockWindowSystem final : public IWindowSystem {
   public:
     [[nodiscard]] auto GetType() const -> WindowSystemType override {
@@ -90,8 +92,10 @@ class MockWindowSystem final : public IWindowSystem {
     entt::dispatcher m_Dispatcher{};
 };
 
-/// Registers the mock backend and creates it through the normal Create()/factory path before main() runs, so
-/// every test in this binary sees the mock device through RHIRenderDevice::Get(). The device is intentionally
+/// @brief Registers the mock backend and creates it through the normal Create()/factory path before main()
+/// runs.
+///
+/// Every test in this binary sees the mock device through RHIRenderDevice::Get(). The device is intentionally
 /// leaked: at static-destruction time the logger and allocators may already be gone, and the OS reclaims the
 /// memory either way.
 struct DeviceInjector {
@@ -224,8 +228,9 @@ struct KeepReadStoragePass final : IRHITransferPass {
     UPtr<Parameter> m_Parameter;
 };
 
-/// Compute pass mixing views and passthrough CPU scalars: the aggregate walk must declare access for the
-/// views only and leave the scalars untouched.
+/// @brief Compute pass mixing views and passthrough CPU scalars.
+///
+/// The aggregate walk must declare access for the views only and leave the scalars untouched.
 struct FilterPass final : IRHIComputePass {
     static constexpr StringView Name        = "Filter";
     static inline Uint32        Constructed = 0;
@@ -323,8 +328,9 @@ struct CopyPass final : IRHITransferPass {
     UPtr<Parameter> m_Parameter;
 };
 
-/// Graphics pass mixing a storage read with an imported color write: the imported write is the side effect
-/// that anchors its producer chain.
+/// @brief Graphics pass mixing a storage read with an imported color write.
+///
+/// The imported write is the side effect that anchors its producer chain.
 struct BridgePass final : IRHIGraphicsPass {
     static constexpr StringView Name = "Bridge";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

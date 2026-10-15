@@ -54,8 +54,9 @@ class MockBindingSet final : public RHIShaderBindingSet {
   public:
     explicit MockBindingSet(const RHIShaderBindingSetDesc& Desc) : RHIShaderBindingSet("Test/BindingSet", Desc) {}
 
-    /// Simulates backend layout creation: fills the effective array capacity a VulkanShaderBindingSet would
-    /// compute.
+    /// @brief Simulates backend layout creation.
+    ///
+    /// Fills the effective array capacity a VulkanShaderBindingSet would compute.
     auto ConfigureArrayCapacity(StringView Path, Uint32 Capacity) -> void {
         for (auto& SetBindings : m_BindingsBySet)
             for (auto& Binding : SetBindings)

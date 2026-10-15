@@ -32,8 +32,9 @@ class RenderGraph final : public Singleton<RenderGraph> {
         m_Pool.Tick();
     }
 
-    /// Release the pool and all cross-frame pipeline refs. Must run before RHIRenderDevice::Destroy() —
-    /// payload destruction needs a live queue.
+    /// @brief Release the pool and all cross-frame pipeline refs.
+    ///
+    /// Must run before RHIRenderDevice::Destroy() — payload destruction needs a live queue.
     auto Shutdown() -> void {
         m_Pool.Shutdown();
         PipelineRegistry::Get().Clear();

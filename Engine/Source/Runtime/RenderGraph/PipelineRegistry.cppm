@@ -41,8 +41,10 @@ struct GraphicsPipelineRequest {
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
 struct ComputePipelineRequest {
     ShaderEntry                            ComputeEntry            = {};
-    /// Specialization constant values fixed at pipeline creation. They are part of the pipeline identity: two
-    /// value sets must produce two pipelines, so the idempotence predicate compares them.
+    /// @brief Specialization constant values fixed at pipeline creation.
+    ///
+    /// They are part of the pipeline identity: two value sets must produce two pipelines, so the idempotence
+    /// predicate compares them.
     std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
@@ -62,9 +64,10 @@ namespace SoulEngine {
 // Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
 // Core:CVar's linkage note.
 
-/// Idempotence predicate for Register: same key + same descriptor is a no-op. Requests compare field by field
-/// (ShaderEntry paths and entry points are the meaningful identity; pipeline fixed-function state uses
-/// defaulted equality).
+/// @brief Idempotence predicate for Register: same key + same descriptor is a no-op.
+///
+/// Requests compare field by field (ShaderEntry paths and entry points are the meaningful identity; pipeline
+/// fixed-function state uses defaulted equality).
 [[nodiscard]] auto SameGraphicsRequest(const GraphicsPipelineRequest& A, const GraphicsPipelineRequest& B) -> bool {
     return A.VertEntry.SourcePath == B.VertEntry.SourcePath && A.VertEntry.EntryPoint == B.VertEntry.EntryPoint &&
            A.FragEntry.SourcePath == B.FragEntry.SourcePath && A.FragEntry.EntryPoint == B.FragEntry.EntryPoint &&
@@ -117,8 +120,10 @@ namespace SoulEngine {
     }
 }
 
-/// Shared RHI-thread tail for graphics/compute async creation: build the binding set, publish it, create the
-/// pipeline, publish it. `Create` is the only pipeline-kind-specific step.
+/// @brief Shared RHI-thread tail for graphics/compute async creation.
+///
+/// Build the binding set, publish it, create the pipeline, publish it. `Create` is the only
+/// pipeline-kind-specific step.
 template <typename PipelineT, typename PipelineDescT, typename CreateFn>
 auto PublishPipelineOnRhiThread(RHIRef<PipelineT>           PipelineRef,
                                 RHIRef<RHIShaderBindingSet> BindingSetRef,
@@ -155,8 +160,10 @@ auto PublishPipelineOnRhiThread(RHIRef<PipelineT>           PipelineRef,
 
 export namespace SoulEngine {
 
-/// Registry key for a typed pipeline pass: the entt type hash, so the graph (type-erased after AddPass) and
-/// the renderer's typed Register<TPass> agree on the key without sharing a string convention.
+/// @brief Registry key for a typed pipeline pass: the entt type hash.
+///
+/// The graph (type-erased after AddPass) and the renderer's typed Register<TPass> agree on the key without
+/// sharing a string convention.
 template <typename TPass>
 [[nodiscard]] inline auto PipelineKeyOf() -> String {
     return Format("{}", entt::type_hash<TPass>::value());
@@ -182,8 +189,9 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
         m_Entries.clear();
     }
 
-    /// Release every entry (pipeline RHIRefs drop to empty). Must run before `RHIRenderDevice::Destroy()` —
-    /// payload destruction needs a live queue.
+    /// @brief Release every entry (pipeline RHIRefs drop to empty).
+    ///
+    /// Must run before `RHIRenderDevice::Destroy()` — payload destruction needs a live queue.
     auto Clear() -> void {
         std::scoped_lock Lock(m_Mutex);
         // Dropping every entry releases the last RHIRef on each pipeline and enqueues payload destruction
@@ -194,8 +202,10 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
 
     // Descriptor registration (renderer OnAttach; no async, no refs)
 
-    /// Typed registration: pulls the descriptor from `TPass::BuildPipelineRequest()` and keys it by the pass
-    /// type. The request's type selects graphics, compute, or ray tracing.
+    /// @brief Typed registration: pulls the descriptor from `TPass::BuildPipelineRequest()` and keys it by
+    /// the pass type.
+    ///
+    /// The request's type selects graphics, compute, or ray tracing.
     template <typename TPass>
     auto Register() -> void {
         if constexpr (std::same_as<decltype(TPass::BuildPipelineRequest()), GraphicsPipelineRequest>)
@@ -323,10 +333,11 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
     mutable std::mutex                m_Mutex   = {};
     std::unordered_map<String, Entry> m_Entries = {};
 
-    /// Shared RegisterGraphics / RegisterCompute body. Idempotent on same key + same descriptor; on conflict,
-    /// LogWarning and keep the first registration (t9 repair option: later may return
-    /// expected<void,ErrorMessage> or emit a LogError with a descriptor diff for RasterRenderer::OnAttach —
-    /// this pass keeps current semantics per review).
+    /// @brief Shared RegisterGraphics / RegisterCompute body.
+    ///
+    /// Idempotent on same key + same descriptor; on conflict, LogWarning and keep the first registration (t9
+    /// repair option: later may return expected<void,ErrorMessage> or emit a LogError with a descriptor diff
+    /// for RasterRenderer::OnAttach — this pass keeps current semantics per review).
     template <typename DescT, typename SamePred>
     auto Register(StringView Key, RHIPassType Kind, const DescT& Desc, DescT Entry::* DescMember, SamePred&& Same)
         -> void {

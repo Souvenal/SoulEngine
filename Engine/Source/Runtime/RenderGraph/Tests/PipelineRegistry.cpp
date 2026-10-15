@@ -20,8 +20,10 @@ using namespace SoulEngine;
 
 namespace {
 
-/// Shared fixture: registry starts clean and the process-global TaskGraph is stopped before every test (tests
-/// that need the lazy-start Pending recipe call TaskGraph::Get().Init(0) themselves). TearDown stops
+/// @brief Shared fixture: registry starts clean and the process-global TaskGraph is stopped before every
+/// test.
+///
+/// Tests that need the lazy-start Pending recipe call TaskGraph::Get().Init(0) themselves. TearDown stops
 /// TaskGraph and clears the registry so no Pending/Failed payloads outlive a test.
 class PipelineRegistryTest : public testing::Test {
   protected:
@@ -36,8 +38,10 @@ class PipelineRegistryTest : public testing::Test {
     }
 };
 
-/// Graphics pass whose async pipeline never finishes in these tests: with the TaskGraph stopped, Ensure fails
-/// outright (Failed); with zero workers the compile is queued but never runs (stays Pending).
+/// @brief Graphics pass whose async pipeline never finishes in these tests.
+///
+/// With the TaskGraph stopped, Ensure fails outright (Failed); with zero workers the compile is queued but
+/// never runs (stays Pending).
 struct AsyncGraphicsPass final : IRHIGraphicsPass {
     static constexpr StringView Name = "AsyncGraphics";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {
@@ -85,8 +89,9 @@ struct AsyncComputePass final : IRHIComputePass {
     UPtr<Parameter> m_Parameter;
 };
 
-/// Graphics consumer: reads a storage buffer and writes an imported target (the side effect that anchors it
-/// in the frame).
+/// @brief Graphics consumer: reads a storage buffer and writes an imported target.
+///
+/// The imported-target write is the side effect that anchors it in the frame.
 struct ConsumerPass final : IRHIGraphicsPass {
     static constexpr StringView Name = "Consumer";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

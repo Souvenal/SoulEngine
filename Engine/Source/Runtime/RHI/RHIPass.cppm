@@ -164,6 +164,8 @@ class IRHIComputePass : public IRHIPass {
     }
 
   private:
+    /// @brief The compute pipeline this pass dispatches with.
+    ///
     /// A compute pass may carry an empty pipeline until dispatch commands are added with the compute pipeline
     /// stage.
     RHIRef<RHIComputePipeline> m_Pipeline = nullptr;
@@ -182,8 +184,9 @@ class IRHITransferPass : public IRHIPass {
     }
 
   protected:
-    /// Blits the complete source into the acquired swapchain image at the given destination rect. This is the
-    /// only present path.
+    /// @brief Blits the complete source into the acquired swapchain image at the given destination rect.
+    ///
+    /// This is the only present path.
     auto BlitToSwapchain(RHIRef<RHITexture> Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight)
         -> void {
         if (!Source || DstWidth == 0 || DstHeight == 0)
