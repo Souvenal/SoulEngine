@@ -15,7 +15,7 @@ namespace Platform {
 // Dump directory — captured during InstallCrashHandler (normal context).
 wchar_t g_DumpDir[MAX_PATH + 1] = {};
 
-/// Write a minidump to Engine/Binaries/SoulEngine_Timestamp_PID.dmp.
+/// @brief Write a minidump to Engine/Binaries/SoulEngine_Timestamp_PID.dmp.
 /// @param ExcPtr  Exception info (can be nullptr for SIGABRT).
 auto WriteMiniDump(EXCEPTION_POINTERS* ExcPtr) -> void {
     SYSTEMTIME SysTm = {};

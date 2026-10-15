@@ -35,6 +35,8 @@ class GeometryPass final : public IRHIGraphicsPass {
         };
     }
 
+    /// @brief The pass's resource declaration.
+    ///
     /// The Parameter IS the resource declaration: each view declares its role and access here; the wiring
     /// site assigns identities only. The remaining fields are passthrough (bindless table, samplers, draw
     /// count).

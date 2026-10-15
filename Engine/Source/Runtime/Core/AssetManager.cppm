@@ -109,16 +109,18 @@ class AssetManager : public Singleton<AssetManager> {
         return AssetHandle{.Id = Id, .Generation = m_Entries.at(Id).Generation};
     }
 
-    /// Resolve an asset path against the application root. Absolute paths pass through normalized; callers
-    /// without a set root must pass absolute paths.
+    /// @brief Resolve an asset path against the application root.
+    ///
+    /// Absolute paths pass through normalized; callers without a set root must pass absolute paths.
     [[nodiscard]] auto ResolvePath(const Path& AssetPath) const -> Path {
         if (AssetPath.is_absolute() || m_ApplicationRoot.empty())
             return AssetPath.lexically_normal();
         return (m_ApplicationRoot / AssetPath).lexically_normal();
     }
 
-    /// Read the entry's file into the cache if not cached yet. Caller holds the mutex. Read failures log a
-    /// warning and leave Data null.
+    /// @brief Read the entry's file into the cache if not cached yet.
+    ///
+    /// Caller holds the mutex. Read failures log a warning and leave Data null.
     auto ReadContentLocked(Entry& Entry) -> void {
         if (Entry.Data)
             return;

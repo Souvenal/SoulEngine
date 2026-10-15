@@ -16,7 +16,7 @@ import std;
 
 export namespace SoulEngine {
 
-/// Supported shader compiler backends.
+/// @brief Supported shader compiler backends.
 ///
 /// The ShaderBackend field in shader compile descriptors is the canonical source of truth for selecting which
 /// compiler pipeline to use. Source file extensions are validated against this value (warning on mismatch),

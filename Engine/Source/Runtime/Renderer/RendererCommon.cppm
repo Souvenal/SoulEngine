@@ -103,10 +103,12 @@ class GeometryUploader {
   public:
     GeometryUploader() = default;
 
-    /// Issue the outstanding upload stages for a record. Buffers are queued on the first call; the BLAS stage
-    /// (descriptor creation + pending-build batch entry, one step) follows once the buffers are Ready and
-    /// NeedBLAS is set. Each stage checks its own flag, so a fully-requested record is a silent no-op;
-    /// failures leave the stage's flag unset for the next call to retry.
+    /// @brief Issue the outstanding upload stages for a record.
+    ///
+    /// Buffers are queued on the first call; the BLAS stage (descriptor creation + pending-build batch entry,
+    /// one step) follows once the buffers are Ready and NeedBLAS is set. Each stage checks its own flag, so a
+    /// fully-requested record is a silent no-op; failures leave the stage's flag unset for the next call to
+    /// retry.
     auto Upload(GeometryRecord& Record, bool NeedBLAS) -> std::expected<void, ErrorMessage> {
         if (!Record.BufferUploadRequested)
             if (auto R = UploadBuffers(Record); !R)
