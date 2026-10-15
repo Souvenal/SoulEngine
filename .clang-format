@@ -47,7 +47,7 @@ AlignConsecutiveDeclarations:
   AcrossComments: true
   AlignCompound: true
   PadOperators: true
-  
+
 # Always break template declarations
 AlwaysBreakTemplateDeclarations: Yes
 
@@ -56,15 +56,9 @@ AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 
-# Include sorting
-SortIncludes: CaseSensitive
-IncludeCategories:
-  - Regex:           '^<<.*\.h>'
-    Priority:        1
-  - Regex:           '^<<.*'
-    Priority:        2
-  - Regex:           '.*'
-    Priority:        3
+# Include sorting is disabled: module-fragment include order is load-bearing (volk.h must precede every
+# other Vulkan header, VMA after volk), and the previous category regexes were inert catch-alls anyway
+SortIncludes: Never
 
 # Namespace handling
 NamespaceIndentation: None
