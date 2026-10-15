@@ -57,6 +57,8 @@ Code form and readability only, not behavior.
 
 - In `class` types, prefix all non-static data members with `m_`. `struct` types are exempt — their data members need no prefix. Static data members should use no prefix regardless of type. This does not apply to union members, bitfields of size 0, or anonymous struct/union members.
 
+- `bool` data members use an `Is` prefix (e.g. `m_IsCoherent`); `bool` fields of aggregate structs follow the same convention.
+
 - **DRY (Don't Repeat Yourself) — one definition per function.** A function's signature must be written exactly once, at its definition site. Function declarations (a signature without a definition) are forbidden unless necessary:
   - Do not split a member function into an in-class declaration plus an out-of-class definition (`ReturnType Class::Method(...) { ... }`). Define member functions inline in the class body so the signature appears once.
   - Do not use separate forward declarations for functions across translation units.
@@ -65,7 +67,7 @@ Code form and readability only, not behavior.
 
 - Module partition naming: allow exactly one colon separator in the form `A:B`. To express logical nesting beyond one level, use a single dot inside the partition name, for example `A:B.C`. Treat the dot as part of the partition identifier and ensure build tools map `A:B.C` to a single module partition name.
 
-- Use Doxygen-style comments (`///`) for public API documentation.
+- Comment placement and content rules (Doxygen `///` usage, per-member vs type-level comments) live in `.agents/rules/comment-coding-spec.md`.
 
 - All data member default values SHOULD be written at the declaration site (`Type m_Member = Default;`) so the default is visible at the definition. Use constructor initializer lists for simple, infallible value assignment and dependency injection, including base-class construction. Use a factory returning `std::expected` when construction requires validation, allocation, resource creation, or any other fallible work. For configurable values that may be overridden by a config file, use `m_Member = Cfg.SomeField.value_or(m_Member);` in Init/constructor body; the member's declaration-site default serves as the backup.
 
@@ -91,7 +93,6 @@ Code form and readability only, not behavior.
 | Trailing return types | Functions (not ctor/dtor) | Review |
 | DRY — no separate declarations; in-class member definitions | All functions | Review |
 | `m_` prefix on non-static data members | `class` types only | Review |
-| Doxygen `///` comments | Public API | Review |
 | Aggregate init (`{ .Field = ... }`) | Structs | Review |
 | Declaration-site defaults | All data members | Review |
 | `UPtr<T>` / `SPtr<T>` aliases | All code | Review |

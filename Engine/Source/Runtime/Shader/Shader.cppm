@@ -31,7 +31,7 @@ inline constexpr Uint32 kShaderReflectionArrayUnboundedSize = std::numeric_limit
 /// RHI to select pipeline bind points, and by reflection to label entry
 /// points.  Backends (Slang, Vulkan) map to/from their native stage
 /// types.  Values are bit flags so multi-stage sets (e.g. a graphics
-/// program's vertex+fragment) compose with magic_enum bitwise operators.
+/// program's vertex+fragment) compose with operator|.
 enum class ShaderStage : Uint16 {
     Unknown       = 0,
     Vertex        = 1 << 0,
@@ -64,23 +64,34 @@ enum class ShaderScalarType : Uint8 {
 
 /// @brief Minimal resource categories supported by the first reflection pass.
 ///
-/// TODO: Extend this to cover more native resource kinds once the engine
-/// needs them (texel buffers, immutable samplers, acceleration structures,
-/// combined image samplers, etc.).
+/// The kind axis splits only where backend descriptor types differ: one texture kind serves both sampled and
+/// storage bindings (the access axis below carries that direction), while constant and storage buffers stay
+/// distinct because the backends type their descriptors differently.
+///
+/// TODO: Extend this to cover more native resource kinds once the engine needs them (texel buffers,
+/// immutable samplers, combined image samplers, etc.).
 enum class ShaderResourceType : Uint8 {
-    Unknown               = 0,
-    ConstantBuffer        = 1,
-    StorageBuffer         = 2,
-    /// Shader-read-only texture descriptor (DX: SRV).
-    SampledTexture        = 3,
-    /// Shader read-write texture/image descriptor (DX: UAV), not a render
-    /// target attachment (DX: RTV/DSV).  Attachments usually use
-    /// attachment-optimal layouts and may get hardware compression/tile-local
-    /// paths; storage images commonly use general layouts for random access.
-    StorageTexture        = 4,
-    Sampler               = 5,
+    Unknown        = 0,
+    ConstantBuffer = 1,
+    StorageBuffer  = 2,
+    /// Texture image descriptor of any access direction (DX: SRV or UAV).
+    Texture        = 3,
+    Sampler        = 4,
     /// Top-level acceleration structure used for hardware ray traversal.
-    AccelerationStructure = 6,
+    AccelerationStructure = 5,
+};
+
+/// @brief Shader-declared access direction of one resource binding.
+///
+/// Access is an axis independent of ShaderResourceType: it comes from the shader's own declaration (Texture2D
+/// vs RWTexture2D, StructuredBuffer vs RWStructuredBuffer) and travels with the binding so consumers can
+/// dispatch or validate on it without re-reading the kind.
+enum class ShaderBindingAccess : Uint8 {
+    Unknown   = 0,
+    /// The shader only reads through this binding.
+    Read      = 1,
+    /// The shader may read and write through this binding.
+    ReadWrite = 2,
 };
 
 /// @brief Reflected scalar/vector/matrix shape for a shader-visible value.
@@ -93,11 +104,13 @@ struct ShaderValueType {
 /// @brief Reflected shader-visible resource binding.
 struct ShaderBinding {
     /// Shader parameter access path, e.g. "g_frame.cb"; not a resource key or file path.
-    String             ParameterPath = {};
-    Uint32             Set           = 0;
-    Uint32             BindingIndex  = 0;
-    ShaderResourceType Type          = ShaderResourceType::Unknown;
-    Uint32             ArrayCount    = 1;
+    String              ParameterPath = {};
+    Uint32              Set           = 0;
+    Uint32              BindingIndex  = 0;
+    ShaderResourceType  Type          = ShaderResourceType::Unknown;
+    /// Shader-declared access direction; samplers and acceleration structures stay Unknown.
+    ShaderBindingAccess Access        = ShaderBindingAccess::Unknown;
+    Uint32              ArrayCount    = 1;
 };
 
 /// @brief Reflected push-constant byte range.
@@ -108,9 +121,8 @@ struct ShaderPushConstantRange {
 
 /// @brief Reflected specialization constant (Slang [SpecializationConstant]).
 ///
-/// Host code looks values up by Name (Q7); ConstantId only exists in
-/// reflection and the Vulkan layer. Defaults come from Slang's integer getter:
-/// bool/int/uint are populated, float has no SDK getter and stays nullopt (Q2).
+/// Host code looks values up by Name; ConstantId only exists in reflection and the Vulkan layer. Defaults
+/// come from Slang's integer getter: bool/int/uint are populated, float has no SDK getter and stays nullopt.
 struct ShaderSpecializationConstant {
     String                Name         = {};
     Uint32                ConstantId   = 0;

@@ -41,7 +41,7 @@ struct GraphicsPipelineRequest {
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
 struct ComputePipelineRequest {
     ShaderEntry ComputeEntry = {};
-    /// Specialization constant values fixed at pipeline creation (WT3).
+    /// Specialization constant values fixed at pipeline creation.
     /// They are part of the pipeline identity: two value sets must produce
     /// two pipelines, so the idempotence predicate compares them.
     std::vector<RHISpecializationConstant> SpecializationConstants = {};
@@ -417,7 +417,6 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
                     ThreadQueue::RHI,
                     [PipelineRef, BindingSetRef, Name = std::move(Name),
                      PipelineDesc = std::move(PipelineDesc)]() mutable {
-                        using magic_enum::bitwise_operators::operator|;
                         PublishPipelineOnRhiThread(
                             PipelineRef,
                             BindingSetRef,
@@ -516,7 +515,6 @@ class PipelineRegistry final : public Singleton<PipelineRegistry> {
                     ThreadQueue::RHI,
                     [PipelineRef, BindingSetRef, Name = std::move(Name),
                      PipelineDesc = std::move(PipelineDesc)]() mutable {
-                        using magic_enum::bitwise_operators::operator|;
                         PublishPipelineOnRhiThread(
                             PipelineRef,
                             BindingSetRef,

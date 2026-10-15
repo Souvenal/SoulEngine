@@ -3,6 +3,7 @@ export module RHI:Pass;
 import Core;
 import :Command;
 import :Pipeline;
+import :Types;
 
 import std;
 
@@ -39,15 +40,6 @@ class IRHIPass {
     }
 
   protected:
-    /// Binds the sampled-image array used by the pass pipeline's bindless space.
-    [[nodiscard]] auto BindBindlessResource(RHIRefArray<RHISampledTexture> Resource)
-        -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet();
-        if (!BindingSet)
-            return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
-        return BindingSet->BindBindlessResource(std::move(Resource));
-    }
-
     [[nodiscard]] auto BindResources(std::span<const RHIShaderBindingRequest> Resources)
         -> std::expected<void, ErrorMessage> {
         auto* BindingSet = GetShaderBindingSet();
@@ -84,8 +76,15 @@ class IRHIPass {
 
 class IRHIGraphicsPass : public IRHIPass {
   public:
-    explicit IRHIGraphicsPass(RHIRef<RHIGraphicsPipeline> Pipeline)
-        : m_Pipeline(std::move(Pipeline)) {}
+    IRHIGraphicsPass() = default;
+
+    /// @brief Binds the pipeline the pass records against.
+    ///
+    /// The pass is constructed at graph registration while its async pipeline may still be Pending; the
+    /// graph stamps the Ready ref at Compile, before the frame list leaves the builder.
+    auto BindPipeline(RHIRef<RHIGraphicsPipeline> Pipeline) -> void {
+        m_Pipeline = std::move(Pipeline);
+    }
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Graphics;
@@ -117,7 +116,7 @@ class IRHIGraphicsPass : public IRHIPass {
         m_Commands.emplace_back(RHIDrawCmd{});
     }
 
-    auto DrawIndirect(RHIRef<RHITransientShaderStorageBuffer> IndirectBuffer,
+    auto DrawIndirect(RHIRef<RHIBuffer> IndirectBuffer,
                       Uint64                          Offset    = 0,
                       Uint32                          DrawCount = 1,
                       Uint32                          Stride    = sizeof(Uint32) * 4) -> void {
@@ -132,20 +131,6 @@ class IRHIGraphicsPass : public IRHIPass {
         });
     }
 
-    auto DrawIndexed(std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs,
-                     RHIRef<RHIIndexBuffer>                                        IndexBufferRef) -> void {
-        if (!VertexBufferRefs[0] || !IndexBufferRef)
-            return;
-        for (Uint32 Index = 1; Index < VertexBufferRefs.size(); ++Index) {
-            if (VertexBufferRefs[Index].GetState() != RHIRefState::Unknown && !VertexBufferRefs[Index])
-                return;
-        }
-        m_Commands.emplace_back(RHIDrawIndexedCmd{
-            .VertexBufferRefs = std::move(VertexBufferRefs),
-            .IndexBufferRef   = std::move(IndexBufferRef),
-        });
-    }
-
     RHIGraphicsAttachments m_Attachments = {};
 
   private:
@@ -154,10 +139,15 @@ class IRHIGraphicsPass : public IRHIPass {
 
 class IRHIComputePass : public IRHIPass {
   public:
-    /// A compute pass may carry an empty pipeline until dispatch commands are
-    /// added with the compute pipeline stage.
-    explicit IRHIComputePass(RHIRef<RHIComputePipeline> Pipeline = nullptr)
-        : m_Pipeline(std::move(Pipeline)) {}
+    IRHIComputePass() = default;
+
+    /// @brief Binds the pipeline the pass records against.
+    ///
+    /// The pass is constructed at graph registration while its async pipeline may still be Pending; the
+    /// graph stamps the Ready ref at Compile, before the frame list leaves the builder.
+    auto BindPipeline(RHIRef<RHIComputePipeline> Pipeline) -> void {
+        m_Pipeline = std::move(Pipeline);
+    }
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::Compute;
@@ -179,6 +169,8 @@ class IRHIComputePass : public IRHIPass {
     }
 
   private:
+    /// A compute pass may carry an empty pipeline until dispatch commands are
+    /// added with the compute pipeline stage.
     RHIRef<RHIComputePipeline> m_Pipeline = nullptr;
 };
 
@@ -196,8 +188,8 @@ class IRHITransferPass : public IRHIPass {
 
   protected:
     /// Blits the complete source into the acquired swapchain image at the given
-    /// destination rect. This is the only present path (ADR 05).
-    auto BlitToSwapchain(RHIRef<RHIRenderTarget> Source,
+    /// destination rect. This is the only present path.
+    auto BlitToSwapchain(RHIRef<RHITexture> Source,
                          Uint32                  DstX,
                          Uint32                  DstY,
                          Uint32                  DstWidth,
@@ -213,15 +205,16 @@ class IRHITransferPass : public IRHIPass {
         });
     }
 
-    auto CopyTextureToBuffer(RHIRef<RHIRenderTarget>   Source,
-                             Uint32                    SrcX,
-                             Uint32                    SrcY,
-                             RHIRef<RHIReadbackBuffer> Target,
-                             Uint32                    SrcWidth  = 1,
-                             Uint32                    SrcHeight = 1) -> void {
+    /// @brief Read back a texel region of a render target into a readback's backend ring.
+    auto ReadbackTexture(RHIRef<RHITexture>   Source,
+                         Uint32                    SrcX,
+                         Uint32                    SrcY,
+                         RHIRef<RHIReadback>       Target,
+                         Uint32                    SrcWidth  = 1,
+                         Uint32                    SrcHeight = 1) -> void {
         if (!Source || !Target || SrcWidth == 0 || SrcHeight == 0)
             return;
-        m_Commands.emplace_back(RHICopyTextureToBufferCmd{
+        m_Commands.emplace_back(RHIReadbackTextureCmd{
             .Source    = std::move(Source),
             .SrcX      = SrcX,
             .SrcY      = SrcY,
@@ -234,8 +227,15 @@ class IRHITransferPass : public IRHIPass {
 
 class IRHIRayTracingPass : public IRHIPass {
   public:
-    explicit IRHIRayTracingPass(RHIRef<RHIRayTracingPipeline> Pipeline)
-        : m_Pipeline(std::move(Pipeline)) {}
+    IRHIRayTracingPass() = default;
+
+    /// @brief Binds the pipeline the pass records against.
+    ///
+    /// The pass is constructed at graph registration while its async pipeline may still be Pending; the
+    /// graph stamps the Ready ref at Compile, before the frame list leaves the builder.
+    auto BindPipeline(RHIRef<RHIRayTracingPipeline> Pipeline) -> void {
+        m_Pipeline = std::move(Pipeline);
+    }
 
     [[nodiscard]] auto GetType() const noexcept -> RHIPassType override {
         return RHIPassType::RayTracing;
@@ -258,6 +258,15 @@ class IRHIRayTracingPass : public IRHIPass {
     RHIRef<RHIRayTracingPipeline> m_Pipeline = nullptr;
 };
 
+/// @brief One scheduled pass plus its prologue: the graph-produced,
+/// destination-only state requirements for the pass's declared accesses
+/// The prologue is a property of the pass's position in this
+/// frame's schedule, not of the pass itself.
+struct RHIPassEntry {
+    UPtr<IRHIPass> Pass     = nullptr;
+    RHIBarrierList Prologue = {};
+};
+
 /// @brief Complete frame packet transferred from RenderLoop to the RHI thread.
 struct RenderPassList {
     RenderPassList()                               = default;
@@ -266,7 +275,7 @@ struct RenderPassList {
     RenderPassList(RenderPassList&&) noexcept      = default;
     auto operator=(RenderPassList&&) noexcept -> RenderPassList& = default;
 
-    std::vector<UPtr<IRHIPass>> Passes = {};
+    std::vector<RHIPassEntry> Entries = {};
     std::optional<RHIImGuiPresentationOverlayCmd> ImGuiPresentationOverlay = std::nullopt;
 };
 

@@ -29,8 +29,8 @@ export namespace SoulEngine {
 /// selection mask.
 ///
 /// The class IS the graph's TPass. SceneColor is the only legal fused RMW —
-/// a loadOp=Load color attachment declared via `RGColorRT{.Load = true}`.
-/// Present is the explicit BlitToSwapchainPass downstream (ADR 05).
+/// a loadOp=Load color attachment declared as Read|Write access on the view.
+/// Present is the explicit BlitToSwapchainPass downstream.
 class SelectionOutlinePass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "SelectionOutlinePass";
@@ -59,46 +59,46 @@ class SelectionOutlinePass final : public IRHIGraphicsPass {
     struct Parameter {
         /// Fused read-modify-write attachment: one internal RmwAttachment
         /// access, never a Read+Write pair.
-        RGColorRT    SceneColor = {.Load = true};
-        RGTextureSRV Mask       = {};
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Read | RHIAccess::Write> SceneColor;
+        RGTextureView<RHITextureUsage::Sampled, RHIAccess::Read>                         Mask;
         RHIRef<RHISampler> LinearSampler = nullptr;
         Float32 ViewportWidth  = 0.0f;
         Float32 ViewportHeight = 0.0f;
     };
 
-    SelectionOutlinePass(Parameter In, RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
+    SelectionOutlinePass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
         m_Attachments = {};
 
-        if (!m_Parameter.SceneColor.Ref || !m_Parameter.Mask.Ref ||
-            !m_Parameter.LinearSampler)
+        if (!m_Parameter->SceneColor.Resolved || !m_Parameter->Mask.Resolved ||
+            !m_Parameter->LinearSampler)
             return std::unexpected(ErrorMessage("Selection outline pass resources are not ready"));
 
         m_Attachments = RHIGraphicsAttachments{
             .ColorAttachments = {
-                {.TextureRef = m_Parameter.SceneColor.Ref,
+                {.View = m_Parameter->SceneColor.ResolvedView(),
                  .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 0.0f, 0.0f},
                  .Clear = false},
             },
         };
         SetViewport(0.0f,
                     0.0f,
-                    static_cast<Float32>(m_Parameter.SceneColor.Ref->GetWidth()),
-                    static_cast<Float32>(m_Parameter.SceneColor.Ref->GetHeight()));
-        SetScissorRect(0, 0, m_Parameter.SceneColor.Ref->GetWidth(), m_Parameter.SceneColor.Ref->GetHeight());
+                    static_cast<Float32>(m_Parameter->SceneColor.Resolved->GetWidth()),
+                    static_cast<Float32>(m_Parameter->SceneColor.Resolved->GetHeight()));
+        SetScissorRect(0, 0, m_Parameter->SceneColor.Resolved->GetWidth(),
+                       m_Parameter->SceneColor.Resolved->GetHeight());
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_outline.maskTexture", m_Parameter.Mask.Ref, true},
-                RHIShaderBindingRequest{"g_outline.sampler", m_Parameter.LinearSampler, true},
+                RHIShaderBindingRequest{"g_outline.maskTexture", m_Parameter->Mask.ResolvedView()},
+                RHIShaderBindingRequest{"g_outline.sampler", RHISamplerView{.Sampler = m_Parameter->LinearSampler}},
             }); !R)
             return std::unexpected(R.error());
         if (auto R = PushConstants(0,
                                    SelectionOutlinePushConstants{
-                                       .ViewportWidth = m_Parameter.ViewportWidth,
-                                       .ViewportHeight = m_Parameter.ViewportHeight,
+                                       .ViewportWidth = m_Parameter->ViewportWidth,
+                                       .ViewportHeight = m_Parameter->ViewportHeight,
                                    });
             !R)
             return std::unexpected(R.error());
@@ -107,7 +107,7 @@ class SelectionOutlinePass final : public IRHIGraphicsPass {
     }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

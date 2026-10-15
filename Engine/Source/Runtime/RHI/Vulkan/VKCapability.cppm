@@ -297,6 +297,8 @@ class VulkanCapability : public Singleton<VulkanCapability> {
         m_DeviceExts.push_back({vk::EXTMemoryBudgetExtensionName, false});
         // VK_EXT_calibrated_timestamps — used by GPU profiling
         m_DeviceExts.push_back({vk::EXTCalibratedTimestampsExtensionName, false});
+        // VK_KHR_copy_commands2 — the frame-start upload batch records vkCmdCopyBuffer2
+        m_DeviceExts.push_back({vk::KHRCopyCommands2ExtensionName, true});
 
         // Hardware ray tracing is an optional all-or-nothing device capability.
         // These extensions are appended only after ResolveRayTracingSupport validates

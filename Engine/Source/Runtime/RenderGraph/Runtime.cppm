@@ -4,13 +4,13 @@ export module RenderGraph:Runtime;
 
 import Core;
 import :PipelineRegistry;
-import :RenderTargetPool;
+import :TexturePool;
 
 export namespace SoulEngine {
 
-/// @brief Module-level RenderGraph singleton (ADR 05).
+/// @brief Module-level RenderGraph singleton.
 ///
-/// Owns the cross-frame facilities: the transient render-target pool and the
+/// Owns the cross-frame facilities: the transient texture pool and the
 /// PipelineRegistry lifecycle. Per-frame graphs are RenderGraphBuilder
 /// objects; they never hold cross-frame state.
 ///
@@ -43,15 +43,15 @@ class RenderGraph final : public Singleton<RenderGraph> {
         PipelineRegistry::Get().Clear();
     }
 
-    /// @brief The transient render-target pool builders acquire from.
-    [[nodiscard]] auto GetPool() -> RGRenderTargetPool& {
+    /// @brief The transient texture pool builders acquire from.
+    [[nodiscard]] auto GetPool() -> RGTexturePool& {
         return m_Pool;
     }
 
   private:
     RenderGraph() = default;
 
-    RGRenderTargetPool m_Pool = {};
+    RGTexturePool m_Pool = {};
 };
 
 } // namespace SoulEngine

@@ -11,7 +11,7 @@ import Core;
 export namespace SoulEngine {
 
 /// @brief Physical-pixel rectangle on the window where a camera's final image
-/// lands (ADR 05). The present blit targets it; picking maps through it.
+/// lands. The present blit targets it; picking maps through it.
 struct CameraViewport {
     Uint32 X      = 0;
     Uint32 Y      = 0;
@@ -30,7 +30,7 @@ struct CameraResizeEvent {
 
 /// @brief Immutable render data for one camera/view.
 ///
-/// Carries no RHI resources (ADR 05): renderers create the view's render
+/// Carries no RHI resources: renderers create the view's render
 /// targets as pooled RenderGraph transients derived from the Viewport.
 struct CameraViewRecord {
     hlslpp::float4x4 ViewProjection = hlslpp::float4x4::identity();
@@ -54,7 +54,7 @@ struct CameraViewRecord {
 ///
 /// Viewport is Runtime State driven by CameraResizeEvent, not authoring data;
 /// it is intentionally absent from the EnTT meta registration below. View
-/// render targets are not component state (ADR 05).
+/// render targets are not component state.
 struct CameraComponent {
     float          FOV            = 60.0f;
     float          NearPlane      = 0.1f;

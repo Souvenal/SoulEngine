@@ -70,7 +70,7 @@ TEST_F(SpecializationConstantTest, ReflectionEntries) {
     EXPECT_EQ(*IntIt->DefaultValue, 7);
 
     // float constant: the Slang API exposes no float default getter, so the
-    // reflected default stays unknown (Q2).
+    // reflected default stays unknown.
     const auto FloatIt = FindByName("kScale");
     ASSERT_NE(FloatIt, Constants.end());
     EXPECT_EQ(FloatIt->ConstantId, 2U);

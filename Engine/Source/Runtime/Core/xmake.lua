@@ -1,15 +1,16 @@
 target("Core")
     set_kind("moduleonly")
 
-    -- toml++/spdlog/magic_enum stay private: header-only packages used only in
-    -- CVar.cppm / Logging.cppm / Yaml.cppm; nothing to propagate at link time.
-    -- libyaml is a compiled library: Core's own module objects reference its
-    -- symbols, and xmake does not propagate a private package's links to
-    -- dependents, so it must stay public.
-    -- hlslpp / entt stay public: exported Core API (Types.cppm glue, meta APIs) references them.
-    add_packages("spdlog", "hlslpp", "entt", "libyaml", {public = true})
+    -- magic_enum is public: Core's exported flag vocabulary (Util/Flags.cppm) names
+    -- magic_enum::customize::enum_range in the FlagEnum concept and in operator|, and every importer
+    -- instantiates that template, so the package must stay reachable through Core's import chain.
+    -- spdlog / hlslpp / entt / libyaml are public too; hlslpp and entt because exported Core API
+    -- (Types.cppm glue, meta APIs) references them, and libyaml because Core's own module objects
+    -- reference its symbols and xmake does not propagate a private package's links to dependents.
+    -- toml++ stays private: header-only, used only in CVar.cppm.
+    add_packages("spdlog", "hlslpp", "entt", "libyaml", "magic_enum", {public = true})
     add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0")
-    add_packages("toml++", "magic_enum")
+    add_packages("toml++")
 
     add_files("**.cppm")
 

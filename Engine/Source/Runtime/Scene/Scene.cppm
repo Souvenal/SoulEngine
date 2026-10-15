@@ -22,7 +22,7 @@ struct GameSnapshot {
     std::vector<CameraViewRecord>  Views     = {};
     std::vector<InstanceRecord>    Instances = {};
     std::vector<LightRecord>       Lights    = {};
-    RHIRefArray<RHISampledTexture> Textures  = {};
+    std::vector<RHIRef<RHITexture>> Textures = {};
     float                          Time      = 0.0f;
 };
 
@@ -204,7 +204,7 @@ class Scene {
             .Views     = CameraSys->get().CollectViews(),
             .Instances = CollectSnapshotInstances(),
             .Lights    = LightSys->get().CollectLights(),
-            .Textures  = MeshSys->get().GetTextureArray(),
+            .Textures  = MeshSys->get().GetTextures(),
             .Time      = m_Time,
         };
     }

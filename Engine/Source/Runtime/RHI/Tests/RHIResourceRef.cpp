@@ -25,10 +25,10 @@ class MockSampler final : public RHISampler {
     Uint32& m_DestructionCount;
 };
 
-class MockVertexBuffer final : public RHIVertexBuffer {
+class MockVertexBuffer final : public RHIBuffer {
   public:
     MockVertexBuffer(StringView Name, Uint32& DestructionCount)
-        : RHIVertexBuffer(String(Name), RHIVertexBufferDesc{}), m_DestructionCount(DestructionCount) {}
+        : RHIBuffer(String(Name), 0, RHIBufferUsage::Vertex, RHIMemoryUsage::GpuOnly, RHILifetime::Persistent), m_DestructionCount(DestructionCount) {}
     ~MockVertexBuffer() override {
         ++m_DestructionCount;
     }
@@ -37,15 +37,10 @@ class MockVertexBuffer final : public RHIVertexBuffer {
     Uint32& m_DestructionCount;
 };
 
-class MockTransientConstantBuffer final : public RHITransientConstantBuffer {
+class MockTransientShaderStorageBuffer final : public RHIBuffer {
   public:
-    MockTransientConstantBuffer(String Name, Uint64 Size) : RHITransientConstantBuffer(std::move(Name), Size) {}
-};
-
-class MockTransientShaderStorageBuffer final : public RHITransientShaderStorageBuffer {
-  public:
-    MockTransientShaderStorageBuffer(String Name, Uint64 Size, RHITransientBufferUsage Usage)
-        : RHITransientShaderStorageBuffer(std::move(Name), Size, Usage) {}
+    MockTransientShaderStorageBuffer(String Name, Uint64 Size, RHIBufferUsage Usage)
+        : RHIBuffer(std::move(Name), Size, Usage, RHIMemoryUsage::CpuToGpu, RHILifetime::Transient) {}
 };
 
 TEST(RHIRefArrayTest, ReservesNullDescriptorSlotZero) {
@@ -94,63 +89,58 @@ class MockRenderDevice final : public RHIRenderDevice {
         return RHIBackendType::Unknown;
     }
 
-    [[nodiscard]] auto CreateVertexBuffer(StringView Name, const RHIVertexBufferDesc&)
-        -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> override {
-        auto Resource = RHIRef<RHIVertexBuffer>::Create();
-        if (m_FailVertexBuffer) {
-            Resource.MarkFailed(ErrorMessage("mock vertex-buffer creation failure"));
-            return std::unexpected(ErrorMessage("mock vertex-buffer creation failure"));
+    [[nodiscard]] auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> override {
+        if (Desc.Lifetime == RHILifetime::Transient) {
+            if (Desc.SizeBytes == 0)
+                return std::unexpected(ErrorMessage("mock transient shader-storage size must be greater than zero"));
+            if (Desc.Usage == RHIBufferUsage::Unknown)
+                return std::unexpected(ErrorMessage("mock transient shader-storage usage must not be unknown"));
+            auto Resource = RHIRef<RHIBuffer>::Create();
+            auto Payload  = std::make_unique<MockTransientShaderStorageBuffer>(
+                String(Name), Desc.SizeBytes, Desc.Usage);
+            if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
+                return std::unexpected(Publish.error());
+            return Resource;
         }
-        auto Payload = Resource.m_Payload;
+        auto Resource = RHIRef<RHIBuffer>::Create();
+        if (m_FailVertexBuffer) {
+            Resource.MarkFailed(ErrorMessage("mock buffer creation failure"));
+            return std::unexpected(ErrorMessage("mock buffer creation failure"));
+        }
         if (auto Publish = Resource.Publish(
-                UPtr<RHIVertexBuffer>{std::make_unique<MockVertexBuffer>(Name, m_VertexDestructions)},
-                RHIRefState::GpuPending);
+                UPtr<RHIBuffer>{std::make_unique<MockVertexBuffer>(Name, m_VertexDestructions)},
+                RHIRefState::Ready);
             !Publish) {
             return std::unexpected(Publish.error());
         }
-        m_CompletionCallbacks.emplace_back([Payload] { (void)Payload->TryMarkReady(); });
         return Resource;
     }
 
-    [[nodiscard]] auto CreateIndexBuffer(StringView, const RHIIndexBufferDesc&)
-        -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> override {
-        return std::unexpected(ErrorMessage("mock index-buffer creation is not implemented"));
+    [[nodiscard]] auto UploadBuffer(RHIRef<RHIBuffer> Buffer, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> override {
+        const auto* Payload = Buffer.TryGet();
+        if (!Payload)
+            return std::unexpected(ErrorMessage("mock upload: buffer ref is not Ready"));
+        if (Data.size_bytes() != Payload->GetSize())
+            return std::unexpected(ErrorMessage("mock upload: data size does not match buffer size"));
+        m_LastUpload.assign(Data.begin(), Data.end());
+        return {};
     }
 
-    [[nodiscard]] auto CreateTransientConstantBuffer(StringView Name, const RHITransientConstantBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> override {
-        if (Desc.SizeBytes == 0)
-            return std::unexpected(ErrorMessage("mock transient constant-buffer size must be greater than zero"));
-        if (Desc.InitialData && Desc.InitialData->size_bytes() != Desc.SizeBytes)
-            return std::unexpected(ErrorMessage("mock transient constant-buffer InitialData size mismatch"));
-        auto Resource = RHIRef<RHITransientConstantBuffer>::Create();
-        auto Payload = std::make_unique<MockTransientConstantBuffer>(String(Name), Desc.SizeBytes);
-        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
-            return std::unexpected(Publish.error());
-        return Resource;
+    [[nodiscard]] auto CreateReadback(StringView, Uint64)
+        -> std::expected<RHIRef<RHIReadback>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock readback creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateTransientShaderStorageBuffer(
-        StringView Name,
-        const RHITransientShaderStorageBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> override {
-        if (Desc.SizeBytes == 0)
-            return std::unexpected(ErrorMessage("mock transient shader-storage size must be greater than zero"));
-        if (Desc.Usage == RHITransientBufferUsage::Unknown)
-            return std::unexpected(ErrorMessage("mock transient shader-storage usage must not be unknown"));
-        if (Desc.InitialData && Desc.InitialData->size_bytes() != Desc.SizeBytes)
-            return std::unexpected(ErrorMessage("mock transient shader-storage InitialData size mismatch"));
-        auto Resource = RHIRef<RHITransientShaderStorageBuffer>::Create();
-        auto Payload = std::make_unique<MockTransientShaderStorageBuffer>(
-            String(Name), Desc.SizeBytes, Desc.Usage);
-        if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish)
-            return std::unexpected(Publish.error());
-        return Resource;
+    [[nodiscard]] auto CreateTexture(StringView, const RHITextureDesc&)
+        -> std::expected<RHIRef<RHITexture>, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock texture creation is not implemented"));
     }
 
-    [[nodiscard]] auto CreateSampledTexture(StringView, const RHISampledTextureDesc&)
-        -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> override {
-        return std::unexpected(ErrorMessage("mock sampled-texture creation is not implemented"));
+    [[nodiscard]] auto UploadTexture(RHIRef<RHITexture>, std::span<const std::byte>)
+        -> std::expected<void, ErrorMessage> override {
+        return std::unexpected(ErrorMessage("mock texture upload is not implemented"));
     }
 
     [[nodiscard]] auto CreateSampler(StringView Name, const RHISamplerDesc&)
@@ -162,16 +152,6 @@ class MockRenderDevice final : public RHIRenderDevice {
             return std::unexpected(Publish.error());
         }
         return Resource;
-    }
-
-    [[nodiscard]] auto CreateRenderTarget(StringView, const RHIRenderTargetDesc&)
-        -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> override {
-        return std::unexpected(ErrorMessage("mock render-target creation is not implemented"));
-    }
-
-    [[nodiscard]] auto CreateReadbackBuffer(StringView, const RHIReadbackBufferDesc&)
-        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> override {
-        return std::unexpected(ErrorMessage("mock readback-buffer creation is not implemented"));
     }
 
     [[nodiscard]] auto CreateShaderBindingSet(StringView, const RHIShaderBindingSetDesc&)
@@ -229,22 +209,16 @@ class MockRenderDevice final : public RHIRenderDevice {
     }
 
     [[nodiscard]] auto Tick() -> std::expected<void, ErrorMessage> override {
-        if (!m_GpuComplete)
-            return {};
-        auto Callbacks = std::move(m_CompletionCallbacks);
-        for (auto& Complete : Callbacks)
-            Complete();
         return {};
     }
 
     bool   m_FailVertexBuffer    = false;
-    bool   m_GpuComplete         = false;
-    Uint32 m_VertexDestructions  = 0;
-    Uint32 m_SamplerDestructions = 0;
+    Uint32                m_VertexDestructions  = 0;
+    Uint32                m_SamplerDestructions = 0;
+    std::vector<std::byte> m_LastUpload         = {};
 
   private:
     RHIDeferredDeletionQueue           m_DeletionQueue       = {};
-    std::vector<std::function<void()>> m_CompletionCallbacks = {};
 };
 
 } // namespace
@@ -309,39 +283,47 @@ TEST(RHIResourceRefTest, SynchronousCreateReturnsReadySamplerRef) {
 }
 
 TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
-    using magic_enum::bitwise_operators::operator|;
-
     MockRenderDevice Device;
     const std::array<std::byte, 16> Data = {};
 
-    auto Constant = Device.CreateTransientConstantBuffer(
+    auto Constant = Device.CreateBuffer(
         "Test/TransientConstant",
-        RHITransientConstantBufferDesc{
-            .SizeBytes   = Data.size(),
-            .InitialData = std::span<const std::byte>{Data},
+        RHIBufferDesc{
+            .SizeBytes = Data.size(),
+            .Usage     = RHIBufferUsage::Constant,
+            .MemoryUsage = RHIMemoryUsage::CpuToGpu,
+            .Lifetime    = RHILifetime::Transient,
         });
     ASSERT_TRUE(Constant.has_value());
     ASSERT_TRUE(*Constant);
     EXPECT_EQ((*Constant)->GetSize(), Data.size());
 
-    auto Storage = Device.CreateTransientShaderStorageBuffer(
+    // Bytes flow through UploadBuffer, never through the Desc.
+    auto Upload = Device.UploadBuffer(*Constant, std::span<const std::byte>{Data});
+    ASSERT_TRUE(Upload.has_value());
+    EXPECT_EQ(Device.m_LastUpload.size(), Data.size());
+
+    auto Storage = Device.CreateBuffer(
         "Test/TransientStorage",
-        RHITransientShaderStorageBufferDesc{
-            .SizeBytes   = Data.size(),
-            .Usage       = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
-            .InitialData = std::span<const std::byte>{Data},
+        RHIBufferDesc{
+            .SizeBytes = Data.size(),
+            .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
+            .MemoryUsage = RHIMemoryUsage::CpuToGpu,
+            .Lifetime    = RHILifetime::Transient,
         });
     ASSERT_TRUE(Storage.has_value());
     ASSERT_TRUE(*Storage);
     EXPECT_EQ((*Storage)->GetSize(), Data.size());
     EXPECT_EQ((*Storage)->GetUsage(),
-              RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead);
+              RHIBufferUsage::Storage | RHIBufferUsage::Indirect);
 
-    auto Scratch = Device.CreateTransientShaderStorageBuffer(
+    auto Scratch = Device.CreateBuffer(
         "Test/TransientScratch",
-        RHITransientShaderStorageBufferDesc{
+        RHIBufferDesc{
             .SizeBytes = 64,
-            .Usage     = RHITransientBufferUsage::ShaderRead,
+            .Usage     = RHIBufferUsage::Storage,
+            .MemoryUsage = RHIMemoryUsage::CpuToGpu,
+            .Lifetime    = RHILifetime::Transient,
         });
     ASSERT_TRUE(Scratch.has_value());
     ASSERT_TRUE(*Scratch);
@@ -353,18 +335,13 @@ TEST(RHIResourceRefTest, TransientCreateReturnsReadyRefAndPreservesMetadata) {
     DrainRHIDeferredDeletions();
 }
 
-TEST(RHIResourceRefTest, BackendCreatePublishesGpuPendingThenReady) {
+TEST(RHIResourceRefTest, BackendCreatePublishesReady) {
     MockRenderDevice Device;
-    auto             Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
+    auto             Result = Device.CreateBuffer("Test/VertexBuffer", RHIBufferDesc{});
 
     ASSERT_TRUE(Result.has_value());
     auto Buffer = std::move(*Result);
     auto Copy   = Buffer;
-    EXPECT_EQ(Copy.GetState(), RHIRefState::GpuPending);
-    EXPECT_EQ(Copy.TryGet(), nullptr);
-
-    Device.m_GpuComplete = true;
-    ASSERT_TRUE(Device.Tick().has_value());
     EXPECT_EQ(Copy.GetState(), RHIRefState::Ready);
     EXPECT_TRUE(Copy);
     EXPECT_NE(Copy.TryGet(), nullptr);
@@ -380,41 +357,8 @@ TEST(RHIResourceRefTest, BackendCreationFailureReturnsError) {
     MockRenderDevice Device;
     Device.m_FailVertexBuffer = true;
 
-    auto Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
+    auto Result = Device.CreateBuffer("Test/VertexBuffer", RHIBufferDesc{});
     EXPECT_FALSE(Result.has_value());
-    EXPECT_NE(Result.error().ToString().find("mock vertex-buffer creation failure"), String::npos);
+    EXPECT_NE(Result.error().ToString().find("mock buffer creation failure"), String::npos);
 }
 
-TEST(RHIResourceRefTest, CompletionCallbackKeepsPayloadAliveUntilGpuCompletion) {
-    MockRenderDevice Device;
-    auto             Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
-    ASSERT_TRUE(Result.has_value());
-    auto Buffer = std::move(*Result);
-    auto Copy   = Buffer;
-
-    Buffer = nullptr;
-    Copy   = nullptr;
-    ASSERT_TRUE(Device.Tick().has_value());
-    EXPECT_EQ(Device.m_VertexDestructions, 0);
-
-    Device.m_GpuComplete = true;
-    ASSERT_TRUE(Device.Tick().has_value());
-    EXPECT_EQ(Device.m_VertexDestructions, 0);
-    DrainRHIDeferredDeletions();
-    EXPECT_EQ(Device.m_VertexDestructions, 1);
-}
-
-TEST(RHIResourceRefTest, CompletionCannotOverwriteFailure) {
-    MockRenderDevice Device;
-    auto             Result = Device.CreateVertexBuffer("Test/VertexBuffer", RHIVertexBufferDesc{});
-    ASSERT_TRUE(Result.has_value());
-    auto Buffer = std::move(*Result);
-
-    Buffer.MarkFailed(ErrorMessage("mock completion failure"));
-    Device.m_GpuComplete = true;
-    ASSERT_TRUE(Device.Tick().has_value());
-
-    EXPECT_EQ(Buffer.GetState(), RHIRefState::Failed);
-    ASSERT_TRUE(Buffer.GetError().has_value());
-    EXPECT_NE(Buffer.GetError()->ToString().find("mock completion failure"), String::npos);
-}

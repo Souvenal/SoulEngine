@@ -4,6 +4,7 @@ Guidance for AI agents on this repo.
 
 ## Build & Run
 
+- Sync package repos: `xmake repo -u` (required before configuring — the project's souvenal-repo clone lives under `.xmake/`, so any fresh checkout or deleted `.xmake` needs this; xmake does not auto-clone it when the global network mode is `private`, and the resulting "package not found in any repository" error does not mention the real cause)
 - Configure: `xmake f -m debug` or `xmake f -m release`
 - Build: `xmake`
 - Run: `xmake run`
@@ -49,6 +50,10 @@ Multi-context — `CONTEXT.md` at root maps to per-module `CONTEXT.md`. See `Doc
 ## C++ Module Conventions
 
 - **Module Organization:** New Vulkan/RHI module partitions go in own `.cppm` file, not appended to existing modules. Partitions use `export module Vulkan:PartitionName;` syntax.
+
+## Coding Specs
+
+Path-scoped coding specs live in [`.agents/rules/`](.agents/rules/) (`cpp-coding-spec`, `comment-coding-spec`, `slang-coding-spec`, `vulkan-coding-spec`). Before writing or editing code under a spec's `paths` frontmatter, read that spec. The comment spec fires on ANY comment you add or modify — read it before your first edit, not after review. Mechanical comment rules (110-column width, two legal doc forms) are enforced by `Tools/check_comments.py`.
 
 ## Code Editing Rules
 

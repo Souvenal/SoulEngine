@@ -49,15 +49,14 @@ struct AsyncGraphicsPass final : IRHIGraphicsPass {
     }
 
     struct Parameter {
-        RGColorRT Output = {};
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Output;
     };
 
-    AsyncGraphicsPass(Parameter In, RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
+    AsyncGraphicsPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 /// Same recipe as a compute pass.
@@ -70,15 +69,14 @@ struct AsyncComputePass final : IRHIComputePass {
     }
 
     struct Parameter {
-        RGStorageBufferUAV Output = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> Output;
     };
 
-    AsyncComputePass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
+    AsyncComputePass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 /// Graphics consumer: reads a storage buffer and writes an imported target
@@ -88,16 +86,15 @@ struct ConsumerPass final : IRHIGraphicsPass {
     [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
 
     struct Parameter {
-        RGStorageBufferSRV Input  = {};
-        RGColorRT          Output = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read> Input;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Output;
     };
 
-    ConsumerPass(Parameter In)
-        : IRHIGraphicsPass(nullptr), m_Parameter(std::move(In)) {}
+    ConsumerPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override { return {}; }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace
@@ -158,12 +155,12 @@ TEST_F(PipelineRegistryTest, PendingPipelineDropsTheSideEffectChainAsAnEmptyFram
     PipelineRegistry::Get().Register<AsyncGraphicsPass>();
 
     RenderGraphBuilder Graph;
-    const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
-    Graph.AddPass<AsyncGraphicsPass>({.Output = RGColorRT{.Texture = Target}});
+    const auto  Target = Graph.Import(RHIRef<RHITexture>{});
+    Graph.AddPass<AsyncGraphicsPass>({.Output = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
-    EXPECT_TRUE(List->Passes.empty());
+    EXPECT_TRUE(List->Entries.empty());
 }
 
 TEST_F(PipelineRegistryTest, PendingPipelineCascadesToDependents) {
@@ -174,16 +171,15 @@ TEST_F(PipelineRegistryTest, PendingPipelineCascadesToDependents) {
     PipelineRegistry::Get().Register<AsyncComputePass>();
 
     RenderGraphBuilder Graph;
-    const auto  Scratch = Graph.CreateShaderStorageBuffer(
-        "Scratch", RGShaderStorageBufferDesc{.SizeBytes = 16, .Usage = RHITransientBufferUsage::ShaderRead});
-    const auto Target = Graph.Import(RHIRef<RHIRenderTarget>{});
-    Graph.AddPass<AsyncComputePass>({.Output = RGStorageBufferUAV{.Buffer = Scratch}});
-    Graph.AddPass<ConsumerPass>({.Input  = RGStorageBufferSRV{.Buffer = Scratch},
-                                 .Output = RGColorRT{.Texture = Target}});
+    const auto  Scratch = Graph.CreateBuffer("Scratch", RHIBufferDesc{.SizeBytes = 16, .Usage = RHIBufferUsage::Storage, .Lifetime = RHILifetime::Transient});
+    const auto Target = Graph.Import(RHIRef<RHITexture>{});
+    Graph.AddPass<AsyncComputePass>({.Output = Scratch});
+    Graph.AddPass<ConsumerPass>({.Input  = Scratch,
+                                 .Output = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
-    EXPECT_TRUE(List->Passes.empty());
+    EXPECT_TRUE(List->Entries.empty());
 }
 
 TEST_F(PipelineRegistryTest, DeadPipelinePassIsPrunedBeforeAnyPipelineLookup) {
@@ -196,12 +192,12 @@ TEST_F(PipelineRegistryTest, DeadPipelinePassIsPrunedBeforeAnyPipelineLookup) {
 
     RenderGraphBuilder Graph;
     const auto  Scratch = Graph.CreateTexture(
-        "Scratch", RGTextureDesc{.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM});
-    Graph.AddPass<AsyncGraphicsPass>({.Output = RGColorRT{.Texture = Scratch}});
+        "Scratch", RHITextureDesc{.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM, .Usage = RHITextureUsage::RenderTarget});
+    Graph.AddPass<AsyncGraphicsPass>({.Output = Scratch});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
-    EXPECT_TRUE(List->Passes.empty());
+    EXPECT_TRUE(List->Entries.empty());
 }
 
 TEST_F(PipelineRegistryTest, FailedPipelineOnARequiredPassIsAFrameError) {
@@ -211,8 +207,8 @@ TEST_F(PipelineRegistryTest, FailedPipelineOnARequiredPassIsAFrameError) {
     PipelineRegistry::Get().Register<AsyncGraphicsPass>();
 
     RenderGraphBuilder Graph;
-    const auto  Target = Graph.Import(RHIRef<RHIRenderTarget>{});
-    Graph.AddPass<AsyncGraphicsPass>({.Output = RGColorRT{.Texture = Target}});
+    const auto  Target = Graph.Import(RHIRef<RHITexture>{});
+    Graph.AddPass<AsyncGraphicsPass>({.Output = Target});
 
     auto List = Graph.Compile();
     ASSERT_FALSE(List);

@@ -20,6 +20,10 @@ Foundation types, logging, config, and utilities shared by all other modules.
 
 Type aliases in `Core:Util.Types` abstract away underlying implementations. Every module should use these aliases rather than raw standard types — swapping the backend (e.g. `std::string` → `eastl::string`) is then a single-file change.
 
+### Flag enums
+
+`Core:Util.Flags` exports `SoulEngine::FlagEnum` and one `operator|` for flag enums. An enum opts in by specializing `magic_enum::customize::enum_range<E>` with `is_flags = true` — the same declaration that switches on magic_enum's flags reflection — and every module then composes its flags via ADL (`RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc`, in template arguments included) with no per-file `using`. The concept constraint keeps the operator out of overload sets for enums outside the engine vocabulary, so Vulkan's `vk::` flag bits keep resolving to their own operators inside engine namespaces. _Avoid_: exporting `magic_enum::bitwise_operators::operator|` wholesale, per-enum hand-written bit operators, per-file `using magic_enum::bitwise_operators::operator|`
+
 **String / StringView**: The project-wide string types (currently `std::string` / `std::string_view`). Used everywhere instead of `std::string` to decouple from the STL vendor. _Avoid_: std::string, std::string_view, eastl::string (the last is a future option, not a current name)
 
 **Int8 / Int16 / Int32 / Int64**: Signed fixed-width integers (aliases for `std::int8_t` etc.). **Uint8 / Uint16 / Uint32 / Uint64**: Unsigned fixed-width integers (aliases for `std::uint8_t` etc.).

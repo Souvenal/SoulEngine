@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <entt/entt.hpp>
 #include <hlsl++.h>
@@ -27,7 +27,7 @@ struct EditorCameraResizeEvent {
 
 /// @brief Editor-only camera component with viewport and selection state.
 ///
-/// Holds no view render targets (ADR 05): the editor view's targets are
+/// Holds no view render targets: the editor view's targets are
 /// renderer-created pooled RenderGraph transients derived from the Viewport.
 struct EditorCameraComponent {
     Float32                       FOV            = 60.0f;
@@ -37,7 +37,7 @@ struct EditorCameraComponent {
     CameraViewport                Viewport       = {};
     std::optional<entt::entity>   ReadbackEntity = std::nullopt;
     std::optional<entt::entity>   SelectedEntity = std::nullopt;
-    RHIRef<RHIReadbackBuffer>     Readback       = nullptr;
+    RHIRef<RHIReadback>           Readback       = nullptr;
 };
 
 /// @brief Editor-owned camera system and editor viewport state owner.
@@ -153,10 +153,13 @@ class EditorCameraSystem final : public ISystem {
         for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
             auto& Camera = m_Registry.get<EditorCameraComponent>(CameraEntity);
             if (Camera.Readback) {
-                if (const auto EntityId = Camera.Readback->TryRead<Uint32>()) {
-                    Camera.ReadbackEntity = *EntityId == GBuffer::BackgroundEntityId
+                const auto Bytes = Camera.Readback->TryRead();
+                if (Bytes.size() == sizeof(Uint32)) {
+                    Uint32 EntityId;
+                    std::memcpy(&EntityId, Bytes.data(), sizeof(EntityId));
+                    Camera.ReadbackEntity = EntityId == GBuffer::BackgroundEntityId
                                                 ? std::nullopt
-                                                : std::optional<entt::entity>{static_cast<entt::entity>(*EntityId)};
+                                                : std::optional<entt::entity>{static_cast<entt::entity>(EntityId)};
                 }
             }
             // The click guard mirrors the hover mapping: mouse in logical

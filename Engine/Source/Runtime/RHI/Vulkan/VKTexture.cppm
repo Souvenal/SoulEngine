@@ -2,115 +2,151 @@ module;
 
 #include <vk_mem_alloc.h>
 
+// magic_enum::enum_flags_test is not exported by the v0.9.8 module.
+#include <magic_enum/magic_enum_flags.hpp>
+
 export module Vulkan:Texture;
 
 import Core;
+import TaskGraph;
 import vulkan;
 import RHI;
 import std;
 
 import :Types;
-import :Buffer;
 import :Context;
 import :Debug;
+import :Staging;
 
 namespace SoulEngine {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanDeviceTexture — reusable GPU image wrapper
-// ═════════════════════════════════════════════════════════════════════════════
-
-struct VulkanDeviceTextureCreateDesc {
-    Uint32                Width             = 0;
-    Uint32                Height            = 0;
-    Uint32                MipLevels         = 1;
-    vk::Format            Format            = vk::Format::eUndefined;
-    vk::ImageUsageFlags   Usage             = {};
-    vk::ImageAspectFlags  Aspect            = vk::ImageAspectFlagBits::eColor;
-    bool                  ConcurrentSharing = false;
-};
-
-/// Owns VkImage + whole-chain VkImageView + per-mip VkImageViews + VMA allocation lifecycle.
-class VulkanDeviceTexture : public RHIObject {
+/// Unified backend texture: one identity covering the old sampled
+/// texture and render target. Usage bits come from the creation Desc union.
+/// Owns VkImage + whole-chain VkImageView + per-mip VkImageViews + the VMA
+/// allocation lifecycle directly (no intermediate device-texture wrapper).
+/// Creation is synchronous and byte-free (same contract as persistent
+/// buffers); texel data flows separately through UploadTexture, staged into
+/// the staging belt's frame-start image lane (→ TransferDst → ShaderReadOnly
+/// through the image tracker) — this class performs no upload.
+class VulkanTexture final : public RHITexture {
   public:
-    explicit VulkanDeviceTexture(String Name,
-                                 VmaAllocator Alloc,
-                                 vk::Image Image,
-                                 VmaAllocation Allocation,
-                                 vk::raii::ImageView&& ImageView,
-                                 std::vector<vk::raii::ImageView>&& MipViews,
-                                 VulkanDebugUtils& DebugUtils,
-                                 VulkanImageTracker& ImageTracker)
-        : RHIObject(std::move(Name)),
-          m_Allocator(Alloc),
-          m_Image(Image),
-          m_Allocation(Allocation),
-          m_ImageView(std::move(ImageView)),
-          m_MipViews(std::move(MipViews)),
-          m_ImageTracker(&ImageTracker) {
-        DebugUtils.SetObjectName(m_Image, Format("{}#Image", GetName()));
-        DebugUtils.SetObjectName(GetImageView(), Format("{}#ImageView", GetName()));
+    /// Direct construction is public for make_unique; prefer Create().
+    /// Create owns validation and fills the native handles; the constructor
+    /// only forwards the identity to the RHI base.
+    VulkanTexture(String Name, const RHITextureDesc& Desc) : RHITexture(std::move(Name), Desc) {}
+
+    /// Destruction runs on the RHI thread (deferred-deletion drain), the
+    /// same thread that records with the tracker — safe to Forget here.
+    /// GPU retirement rides the backend deferred deletion queue (the same
+    /// virtual timeline event VMA buffers use): the frame-start upload
+    /// batch's image lane snapshots raw image handles without retaining
+    /// the texture, so final destruction must wait for the GPU.
+    ~VulkanTexture() override {
+        if (m_ImageTracker && m_Image)
+            m_ImageTracker->Forget(m_Image);
+        if (m_Allocation)
+            m_DeferredQueue->Enqueue(m_Image, m_Allocation);
     }
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext&       Context,
-                                     StringView                         Name,
-                                     const VulkanDeviceTextureCreateDesc& Desc)
-        -> std::expected<SPtr<VulkanDeviceTexture>, ErrorMessage> {
+    VulkanTexture(const VulkanTexture&)                    = delete;
+    auto operator=(const VulkanTexture&) -> VulkanTexture& = delete;
+    VulkanTexture(VulkanTexture&&)                         = delete;
+    auto operator=(VulkanTexture&&) -> VulkanTexture&      = delete;
+
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     StringView                     Name,
+                                     const RHITextureDesc&          Desc)
+        -> std::expected<UPtr<VulkanTexture>, ErrorMessage> {
         if (Desc.Width == 0 || Desc.Height == 0)
-            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: invalid dimensions"));
-        if (Desc.Format == vk::Format::eUndefined)
-            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: invalid format"));
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: invalid desc (zero dimensions)"));
+        if (Desc.Format == RHIFormat::Unknown)
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: invalid desc (unknown format)"));
+
+        const bool IsDepth   = magic_enum::enum_flags_test(Desc.Usage, RHITextureUsage::DepthStencil);
+        const bool IsColor   = magic_enum::enum_flags_test(Desc.Usage, RHITextureUsage::RenderTarget);
+        const bool IsStorage = magic_enum::enum_flags_test(Desc.Usage, RHITextureUsage::Storage);
+        if (IsStorage && IsDepth)
+            return std::unexpected(
+                ErrorMessage("VulkanTexture::Create: storage usage is not supported for depth targets"));
+        if (Desc.Usage == RHITextureUsage::None)
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: empty usage"));
+        if (Desc.MemoryUsage == RHIMemoryUsage::Unknown)
+            return std::unexpected(
+                ErrorMessage("VulkanTexture::Create: memory usage is Unknown — a Desc is explicit"));
+        if (Desc.MemoryUsage != RHIMemoryUsage::GpuOnly)
+            return std::unexpected(
+                ErrorMessage("VulkanTexture::Create: only GpuOnly textures are supported"));
+
         // step 1: validate mip count against the Vulkan full-chain limit
         // floor(log2(max(w,h))) + 1 == bit_width(max(w,h)); partial chains are legal (D11).
         if (Desc.MipLevels == 0)
-            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: mipLevels must be at least 1"));
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: mipLevels must be at least 1"));
         const Uint32 MaxMipLevels = std::bit_width((std::max)(Desc.Width, Desc.Height));
         if (Desc.MipLevels > MaxMipLevels)
-            return std::unexpected(ErrorMessage(Format("VulkanDeviceTexture::Create: mipLevels {} exceeds the "
+            return std::unexpected(ErrorMessage(Format("VulkanTexture::Create: mipLevels {} exceeds the "
                                                        "maximum {} for a {}x{} image",
                                                        Desc.MipLevels,
                                                        MaxMipLevels,
                                                        Desc.Width,
                                                        Desc.Height)));
 
-        const bool         bConcurrentSharing = Desc.ConcurrentSharing &&
-                                                Context.GetGraphicsFamily() != Context.GetTransferFamily();
-        const std::array   QueueFamilies{Context.GetGraphicsFamily(), Context.GetTransferFamily()};
-        vk::ImageCreateInfo ImageCI{
-            .imageType             = vk::ImageType::e2D,
-            .format                = Desc.Format,
-            .extent                = {Desc.Width, Desc.Height, 1},
-            .mipLevels             = Desc.MipLevels,
-            .arrayLayers           = 1,
-            .samples               = vk::SampleCountFlagBits::e1,
-            .tiling                = vk::ImageTiling::eOptimal,
-            .usage                 = Desc.Usage,
-            .sharingMode           = bConcurrentSharing ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
-            .queueFamilyIndexCount = bConcurrentSharing ? static_cast<Uint32>(QueueFamilies.size()) : 0,
-            .pQueueFamilyIndices   = bConcurrentSharing ? QueueFamilies.data() : nullptr,
-            .initialLayout         = vk::ImageLayout::eUndefined,
+        auto Usage = vk::ImageUsageFlags{};
+        if (IsDepth)
+            Usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
+        if (IsColor)
+            Usage |= vk::ImageUsageFlagBits::eColorAttachment;
+        if (magic_enum::enum_flags_test(Desc.Usage, RHITextureUsage::TransferSrc))
+            Usage |= vk::ImageUsageFlagBits::eTransferSrc;
+        if (magic_enum::enum_flags_test(Desc.Usage, RHITextureUsage::TransferDst))
+            Usage |= vk::ImageUsageFlagBits::eTransferDst;
+        if (IsStorage)
+            Usage |= vk::ImageUsageFlagBits::eStorage;
+        if (magic_enum::enum_flags_test(Desc.Usage, RHITextureUsage::Sampled))
+            Usage |= vk::ImageUsageFlagBits::eSampled;
+        // GpuOnly placement derives transfer-dst at creation (same contract as
+        // GpuOnly buffers) so UploadTexture works without a declared usage bit.
+        Usage |= vk::ImageUsageFlagBits::eTransferDst;
+
+        const auto VkFmt = ToVkFormat(Desc.Format);
+        if (VkFmt == vk::Format::eUndefined)
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: unsupported texture format"));
+        const vk::ImageAspectFlags Aspect =
+            IsDepth ? vk::ImageAspectFlags{vk::ImageAspectFlagBits::eDepth}
+                    : vk::ImageAspectFlags{vk::ImageAspectFlagBits::eColor};
+
+        const vk::ImageCreateInfo ImageCI{
+            .imageType     = vk::ImageType::e2D,
+            .format        = VkFmt,
+            .extent        = {Desc.Width, Desc.Height, 1},
+            .mipLevels     = Desc.MipLevels,
+            .arrayLayers   = 1,
+            .samples       = vk::SampleCountFlagBits::e1,
+            .tiling        = vk::ImageTiling::eOptimal,
+            .usage         = Usage,
+            .sharingMode   = vk::SharingMode::eExclusive,
+            .initialLayout = vk::ImageLayout::eUndefined,
         };
-        VmaAllocationCreateInfo ImageAllocInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        const VmaAllocationCreateInfo ImageAllocInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
 
         VkImage           RawImage = nullptr;
         VmaAllocation     RawAlloc = nullptr;
-        VkImageCreateInfo RawCI    = static_cast<VkImageCreateInfo>(ImageCI);
+        const VkImageCreateInfo RawCI = static_cast<VkImageCreateInfo>(ImageCI);
         if (vmaCreateImage(Context.GetAllocator(), &RawCI, &ImageAllocInfo, &RawImage, &RawAlloc, nullptr) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: vmaCreateImage failed"));
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: vmaCreateImage failed"));
 
         const auto VkImage = static_cast<vk::Image>(RawImage);
         // step 2: whole-chain default view; sampled/storage descriptors use it unless a
         // per-mip view is requested. RemainingMipLevels keeps 1-mip images byte-identical
         // to the old hardcoded levelCount = 1 behavior (D2).
-        vk::ImageViewCreateInfo ViewCI{
+        const vk::ImageViewCreateInfo ViewCI{
             .image            = VkImage,
             .viewType         = vk::ImageViewType::e2D,
-            .format           = Desc.Format,
+            .format           = VkFmt,
             .components       = {vk::ComponentSwizzle::eIdentity,
                                  vk::ComponentSwizzle::eIdentity,
                                  vk::ComponentSwizzle::eIdentity,
                                  vk::ComponentSwizzle::eIdentity},
-            .subresourceRange = {.aspectMask     = Desc.Aspect,
+            .subresourceRange = {.aspectMask     = Aspect,
                                  .baseMipLevel   = 0,
                                  .levelCount     = vk::RemainingMipLevels,
                                  .baseArrayLayer = 0,
@@ -119,7 +155,7 @@ class VulkanDeviceTexture : public RHIObject {
         auto ViewRes = Context.GetDevice().createImageView(ViewCI);
         if (ViewRes.result != vk::Result::eSuccess) {
             vmaDestroyImage(Context.GetAllocator(), RawImage, RawAlloc);
-            return std::unexpected(ErrorMessage("VulkanDeviceTexture::Create: vkCreateImageView failed"));
+            return std::unexpected(ErrorMessage("VulkanTexture::Create: vkCreateImageView failed"));
         }
 
         // step 3: one level-1 view per mip, created eagerly so render code can bind any
@@ -127,15 +163,15 @@ class VulkanDeviceTexture : public RHIObject {
         std::vector<vk::raii::ImageView> MipViews;
         MipViews.reserve(Desc.MipLevels);
         for (Uint32 Mip = 0; Mip < Desc.MipLevels; ++Mip) {
-            vk::ImageViewCreateInfo MipViewCI{
+            const vk::ImageViewCreateInfo MipViewCI{
                 .image            = VkImage,
                 .viewType         = vk::ImageViewType::e2D,
-                .format           = Desc.Format,
+                .format           = VkFmt,
                 .components       = {vk::ComponentSwizzle::eIdentity,
                                      vk::ComponentSwizzle::eIdentity,
                                      vk::ComponentSwizzle::eIdentity,
                                      vk::ComponentSwizzle::eIdentity},
-                .subresourceRange = {.aspectMask     = Desc.Aspect,
+                .subresourceRange = {.aspectMask     = Aspect,
                                      .baseMipLevel   = Mip,
                                      .levelCount     = 1,
                                      .baseArrayLayer = 0,
@@ -145,446 +181,157 @@ class VulkanDeviceTexture : public RHIObject {
             if (MipViewRes.result != vk::Result::eSuccess) {
                 vmaDestroyImage(Context.GetAllocator(), RawImage, RawAlloc);
                 return std::unexpected(
-                    ErrorMessage(Format("VulkanDeviceTexture::Create: vkCreateImageView failed for mip {}", Mip)));
+                    ErrorMessage(Format("VulkanTexture::Create: vkCreateImageView failed for mip {}", Mip)));
             }
             Context.GetDebugUtils().SetObjectName(*MipViewRes.value, Format("{}#ImageViewMip{}", Name, Mip));
             MipViews.push_back(std::move(MipViewRes.value));
         }
 
-        // step 4: register subresource dimensions so the tracker resolves
-        // RemainingMipLevels and forgets the image cleanly on destruction.
-        Context.GetImageTracker().Register(VkImage, Desc.MipLevels, 1);
+        // The tracker stores no image metadata: transition call sites resolve
+        // concrete ranges from their payloads, and destruction Forget()s the
+        // subresource states on the RHI thread. Creation touches nothing.
+        auto Out              = std::make_unique<VulkanTexture>(String(Name), Desc);
+        Out->m_Allocator      = Context.GetAllocator();
+        Out->m_DeferredQueue  = &Context.GetDeferredDeletionQueue();
+        Out->m_ImageTracker   = &Context.GetImageTracker();
+        Out->m_Image          = VkImage;
+        Out->m_Allocation     = RawAlloc;
+        Out->m_ImageView      = std::move(ViewRes.value);
+        Out->m_MipViews       = std::move(MipViews);
 
-        return std::make_shared<VulkanDeviceTexture>(
-            String(Name),
-            Context.GetAllocator(),
-            VkImage,
-            RawAlloc,
-            std::move(ViewRes.value),
-            std::move(MipViews),
-            Context.GetDebugUtils(),
-            Context.GetImageTracker());
+        Context.GetDebugUtils().SetObjectName(Out->m_Image, Format("{}#Image", Out->GetName()));
+        Context.GetDebugUtils().SetObjectName(Out->GetVkImageView(), Format("{}#ImageView", Out->GetName()));
+
+        return Out;
     }
 
-    ~VulkanDeviceTexture() {
-        // Destruction runs on the RHI thread (deferred-deletion drain), the
-        // same thread that records with the tracker — safe to forget here.
-        if (m_ImageTracker && m_Image)
-            m_ImageTracker->Forget(m_Image);
-        if (m_Allocation)
-            vmaDestroyImage(m_Allocator, static_cast<VkImage>(m_Image), m_Allocation);
-    }
-
-    // Move-only.
-    VulkanDeviceTexture(VulkanDeviceTexture&& Other) noexcept
-        : RHIObject(std::move(Other)),
-          m_Allocator(std::exchange(Other.m_Allocator, nullptr)),
-          m_Image(std::exchange(Other.m_Image, nullptr)),
-          m_Allocation(std::exchange(Other.m_Allocation, nullptr)),
-          m_ImageView(std::move(Other.m_ImageView)),
-          m_MipViews(std::move(Other.m_MipViews)),
-          m_ImageTracker(std::exchange(Other.m_ImageTracker, nullptr)) {}
-
-    auto operator=(VulkanDeviceTexture&& Other) noexcept -> VulkanDeviceTexture& {
-        if (this != &Other) {
-            RHIObject::operator=(std::move(Other));
-            std::swap(m_Allocator, Other.m_Allocator);
-            std::swap(m_Image, Other.m_Image);
-            std::swap(m_Allocation, Other.m_Allocation);
-            std::swap(m_ImageView, Other.m_ImageView);
-            std::swap(m_MipViews, Other.m_MipViews);
-            std::swap(m_ImageTracker, Other.m_ImageTracker);
-        }
-        return *this;
-    }
-
-    VulkanDeviceTexture(const VulkanDeviceTexture&) = delete;
-    auto operator=(const VulkanDeviceTexture&)      = delete;
-
-    [[nodiscard]] auto GetImage() const -> vk::Image {
+    [[nodiscard]] auto GetVkImage() const -> vk::Image {
         return m_Image;
     }
-    [[nodiscard]] auto GetImageView() const -> vk::ImageView {
+    [[nodiscard]] auto GetVkImageView() const -> vk::ImageView {
         return *m_ImageView;
     }
-    /// Per-mip level-1 view. Precondition: Mip < per-mip view count (one per mip level).
-    [[nodiscard]] auto GetImageView(Uint32 Mip) const -> vk::ImageView {
+    /// Per-mip level-1 view. Precondition: Mip < GetMipLevelCount().
+    [[nodiscard]] auto GetVkImageView(Uint32 Mip) const -> vk::ImageView {
         return *m_MipViews[Mip];
-    }
-    [[nodiscard]] auto GetMipLevelCount() const -> Uint32 {
-        return static_cast<Uint32>(m_MipViews.size());
-    }
-    [[nodiscard]] auto GetAllocation() const -> VmaAllocation {
-        return m_Allocation;
-    }
-
-    /// Submit a staging-buffer → image copy via VulkanImmediateContext.
-    /// Handles Undefined→TransferDst→ShaderReadOnly barriers (through the image
-    /// tracker, since Create() now registers the image).
-    /// Returns upload completion token (caller defers staging destruction).
-    [[nodiscard]] auto CopyFrom(VulkanHostBuffer&                      Staging,
-                                VulkanImmediateContext&                Ctx,
-                                Uint32                                 Width,
-                                Uint32                                 Height,
-                                vk::Format                             VkFmt,
-                                VulkanImmediateContext::CompletionDesc Completion)
-        -> std::expected<void, ErrorMessage> {
-        const vk::ImageSubresourceRange Mip0Range{.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                                  .baseMipLevel   = 0,
-                                                  .levelCount     = 1,
-                                                  .baseArrayLayer = 0,
-                                                  .layerCount     = 1};
-        return Ctx.Submit(
-            VulkanImmediateQueue::Transfer,
-            vk::PipelineStageFlagBits2::eTransfer,
-            [&](const vk::raii::CommandBuffer& CmdBuf) {
-                // Barrier: Undefined → TransferDst
-                if (m_ImageTracker)
-                    m_ImageTracker->Transition(CmdBuf,
-                                               m_Image,
-                                               Mip0Range,
-                                               VulkanImageState{
-                                                   .stage   = vk::PipelineStageFlagBits2::eTransfer,
-                                                   .access  = vk::AccessFlagBits2::eTransferWrite,
-                                                   .layout  = vk::ImageLayout::eTransferDstOptimal,
-                                                   .isWrite = true,
-                                               });
-                // Copy buffer → image
-                vk::BufferImageCopy Region{
-                    .bufferOffset      = 0,
-                    .bufferRowLength   = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource  = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                          .mipLevel       = 0,
-                                          .baseArrayLayer = 0,
-                                          .layerCount     = 1},
-                    .imageOffset       = {0, 0, 0},
-                    .imageExtent       = {Width, Height, 1},
-                };
-                CmdBuf.copyBufferToImage(Staging.Get(), m_Image, vk::ImageLayout::eTransferDstOptimal, {Region});
-                // Barrier: TransferDst → ShaderReadOnly
-                if (m_ImageTracker)
-                    m_ImageTracker->Transition(CmdBuf,
-                                               m_Image,
-                                               Mip0Range,
-                                               VulkanImageState{
-                                                   .stage  = vk::PipelineStageFlagBits2::eNone,
-                                                   .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                                               });
-            },
-            std::move(Completion));
     }
 
   private:
-    VmaAllocator        m_Allocator  = nullptr;
+    VmaAllocator        m_Allocator  = nullptr;  ///< VMA allocator that owns the image allocation
     vk::Image           m_Image      = nullptr;
     VmaAllocation       m_Allocation = nullptr;
-    vk::raii::ImageView m_ImageView  = nullptr;
-    // One level-1 view per mip; GetImageView(Mip) indexes this. The whole-chain
+    vk::raii::ImageView m_ImageView  = nullptr;  ///< whole-chain default view
+    // One level-1 view per mip; GetVkImageView(Mip) indexes this. The whole-chain
     // default view above stays the default binding for existing call sites (D2).
     std::vector<vk::raii::ImageView> m_MipViews = {};
     // Non-owning: the tracker lives in VulkanResourceContext and outlives all
     // textures (deferred deletion drains before device shutdown).
     VulkanImageTracker* m_ImageTracker = nullptr;
+    // Non-owning: the queue lives in VulkanResourceContext and outlives all textures.
+    VulkanDeferredDeletionQueue* m_DeferredQueue = nullptr;
+
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// VulkanSampledTexture — GPU sampled texture resource
+// VulkanTextureManager — creation dispatch and upload front-end
 // ═════════════════════════════════════════════════════════════════════════════
 
-class VulkanSampledTexture final : public RHISampledTexture {
+/// @brief The single home of texture concerns: creation dispatch and the upload front-end.
+///
+/// CreateTexture allocates synchronously on the calling thread; Upload snapshots the bytes at the
+/// call site and hands a frame-affined task to the RHI thread, which stages the texels through the
+/// device-owned staging belt's image lane. The render device owns one instance and forwards; the
+/// upload task is RHI-thread confined.
+class VulkanTextureManager final {
   public:
-    VulkanSampledTexture(String Name, SPtr<VulkanDeviceTexture> Tex, Uint32 Width, Uint32 Height)
-        : RHISampledTexture(std::move(Name)),
-          m_Texture(std::move(Tex)),
-          m_Width(Width),
-          m_Height(Height),
-          m_DescriptorInfo{
-              .sampler     = nullptr,
-              .imageView   = m_Texture->GetImageView(),
-              .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-          } {}
+    VulkanTextureManager() = default;
+    VulkanTextureManager(const VulkanTextureManager&)                    = delete;
+    auto operator=(const VulkanTextureManager&) -> VulkanTextureManager& = delete;
+    VulkanTextureManager(VulkanTextureManager&&)                         = default;
+    auto operator=(VulkanTextureManager&&) -> VulkanTextureManager&      = default;
 
-    ~VulkanSampledTexture() override = default;
-
-    VulkanSampledTexture(const VulkanSampledTexture&)                    = delete;
-    auto operator=(const VulkanSampledTexture&) -> VulkanSampledTexture& = delete;
-    VulkanSampledTexture(VulkanSampledTexture&&)                         = delete;
-    auto operator=(VulkanSampledTexture&&) -> VulkanSampledTexture&      = delete;
-
-    /// Static factory: upload pixel data to GPU texture via staging buffer.
-    [[nodiscard]] static auto Create(const VulkanResourceContext&         Context,
-                                     StringView                           Name,
-                                     const RHISampledTextureDesc&         Desc,
-                                     VulkanImmediateContext::CompletionFn OnReady)
-        -> std::expected<UPtr<VulkanSampledTexture>, ErrorMessage> {
-        if (Desc.Data.empty() || Desc.Width == 0 || Desc.Height == 0 || Desc.Channels == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanSampledTexture::Create: invalid desc (empty data or zero dimensions)"));
-        if (Desc.Width > std::numeric_limits<Uint64>::max() / Desc.Height)
-            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: pixel count overflows Uint64"));
-        const Uint64 PixelCount = static_cast<Uint64>(Desc.Width) * Desc.Height;
-        if (PixelCount > std::numeric_limits<Uint64>::max() / Desc.Channels)
-            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: source data size overflows Uint64"));
-        const Uint64 PixelSize = PixelCount * Desc.Channels;
-        if (Desc.Data.size_bytes() != PixelSize)
-            return std::unexpected(
-                ErrorMessage("VulkanSampledTexture::Create: data size does not match texture dimensions"));
-
-        auto StagingRes = VulkanHostBuffer::Create(
-            Context, Format("{}#Staging", Name), PixelSize, vk::BufferUsageFlagBits::eTransferSrc);
-        if (!StagingRes)
-            return std::unexpected(StagingRes.error().Append("VulkanSampledTexture::Create: staging creation failed"));
-        auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
-        if (auto R = Staging->Upload(Desc.Data.data(), PixelSize); !R)
-            return std::unexpected(R.error().Append("VulkanSampledTexture::Create: staging upload failed"));
-
-        const auto VkFmt = ToVkFormat(Desc.Format);
-        if (VkFmt == vk::Format::eUndefined)
-            return std::unexpected(ErrorMessage("VulkanSampledTexture::Create: unsupported texture format"));
-        auto Texture = VulkanDeviceTexture::Create(Context,
-                                                   Name,
-                                                   VulkanDeviceTextureCreateDesc{
-                                                       .Width             = Desc.Width,
-                                                       .Height            = Desc.Height,
-                                                       .Format            = VkFmt,
-                                                       .Usage             = vk::ImageUsageFlagBits::eTransferDst |
-                                                                    vk::ImageUsageFlagBits::eSampled,
-                                                       .Aspect            = vk::ImageAspectFlagBits::eColor,
-                                                       .ConcurrentSharing = true,
-                                                   });
-        if (!Texture)
-            return std::unexpected(Texture.error().Append("VulkanSampledTexture::Create: device texture creation failed"));
-        auto Completion = VulkanImmediateContext::CompletionDesc{
-            .ConsumerQueue = VulkanImmediateQueue::Graphics,
-            .OnComplete =
-                [Staging, Texture = *Texture, OnReady = std::move(OnReady)]() mutable {
-                    if (OnReady)
-                        OnReady();
-                },
-        };
-        if (auto R =
-                (*Texture)
-                    ->CopyFrom(*Staging, Context.GetImmediateContext(), Desc.Width, Desc.Height, VkFmt, std::move(Completion));
-            !R)
-            return std::unexpected(R.error().Append("VulkanSampledTexture::Create: transfer submission failed"));
-        return std::make_unique<VulkanSampledTexture>(String(Name), std::move(*Texture), Desc.Width, Desc.Height);
+    /// @brief Create the manager, borrowing the device-owned staging belt.
+    /// @param Context  resource context providing the VMA allocator, device, and debug utils.
+    /// @param Staging  device-owned staging belt, borrowed for the frame-start image lane.
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, VulkanStagingBelt& Staging)
+        -> std::expected<VulkanTextureManager, ErrorMessage> {
+        VulkanTextureManager Manager;
+        Manager.m_Context = &Context;
+        Manager.m_Staging = &Staging;
+        return Manager;
     }
 
-    // ── RHISampledTexture interface ──────────────────────────────────
-
-    [[nodiscard]] auto GetWidth() const -> Uint32 override {
-        return m_Width;
-    }
-    [[nodiscard]] auto GetHeight() const -> Uint32 override {
-        return m_Height;
+    /// @brief Release the borrowed references.
+    auto Shutdown() -> void {
+        m_Staging = nullptr;
+        m_Context = nullptr;
     }
 
-    // ── Vulkan-specific accessors ──────────────────────────────────────
-
-    [[nodiscard]] auto GetVkImage() const -> vk::Image {
-        return m_Texture->GetImage();
+    /// @brief Synchronous creation on the calling thread (VMA locks internally;
+    /// vkCreateImage/vkCreateImageView are device-level). The ref publishes Ready at return.
+    /// @param Name  logical RHI name; becomes the debug-utils object name.
+    /// @param Desc  texture description; only GpuOnly placement is supported.
+    [[nodiscard]] auto CreateTexture(StringView Name, const RHITextureDesc& Desc)
+        -> std::expected<RHIRef<RHITexture>, ErrorMessage> {
+        auto Result = VulkanTexture::Create(*m_Context, Name, Desc);
+        if (!Result)
+            return std::unexpected(Result.error());
+        auto Resource = RHIRef<RHITexture>::Create();
+        if (auto Publish = Resource.Publish(std::move(*Result), RHIRefState::Ready); !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
     }
-    [[nodiscard]] auto GetVkImageView() const -> vk::ImageView {
-        return m_Texture->GetImageView();
-    }
 
-    /// Build a sampled-image descriptor write for this texture.
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             Uint32            ArrayElement,
-                                             bool              /*IsReadOnly*/) const -> vk::WriteDescriptorSet {
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = ArrayElement,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eSampledImage,
-            .pImageInfo      = &m_DescriptorInfo,
-        };
+    /// @brief Upload a texture's full mip-0 texels: snapshot the bytes, then hand a
+    /// frame-affined task to the RHI thread — the same contract as UploadBuffer.
+    ///
+    /// The task (drained at the matching RHI frame, before Execute) stages the bytes into the
+    /// belt's image lane; Execute records the copy ahead of the frame's passes, so same-frame
+    /// consumers are safe by submission order. Staging failure is fail-soft per entry (log +
+    /// skip, buffer precedent): the caller may simply re-upload.
+    /// @param Texture  destination texture ref.
+    /// @param Data     full mip-0 texel snapshot; its size must equal Width × Height × Channels.
+    [[nodiscard]] auto Upload(RHIRef<RHITexture> Texture, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> {
+        if (Data.empty())
+            return std::unexpected(ErrorMessage("UploadTexture: data is empty"));
+        // Creation is synchronous, so the payload is always Ready here and the
+        // upload contract validates fail-fast at the call site.
+        const auto* Payload = Texture.TryGet();
+        if (!Payload)
+            return std::unexpected(ErrorMessage("UploadTexture: texture ref is not Ready"));
+        if (magic_enum::enum_flags_test(Payload->GetUsage(), RHITextureUsage::DepthStencil))
+            return std::unexpected(ErrorMessage("UploadTexture: depth textures are not upload targets"));
+        const Uint64 ExpectedSize =
+            static_cast<Uint64>(Payload->GetWidth()) * Payload->GetHeight() * Payload->GetChannels();
+        if (Data.size_bytes() != ExpectedSize)
+            return std::unexpected(ErrorMessage(Format(
+                "UploadTexture: data size {} does not match mip-0 size {}", Data.size_bytes(), ExpectedSize)));
+
+        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
+            ThreadQueue::RHI,
+            [this, Texture = std::move(Texture),
+             Snapshot = std::vector<std::byte>{Data.begin(), Data.end()}]() mutable {
+                auto* TaskPayload = Texture.TryGet();
+                if (!TaskPayload) {
+                    LogWarning("UploadTexture: texture ref is not Ready when the upload task ran");
+                    return;
+                }
+                auto& VulkanTex = static_cast<VulkanTexture&>(*TaskPayload);
+                m_Staging->EnqueueImageUpload(VulkanTex.GetName(),
+                                              VulkanTex.GetVkImage(),
+                                              VulkanTex.GetWidth(),
+                                              VulkanTex.GetHeight(),
+                                              Snapshot);
+            });
+        if (!EnqueueResult)
+            return std::unexpected(EnqueueResult.error().Append("UploadTexture: frame task enqueue failed"));
+        return {};
     }
 
   private:
-    SPtr<VulkanDeviceTexture>         m_Texture        = nullptr;
-    Uint32                            m_Width          = 0;
-    Uint32                            m_Height         = 0;
-    vk::DescriptorImageInfo m_DescriptorInfo = {};
-};
-
-class VulkanRenderTarget final : public RHIRenderTarget {
-  public:
-    /// MipIndex sentinel: bind the whole-chain default view (legacy behavior).
-    static constexpr Uint32 WholeChain = std::numeric_limits<Uint32>::max();
-
-    VulkanRenderTarget(String Name,
-                       SPtr<VulkanDeviceTexture> Tex,
-                       Uint32 Width,
-                       Uint32 Height,
-                       RHIFormat Format,
-                       RHITextureUsage Usage)
-        : RHIRenderTarget(std::move(Name)),
-          m_Texture(std::move(Tex)),
-          m_Width(Width),
-          m_Height(Height),
-          m_Format(Format),
-          m_Usage(Usage),
-          m_SampledDescriptorInfo{
-              .sampler     = nullptr,
-              .imageView   = m_Texture->GetImageView(),
-              .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-          },
-          m_StorageDescriptorInfo{
-              .sampler     = nullptr,
-              .imageView   = m_Texture->GetImageView(),
-              .imageLayout = vk::ImageLayout::eGeneral,
-          } {
-        // Per-mip descriptor infos pair with the texture's eagerly created
-        // per-mip views (D2). Mip 0 duplicates the whole-chain view's mip 0.
-        const Uint32 MipCount = m_Texture->GetMipLevelCount();
-        m_MipSampledInfos.reserve(MipCount);
-        m_MipStorageInfos.reserve(MipCount);
-        for (Uint32 Mip = 0; Mip < MipCount; ++Mip) {
-            m_MipSampledInfos.push_back(vk::DescriptorImageInfo{
-                .sampler     = nullptr,
-                .imageView   = m_Texture->GetImageView(Mip),
-                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-            });
-            m_MipStorageInfos.push_back(vk::DescriptorImageInfo{
-                .sampler     = nullptr,
-                .imageView   = m_Texture->GetImageView(Mip),
-                .imageLayout = vk::ImageLayout::eGeneral,
-            });
-        }
-    }
-
-    ~VulkanRenderTarget() override = default;
-
-    VulkanRenderTarget(const VulkanRenderTarget&)                    = delete;
-    auto operator=(const VulkanRenderTarget&) -> VulkanRenderTarget& = delete;
-    VulkanRenderTarget(VulkanRenderTarget&&)                         = delete;
-    auto operator=(VulkanRenderTarget&&) -> VulkanRenderTarget&      = delete;
-
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, StringView Name, const RHIRenderTargetDesc& Desc)
-        -> std::expected<UPtr<VulkanRenderTarget>, ErrorMessage> {
-        if (Desc.Width == 0 || Desc.Height == 0)
-            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: invalid desc (zero dimensions)"));
-        if (Desc.Format == RHIFormat::Unknown)
-            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: invalid desc (unknown format)"));
-
-        const bool IsDepth =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::DepthStencil)) != 0;
-        const bool IsColor =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::RenderTarget)) != 0;
-        const bool IsTransferSrc =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::TransferSrc)) != 0;
-        const bool IsTransferDst =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::TransferDst)) != 0;
-        const bool IsStorage =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0;
-        const bool IsShaderResource =
-            (static_cast<Uint32>(Desc.Usage) & static_cast<Uint32>(RHITextureUsage::ShaderResource)) != 0;
-        if (IsStorage && IsDepth)
-            return std::unexpected(
-                ErrorMessage("VulkanRenderTarget::Create: storage usage is not supported for depth targets"));
-        // Derived usage (ADR 05) may legitimately produce storage- or
-        // transfer-only targets (e.g. a UAV-written blit source); only a
-        // completely empty usage is an error.
-        if (Desc.Usage == RHITextureUsage::None)
-            return std::unexpected(ErrorMessage("VulkanRenderTarget::Create: empty usage"));
-
-        auto Usage = vk::ImageUsageFlags{};
-        if (IsDepth)
-            Usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
-        if (IsColor)
-            Usage |= vk::ImageUsageFlagBits::eColorAttachment;
-        if (IsTransferSrc)
-            Usage |= vk::ImageUsageFlagBits::eTransferSrc;
-        if (IsTransferDst)
-            Usage |= vk::ImageUsageFlagBits::eTransferDst;
-        if (IsStorage)
-            Usage |= vk::ImageUsageFlagBits::eStorage;
-        if (IsShaderResource)
-            Usage |= vk::ImageUsageFlagBits::eSampled;
-
-        const auto VkFmt = ToVkFormat(Desc.Format);
-        auto Texture = VulkanDeviceTexture::Create(Context,
-                                                   Name,
-                                                   VulkanDeviceTextureCreateDesc{
-                                                       .Width             = Desc.Width,
-                                                       .Height            = Desc.Height,
-                                                       .MipLevels         = Desc.MipLevels,
-                                                       .Format            = VkFmt,
-                                                       .Usage             = Usage,
-                                                       .Aspect            =
-                                                           IsDepth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor,
-                                                       .ConcurrentSharing = false,
-                                                   });
-        if (!Texture)
-            return std::unexpected(Texture.error().Append("VulkanRenderTarget::Create: device texture creation failed"));
-        return std::make_unique<VulkanRenderTarget>(
-            String(Name), std::move(*Texture), Desc.Width, Desc.Height, Desc.Format, Desc.Usage);
-    }
-
-    [[nodiscard]] auto GetWidth() const -> Uint32 override {
-        return m_Width;
-    }
-    [[nodiscard]] auto GetHeight() const -> Uint32 override {
-        return m_Height;
-    }
-    [[nodiscard]] auto GetFormat() const -> RHIFormat override {
-        return m_Format;
-    }
-    [[nodiscard]] auto GetUsage() const -> RHITextureUsage override {
-        return m_Usage;
-    }
-    [[nodiscard]] auto GetMipLevelCount() const -> Uint32 override {
-        return m_Texture->GetMipLevelCount();
-    }
-
-    [[nodiscard]] auto GetVkImage() const -> vk::Image {
-        return m_Texture->GetImage();
-    }
-    [[nodiscard]] auto GetVkImageView() const -> vk::ImageView {
-        return m_Texture->GetImageView();
-    }
-    /// Per-mip level-1 view. Precondition: Mip < GetMipLevelCount().
-    [[nodiscard]] auto GetVkImageView(Uint32 Mip) const -> vk::ImageView {
-        return m_Texture->GetImageView(Mip);
-    }
-
-    /// Build a sampled/storage-image descriptor write for this render target.
-    /// MipIndex defaults to WholeChain (whole-image default view); pass a mip
-    /// index to bind that mip's level-1 view (D2).
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             Uint32            ArrayElement,
-                                             bool              IsReadOnly,
-                                             Uint32            MipIndex = WholeChain) const -> vk::WriteDescriptorSet {
-        const vk::DescriptorImageInfo* Info = nullptr;
-        if (MipIndex == WholeChain)
-            Info = IsReadOnly ? &m_SampledDescriptorInfo : &m_StorageDescriptorInfo;
-        else
-            Info = IsReadOnly ? &m_MipSampledInfos[MipIndex] : &m_MipStorageInfos[MipIndex];
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = ArrayElement,
-            .descriptorCount = 1,
-            .descriptorType  = IsReadOnly ? vk::DescriptorType::eSampledImage : vk::DescriptorType::eStorageImage,
-            .pImageInfo      = Info,
-        };
-    }
-
-  private:
-    SPtr<VulkanDeviceTexture>            m_Texture             = nullptr;
-    Uint32                               m_Width               = 0;
-    Uint32                               m_Height              = 0;
-    RHIFormat                            m_Format              = RHIFormat::Unknown;
-    RHITextureUsage                      m_Usage               = RHITextureUsage::None;
-    vk::DescriptorImageInfo              m_SampledDescriptorInfo = {};
-    vk::DescriptorImageInfo              m_StorageDescriptorInfo = {};
-    std::vector<vk::DescriptorImageInfo> m_MipSampledInfos       = {};
-    std::vector<vk::DescriptorImageInfo> m_MipStorageInfos       = {};
+    const VulkanResourceContext* m_Context = nullptr;  ///< borrowed resource context
+    VulkanStagingBelt*           m_Staging = nullptr;  ///< borrowed staging belt, owned by the render device
 };
 
 } // namespace SoulEngine

@@ -15,6 +15,7 @@ import Material;
 import RHI;
 import RenderGraph;
 import Scene;
+import magic_enum;
 
 import :IRenderer;
 import :Common;
@@ -38,10 +39,10 @@ static_assert(offsetof(RayTracingFrameConstants, PathSettings) == 16);
 ///
 /// Per frame: the GeometryUploader lazily uploads geometry; every BLAS it
 /// requests joins the frame's pending-build AS work alongside a freshly
-/// created hollow TLAS (no culling — secondary rays need off-screen geometry),
-/// which the device builds ahead of every pass; PathTracingPass traces into
-/// a transient output target and BlitToSwapchainPass presents it directly
-/// (ADR 05 — no SceneColorRT roundtrip).
+/// created per-frame TLAS (no culling — secondary rays need off-screen
+/// geometry), which the device builds ahead of every pass; PathTracingPass
+/// traces into a transient output target and BlitToSwapchainPass presents
+/// it directly (no SceneColorRT roundtrip).
 class RayTracingRenderer final : public IRenderer {
   public:
     RayTracingRenderer() = default;
@@ -76,7 +77,7 @@ class RayTracingRenderer final : public IRenderer {
             return Result;
         const auto& View = Views.front();
 
-        // No camera-owned targets anymore (ADR 05): the viewport extent is
+        // No camera-owned targets anymore: the viewport extent is
         // the only input the view carries.
         const Uint32 ViewWidth  = View.GetWidth();
         const Uint32 ViewHeight = View.GetHeight();
@@ -87,11 +88,14 @@ class RayTracingRenderer final : public IRenderer {
         const auto Instances = FilterInstances(Scene.Instances);
         if (Instances.empty())
             return Result;
-        const auto DrawData = SceneGpuData::Create(Instances, Scene.Lights, Scene.Textures);
+        auto TextureIndices = ResolveBindlessTextureIndices(Scene.Textures);
+        if (!TextureIndices)
+            return std::unexpected(TextureIndices.error().Append("Ray-tracing bindless texture resolution failed"));
+        const auto DrawData = SceneGpuData::Create(Instances, Scene.Lights, *TextureIndices);
 
-        // ── Per-frame hollow TLAS: the desc slot order is the canonical    ──
-        // ── instance order (InstanceIndex() mapping); the device allocates ──
-        // ── storage and builds at frame start, ahead of every pass         ──
+        // ── Per-frame TLAS: the desc slot order is the canonical          ──
+        // ── instance order (InstanceIndex() mapping); the device builds   ──
+        // ── at frame start, ahead of every pass                           ──
         std::vector<RHITopLevelAccelerationStructureInstance> TlasInstances = {};
         TlasInstances.reserve(DrawData.InstanceRecords.size());
         for (const auto& Instance : DrawData.InstanceRecords)
@@ -104,6 +108,10 @@ class RayTracingRenderer final : public IRenderer {
             RHITopLevelAccelerationStructureDesc{.Instances = std::move(TlasInstances)});
         if (!Tlas)
             return std::unexpected(Tlas.error().Append("Ray-tracing TLAS creation failed"));
+        // Frame-affined build task: the TLAS builds at frame start, after the
+        // BLAS batch and ahead of every pass.
+        if (auto R = RHIRenderDevice::Get().BuildTlas(*Tlas); !R)
+            return std::unexpected(R.error().Append("Ray-tracing TLAS build enqueue failed"));
 
         // ── Frame constants ──
         const auto FrameData = RayTracingFrameConstants{
@@ -120,65 +128,84 @@ class RayTracingRenderer final : public IRenderer {
         // ── Build the frame graph ──
         RenderGraphBuilder Graph;
 
-        const auto InstancesHandle = Graph.CreateShaderStorageBuffer(
+        const auto InstancesHandle = Graph.CreateBuffer(
             "RT/Instances",
-            RGShaderStorageBufferDesc{.SizeBytes   = std::as_bytes(std::span{DrawData.InstanceRecords}).size(),
-                                      .InitialData = std::as_bytes(std::span{DrawData.InstanceRecords})});
-        const auto GeometriesHandle = Graph.CreateShaderStorageBuffer(
+            RHIBufferDesc{.SizeBytes = std::as_bytes(std::span{DrawData.InstanceRecords}).size(),
+                          .Usage     = RHIBufferUsage::Storage,
+                          .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{DrawData.InstanceRecords}));
+        const auto GeometriesHandle = Graph.CreateBuffer(
             "RT/Geometries",
-            RGShaderStorageBufferDesc{.SizeBytes   = std::as_bytes(std::span{DrawData.GeometryRecords}).size(),
-                                      .InitialData = std::as_bytes(std::span{DrawData.GeometryRecords})});
-        const auto MaterialsHandle = Graph.CreateShaderStorageBuffer(
+            RHIBufferDesc{.SizeBytes = std::as_bytes(std::span{DrawData.GeometryRecords}).size(),
+                          .Usage     = RHIBufferUsage::Storage,
+                          .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{DrawData.GeometryRecords}));
+        const auto MaterialsHandle = Graph.CreateBuffer(
             "RT/Materials",
-            RGShaderStorageBufferDesc{.SizeBytes   = std::as_bytes(std::span{DrawData.MaterialRecords}).size(),
-                                      .InitialData = std::as_bytes(std::span{DrawData.MaterialRecords})});
-        const auto LightsHandle = Graph.CreateShaderStorageBuffer(
+            RHIBufferDesc{.SizeBytes = std::as_bytes(std::span{DrawData.MaterialRecords}).size(),
+                          .Usage     = RHIBufferUsage::Storage,
+                          .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{DrawData.MaterialRecords}));
+        const auto LightsHandle = Graph.CreateBuffer(
             "RT/Lights",
-            RGShaderStorageBufferDesc{.SizeBytes   = std::as_bytes(std::span{DrawData.LightRecords}).size(),
-                                      .InitialData = std::as_bytes(std::span{DrawData.LightRecords})});
-        const auto FrameHandle = Graph.CreateConstantBuffer(
+            RHIBufferDesc{.SizeBytes = std::as_bytes(std::span{DrawData.LightRecords}).size(),
+                          .Usage     = RHIBufferUsage::Storage,
+                          .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{DrawData.LightRecords}));
+        const auto FrameHandle = Graph.CreateBuffer(
             "RT/Frame",
-            RGConstantBufferDesc{.SizeBytes   = std::as_bytes(std::span{&FrameData, 1}).size(),
-                                 .InitialData = std::as_bytes(std::span{&FrameData, 1})});
-        const auto ViewHandle = Graph.CreateConstantBuffer(
+            RHIBufferDesc{.SizeBytes = std::as_bytes(std::span{&FrameData, 1}).size(),
+                          .Usage     = RHIBufferUsage::Constant,
+                          .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{&FrameData, 1}));
+        const auto ViewHandle = Graph.CreateBuffer(
             "RT/View",
-            RGConstantBufferDesc{.SizeBytes   = std::as_bytes(std::span{&ViewData, 1}).size(),
-                                 .InitialData = std::as_bytes(std::span{&ViewData, 1})});
+            RHIBufferDesc{.SizeBytes = std::as_bytes(std::span{&ViewData, 1}).size(),
+                          .Usage     = RHIBufferUsage::Constant,
+                          .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{&ViewData, 1}));
 
         // Create the output target once: PathTracing (UAV write) and the
         // present blit (copy source) must reference the same graph resource
-        // so the graph sees the dependency edge between them. Usage bits are
-        // derived by Compile from those views (ADR 05).
+        // so the graph sees the dependency edge between them; the usage
+        // union covers both roles.
         const auto OutputHandle = Graph.CreateTexture(
             "RT/Output",
-            RGTextureDesc{.Width = ViewWidth, .Height = ViewHeight, .Format = RHIFormat::B8G8R8A8_UNORM});
+            RHITextureDesc{.Width  = ViewWidth,
+                           .Height = ViewHeight,
+                           .Format = RHIFormat::B8G8R8A8_UNORM,
+                           .Usage  = RHITextureUsage::Storage | RHITextureUsage::TransferSrc});
         // Primary-surface outputs are pooled graph transients too: the trace
-        // pass's UAV views derive their ShaderStorage usage (ADR 05).
+        // pass's UAV writes fit their declared Storage usage.
         const auto PrimaryNormalHandle = Graph.CreateTexture(
             "RT/PrimaryNormal",
-            RGTextureDesc{.Width = ViewWidth, .Height = ViewHeight, .Format = RHIFormat::R16G16B16A16_SFLOAT});
+            RHITextureDesc{.Width  = ViewWidth,
+                           .Height = ViewHeight,
+                           .Format = RHIFormat::R16G16B16A16_SFLOAT,
+                           .Usage  = RHITextureUsage::Storage});
         const auto PrimaryEntityIdHandle = Graph.CreateTexture(
             "RT/PrimaryEntityId",
-            RGTextureDesc{.Width = ViewWidth, .Height = ViewHeight, .Format = RHIFormat::R32_UINT});
-        PathTracingPass::Parameter TraceParameter = {};
-        TraceParameter.TlasRef          = *Tlas;
-        TraceParameter.Output         = RGStorageTextureUAV{.Texture = OutputHandle};
-        TraceParameter.PrimaryNormal   = RGStorageTextureUAV{.Texture = PrimaryNormalHandle};
-        TraceParameter.PrimaryEntityId = RGStorageTextureUAV{.Texture = PrimaryEntityIdHandle};
-        TraceParameter.Instances    = RGStorageBufferSRV{.Buffer = InstancesHandle};
-        TraceParameter.Geometries   = RGStorageBufferSRV{.Buffer = GeometriesHandle};
-        TraceParameter.Materials    = RGStorageBufferSRV{.Buffer = MaterialsHandle};
-        TraceParameter.Lights       = RGStorageBufferSRV{.Buffer = LightsHandle};
-        TraceParameter.Frame        = RGConstantBufferSRV{.Buffer = FrameHandle};
-        TraceParameter.View         = RGConstantBufferSRV{.Buffer = ViewHandle};
-        TraceParameter.LinearSampler = m_SamplerLinear;
-        TraceParameter.Textures      = Scene.Textures;
-        TraceParameter.Extent =
-            PathTracingExtent{.Width = ViewWidth, .Height = ViewHeight};
-        Graph.AddPass<PathTracingPass>(std::move(TraceParameter));
+            RHITextureDesc{.Width  = ViewWidth,
+                           .Height = ViewHeight,
+                           .Format = RHIFormat::R32_UINT,
+                           .Usage  = RHITextureUsage::Storage});
+        Graph.AddPass<PathTracingPass>({
+            .Output          = OutputHandle,
+            .PrimaryNormal   = PrimaryNormalHandle,
+            .PrimaryEntityId = PrimaryEntityIdHandle,
+            .Instances       = InstancesHandle,
+            .Geometries      = GeometriesHandle,
+            .Materials       = MaterialsHandle,
+            .Lights          = LightsHandle,
+            .Frame           = FrameHandle,
+            .View            = ViewHandle,
+            .TlasRef         = *Tlas,
+            .LinearSampler   = m_SamplerLinear,
+            .Extent          = {.Width = ViewWidth, .Height = ViewHeight},
+        });
 
-        Graph.AddPass<BlitToSwapchainPass>(BlitToSwapchainPass::Parameter{
-            .Source    = RGCopySrc{.Texture = OutputHandle},
+        Graph.AddPass<BlitToSwapchainPass>({
+            .Source    = OutputHandle,
             .DstX      = View.Viewport.X,
             .DstY      = View.Viewport.Y,
             .DstWidth  = ViewWidth,
@@ -190,10 +217,6 @@ class RayTracingRenderer final : public IRenderer {
             return std::unexpected(PassList.error().Append("RayTracingRenderer frame graph compile failed"));
         Result.CmdList = std::move(*PassList);
 
-        // Frame-start AS work: the device executes the pending BLAS batch,
-        // then this frame's TLAS build, ahead of every pass.
-        Result.PendingBlasBuilds = m_Uploader.DrainPendingBlasBuilds();
-        Result.PendingTlasBuilds = {std::move(*Tlas)};
         return Result;
     }
 

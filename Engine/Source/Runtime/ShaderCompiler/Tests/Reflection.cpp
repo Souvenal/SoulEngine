@@ -189,7 +189,8 @@ TEST_F(ReflectionTest, ResourceBindings) {
     It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) { return B.Set == 0 && B.BindingIndex == 1; });
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->ParameterPath, "g_tex");
-    EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
+    EXPECT_EQ(It->Type, ShaderResourceType::Texture);
+    EXPECT_EQ(It->Access, ShaderBindingAccess::Read);
 
     // SamplerState [[vk::binding(2, 0)]]
     It = std::ranges::find_if(R.Bindings, [](const ShaderBinding& B) { return B.Set == 0 && B.BindingIndex == 2; });
@@ -255,7 +256,8 @@ TEST_F(ReflectionTest, RuntimeParameterBlockBindingPaths) {
     ASSERT_NE(It, R.Bindings.end());
     EXPECT_EQ(It->Set, 2U);
     EXPECT_EQ(It->BindingIndex, 0U);
-    EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
+    EXPECT_EQ(It->Type, ShaderResourceType::Texture);
+    EXPECT_EQ(It->Access, ShaderBindingAccess::Read);
 	EXPECT_EQ(It->ArrayCount, kShaderReflectionArrayUnboundedSize);
 }
 
@@ -269,7 +271,8 @@ TEST_F(ReflectionTest, FixedSizeArrayBindingCount) {
         return B.ParameterPath == "g_params.uFixedTextures";
     });
     ASSERT_NE(It, R.Bindings.end());
-    EXPECT_EQ(It->Type, ShaderResourceType::SampledTexture);
+    EXPECT_EQ(It->Type, ShaderResourceType::Texture);
+    EXPECT_EQ(It->Access, ShaderBindingAccess::Read);
     EXPECT_EQ(It->ArrayCount, 4U);
 
     // Scalar members of the same block stay scalar.

@@ -51,63 +51,59 @@ class PathTracingPass final : public IRHIRayTracingPass {
     }
 
     struct Parameter {
-        RGStorageTextureUAV Output          = {};
-        RGStorageTextureUAV PrimaryNormal   = {};
-        RGStorageTextureUAV PrimaryEntityId = {};
-        RGStorageBufferSRV  Instances       = {};
-        RGStorageBufferSRV  Geometries      = {};
-        RGStorageBufferSRV  Materials       = {};
-        RGStorageBufferSRV  Lights          = {};
-        RGConstantBufferSRV Frame           = {};
-        RGConstantBufferSRV View            = {};
+        RGTextureView<RHITextureUsage::Storage, RHIAccess::Write>   Output;
+        RGTextureView<RHITextureUsage::Storage, RHIAccess::Write>   PrimaryNormal;
+        RGTextureView<RHITextureUsage::Storage, RHIAccess::Write>   PrimaryEntityId;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>      Instances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>      Geometries;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>      Materials;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>      Lights;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>     Frame;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>     View;
         // ── Passthrough (declare no access) ──
         /// The frame's TLAS, bound for the trace; built by the frame-start
         /// AS phase, not by this pass.
         RHIRef<RHITopLevelAccelerationStructure> TlasRef       = nullptr;
         RHIRef<RHISampler>                       LinearSampler = nullptr;
-        RHIRefArray<RHISampledTexture>           Textures      = {};
         PathTracingExtent                      Extent        = {};
     };
 
-    PathTracingPass(Parameter In, RHIRef<RHIRayTracingPipeline> Pipeline)
-        : IRHIRayTracingPass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
+    PathTracingPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
 
-        if (!GetShaderBindingSet() || !m_Parameter.TlasRef || !m_Parameter.Output.Ref ||
-            !m_Parameter.PrimaryNormal.Ref || !m_Parameter.PrimaryEntityId.Ref ||
-            !m_Parameter.LinearSampler || !m_Parameter.Textures || !m_Parameter.Instances.Ref ||
-            !m_Parameter.Geometries.Ref || !m_Parameter.Materials.Ref || !m_Parameter.Lights.Ref ||
-            !m_Parameter.Frame.Ref || !m_Parameter.View.Ref ||
-            m_Parameter.Extent.Width == 0 || m_Parameter.Extent.Height == 0)
+        if (!GetShaderBindingSet() || !m_Parameter->TlasRef || !m_Parameter->Output.Resolved ||
+            !m_Parameter->PrimaryNormal.Resolved || !m_Parameter->PrimaryEntityId.Resolved ||
+            !m_Parameter->LinearSampler || !m_Parameter->Instances.Resolved ||
+            !m_Parameter->Geometries.Resolved || !m_Parameter->Materials.Resolved ||
+            !m_Parameter->Lights.Resolved || !m_Parameter->Frame.Resolved || !m_Parameter->View.Resolved ||
+            m_Parameter->Extent.Width == 0 || m_Parameter->Extent.Height == 0)
             return std::unexpected(ErrorMessage("Path tracing pass resources are not ready"));
 
         // The whole descriptor set must be bound in one batch: the binding
         // set validates that every reflected slot of the set is covered.
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_rayTracing.tlas", m_Parameter.TlasRef, true},
-                RHIShaderBindingRequest{"g_rayTracing.output", m_Parameter.Output.Ref, false},
-                RHIShaderBindingRequest{"g_rayTracing.primaryNormal", m_Parameter.PrimaryNormal.Ref, false},
-                RHIShaderBindingRequest{"g_rayTracing.primaryEntityId", m_Parameter.PrimaryEntityId.Ref, false},
-                RHIShaderBindingRequest{"g_rayTracing.instances", m_Parameter.Instances.Ref, true},
-                RHIShaderBindingRequest{"g_rayTracing.geometryTable.records", m_Parameter.Geometries.Ref, true},
-                RHIShaderBindingRequest{"g_rayTracing.materials", m_Parameter.Materials.Ref, true},
-                RHIShaderBindingRequest{"g_rayTracing.lights", m_Parameter.Lights.Ref, true},
-                RHIShaderBindingRequest{"g_rayTracing.frame", m_Parameter.Frame.Ref, true},
-                RHIShaderBindingRequest{"g_rayTracing.view", m_Parameter.View.Ref, true},
-                RHIShaderBindingRequest{"g_rayTracing.linearSampler", m_Parameter.LinearSampler, true},
+                RHIShaderBindingRequest{"g_rayTracing.tlas", RHITlasView{.Tlas = m_Parameter->TlasRef}},
+                RHIShaderBindingRequest{"g_rayTracing.output", m_Parameter->Output.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.primaryNormal", m_Parameter->PrimaryNormal.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.primaryEntityId", m_Parameter->PrimaryEntityId.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.instances", m_Parameter->Instances.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.geometryTable.records", m_Parameter->Geometries.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.materials", m_Parameter->Materials.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.lights", m_Parameter->Lights.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.frame", m_Parameter->Frame.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.view", m_Parameter->View.ResolvedView()},
+                RHIShaderBindingRequest{"g_rayTracing.linearSampler", RHISamplerView{.Sampler = m_Parameter->LinearSampler}},
             }); !R)
             return std::unexpected(R.error());
-        if (auto R = BindBindlessResource(std::move(m_Parameter.Textures)); !R)
-            return std::unexpected(R.error());
 
-        TraceRays(m_Parameter.Extent.Width, m_Parameter.Extent.Height);
+        TraceRays(m_Parameter->Extent.Width, m_Parameter->Extent.Height);
         return {};
     }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

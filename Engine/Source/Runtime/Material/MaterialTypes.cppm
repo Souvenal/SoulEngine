@@ -192,7 +192,7 @@ struct MaterialYamlRecord {
 /// @brief Runtime texture data cached by normalized asset path.
 struct TextureData {
     Path                      AssetPath = {};
-    RHIRef<RHISampledTexture> Texture   = nullptr;
+    RHIRef<RHITexture> Texture   = nullptr;
 };
 
 using TextureDataHandle = entt::resource<TextureData>;
@@ -305,7 +305,7 @@ struct MaterialRecord {
             hlslpp::float3{1.0f, 1.0f, 1.0f}};
 
         // Texture handles use {descriptor slot, sampler slot}; {0, 0} is the
-        // null handle, and RHIRefArray reserves descriptor slot 0. std430
+        // null handle, and the global bindless table reserves descriptor slot 0. std430
         // aligns uint2 to 8 bytes, so every handle must be 8-aligned to match
         // the Slang-side MaterialRecord layout.
         alignas(8) std::array<Uint32, 2> BaseColorTexture         = {};
@@ -317,7 +317,43 @@ struct MaterialRecord {
         alignas(8) std::array<Uint32, 2> EmissiveTexture          = {};
     };
 
-    [[nodiscard]] auto BuildGpuData(const RHIRefArray<RHISampledTexture>& TextureArray) const
+    [[nodiscard]] auto HasUnresolvedBindlessTextures(const std::unordered_map<Uint64, Uint32>& TextureIndices) const
+        -> bool {
+        const auto FirstSlot = [this](TextureType Type) -> TextureDataHandle {
+            const auto Slot = std::ranges::find_if(Textures, [Type](const TextureRecord& Record) -> bool {
+                return Record.Type == Type;
+            });
+            return Slot == Textures.end() ? TextureDataHandle{} : Slot->Texture;
+        };
+        const auto IsUnresolved = [&TextureIndices](const TextureDataHandle& Texture) -> bool {
+            return Texture && Texture->Texture && !TextureIndices.contains(Texture->Texture->GetId());
+        };
+
+        auto BaseColor = FirstSlot(TextureType::BaseColor);
+        if (!BaseColor)
+            BaseColor = FirstSlot(TextureType::Diffuse);
+        auto Normal = FirstSlot(TextureType::NormalCamera);
+        if (!Normal)
+            Normal = FirstSlot(TextureType::Normals);
+        auto Emissive = FirstSlot(TextureType::EmissionColor);
+        if (!Emissive)
+            Emissive = FirstSlot(TextureType::Emissive);
+        if (IsUnresolved(BaseColor) || IsUnresolved(Normal) || IsUnresolved(Emissive) ||
+            IsUnresolved(FirstSlot(TextureType::AmbientOcclusion)))
+            return true;
+
+        const auto GltfMetallicRoughness = FirstSlot(TextureType::GltfMetallicRoughness);
+        if (GltfMetallicRoughness)
+            return IsUnresolved(GltfMetallicRoughness);
+
+        const auto Metallic  = FirstSlot(TextureType::Metalness);
+        const auto Roughness = FirstSlot(TextureType::DiffuseRoughness);
+        if (Metallic && Roughness && Metallic->Texture == Roughness->Texture)
+            return IsUnresolved(Metallic);
+        return IsUnresolved(Metallic) || IsUnresolved(Roughness);
+    }
+
+    [[nodiscard]] auto BuildGpuData(const std::unordered_map<Uint64, Uint32>& TextureIndices) const
         -> GpuData {
         const auto FirstSlot = [this](TextureType Type) -> TextureDataHandle {
             const auto Slot = std::ranges::find_if(Textures, [Type](const TextureRecord& Record) -> bool {
@@ -325,11 +361,12 @@ struct MaterialRecord {
             });
             return Slot == Textures.end() ? TextureDataHandle{} : Slot->Texture;
         };
-        const auto ResolveTexture = [&TextureArray](const TextureDataHandle& Texture) -> std::array<Uint32, 2> {
+        const auto ResolveTexture = [&TextureIndices](const TextureDataHandle& Texture) -> std::array<Uint32, 2> {
             if (!Texture || !Texture->Texture)
                 return {};
-            const auto Index = TextureArray.FindIndex(Texture->Texture);
-            return Index ? std::array<Uint32, 2>{*Index, 0} : std::array<Uint32, 2>{};
+            const auto Index = TextureIndices.find(Texture->Texture->GetId());
+            return Index != TextureIndices.end() ? std::array<Uint32, 2>{Index->second, 0}
+                                                 : std::array<Uint32, 2>{};
         };
 
         GpuData Result{

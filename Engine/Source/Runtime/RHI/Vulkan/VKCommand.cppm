@@ -10,6 +10,7 @@ import :Context;
 import :Capability;
 import :Swapchain;
 import :Buffer;
+import :Readback;
 import :Pipeline;
 import :RayTracingPipeline;
 import :Sampler;
@@ -53,52 +54,8 @@ class VulkanCmdVisitor {
     /// Bind a pipeline-owned shader binding set and apply the committed
     /// dynamic-offset and push-constant snapshot for the current pass.
     auto BindShaderBindingSet(VulkanShaderBindingSet& BindingSet,
-                              vk::PipelineBindPoint BindPoint,
-                              vk::PipelineStageFlags2 TransitionStages) -> void {
+                              vk::PipelineBindPoint BindPoint) -> void {
         const vk::PipelineLayout Layout = BindingSet.GetPipelineLayout();
-
-        for (const auto& SetBindings : BindingSet.GetBindingsBySet())
-            for (const auto& Slot : SetBindings) {
-                if (Slot.Info.Type == ShaderResourceType::StorageBuffer) {
-                    // Descriptor-bound storage buffers are always transient arena
-                    // slices; tracking their access state covers cross-pass
-                    // producer->consumer hazards (e.g. culling -> geometry).
-                    const auto* Buffer = static_cast<const VulkanTransientShaderStorageBuffer*>(Slot.Resource);
-                    if (!Buffer)
-                        continue;
-                    ResourceContext.GetBufferTracker().Transition(Buf,
-                                                 Buffer->GetArenaBuffer(),
-                                                 Buffer->GetOffset(),
-                                                 Buffer->GetSize(),
-                                                 VulkanBufferState{
-                                                     .stage  = TransitionStages,
-                                                     .access = Slot.IsReadOnly
-                                                                   ? vk::AccessFlagBits2::eShaderRead
-                                                                   : vk::AccessFlagBits2::eShaderRead |
-                                                                         vk::AccessFlagBits2::eShaderWrite,
-                                                     .isWrite = !Slot.IsReadOnly,
-                                                 });
-                    continue;
-                }
-                if ((Slot.Info.Type != ShaderResourceType::SampledTexture &&
-                     Slot.Info.Type != ShaderResourceType::StorageTexture) ||
-                    !Slot.IsRenderTarget)
-                    continue;
-                const auto* Target = static_cast<const VulkanRenderTarget*>(Slot.Resource);
-                if (!Target)
-                    continue;
-                const bool IsSampled = Slot.Info.Type == ShaderResourceType::SampledTexture;
-                ResourceContext.GetImageTracker().Transition(
-                    Buf,
-                    Target->GetVkImage(),
-                    VulkanImageTracker::FullRange(ToVkImageAspect(Target->GetFormat())),
-                    VulkanImageState{
-                        .stage  = TransitionStages,
-                        .access = IsSampled ? vk::AccessFlagBits2::eShaderRead
-                                            : vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-                        .layout = IsSampled ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eGeneral,
-                    });
-            }
 
         auto State = BindingSet.CaptureBindingState();
         if (!State) {
@@ -153,8 +110,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
         auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
         if (BindingSet)
             BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
-                                 vk::PipelineBindPoint::eGraphics,
-                                 vk::PipelineStageFlagBits2::eAllGraphics);
+                                 vk::PipelineBindPoint::eGraphics);
         BeginRendering(Attachments);
     }
 
@@ -171,32 +127,20 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
         Uint32 RenderHeight = 0;
 
         for (const auto& AttachmentDesc : Attachments.ColorAttachments) {
-            auto* ColorTarget = AttachmentDesc.TextureRef.TryGet();
+            auto* ColorTarget = AttachmentDesc.View.Texture.TryGet();
             if (!ColorTarget) {
                 Error = ErrorMessage("Rendering pass color attachment is not ready");
                 return;
             }
-            const auto& ColorRT = static_cast<const VulkanRenderTarget&>(*ColorTarget);
-            ResourceContext.GetImageTracker().Transition(
-                Buf,
-                ColorRT.GetVkImage(),
-                VulkanImageTracker::FullRange(ToVkImageAspect(ColorRT.GetFormat())),
-                VulkanImageState{
-                    .stage  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                    // Clear uses eClear, which does not load old contents; eLoad must
-                    // read the existing color while also writing the attachment.
-                    .access = AttachmentDesc.Clear ? vk::AccessFlagBits2::eColorAttachmentWrite
-                                                   : vk::AccessFlagBits2::eColorAttachmentRead |
-                                                         vk::AccessFlagBits2::eColorAttachmentWrite,
-                    .layout = vk::ImageLayout::eColorAttachmentOptimal,
-                    .isWrite = true,
-                });
+            const auto& ColorRT = static_cast<const VulkanTexture&>(*ColorTarget);
             if (AttachmentDesc.Clear && std::holds_alternative<std::monostate>(AttachmentDesc.ClearValue)) {
                 Error = ErrorMessage("Rendering pass color attachment clear value is not set");
                 return;
             }
             ColorAttachments.push_back(vk::RenderingAttachmentInfo{
-                .imageView   = ColorRT.GetVkImageView(),
+                .imageView   = AttachmentDesc.View.Range.MipLevelCount == kRHIRemainingSubresources
+                                   ? ColorRT.GetVkImageView()
+                                   : ColorRT.GetVkImageView(AttachmentDesc.View.Range.BaseMipLevel),
                 .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                 .loadOp      = AttachmentDesc.Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
                 .storeOp     = vk::AttachmentStoreOp::eStore,
@@ -210,34 +154,17 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
 
         std::optional<vk::RenderingAttachmentInfo> DepthAttachment = std::nullopt;
         if (Attachments.DepthAttachment.has_value()) {
-            auto* DepthTarget = Attachments.DepthAttachment->TextureRef.TryGet();
+            auto* DepthTarget = Attachments.DepthAttachment->View.Texture.TryGet();
             if (!DepthTarget) {
                 Error = ErrorMessage("Rendering pass depth attachment is not ready");
                 return;
             }
-            auto& VkDepthRT = static_cast<const VulkanRenderTarget&>(*DepthTarget);
+            auto& VkDepthRT = static_cast<const VulkanTexture&>(*DepthTarget);
             m_CurrentDepthFormat = VkDepthRT.GetFormat();
-            ResourceContext.GetImageTracker().Transition(
-                Buf,
-                VkDepthRT.GetVkImage(),
-                VulkanImageTracker::FullRange(ToVkImageAspect(VkDepthRT.GetFormat())),
-                VulkanImageState{
-                    // Depth attachment writes, including the final store operation, may
-                    // occur in either fragment-test stage. This is synchronization
-                    // coverage, not a request to force Early-Z or Late-Z execution.
-                    .stage = vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                             vk::PipelineStageFlagBits2::eLateFragmentTests,
-                    // Depth follows the same clear/load distinction; depth eLoad reads
-                    // the existing depth, so the load path needs read and write access.
-                    .access = Attachments.DepthAttachment->Clear
-                                  ? vk::AccessFlagBits2::eDepthStencilAttachmentWrite
-                                  : vk::AccessFlagBits2::eDepthStencilAttachmentRead |
-                                        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-                    .layout = vk::ImageLayout::eDepthAttachmentOptimal,
-                    .isWrite = true,
-                });
             DepthAttachment = vk::RenderingAttachmentInfo{
-                .imageView = VkDepthRT.GetVkImageView(),
+                .imageView = Attachments.DepthAttachment->View.Range.MipLevelCount == kRHIRemainingSubresources
+                                 ? VkDepthRT.GetVkImageView()
+                                 : VkDepthRT.GetVkImageView(Attachments.DepthAttachment->View.Range.BaseMipLevel),
                 .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
                 .loadOp = Attachments.DepthAttachment->Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
                 .storeOp = vk::AttachmentStoreOp::eStore,
@@ -280,39 +207,8 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
         Buf.setScissor(0, {vk::Rect2D{{Cmd.X, Cmd.Y}, {Cmd.Width, Cmd.Height}}});
     }
 
-    auto operator()(const RHIDrawIndexedCmd& Cmd) -> void {
-        for (Uint32 Binding = 0; Binding < Cmd.VertexBufferRefs.size(); ++Binding) {
-            auto* VertexBufferPtr = Cmd.VertexBufferRefs[Binding].TryGet();
-            if (!VertexBufferPtr)
-                continue;
-            const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
-            Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
-        }
-        const auto* IndexBufferPtr = Cmd.IndexBufferRef.TryGet();
-        if (!IndexBufferPtr) {
-            Error = ErrorMessage("Indexed draw is missing its index buffer");
-            return;
-        }
-        const auto& VkIB = static_cast<const VulkanIndexBuffer&>(*IndexBufferPtr);
-        Buf.bindIndexBuffer(VkIB.GetVkBuffer(), 0, vk::IndexType::eUint32);
-        Buf.drawIndexed(static_cast<Uint32>(VkIB.GetIndexCount()), 1, 0, 0, 0);
-    }
-
     auto operator()(const RHIDrawCmd& Cmd) -> void {
-        if (!Cmd.VertexBufferRefs[0].TryGet()) {
-            Buf.draw(3, 1, 0, 0);
-            return;
-        }
-
-        for (Uint32 Binding = 0; Binding < Cmd.VertexBufferRefs.size(); ++Binding) {
-            auto* VertexBufferPtr = Cmd.VertexBufferRefs[Binding].TryGet();
-            if (!VertexBufferPtr)
-                continue;
-            const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*VertexBufferPtr);
-            Buf.bindVertexBuffers(Binding, {VkVB.GetVkBuffer()}, {0});
-        }
-        const auto& VkVB = static_cast<const VulkanVertexBuffer&>(*Cmd.VertexBufferRefs[0].TryGet());
-        Buf.draw(static_cast<Uint32>(VkVB.GetVertexCount()), 1, 0, 0);
+        Buf.draw(Cmd.VertexCount, 1, 0, 0);
     }
 
     auto operator()(const RHIDrawIndirectCmd& Cmd) -> void {
@@ -321,9 +217,9 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             Error = ErrorMessage("Indirect draw references an invalid transient storage buffer");
             return;
         }
-        const auto& VulkanBuffer = static_cast<const VulkanTransientShaderStorageBuffer&>(*StorageBuffer);
-        if (Cmd.Offset > VulkanBuffer.GetSize() || Cmd.Stride < sizeof(Uint32) * 4 ||
-            Cmd.DrawCount > (VulkanBuffer.GetSize() - Cmd.Offset) / Cmd.Stride) {
+        const auto& Indirect = static_cast<const VulkanBuffer&>(*StorageBuffer);
+        if (Cmd.Offset > Indirect.GetSize() || Cmd.Stride < sizeof(Uint32) * 4 ||
+            Cmd.DrawCount > (Indirect.GetSize() - Cmd.Offset) / Cmd.Stride) {
             Error = ErrorMessage("Indirect draw range exceeds its transient buffer");
             return;
         }
@@ -331,18 +227,13 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
             Error = ErrorMessage("Indirect draw count exceeds Vulkan maxDrawIndirectCount");
             return;
         }
-        // The indirect buffer may be produced by an earlier compute pass
-        // (e.g. GPU culling); transition its consumed range before the draw.
-        ResourceContext.GetBufferTracker().Transition(Buf,
-                                     VulkanBuffer.GetArenaBuffer(),
-                                     VulkanBuffer.GetOffset() + Cmd.Offset,
-                                     static_cast<vk::DeviceSize>(Cmd.DrawCount) * Cmd.Stride,
-                                     VulkanBufferState{
-                                         .stage  = vk::PipelineStageFlagBits2::eDrawIndirect,
-                                         .access = vk::AccessFlagBits2::eIndirectCommandRead,
-                                     });
-        Buf.drawIndirect(VulkanBuffer.GetArenaBuffer(),
-                         VulkanBuffer.GetOffset() + Cmd.Offset,
+        const auto* Prop = Indirect.GetProp<TransientBufferProp>();
+        if (!Prop) {
+            Error = ErrorMessage("Indirect draw buffer has no transient state");
+            return;
+        }
+        Buf.drawIndirect(Indirect.GetVkBuffer(),
+                         Prop->Allocation.Offset + Cmd.Offset,
                          Cmd.DrawCount,
                          Cmd.Stride);
     }
@@ -369,8 +260,7 @@ class VulkanComputeCmdVisitor final : public VulkanCmdVisitor {
         auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
         if (BindingSet)
             BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
-                                 vk::PipelineBindPoint::eCompute,
-                                 vk::PipelineStageFlagBits2::eComputeShader);
+                                 vk::PipelineBindPoint::eCompute);
     }
 
     auto operator()(const RHIDispatchCmd& Cmd) -> void {
@@ -396,8 +286,7 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
         auto* BindingSet = Pipeline.GetShaderBindingSet().TryGet();
         if (BindingSet)
             BindShaderBindingSet(static_cast<VulkanShaderBindingSet&>(*BindingSet),
-                                 vk::PipelineBindPoint::eRayTracingKHR,
-                                 vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
+                                 vk::PipelineBindPoint::eRayTracingKHR);
     }
 
     auto operator()(const RHITraceRaysCmd& Cmd) -> void {
@@ -441,7 +330,7 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
             Error = ErrorMessage("Blit-to-swapchain references a source that is not ready");
             return;
         }
-        const auto& Src = static_cast<const VulkanRenderTarget&>(*SourcePtr);
+        const auto& Src = static_cast<const VulkanTexture&>(*SourcePtr);
         if (ToVkImageAspect(Src.GetFormat()) != vk::ImageAspectFlagBits::eColor) {
             Error = ErrorMessage("Blit-to-swapchain requires a color source target");
             return;
@@ -449,21 +338,9 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
         const auto SrcImage = Src.GetVkImage();
         const auto DstImage = m_Swapchain.GetImage(m_Swapchain.GetCurrentIndex());
 
-        // step 1: transition source to transfer-src and the swapchain image
-        // to transfer-dst; the swapchain image stays backend-private
-        ResourceContext.GetImageTracker().Transition(
-            Buf,
-            SrcImage,
-            vk::ImageSubresourceRange{.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                      .baseMipLevel   = 0,
-                                      .levelCount     = 1,
-                                      .baseArrayLayer = 0,
-                                      .layerCount     = 1},
-            VulkanImageState{
-                .stage  = vk::PipelineStageFlagBits2::eTransfer,
-                .access = vk::AccessFlagBits2::eTransferRead,
-                .layout = vk::ImageLayout::eTransferSrcOptimal,
-            });
+        // step 1: transition the swapchain image to transfer-dst; it stays
+        // backend-private (the graph-declared source is transitioned by the
+        // pass's prologue)
         ResourceContext.GetImageTracker().Transition(
             Buf,
             DstImage,
@@ -479,7 +356,7 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
                 .isWrite = true,
             });
 
-        // step 2: blit the whole source into the explicit destination rect; filtering is fixed Nearest (ADR 05)
+        // step 2: blit the whole source into the explicit destination rect; filtering is fixed Nearest
         vk::ImageBlit BlitRegion{
             .srcSubresource = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
                                .mipLevel       = 0,
@@ -506,40 +383,28 @@ class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
                       vk::Filter::eNearest);
     }
 
-    auto operator()(const RHICopyTextureToBufferCmd& Cmd) -> void {
+    auto operator()(const RHIReadbackTextureCmd& Cmd) -> void {
         const auto* SourcePtr = Cmd.Source.TryGet();
         auto*       TargetPtr = Cmd.Target.TryGet();
         if (!SourcePtr || !TargetPtr) {
-            Error = ErrorMessage("Copy-to-readback references resources that are not ready");
+            Error = ErrorMessage("Texture-readback references resources that are not ready");
             return;
         }
-        const auto& Src = static_cast<const VulkanRenderTarget&>(*SourcePtr);
-        auto&       Dst = static_cast<VulkanReadbackBuffer&>(*TargetPtr);
+        const auto& Src = static_cast<const VulkanTexture&>(*SourcePtr);
+        auto&       Dst = static_cast<VulkanReadback&>(*TargetPtr);
         if (Cmd.SrcX + Cmd.SrcWidth > Src.GetWidth() || Cmd.SrcY + Cmd.SrcHeight > Src.GetHeight()) {
-            Error = ErrorMessage("Copy-to-readback source region exceeds the source target");
+            Error = ErrorMessage("Texture-readback source region exceeds the source target");
             return;
         }
         // The picking contract keeps payloads at one 32-bit texel; larger
         // regions must stay within the slot.
         const Uint64 PayloadBytes = static_cast<Uint64>(Cmd.SrcWidth) * Cmd.SrcHeight * sizeof(Uint32);
         if (PayloadBytes > Dst.GetSize()) {
-            Error = ErrorMessage("Copy-to-readback payload exceeds the target size");
+            Error = ErrorMessage("Texture-readback payload exceeds the target size");
             return;
         }
         const auto Offset = Dst.AllocateWriteOffset();
 
-        ResourceContext.GetImageTracker().Transition(Buf,
-                               Src.GetVkImage(),
-                               vk::ImageSubresourceRange{.aspectMask     = ToVkImageAspect(Src.GetFormat()),
-                                                         .baseMipLevel   = 0,
-                                                         .levelCount     = 1,
-                                                         .baseArrayLayer = 0,
-                                                         .layerCount     = 1},
-                               VulkanImageState{
-                                   .stage  = vk::PipelineStageFlagBits2::eTransfer,
-                                   .access = vk::AccessFlagBits2::eTransferRead,
-                                   .layout = vk::ImageLayout::eTransferSrcOptimal,
-                               });
         const vk::BufferImageCopy Region{
             .bufferOffset      = Offset,
             .bufferRowLength   = 0,

@@ -10,6 +10,7 @@ import std;
 import Core;
 import :EditorCamera;
 import EditorTypes;
+import magic_enum;
 import RHI;
 import Scene;
 import WindowSystem;
@@ -59,8 +60,8 @@ class EditorWorld {
                                                });
         m_Registry.emplace<NameComponent>(CameraEntity, NameComponent{.Name = "EditorViewportCamera"});
         auto& Camera = m_Registry.emplace<EditorCameraComponent>(CameraEntity);
-        if (const auto Readback = RHIRenderDevice::Get().CreateReadbackBuffer(
-                "Editor/Viewport/Picking", RHIReadbackBufferDesc{.Size = sizeof(Uint32)});
+        if (const auto Readback =
+                RHIRenderDevice::Get().CreateReadback("Editor/Viewport/Picking", sizeof(Uint32));
             Readback) {
             Camera.Readback = *Readback;
         } else {

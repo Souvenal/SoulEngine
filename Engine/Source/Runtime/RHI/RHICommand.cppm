@@ -30,20 +30,16 @@ struct RHISetScissorCmd {
     Uint32 Height = 0;
 };
 
-/// @brief Draw indexed primitives.
-struct RHIDrawIndexedCmd {
-    std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs = {};
-    RHIRef<RHIIndexBuffer>                                        IndexBufferRef   = nullptr;
-};
-
-/// @brief Draw non-indexed primitives.
+/// @brief Draw non-indexed primitives. All geometry reaches shaders through
+/// vertex pulling (BDA) or indirect draws; there is no vertex-buffer binding
+/// path. The fullscreen-triangle users emit the default 3.
 struct RHIDrawCmd {
-    std::array<RHIRef<RHIVertexBuffer>, kMaxVertexBufferBindings> VertexBufferRefs = {};
+    Uint32 VertexCount = 3;
 };
 
 /// @brief Draw non-indexed primitives from GPU-written indirect commands.
 struct RHIDrawIndirectCmd {
-    RHIRef<RHITransientShaderStorageBuffer> IndirectBuffer = nullptr;
+    RHIRef<RHIBuffer> IndirectBuffer = nullptr;
     Uint64                          Offset         = 0;
     Uint32                          DrawCount      = 1;
     Uint32                          Stride         = sizeof(Uint32) * 4;
@@ -63,24 +59,23 @@ struct RHITraceRaysCmd {
     Uint32                        Depth       = 1;
 };
 
-/// @brief Copy a small texel region from a render target into one readback
-/// buffer. The backend chooses an internal ring position and stamps it with
-/// the submission's timeline value.
-struct RHICopyTextureToBufferCmd {
-    RHIRef<RHIRenderTarget>   Source    = nullptr;
+/// @brief Read back a texel region from a render target into a readback. The backend picks an internal ring
+/// position and stamps it with the submission's timeline value.
+struct RHIReadbackTextureCmd {
+    RHIRef<RHITexture>   Source    = nullptr;
     Uint32                    SrcX      = 0;
     Uint32                    SrcY      = 0;
     Uint32                    SrcWidth  = 1;
     Uint32                    SrcHeight = 1;
-    RHIRef<RHIReadbackBuffer> Target    = nullptr;
+    RHIRef<RHIReadback>       Target    = nullptr;
 };
 
 /// @brief Blit the complete render target into the acquired swapchain image.
 ///
-/// This is the only present path (ADR 05): the backend resolves the current
+/// This is the only present path: the backend resolves the current
 /// swapchain image, which stays backend-private. Fixed nearest filtering.
 struct RHIBlitToSwapchainCmd {
-    RHIRef<RHIRenderTarget> Source    = nullptr;
+    RHIRef<RHITexture> Source    = nullptr;
     Uint32                  DstX      = 0;
     Uint32                  DstY      = 0;
     Uint32                  DstWidth  = 1;
@@ -90,12 +85,11 @@ struct RHIBlitToSwapchainCmd {
 /// @brief All command types dispatched via std::visit.
 using RHICommand = std::variant<RHISetViewportCmd,
                                 RHISetScissorCmd,
-                                RHIDrawIndexedCmd,
                                 RHIDrawCmd,
                                 RHIDrawIndirectCmd,
                                 RHIDispatchCmd,
                                 RHITraceRaysCmd,
-                                RHICopyTextureToBufferCmd,
+                                RHIReadbackTextureCmd,
                                 RHIBlitToSwapchainCmd>;
 
 /// @brief One Dear ImGui overlay to record over the acquired presentation image.

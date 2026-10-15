@@ -5,6 +5,9 @@ module;
 // GMF restores visibility. Safe to drop once clang fixes concept re-export.
 #include <concepts>
 
+// magic_enum::enum_flags_test is not exported by the v0.9.8 module.
+#include <magic_enum/magic_enum_flags.hpp>
+
 export module RHI:Pipeline;
 
 import Core;
@@ -15,8 +18,6 @@ import std;
 
 export namespace SoulEngine {
 
-// ── RHIPipelineType ─────────────────────────────────────────────────────────
-
 enum class RHIPipelineType : Uint8 {
     Unknown = 0,
     Graphics,
@@ -24,97 +25,96 @@ enum class RHIPipelineType : Uint8 {
     RayTracing,
 };
 
-// ── RHIShaderBindingSet ─────────────────────────────────────────────────────
-
-class RHIShaderBindingSet;
-
 /// @brief Reflected shader interface used to construct a binding set.
 struct RHIShaderBindingSetDesc {
     ShaderReflection Reflection = {};
-    /// Bitmask of every stage in the shader program (magic_enum flags).
+    /// Bitmask of every stage in the shader program.
     ShaderStage      Stages     = ShaderStage::Unknown;
 };
 
+/// @brief One bound resource at the RHI level: always a view.
+///
+/// Sampler and TLAS views are degenerate (identity only), so every alternative retains its payload through
+/// the embedded RHIRef.
+using RHIBoundResource =
+    std::variant<std::monostate, RHITextureView, RHIBufferView, RHISamplerView, RHITlasView>;
+
+} // namespace SoulEngine
+
+namespace SoulEngine {
+
+/// @brief The shader-level type a bound resource plays in this request.
+///
+/// Derived from the view's role — one view, one role.
+[[nodiscard]] inline auto ResolveBindingType(const RHIBoundResource& Bound) -> ShaderResourceType {
+    if (const auto* View = std::get_if<RHITextureView>(&Bound))
+        return ShaderResourceType::Texture;
+    if (const auto* View = std::get_if<RHIBufferView>(&Bound)) {
+        if (magic_enum::enum_flags_test(View->Usage, RHIBufferUsage::Constant))
+            return ShaderResourceType::ConstantBuffer;
+        return ShaderResourceType::StorageBuffer;
+    }
+    if (std::get_if<RHISamplerView>(&Bound))
+        return ShaderResourceType::Sampler;
+    if (std::get_if<RHITlasView>(&Bound))
+        return ShaderResourceType::AccelerationStructure;
+    return ShaderResourceType::Unknown;
+}
+
+/// @brief The access direction a bound view exercises.
+///
+/// A storage texture view writes, every other texture view reads. Buffer, sampler, and TLAS views answer
+/// Unknown, and access validation skips Unknown on either side.
+[[nodiscard]] inline auto ResolveBindingAccess(const RHIBoundResource& Bound) -> ShaderBindingAccess {
+    if (const auto* View = std::get_if<RHITextureView>(&Bound))
+        return View->Usage == RHITextureUsage::Storage ? ShaderBindingAccess::ReadWrite
+                                                       : ShaderBindingAccess::Read;
+    return ShaderBindingAccess::Unknown;
+}
+
+/// @brief Readiness probe shared by binding validation: the resource a bound alternative refers to.
+///
+/// Returns nullptr when the alternative is absent or its payload is not Ready.
+[[nodiscard]] inline auto ResolveBindingObject(const RHIBoundResource& Bound) -> RHIObject* {
+    if (const auto* View = std::get_if<RHITextureView>(&Bound))
+        return View->Texture.TryGet();
+    if (const auto* View = std::get_if<RHIBufferView>(&Bound))
+        return View->Buffer.TryGet();
+    if (const auto* View = std::get_if<RHISamplerView>(&Bound))
+        return View->Sampler.TryGet();
+    if (const auto* View = std::get_if<RHITlasView>(&Bound))
+        return View->Tlas.TryGet();
+    return nullptr;
+}
+
+} // namespace SoulEngine
+
+export namespace SoulEngine {
+
 struct RHIShaderBindingRequest {
-    StringView         ParameterPath  = {};
-    RHIObject*         Resource       = nullptr;
-    ShaderResourceType Type           = ShaderResourceType::Unknown;
-    // Sampled textures and render targets share SampledTexture at the shader
-    // level; retain this concrete kind so Vulkan can dispatch the raw pointer safely.
-    bool               IsRenderTarget = false;
-    bool               IsReadOnly     = true;
+    StringView       ParameterPath = {};
+    RHIBoundResource Bound         = {};
 
     RHIShaderBindingRequest() = default;
 
-    template <typename T>
-    RHIShaderBindingRequest(StringView ParameterPathIn, RHIRef<T> Resource, bool IsReadOnlyIn)
-        : ParameterPath(ParameterPathIn),
-          Resource(Resource.TryGet()),
-          Type(ResolveRequestType(Resource, IsReadOnlyIn)),
-          IsRenderTarget(std::same_as<T, RHIRenderTarget>),
-          IsReadOnly(IsReadOnlyIn) {}
-
-  private:
-    /// A render target's usage flags are capabilities, not a binding type: the
-    /// same image can be storage-written by one pass and sampled by another
-    /// (the RT pass storage-writes the GBuffer normal target; deferred
-    /// lighting samples it). The binding intent (IsReadOnly) selects the
-    /// shader-level type; the resource's static type is the fallback.
-    template <typename T>
-    [[nodiscard]] static auto ResolveRequestType(const RHIRef<T>& Resource, bool IsReadOnly)
-        -> ShaderResourceType {
-        auto* Object = Resource.TryGet();
-        if (!Object)
-            return ShaderResourceType::Unknown;
-        if constexpr (std::same_as<T, RHIRenderTarget>) {
-            const auto Usage        = static_cast<Uint32>(Object->GetUsage());
-            const bool bCanSample   = (Usage & static_cast<Uint32>(RHITextureUsage::ShaderResource)) != 0;
-            const bool bCanStorage  = (Usage & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0;
-            if (IsReadOnly && bCanSample)
-                return ShaderResourceType::SampledTexture;
-            if (!IsReadOnly && bCanStorage)
-                return ShaderResourceType::StorageTexture;
-        }
-        return Object->GetShaderBindingType();
-    }
+    /// Explicit view forms.
+    RHIShaderBindingRequest(StringView ParameterPathIn, RHITextureView View)
+        : ParameterPath(ParameterPathIn), Bound(View) {}
+    RHIShaderBindingRequest(StringView ParameterPathIn, RHIBufferView View)
+        : ParameterPath(ParameterPathIn), Bound(View) {}
+    RHIShaderBindingRequest(StringView ParameterPathIn, RHISamplerView View)
+        : ParameterPath(ParameterPathIn), Bound(View) {}
+    RHIShaderBindingRequest(StringView ParameterPathIn, RHITlasView View)
+        : ParameterPath(ParameterPathIn), Bound(View) {}
 };
 
-/// @brief One element of a shader resource array binding (WT2/D16).
-/// Mip follows the D16 convention: a value >= the target's mip level count
-/// selects the whole-chain default view; the backend resolves it.
+/// @brief One element of a shader resource array binding.
+///
+/// Texture views only today; buffers/samplers extend here when arrays of them arrive.
 struct RHIArrayBindingElement {
-    RHIObject* Resource      = nullptr;
-    Uint32     Mip           = 0;
-    Uint32     ArrayIndex    = 0;
-    bool       IsRenderTarget = false;
+    RHITextureView View       = {};
+    Uint32         ArrayIndex = 0;
 };
-
-// Note: no templated constructors/factories here — a template instantiated
-// with a type from another partition of this module (e.g. RHIRenderTarget
-// from RHI:Types) crashes clang 23.1.1's mangler in consumer TUs
-// (same ICE family as the entt meta bug, 2026-09-16).
-
-/// @brief Element binding one mip of a render target into a shader array (WT2/D16).
-[[nodiscard]] inline auto MakeRenderTargetArrayElement(RHIRef<RHIRenderTarget> Target,
-                                                       Uint32                  Mip,
-                                                       Uint32                  ArrayIndex) -> RHIArrayBindingElement {
-    return RHIArrayBindingElement{
-        .Resource      = Target.TryGet(),
-        .Mip           = Mip,
-        .ArrayIndex    = ArrayIndex,
-        .IsRenderTarget = true,
-    };
-}
-
-/// @brief Element binding a sampled texture into a shader array (WT2).
-[[nodiscard]] inline auto MakeSampledTextureArrayElement(RHIRef<RHISampledTexture> Texture,
-                                                         Uint32                    ArrayIndex) -> RHIArrayBindingElement {
-    return RHIArrayBindingElement{
-        .Resource      = Texture.TryGet(),
-        .ArrayIndex    = ArrayIndex,
-        .IsRenderTarget = false,
-    };
-}
 
 /// @brief Request binding a shader-side resource array (fixed or unbounded).
 /// Elements may address arbitrary array indices; gaps stay unbound
@@ -122,8 +122,6 @@ struct RHIArrayBindingElement {
 struct RHIShaderArrayBindingRequest {
     StringView                              ParameterPath = {};
     std::span<const RHIArrayBindingElement> Elements      = {};
-    ShaderResourceType                      Type          = ShaderResourceType::Unknown;
-    bool                                    IsReadOnly    = true;
 };
 
 /// @brief Backend-owned descriptor resources for one reflected shader layout.
@@ -133,18 +131,20 @@ class RHIShaderBindingSet : public RHIObject {
     /// bound resource.
     struct Slot {
         ShaderBinding      Info           = {};
-        RHIObject*         Resource       = nullptr;
-        // The shader type alone cannot distinguish sampled textures from
-        // render targets after binding resources are type-erased.
-        bool               IsRenderTarget = false;
-        bool               IsReadOnly     = true;
-        /// Backend-filled effective descriptor count: ArrayCount for fixed
-        /// arrays, the chosen layout count for unbounded ones (WT2).
+        /// @brief The bound resource as a view.
+        ///
+        /// Sampler/TLAS views are degenerate identity wrappers. Replaces the old raw-pointer + flag
+        /// smuggling.
+        RHIBoundResource   Bound          = {};
+        /// @brief Backend-filled effective descriptor count.
+        ///
+        /// ArrayCount for fixed arrays, the chosen layout count for unbounded ones.
         Uint32             ArrayCapacity  = 1;
         /// True when the slot backs an unbounded (variable descriptor count) array.
         bool               IsVariableCountArray = false;
-        /// Bound array elements (WT2); empty for scalar slots. Indices may
-        /// have gaps — unbound elements are never written.
+        /// @brief Bound array elements; empty for scalar slots.
+        ///
+        /// Indices may have gaps — unbound elements are never written.
         std::vector<RHIArrayBindingElement> ArrayElements = {};
     };
 
@@ -159,21 +159,9 @@ class RHIShaderBindingSet : public RHIObject {
     }
 
     [[nodiscard]] auto HasUnboundBindings() const -> bool {
-        if (m_BindlessSpace && !m_BindlessTextures) {
-            // Only require bindless textures when a binding actually references
-            // the bindless space. Slang may allocate a bindless space index for
-            // a module that never uses it (e.g. StructuredBuffer in ParameterBlock).
-            const bool HasBindlessBinding = std::ranges::any_of(m_BindingsBySet, [&](const auto& Bindings) {
-                return std::ranges::any_of(Bindings, [&](const Slot& Binding) {
-                    return Binding.Info.Set == *m_BindlessSpace;
-                });
-            });
-            if (HasBindlessBinding)
-                return true;
-        }
         return std::ranges::any_of(m_BindingsBySet, [](const auto& Bindings) {
             return std::ranges::any_of(Bindings, [](const Slot& Binding) {
-                return Binding.Resource == nullptr && Binding.ArrayElements.empty();
+                return std::holds_alternative<std::monostate>(Binding.Bound) && Binding.ArrayElements.empty();
             });
         });
     }
@@ -199,14 +187,22 @@ class RHIShaderBindingSet : public RHIObject {
                     "Shader parameter '{}' is not present in the shader binding layout", Request.ParameterPath)));
             const auto Location = std::pair{(*It)->Info.Set, (*It)->Info.BindingIndex};
             BindingLocations.push_back(Location);
-            if (!Request.Resource)
+            if (!ResolveBindingObject(Request.Bound))
                 return std::unexpected(
                     ErrorMessage(Format("Shader parameter '{}' has no ready resource", Request.ParameterPath)));
-            if (Request.Type != (*It)->Info.Type)
+            const auto BoundType = ResolveBindingType(Request.Bound);
+            if (BoundType != (*It)->Info.Type)
                 return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {}, received {}",
                                                            Request.ParameterPath,
                                                            magic_enum::enum_name((*It)->Info.Type),
-                                                           magic_enum::enum_name(Request.Type))));
+                                                           magic_enum::enum_name(BoundType))));
+            const auto BoundAccess = ResolveBindingAccess(Request.Bound);
+            if (BoundAccess != ShaderBindingAccess::Unknown &&
+                (*It)->Info.Access != ShaderBindingAccess::Unknown && BoundAccess != (*It)->Info.Access)
+                return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {} access, received {}",
+                                                           Request.ParameterPath,
+                                                           magic_enum::enum_name((*It)->Info.Access),
+                                                           magic_enum::enum_name(BoundAccess))));
             if ((*It)->Info.ArrayCount != 1)
                 return std::unexpected(ErrorMessage(Format(
                     "Shader parameter '{}' is an array; use BindArrayResources instead", Request.ParameterPath)));
@@ -255,16 +251,15 @@ class RHIShaderBindingSet : public RHIObject {
                 SetBindings, [BindingIndex](const RHIShaderBindingSet::Slot& Candidate) {
                     return Candidate.Info.BindingIndex == BindingIndex;
                 });
-            Slot->Resource = Resources[Index].Resource;
-            Slot->IsRenderTarget = Resources[Index].IsRenderTarget;
-            Slot->IsReadOnly = Resources[Index].IsReadOnly;
+            Slot->Bound = Resources[Index].Bound;
         }
         return OnResourcesBound(SetIndex);
     }
 
-    /// Binds shader-side resource arrays (fixed or unbounded). One batch must
-    /// target a single descriptor set; scalar slots of the same set are bound
-    /// through BindResources (WT2).
+    /// @brief Binds shader-side resource arrays (fixed or unbounded).
+    ///
+    /// One batch must target a single descriptor set; scalar slots of the same set are bound through
+    /// BindResources.
     [[nodiscard]] auto BindArrayResources(std::span<const RHIShaderArrayBindingRequest> Requests)
         -> std::expected<void, ErrorMessage> {
         if (Requests.empty())
@@ -296,11 +291,19 @@ class RHIShaderBindingSet : public RHIObject {
             if (Target->Info.ArrayCount == 1)
                 return std::unexpected(ErrorMessage(Format(
                     "Shader parameter '{}' is not an array; use BindResources instead", Request.ParameterPath)));
-            if (Request.Type != Target->Info.Type)
+            const auto BoundType = ResolveBindingType(Request.Elements.front().View);
+            if (BoundType != Target->Info.Type)
                 return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {}, received {}",
                                                            Request.ParameterPath,
                                                            magic_enum::enum_name(Target->Info.Type),
-                                                           magic_enum::enum_name(Request.Type))));
+                                                           magic_enum::enum_name(BoundType))));
+            const auto BoundAccess = ResolveBindingAccess(Request.Elements.front().View);
+            if (BoundAccess != ShaderBindingAccess::Unknown &&
+                Target->Info.Access != ShaderBindingAccess::Unknown && BoundAccess != Target->Info.Access)
+                return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {} access, received {}",
+                                                           Request.ParameterPath,
+                                                           magic_enum::enum_name(Target->Info.Access),
+                                                           magic_enum::enum_name(BoundAccess))));
             if (!SetIndex)
                 SetIndex = Target->Info.Set;
             else if (*SetIndex != Target->Info.Set)
@@ -313,7 +316,7 @@ class RHIShaderBindingSet : public RHIObject {
             std::vector<Uint32> SeenIndices;
             SeenIndices.reserve(Request.Elements.size());
             for (const auto& Element : Request.Elements) {
-                if (!Element.Resource)
+                if (!Element.View.Texture.TryGet())
                     return std::unexpected(ErrorMessage(Format(
                         "Shader array parameter '{}' has an element with no ready resource", Request.ParameterPath)));
                 if (std::ranges::find(SeenIndices, Element.ArrayIndex) != SeenIndices.end())
@@ -332,20 +335,8 @@ class RHIShaderBindingSet : public RHIObject {
 
         for (auto& [Target, Request] : Resolved) {
             Target->ArrayElements.assign(Request->Elements.begin(), Request->Elements.end());
-            Target->IsReadOnly = Request->IsReadOnly;
         }
         return OnResourcesBound(*SetIndex);
-    }
-
-    /// Binds the sampled-image array used by the reflected bindless space.
-    [[nodiscard]] auto BindBindlessResource(RHIRefArray<RHISampledTexture> Resource)
-        -> std::expected<void, ErrorMessage> {
-        if (!m_BindlessSpace)
-            return std::unexpected(ErrorMessage("Shader binding set has no reflected bindless space"));
-        if (!Resource)
-            return std::unexpected(ErrorMessage("Bindless sampled-texture array is invalid"));
-        m_BindlessTextures = std::move(Resource);
-        return OnBindlessResourceBound();
     }
 
     template <typename T>
@@ -402,12 +393,9 @@ class RHIShaderBindingSet : public RHIObject {
     }
 
     [[nodiscard]] virtual auto OnResourcesBound(Uint32) -> std::expected<void, ErrorMessage> = 0;
-    /// Applies backend-specific updates after the bindless array is stored.
-    [[nodiscard]] virtual auto OnBindlessResourceBound() -> std::expected<void, ErrorMessage> = 0;
 
     std::vector<std::vector<Slot>>                m_BindingsBySet        = {};
     std::vector<PushConstantWrite>                m_PendingPushConstants = {};
-    std::optional<RHIRefArray<RHISampledTexture>> m_BindlessTextures     = std::nullopt;
     std::optional<Uint32>                         m_BindlessSpace        = std::nullopt;
     std::vector<ShaderPushConstantRange>          m_PushConstantRanges   = {};
     ShaderStage                                   m_Stages               = ShaderStage::Unknown;
@@ -473,9 +461,10 @@ class RHIGraphicsPipeline : public RHIPipeline {
 
 // ── Compute pipeline ────────────────────────────────────────────────────────
 
-/// @brief One host-provided specialization constant value (WT3, Q8).
-/// The reflection remains the type authority: a variant holding the wrong
-/// scalar type for the reflected constant is a hard error (Q3).
+/// @brief One host-provided specialization constant value.
+///
+/// The reflection remains the type authority: a variant holding the wrong scalar type for the reflected
+/// constant is a hard error.
 struct RHISpecializationConstant {
     String                                  Name  = {};
     std::variant<bool, Int32, Uint32, Float32> Value = false;
@@ -483,10 +472,10 @@ struct RHISpecializationConstant {
     bool operator==(const RHISpecializationConstant&) const = default;
 };
 
-/// @brief Validates provided spec values against the shader reflection (WT3 Q3/Q9):
-/// unknown names, duplicate names, and variant/reflection scalar-type
-/// mismatches are hard errors. Device-independent, so it lives here rather
-/// than in a backend.
+/// @brief Validates provided spec values against the shader reflection: unknown names, duplicate names,
+/// and variant/reflection scalar-type mismatches are hard errors.
+///
+/// Device-independent, so it lives here rather than in a backend.
 [[nodiscard]] inline auto ValidateSpecializationConstants(std::span<const RHISpecializationConstant> Values,
                                                           const ShaderReflection& Reflection)
     -> std::expected<void, ErrorMessage> {

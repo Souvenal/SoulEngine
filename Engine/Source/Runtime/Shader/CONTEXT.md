@@ -12,7 +12,9 @@ Shader data model — owns the types that describe compiled shader artifacts. Th
 
 **SpecializationConstant**: Reflected `Slang [SpecializationConstant]` global (name, constant id, scalar type, optional default). Host code looks values up by name; the constant id only exists in reflection and the Vulkan layer. Host-provided values are fixed at pipeline creation; omitted constants keep their shader-declared defaults. Float defaults have no Slang SDK getter and stay empty.
 
-**ResourceType**: Minimal resource categories (`ConstantBuffer`, `StorageBuffer`, `SampledTexture`, `StorageTexture`, `Sampler`).
+**ResourceType**: Minimal resource categories (`ConstantBuffer`, `StorageBuffer`, `Texture`, `Sampler`, `AccelerationStructure`). The kind axis splits only where backend descriptor types differ; the shader-declared access direction rides the separate BindingAccess axis.
+
+**BindingAccess**: Reflected shader-declared access direction of a binding (`Read`, `ReadWrite`; `Unknown` for samplers and acceleration structures, which carry no access). Sourced from the shader's own declaration (`Texture2D` vs `RWTexture2D`, `StructuredBuffer` vs `RWStructuredBuffer`) and independent of ResourceType.
 
 **ValueType**: Reflected scalar/vector/matrix shape (scalar type, rows, columns).
 

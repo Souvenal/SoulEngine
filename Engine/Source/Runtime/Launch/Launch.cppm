@@ -161,7 +161,7 @@ class EngineLoop {
         }
 
         // Cross-frame render-graph facilities (pipeline registry + transient
-        // render-target pool, ADR 05)
+        // render-target pool)
         RenderGraph::Get().Init();
 
         const auto InitialRenderer = CVarRenderDefaultRenderer.Get();
@@ -357,7 +357,7 @@ class EngineLoop {
             TaskGraph::Get().DrainTasks(ThreadQueue::Render);
 
             // Pool maintenance (LRU eviction) runs before this frame's
-            // Compile acquires (ADR 05).
+            // Compile acquires.
             RenderGraph::Get().Tick();
 
             if (!Slot.Renderer) {

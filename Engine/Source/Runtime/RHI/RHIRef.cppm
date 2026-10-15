@@ -73,7 +73,7 @@ inline auto DrainRHIDeferredDeletions() -> void {
 
 // ── RHI Ref State ─────────────────────────────────────────────────────────
 
-enum class RHIRefState : Uint8 { Unknown = 0, RhiCommitting, GpuPending, Ready, Failed };
+enum class RHIRefState : Uint8 { Unknown = 0, RhiCommitting, Ready, Failed };
 
 // ── RHI Ref Payload ───────────────────────────────────────
 
@@ -109,19 +109,12 @@ class RHIRefPayload final {
         m_State.store(RHIRefState::Failed, std::memory_order_release);
     }
 
-    [[nodiscard]] auto TryMarkReady() -> bool {
-        auto Expected = RHIRefState::GpuPending;
-        return m_State.compare_exchange_strong(
-            Expected, RHIRefState::Ready, std::memory_order_release, std::memory_order_acquire);
-    }
-
     [[nodiscard]] auto TryGet() const -> T* {
         return GetState() == RHIRefState::Ready ? m_Object.get() : nullptr;
     }
 
     [[nodiscard]] auto Publish(UPtr<T> Object, RHIRefState State) -> bool {
-        if (!Object || (State != RHIRefState::GpuPending && State != RHIRefState::Ready) || m_Object ||
-            GetState() != RHIRefState::RhiCommitting)
+        if (!Object || State != RHIRefState::Ready || m_Object || GetState() != RHIRefState::RhiCommitting)
             return false;
 
         m_Object = std::move(Object);
@@ -130,9 +123,8 @@ class RHIRefPayload final {
     }
 
     auto Publish(RHIRefPayload& Source, RHIRefState State) -> bool {
-        if (this == &Source || (State != RHIRefState::GpuPending && State != RHIRefState::Ready) ||
-            GetState() != RHIRefState::RhiCommitting || m_Object || Source.GetState() != RHIRefState::Ready ||
-            !Source.m_Object)
+        if (this == &Source || State != RHIRefState::Ready || GetState() != RHIRefState::RhiCommitting ||
+            m_Object || Source.GetState() != RHIRefState::Ready || !Source.m_Object)
             return false;
 
         m_Object = std::move(Source.m_Object);

@@ -6,10 +6,10 @@ export module Vulkan:RayTracingPipeline;
 
 import RHI;
 import Shader;
+import TaskGraph;
 import vulkan;
 import std;
 
-import :Buffer;
 import :Capability;
 import :Pipeline;
 import :ShaderBindingSet;
@@ -358,18 +358,30 @@ export auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
 }
 
 /// Vulkan realization of a ray-tracing pipeline and its immutable shader-binding table.
+///
+/// The SBT lives in self-owned device-local storage created with the pipeline (the base address
+/// is aligned to shaderGroupBaseAlignment at creation, so the strided regions bake synchronously);
+/// the packed bytes stage through the device-owned staging belt via a frame-affined task and land
+/// in the frame-start upload batch, so a same-frame trace pass is safe by submission order (the
+/// GpuOnly buffer contract).
 class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
   public:
     explicit VulkanRayTracingPipeline(String Name, const RHIRayTracingPipelineDesc& Desc)
         : RHIRayTracingPipeline(std::move(Name), Desc.BindingSet) {}
 
-    ~VulkanRayTracingPipeline() override = default;
+    /// The SBT buffer's native destruction rides the backend deferred deletion queue: a virtual
+    /// timeline event keeps it valid until the submission that referenced it has drained.
+    ~VulkanRayTracingPipeline() override {
+        if (m_SbtAllocation)
+            m_DeferredQueue->Enqueue(m_SbtBuffer, m_SbtAllocation);
+    }
 
     VulkanRayTracingPipeline(const VulkanRayTracingPipeline&)                    = delete;
     auto operator=(const VulkanRayTracingPipeline&) -> VulkanRayTracingPipeline& = delete;
 
     [[nodiscard]] static auto Create(const VulkanResourceContext&    Context,
-                                     StringView                      Name,
+                                     VulkanStagingBelt&                Staging,
+                                     StringView                       Name,
                                      const RHIRayTracingPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanRayTracingPipeline>, ErrorMessage> {
         if (!VulkanCapability::Get().IsRayTracingAvailable())
@@ -439,30 +451,55 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
         if (!SbtData)
             return std::unexpected(SbtData.error().Append("Failed to populate shader-binding-table records"));
 
-        auto SbtBuffer = VulkanHostBuffer::Create(
-            Context,
-            Format("{}#ShaderBindingTable", Name),
-            SbtLayout->TotalSize,
-            vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress);
-        if (!SbtBuffer)
-            return std::unexpected(SbtBuffer.error().Append("Failed to allocate shader-binding-table buffer"));
-        if (auto R = SbtBuffer->Upload(SbtData->data(), SbtData->size()); !R)
-            return std::unexpected(R.error().Append("Failed to upload shader-binding-table records"));
-
+        // Device-local SBT storage with the base address aligned at
+        // creation, so the strided regions bake below without a post-hoc
+        // alignment check. The packed bytes ride a frame-affined task to the
+        // frame-start upload batch (GpuOnly buffer contract): a same-frame
+        // trace pass is safe by submission order. The SBT read access is
+        // outside the RHIBufferUsage vocabulary, so the explicit-access belt
+        // entry supplies eShaderRead directly.
+        const vk::BufferCreateInfo SbtCI{
+            .size  = SbtLayout->TotalSize,
+            .usage = vk::BufferUsageFlagBits::eShaderBindingTableKHR |
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eTransferDst,
+            .sharingMode = vk::SharingMode::eExclusive,
+        };
+        const VmaAllocationCreateInfo SbtAllocInfo{
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        };
+        vk::Buffer    SbtBuffer;
+        VmaAllocation SbtAllocation = nullptr;
+        if (vmaCreateBufferWithAlignment(Context.GetAllocator(),
+                                         reinterpret_cast<const VkBufferCreateInfo*>(&SbtCI),
+                                         &SbtAllocInfo,
+                                         Properties.shaderGroupBaseAlignment,
+                                         reinterpret_cast<VkBuffer*>(&SbtBuffer),
+                                         &SbtAllocation,
+                                         nullptr) != VK_SUCCESS)
+            return std::unexpected(ErrorMessage("Failed to allocate shader-binding-table buffer via VMA"));
+        Context.GetDebugUtils().SetObjectName(SbtBuffer, Format("{}#ShaderBindingTable", Name));
         const vk::DeviceAddress SbtAddress =
-            SbtBuffer->GetDeviceAddress();
-        if (SbtAddress == 0 || SbtAddress % Properties.shaderGroupBaseAlignment != 0) {
-            return std::unexpected(ErrorMessage(Format(
-                "Shader-binding-table buffer address {} is not aligned to required base alignment {}",
-                SbtAddress,
-                Properties.shaderGroupBaseAlignment)));
+            Context.GetDevice().getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = SbtBuffer});
+
+        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
+            ThreadQueue::RHI,
+            [&Staging, Name = String(Name), SbtBuffer, Data = std::move(*SbtData)]() mutable {
+                Staging.EnqueueBufferUpload(
+                    Name, SbtBuffer, vk::AccessFlagBits2::eShaderRead, std::as_bytes(std::span{Data}));
+            });
+        if (!EnqueueResult) {
+            // Never GPU-visible: destroy in place instead of retiring.
+            vmaDestroyBuffer(Context.GetAllocator(), static_cast<VkBuffer>(SbtBuffer), SbtAllocation);
+            return std::unexpected(EnqueueResult.error().Append("Failed to enqueue shader-binding-table upload"));
         }
 
         auto Result = std::make_unique<VulkanRayTracingPipeline>(String(Name), Desc);
         Result->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
         Result->m_Bindings = BuildReflectedBindings(Desc.Program.Reflection);
         Result->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
-        Result->m_ShaderBindingTable = std::make_shared<VulkanHostBuffer>(std::move(*SbtBuffer));
+        Result->m_DeferredQueue = &Context.GetDeferredDeletionQueue();
+        Result->m_SbtBuffer     = SbtBuffer;
+        Result->m_SbtAllocation = SbtAllocation;
         Result->m_RayGenerationRegion = MakeRegion(SbtAddress, SbtLayout->RayGeneration);
         Result->m_MissRegion = MakeRegion(SbtAddress, SbtLayout->Miss);
         Result->m_HitRegion = MakeRegion(SbtAddress, SbtLayout->Hit);
@@ -493,7 +530,9 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
   private:
     SPtr<vk::raii::Pipeline>                         m_VkPipeline = nullptr;
     std::vector<VulkanReflectedDescriptorBinding>          m_Bindings = {};
-    SPtr<VulkanHostBuffer>                                 m_ShaderBindingTable = nullptr;
+    VulkanDeferredDeletionQueue* m_DeferredQueue = nullptr;  ///< borrowed; owned by the resource context
+    vk::Buffer                   m_SbtBuffer     = nullptr;  ///< device-local shader binding table storage
+    VmaAllocation                m_SbtAllocation = nullptr;
     vk::StridedDeviceAddressRegionKHR                m_RayGenerationRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_MissRegion = {};
     vk::StridedDeviceAddressRegionKHR                m_HitRegion = {};

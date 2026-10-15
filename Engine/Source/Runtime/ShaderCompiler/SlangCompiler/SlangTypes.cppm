@@ -20,21 +20,21 @@ namespace SoulEngine {
 // File-local helpers for normalizing Slang reflection details before public mappings.
 namespace {
 
-[[nodiscard]] auto ToShaderTextureResourceType(SlangResourceAccess Access)
-    -> std::expected<ShaderResourceType, ErrorMessage> {
+[[nodiscard]] auto ToShaderBindingAccess(SlangResourceAccess Access)
+    -> std::expected<ShaderBindingAccess, ErrorMessage> {
     switch (Access) {
     case SLANG_RESOURCE_ACCESS_NONE:
     case SLANG_RESOURCE_ACCESS_READ:
-        return ShaderResourceType::SampledTexture;
+        return ShaderBindingAccess::Read;
     case SLANG_RESOURCE_ACCESS_READ_WRITE:
     case SLANG_RESOURCE_ACCESS_WRITE:
     case SLANG_RESOURCE_ACCESS_RASTER_ORDERED:
     case SLANG_RESOURCE_ACCESS_APPEND:
     case SLANG_RESOURCE_ACCESS_CONSUME:
     case SLANG_RESOURCE_ACCESS_FEEDBACK:
-        return ShaderResourceType::StorageTexture;
+        return ShaderBindingAccess::ReadWrite;
     default:
-        return std::unexpected(ErrorMessage("Unsupported texture access mode in reflection"));
+        return std::unexpected(ErrorMessage("Unsupported resource access mode in reflection"));
     }
 }
 
@@ -46,30 +46,41 @@ namespace {
     return TypeLayout;
 }
 
-/// Map the type layout of a leaf variable (array layers stripped) to the
-/// engine's ResourceType.  Used by the reflection DFS, which reaches leaves
-/// through the variable tree rather than through binding ranges.
-[[nodiscard]] auto ToShaderResourceTypeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
-    -> std::expected<ShaderResourceType, ErrorMessage> {
+/// @brief One reflected binding's classification: resource kind and shader-declared access as separate axes.
+struct ShaderBindingShape {
+    ShaderResourceType  Type   = ShaderResourceType::Unknown;
+    ShaderBindingAccess Access = ShaderBindingAccess::Unknown;
+};
+
+/// @brief Map a leaf variable's type layout (array layers stripped) to the engine's binding classification.
+///
+/// Used by the reflection DFS, which reaches leaves through the variable tree rather than through binding
+/// ranges. Textures and storage buffers take their access from the Slang resource access mode; constant
+/// buffers are read-only by construction and samplers/acceleration structures carry no access.
+[[nodiscard]] auto ToShaderBindingShapeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
+    -> std::expected<ShaderBindingShape, ErrorMessage> {
     TypeLayout = StripArrayTypeLayout(TypeLayout);
     if (!TypeLayout)
         return std::unexpected(ErrorMessage("Binding reflection is missing a type layout"));
 
     switch (TypeLayout->getKind()) {
     case slang::TypeReflection::Kind::ConstantBuffer:
-        return ShaderResourceType::ConstantBuffer;
+        return ShaderBindingShape{.Type = ShaderResourceType::ConstantBuffer, .Access = ShaderBindingAccess::Read};
     case slang::TypeReflection::Kind::SamplerState:
-        return ShaderResourceType::Sampler;
+        return ShaderBindingShape{.Type = ShaderResourceType::Sampler};
     case slang::TypeReflection::Kind::Resource: {
         const auto BaseResourceShape = static_cast<SlangResourceShapeIntegral>(TypeLayout->getResourceShape()) &
             static_cast<SlangResourceShapeIntegral>(SLANG_RESOURCE_BASE_SHAPE_MASK);
         if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_ACCELERATION_STRUCTURE))
-            return ShaderResourceType::AccelerationStructure;
+            return ShaderBindingShape{.Type = ShaderResourceType::AccelerationStructure};
+        auto Access = ToShaderBindingAccess(TypeLayout->getResourceAccess());
+        if (!Access)
+            return std::unexpected(std::move(Access.error()));
         if (BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_STRUCTURED_BUFFER) ||
             BaseResourceShape == static_cast<SlangResourceShapeIntegral>(SLANG_BYTE_ADDRESS_BUFFER)) {
-            return ShaderResourceType::StorageBuffer;
+            return ShaderBindingShape{.Type = ShaderResourceType::StorageBuffer, .Access = *Access};
         }
-        return ToShaderTextureResourceType(TypeLayout->getResourceAccess());
+        return ShaderBindingShape{.Type = ShaderResourceType::Texture, .Access = *Access};
     }
     default:
         return std::unexpected(ErrorMessage(Format("Unsupported leaf type kind {} in reflection",

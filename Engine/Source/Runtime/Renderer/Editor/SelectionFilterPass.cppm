@@ -29,46 +29,48 @@ class SelectionFilterPass final : public IRHIComputePass {
     }
 
     struct Parameter {
-        RGStorageBufferSRV ViewInstances     = {};
-        RGStorageBufferSRV ViewIndirect      = {};
-        RGStorageBufferUAV SelectedInstances = {};
-        RGStorageBufferUAV SelectedIndirect  = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  ViewInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  ViewIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> SelectedInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> SelectedIndirect;
+        /// @brief Per-command selected counts.
+        ///
         /// Created with zero-initialized InitialData (historical crash fix):
-        /// the filter accumulates per-command counts via InterlockedAdd.
-        RGStorageBufferUAV SelectedCounters  = {};
+        /// the filter accumulates per-command counts via InterlockedAdd — an
+        /// RMW, hence the declared Read|Write.
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read | RHIAccess::Write> SelectedCounters;
         Uint32 CommandCount     = 0;
         Uint32 SelectedEntityId = 0;
     };
 
-    SelectionFilterPass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
+    SelectionFilterPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
 
-        if (!m_Parameter.ViewInstances.Ref || !m_Parameter.ViewIndirect.Ref ||
-            !m_Parameter.SelectedInstances.Ref || !m_Parameter.SelectedIndirect.Ref ||
-            !m_Parameter.SelectedCounters.Ref || m_Parameter.CommandCount == 0)
+        if (!m_Parameter->ViewInstances.Resolved || !m_Parameter->ViewIndirect.Resolved ||
+            !m_Parameter->SelectedInstances.Resolved || !m_Parameter->SelectedIndirect.Resolved ||
+            !m_Parameter->SelectedCounters.Resolved || m_Parameter->CommandCount == 0)
             return std::unexpected(ErrorMessage("Selection filter pass resources are not ready"));
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_selectionFilter.sceneInstances", m_Parameter.ViewInstances.Ref, true},
-                RHIShaderBindingRequest{"g_selectionFilter.sceneIndirectCommands", m_Parameter.ViewIndirect.Ref, true},
-                RHIShaderBindingRequest{"g_selectionFilter.selectedInstances", m_Parameter.SelectedInstances.Ref, false},
-                RHIShaderBindingRequest{"g_selectionFilter.selectedIndirectCommands", m_Parameter.SelectedIndirect.Ref, false},
-                RHIShaderBindingRequest{"g_selectionFilter.commandCounters", m_Parameter.SelectedCounters.Ref, false},
+                RHIShaderBindingRequest{"g_selectionFilter.sceneInstances", m_Parameter->ViewInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.sceneIndirectCommands", m_Parameter->ViewIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.selectedInstances", m_Parameter->SelectedInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.selectedIndirectCommands", m_Parameter->SelectedIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.commandCounters", m_Parameter->SelectedCounters.ResolvedView()},
             }); !R)
             return std::unexpected(R.error());
 
-        if (auto R = PushConstants(0, m_Parameter.SelectedEntityId); !R)
+        if (auto R = PushConstants(0, m_Parameter->SelectedEntityId); !R)
             return std::unexpected(R.error());
 
-        Dispatch(m_Parameter.CommandCount);
+        Dispatch(m_Parameter->CommandCount);
         return {};
     }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

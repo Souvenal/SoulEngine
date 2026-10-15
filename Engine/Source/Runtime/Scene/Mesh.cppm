@@ -22,15 +22,19 @@ export namespace SoulEngine {
 /// owns the record through the scene-local mesh resource cache.
 ///
 /// GPU residency is lazy: the loader fills CPU data only. The renderer-owned
-/// `GeometryUploader` queues buffer creation on first use and sets
-/// `BufferUploadRequested`; the ray-tracing path additionally queues a static
-/// BLAS descriptor once the buffers are Ready and sets `BlasRequested` — the
-/// same step enters the BLAS into a frame's pending-build batch (carried by
-/// RenderResult, built by the device at the start of that frame's execution).
-/// Both flags mean "the request has been issued", never "completed" — actual
-/// usability is the corresponding RHIRef reaching Ready, queried via
-/// `IsReadyOnGpu`. A record may enter an RT frame with a not-yet-built BLAS,
-/// safe because the frame-start AS phase runs the build before every pass.
+/// `GeometryUploader` creates buffers on first use and sets
+/// `BufferUploadRequested` — buffer creation is a synchronous pure allocation
+/// on the calling thread (Ready at return, device address bakable), the bytes
+/// go to UploadBuffer as a frame-affined task whose copies land in the
+/// frame-start upload batch of the same frame, and the CPU streams are
+/// released. The ray-tracing path additionally queues a static BLAS descriptor
+/// once the buffers are Ready and sets `BlasRequested`; the BLAS joins a
+/// frame's pending-build batch (carried by RenderResult, built at frame start
+/// after the upload batch). Both flags mean "the request has been issued",
+/// never "completed" — actual usability is the corresponding RHIRef reaching
+/// Ready, queried via `IsReadyOnGpu`. A record may enter an RT frame with a
+/// not-yet-built BLAS, safe because the frame-start AS phase runs the build
+/// before every pass.
 ///
 /// Mutation rule: `GeometryUploader` is the sole writer of GPU state (buffers,
 /// BLAS, flags). The record itself carries only const queries
@@ -43,12 +47,20 @@ export namespace SoulEngine {
 struct GeometryRecord {
     String Name = {};
 
-    RHIRef<RHIVertexBuffer>                    PositionBuffer = nullptr;
-    RHIRef<RHIVertexBuffer>                    NormalBuffer   = nullptr;
-    RHIRef<RHIVertexBuffer>                    TangentBuffer  = nullptr;
-    RHIRef<RHIVertexBuffer>                    TexCoordBuffer = nullptr;
-    RHIRef<RHIIndexBuffer>                     IndexBuffer    = nullptr;
-    /// @brief Geometry-owned static BLAS descriptor; queued on demand by the RT path, hollow until built, built once, never updated.
+    RHIRef<RHIBuffer>                          PositionBuffer = nullptr;
+    RHIRef<RHIBuffer>                          NormalBuffer   = nullptr;
+    RHIRef<RHIBuffer>                          TangentBuffer  = nullptr;
+    RHIRef<RHIBuffer>                          TexCoordBuffer = nullptr;
+    RHIRef<RHIBuffer>                          IndexBuffer    = nullptr;
+    /// Geometry metadata is mesh data, not buffer data: filled by
+    /// GeometryUploader from the CPU streams, consumed by the BLAS desc and
+    /// the indirect-command derivation. IndexCount already lives below with
+    /// the CPU streams.
+    Uint64 VertexCount    = 0;
+    Uint32 PositionStride = 0;
+    /// @brief Geometry-owned static BLAS; created and built on demand by the RT path.
+    ///
+    /// Built exactly once and never updated.
     RHIRef<RHIBottomLevelAccelerationStructure> Blas          = nullptr;
 
     /// @brief Set by GeometryUploader once buffer creation has been queued to the RHI thread.
@@ -65,10 +77,11 @@ struct GeometryRecord {
     }
 
     /// @brief Whether the requested resources are usable on the GPU: every
-    /// required buffer ref Ready; with NeedBLAS, the BLAS allocation ref Ready
-    /// as well. Absent tangent or texcoord streams do not block readiness. Does
-    /// NOT track the deferred BLAS build (storage materializes at the
-    /// frame-start AS phase).
+    /// required buffer ref Ready (= allocated, device address bakable; the
+    /// bytes land in the carrying frame's frame-start upload batch); with
+    /// NeedBLAS, the BLAS allocation ref Ready as well. Absent tangent or
+    /// texcoord streams do not block readiness. Does NOT track the deferred
+    /// BLAS build (storage materializes at the frame-start AS phase).
     [[nodiscard]] auto IsReadyOnGpu(bool NeedBLAS) const -> bool {
         if (!BufferUploadRequested)
             return false;
@@ -118,6 +131,8 @@ struct GeometryRecord {
     bool                    HasTangents         = false;
     hlslpp::interop::float4 LocalBoundingSphere = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 
+    // CPU streams, released by GeometryUploader once the buffer stage
+    // succeeds (the byte snapshots move into the buffer payloads).
     std::vector<hlslpp::interop::float3> Positions;
     std::vector<hlslpp::interop::float3> Normals;
     std::vector<hlslpp::interop::float4> Tangents;
@@ -447,19 +462,19 @@ class MeshSystem : public ISystem {
     }
 
     auto OnUpdate(Float32) -> void override {
-        m_TextureArray.BeginAppend();
         const auto AppendMaterialTextures = [this](const MaterialHandle& Material) -> void {
             if (!Material)
                 return;
             for (const auto& TextureSlot : Material->Textures) {
-                // Do not require a Ready payload here: mesh-load frames queue
-                // texture creation on the RHI thread, so refs are still
-                // RhiCommitting/GpuPending and must be appended regardless.
+                // Texture creation is synchronous and publishes Ready at
+                // return, so the guard below only filters empty refs; texel
+                // bytes land via UploadTexture's frame-start batch by
+                // submission order.
                 if (!TextureSlot.Texture ||
                     TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
                     continue;
-                if (auto R = m_TextureArray.Append(TextureSlot.Texture->Texture); !R)
-                    LogWarning("MeshSystem: failed to append texture from material: {}", R.error().ToString());
+                if (std::ranges::find(m_Textures, TextureSlot.Texture->Texture) == m_Textures.end())
+                    m_Textures.push_back(TextureSlot.Texture->Texture);
             }
         };
         const auto AppendMeshTextures = [&AppendMaterialTextures](const MeshRecord& Mesh) -> void {
@@ -500,7 +515,6 @@ class MeshSystem : public ISystem {
             }
             AppendMaterialTextures(Mesh.MaterialOverride);
         }
-        m_TextureArray.EndAppend();
     }
 
     [[nodiscard]] auto CollectInstances() const -> std::vector<InstanceRecord> {
@@ -563,12 +577,12 @@ class MeshSystem : public ISystem {
         return Result;
     }
 
-    [[nodiscard]] auto GetTextureArray() const -> const RHIRefArray<RHISampledTexture>& {
-        return m_TextureArray;
+    [[nodiscard]] auto GetTextures() const -> const std::vector<RHIRef<RHITexture>>& {
+        return m_Textures;
     }
 
   private:
-    RHIRefArray<RHISampledTexture> m_TextureArray;
+    std::vector<RHIRef<RHITexture>> m_Textures = {};
     Path                           m_AssetRoot         = {};
     MeshCache                      m_MeshCache;
     MaterialYamlCache              m_MaterialYamlCache;

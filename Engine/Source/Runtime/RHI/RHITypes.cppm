@@ -6,7 +6,6 @@ export module RHI:Types;
 
 import Core;
 import :Ref;
-import Shader;
 import magic_enum;
 
 import std;
@@ -28,17 +27,6 @@ class RHIObject {
         return m_Id;
     }
 
-    [[nodiscard]] virtual auto GetShaderBindingType() const -> ShaderResourceType {
-        return ShaderResourceType::Unknown;
-    }
-
-    /// Whether this object is a per-frame transient arena slice. Transient
-    /// buffers bind through dynamic descriptors; persistent buffers never
-    /// occupy descriptor bindings (they use vertex input or device addresses).
-    [[nodiscard]] virtual auto IsTransient() const -> bool {
-        return false;
-    }
-
   protected:
     explicit RHIObject(String Name) : m_Name(std::move(Name)), m_Id(s_NextId.fetch_add(1, std::memory_order_relaxed)) {}
     RHIObject(RHIObject&&)                    = default;
@@ -51,21 +39,6 @@ class RHIObject {
     Uint64 m_Id   = 0;
 };
 
-class RHIRenderTarget;
-
-// ── Buffer descriptor types ────────────────────────────────────────────────
-
-struct RHIVertexBufferDesc {
-    std::span<const std::byte> Data        = {};
-    Uint64                     VertexCount = 0;
-    Uint32                     Stride      = 0;
-};
-
-struct RHIIndexBufferDesc {
-    std::span<const std::byte> Data       = {};
-    Uint64                     IndexCount = 0;
-};
-
 enum class RHISamplerProfile : Uint8 {
     Unknown = 0,
     LinearRepeat,
@@ -74,170 +47,6 @@ enum class RHISamplerProfile : Uint8 {
 
 struct RHISamplerDesc {
     RHISamplerProfile Profile = RHISamplerProfile::LinearRepeat;
-};
-
-// ── Typed GPU buffer polymorphic bases ──────────────────────────────────
-
-/// Polymorphic base for vertex buffer resources and their immutable metadata.
-/// Backend concrete classes (e.g. VulkanVertexBuffer) own GPU allocations.
-/// Higher-level owners keep RHIRef instances; command lists only observe them.
-class RHIVertexBuffer : public RHIObject {
-  public:
-    RHIVertexBuffer(const RHIVertexBuffer&)                    = delete;
-    auto operator=(const RHIVertexBuffer&) -> RHIVertexBuffer& = delete;
-    RHIVertexBuffer(RHIVertexBuffer&&)                         = delete;
-    auto operator=(RHIVertexBuffer&&) -> RHIVertexBuffer&      = delete;
-    virtual ~RHIVertexBuffer()                                 = default;
-
-    [[nodiscard]] auto GetVertexCount() const noexcept -> Uint64 {
-        return m_VertexCount;
-    }
-    [[nodiscard]] auto GetStride() const noexcept -> Uint32 {
-        return m_Stride;
-    }
-    [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
-        return 0;
-    }
-
-    /// Vertex buffers have no dedicated shader descriptor type; they reach
-    /// shaders through vertex pulling as structured/storage buffers. The
-    /// backend allocation carries the storage-buffer usage bit, so reporting
-    /// StorageBuffer here is the valid descriptor-level capability.
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::StorageBuffer;
-    }
-
-  protected:
-    explicit RHIVertexBuffer(String Name, const RHIVertexBufferDesc& Desc)
-        : RHIObject(std::move(Name)), m_VertexCount(Desc.VertexCount), m_Stride(Desc.Stride) {}
-
-  private:
-    Uint64 m_VertexCount = 0;
-    Uint32 m_Stride      = 0;
-};
-
-/// Polymorphic base for index buffer resources and their immutable metadata.
-/// Same role as RHIVertexBuffer, for Uint32 index data.
-class RHIIndexBuffer : public RHIObject {
-  public:
-    RHIIndexBuffer(const RHIIndexBuffer&)                    = delete;
-    auto operator=(const RHIIndexBuffer&) -> RHIIndexBuffer& = delete;
-    RHIIndexBuffer(RHIIndexBuffer&&)                         = delete;
-    auto operator=(RHIIndexBuffer&&) -> RHIIndexBuffer&      = delete;
-    virtual ~RHIIndexBuffer()                                = default;
-
-    [[nodiscard]] auto GetIndexCount() const noexcept -> Uint64 {
-        return m_IndexCount;
-    }
-    [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
-        return 0;
-    }
-
-    /// Same rationale as RHIVertexBuffer: no index-buffer descriptor type
-    /// exists; shader access goes through storage-buffer vertex pulling, and
-    /// the backend allocation carries the storage-buffer usage bit.
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::StorageBuffer;
-    }
-
-  protected:
-    explicit RHIIndexBuffer(String Name, const RHIIndexBufferDesc& Desc)
-        : RHIObject(std::move(Name)), m_IndexCount(Desc.IndexCount) {}
-
-  private:
-    Uint64 m_IndexCount = 0;
-};
-
-/// @brief GPU access modes required by a transient buffer.
-enum class RHITransientBufferUsage : Uint8 {
-    Unknown             = 0,
-    UniformRead         = 1 << 0,
-    ShaderRead          = 1 << 1,
-    IndirectCommandRead = 1 << 2,
-};
-
-} // namespace SoulEngine
-
-export namespace magic_enum::customize {
-template <>
-struct enum_range<SoulEngine::RHITransientBufferUsage> {
-    static constexpr bool is_flags = true;
-};
-} // namespace magic_enum::customize
-
-export namespace SoulEngine {
-
-struct RHITransientConstantBufferDesc {
-    Uint64                                      SizeBytes   = 0;
-    std::optional<std::span<const std::byte>>   InitialData = std::nullopt;
-};
-
-struct RHITransientShaderStorageBufferDesc {
-    Uint64                                      SizeBytes   = 0;
-    RHITransientBufferUsage                      Usage       = RHITransientBufferUsage::ShaderRead;
-    std::optional<std::span<const std::byte>>   InitialData = std::nullopt;
-};
-
-/// @brief Logical per-frame uniform buffer resolved by the active RHI backend.
-class RHITransientConstantBuffer : public RHIObject {
-  public:
-    RHITransientConstantBuffer(const RHITransientConstantBuffer&)                    = delete;
-    auto operator=(const RHITransientConstantBuffer&) -> RHITransientConstantBuffer& = delete;
-    RHITransientConstantBuffer(RHITransientConstantBuffer&&)                         = delete;
-    auto operator=(RHITransientConstantBuffer&&) -> RHITransientConstantBuffer&      = delete;
-    virtual ~RHITransientConstantBuffer()                                            = default;
-
-    [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
-        return m_Size;
-    }
-
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::ConstantBuffer;
-    }
-
-    [[nodiscard]] auto IsTransient() const -> bool override {
-        return true;
-    }
-
-  protected:
-    RHITransientConstantBuffer(String Name, Uint64 Size) : RHIObject(std::move(Name)), m_Size(Size) {}
-
-  private:
-    Uint64 m_Size = 0;
-};
-
-/// @brief Logical per-frame storage buffer resolved by the active RHI backend.
-class RHITransientShaderStorageBuffer : public RHIObject {
-  public:
-    RHITransientShaderStorageBuffer(const RHITransientShaderStorageBuffer&)                    = delete;
-    auto operator=(const RHITransientShaderStorageBuffer&) -> RHITransientShaderStorageBuffer& = delete;
-    RHITransientShaderStorageBuffer(RHITransientShaderStorageBuffer&&)                         = delete;
-    auto operator=(RHITransientShaderStorageBuffer&&) -> RHITransientShaderStorageBuffer&      = delete;
-    virtual ~RHITransientShaderStorageBuffer()                                                 = default;
-
-    [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
-        return m_Size;
-    }
-
-    [[nodiscard]] auto GetUsage() const noexcept -> RHITransientBufferUsage {
-        return m_Usage;
-    }
-
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::StorageBuffer;
-    }
-
-    [[nodiscard]] auto IsTransient() const -> bool override {
-        return true;
-    }
-
-  protected:
-    RHITransientShaderStorageBuffer(String Name, Uint64 Size, RHITransientBufferUsage Usage)
-        : RHIObject(std::move(Name)), m_Size(Size), m_Usage(Usage) {}
-
-  private:
-    Uint64                  m_Size  = 0;
-    RHITransientBufferUsage m_Usage = RHITransientBufferUsage::Unknown;
 };
 
 /// Shader-visible sampling state object.
@@ -256,137 +65,11 @@ class RHISampler : public RHIObject {
         return m_Desc;
     }
 
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::Sampler;
-    }
-
   protected:
     explicit RHISampler(String Name, const RHISamplerDesc& Desc) : RHIObject(std::move(Name)), m_Desc(Desc) {}
 
   private:
     RHISamplerDesc m_Desc = {};
-};
-
-/// @brief Descriptor for a persistent GPU-to-CPU readback buffer.
-struct RHIReadbackBufferDesc {
-    Uint32 Size = 0; ///< Bytes per readback payload; the payload must be single-copy atomic.
-};
-
-/// @brief Persistent GPU-to-CPU readback payload.
-///
-/// Backends may use a private multi-frame ring to avoid CPU/GPU read races.
-/// The payload must stay single-copy atomic (e.g. one aligned Uint32); larger
-/// payloads require a seqlock-style upgrade first.
-class RHIReadbackBuffer : public RHIObject {
-  public:
-    RHIReadbackBuffer(const RHIReadbackBuffer&)                    = delete;
-    auto operator=(const RHIReadbackBuffer&) -> RHIReadbackBuffer& = delete;
-    RHIReadbackBuffer(RHIReadbackBuffer&&)                         = delete;
-    auto operator=(RHIReadbackBuffer&&) -> RHIReadbackBuffer&      = delete;
-    virtual ~RHIReadbackBuffer()                                   = default;
-
-    [[nodiscard]] auto GetSize() const noexcept -> Uint32 {
-        return m_Size;
-    }
-
-    /// @brief Try to copy out the newest GPU-completed payload.
-    /// @return The payload, or std::nullopt when no completed write exists.
-    template <typename T>
-        requires std::is_trivially_copyable_v<T>
-    [[nodiscard]] auto TryRead() const -> std::optional<T> {
-        if (sizeof(T) > m_Size)
-            return std::nullopt;
-
-        T Out{};
-        return TryReadBytes(std::as_writable_bytes(std::span<T>{&Out, 1})) ? std::optional<T>{Out} : std::nullopt;
-    }
-
-  protected:
-    explicit RHIReadbackBuffer(String Name, const RHIReadbackBufferDesc& Desc)
-        : RHIObject(std::move(Name)), m_Size(Desc.Size) {}
-
-    [[nodiscard]] virtual auto TryReadBytes(std::span<std::byte> Out) const -> bool = 0;
-
-  private:
-    Uint32 m_Size = 0;
-};
-
-// ── Ray-tracing acceleration structures ─────────────────────────────────────
-
-/// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
-struct RHIBottomLevelAccelerationStructureDesc {
-    RHIRef<RHIVertexBuffer> VertexBufferRef = nullptr;
-    RHIRef<RHIIndexBuffer>  IndexBufferRef  = nullptr;
-};
-
-/// GPU payload containing reusable object-space triangle geometry.
-class RHIBottomLevelAccelerationStructure : public RHIObject {
-  public:
-    RHIBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructure&)                    = delete;
-    auto operator=(const RHIBottomLevelAccelerationStructure&) -> RHIBottomLevelAccelerationStructure& = delete;
-    RHIBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructure&&)                         = delete;
-    auto operator=(RHIBottomLevelAccelerationStructure&&) -> RHIBottomLevelAccelerationStructure&      = delete;
-    virtual ~RHIBottomLevelAccelerationStructure()                                                     = default;
-
-  protected:
-    explicit RHIBottomLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
-};
-
-/// One TLAS instance: a BLAS plus its world transform for this frame.
-struct RHITopLevelAccelerationStructureInstance {
-    RHIRef<RHIBottomLevelAccelerationStructure> Blas      = nullptr;
-    hlslpp::float4x4                            Transform = hlslpp::float4x4::identity();
-};
-
-/// Descriptor for a per-frame hollow TLAS.
-///
-/// Instances slot order is the canonical TLAS instance order: the device
-/// packs them 1:1, so Slang InstanceIndex() indexes the renderer's sorted
-/// instance table by the same slot.
-struct RHITopLevelAccelerationStructureDesc {
-    std::vector<RHITopLevelAccelerationStructureInstance> Instances = {};
-};
-
-/// Hollow TLAS handle: instance metadata is recorded at creation; the device
-/// materializes storage and builds it at frame start.
-class RHITopLevelAccelerationStructure : public RHIObject {
-  public:
-    RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
-    auto operator=(const RHITopLevelAccelerationStructure&) -> RHITopLevelAccelerationStructure& = delete;
-    RHITopLevelAccelerationStructure(RHITopLevelAccelerationStructure&&)                         = delete;
-    auto operator=(RHITopLevelAccelerationStructure&&) -> RHITopLevelAccelerationStructure&      = delete;
-    virtual ~RHITopLevelAccelerationStructure()                                                  = default;
-
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::AccelerationStructure;
-    }
-
-  protected:
-    explicit RHITopLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
-};
-
-// ── Opaque handle types ───────────────────────────────────────────────────
-
-/// Polymorphic base for shader-readable sampled texture resources.
-/// Backend concrete class (e.g. VulkanSampledTexture) owns the GPU allocation.
-/// Higher-level owners keep RHIRef instances of RHISampledTexture.
-class RHISampledTexture : public RHIObject {
-  public:
-    RHISampledTexture(const RHISampledTexture&)                    = delete;
-    auto operator=(const RHISampledTexture&) -> RHISampledTexture& = delete;
-    RHISampledTexture(RHISampledTexture&&)                         = delete;
-    auto operator=(RHISampledTexture&&) -> RHISampledTexture&      = delete;
-    virtual ~RHISampledTexture()                                   = default;
-
-    [[nodiscard]] virtual auto GetWidth() const -> Uint32  = 0;
-    [[nodiscard]] virtual auto GetHeight() const -> Uint32 = 0;
-
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        return ShaderResourceType::SampledTexture;
-    }
-
-  protected:
-    explicit RHISampledTexture(String Name) : RHIObject(std::move(Name)) {}
 };
 
 // ── Texture ──────────────────────────────────────────────────────────────────
@@ -439,16 +122,16 @@ struct RHIRasterizerState {
 };
 
 enum class RHIBlendFactor : Uint8 {
-    Zero                  = 0,
-    One                   = 1,
-    SrcColor              = 2,
-    OneMinusSrcColor      = 3,
-    DstColor              = 4,
-    OneMinusDstColor      = 5,
-    SrcAlpha              = 6,
-    OneMinusSrcAlpha      = 7,
-    DstAlpha              = 8,
-    OneMinusDstAlpha      = 9,
+    Zero             = 0,
+    One              = 1,
+    SrcColor         = 2,
+    OneMinusSrcColor = 3,
+    DstColor         = 4,
+    OneMinusDstColor = 5,
+    SrcAlpha         = 6,
+    OneMinusSrcAlpha = 7,
+    DstAlpha         = 8,
+    OneMinusDstAlpha = 9,
 };
 
 enum class RHIBlendOp : Uint8 {
@@ -479,70 +162,316 @@ struct RHIDepthStencilState {
 };
 
 enum class RHITextureUsage : Uint32 {
-    None           = 0,
-    RenderTarget   = 1u << 0,
-    DepthStencil   = 1u << 1,
-    ShaderResource = 1u << 2,
-    ShaderStorage  = 1u << 4,
-    TransferSrc    = 1u << 5,
-    TransferDst    = 1u << 6,
+    None         = 0,
+    RenderTarget = 1u << 0,
+    DepthStencil = 1u << 1,
+    Sampled      = 1u << 2,
+    Storage      = 1u << 4,
+    TransferSrc  = 1u << 5,
+    TransferDst  = 1u << 6,
 };
 
-[[nodiscard]] inline auto operator|(RHITextureUsage a, RHITextureUsage b) -> RHITextureUsage {
-    return static_cast<RHITextureUsage>(static_cast<Uint32>(a) | static_cast<Uint32>(b));
-}
+/// @brief Allocation-legality usage flags for a unified buffer.
+/// Mirrors VkBufferUsageFlagBits roles; the creation union must cover every
+/// future use. TransferSrc/TransferDst double as the RenderGraph view/sync
+/// declaration axis.
+enum class RHIBufferUsage : Uint32 {
+    Unknown     = 0,
+    Vertex      = 1u << 0,
+    Index       = 1u << 1,
+    /// Constant-buffer role (D3D/UE "constant buffer" = Vulkan "uniform
+    /// buffer"); named Constant to match the shader-side vocabulary
+    /// (ShaderResourceType::ConstantBuffer).
+    Constant    = 1u << 2,
+    Storage     = 1u << 3,
+    Indirect    = 1u << 4,
+    TransferSrc = 1u << 5,
+    TransferDst = 1u << 6,
+};
 
-/// Polymorphic base for render-target images (color or depth/stencil).
-/// Color vs depth is distinguished by GetFormat()/GetUsage(), not by type.
-/// Backend concrete class owns GPU allocation. Higher-level owners keep RHIRef instances.
-class RHIRenderTarget : public RHIObject {
+/// Resource lifetime axis
+enum class RHILifetime : Uint8 {
+    Unknown,
+    /// Individually owned; outlives frames.
+    Persistent,
+    /// Per-frame belt slice, valid only for the logical frame in which it was created.
+    Transient,
+};
+
+/// Memory placement of a buffer allocation. Placement decides the upload mechanism.
+enum class RHIMemoryUsage : Uint8 {
+    Unknown,
+    /// Device-local transfer destination; upload rides a staging copy.
+    GpuOnly,
+    /// Host-visible; upload is an RHI-thread memory copy.
+    CpuToGpu,
+};
+
+struct RHIBufferDesc {
+    Uint64            SizeBytes   = 0;
+    RHIBufferUsage    Usage       = RHIBufferUsage::Unknown;
+    RHIMemoryUsage    MemoryUsage = RHIMemoryUsage::Unknown;
+    RHILifetime       Lifetime    = RHILifetime::Unknown;
+};
+
+/// Unified buffer identity. Vertex/index/uniform/storage/indirect are usages, not types — GPU→CPU readback is
+/// not a buffer at all, it is the RHIReadback consumer object below. Lifetime is stored on the identity and
+/// discriminates the backend's per-flavor state (persistent allocation vs transient belt slice), whose
+/// allocation strategy the backend concrete class owns.
+class RHIBuffer : public RHIObject {
   public:
-    RHIRenderTarget(const RHIRenderTarget&)                    = delete;
-    auto operator=(const RHIRenderTarget&) -> RHIRenderTarget& = delete;
-    RHIRenderTarget(RHIRenderTarget&&)                         = delete;
-    auto operator=(RHIRenderTarget&&) -> RHIRenderTarget&      = delete;
-    virtual ~RHIRenderTarget()                                 = default;
+    RHIBuffer(const RHIBuffer&)                    = delete;
+    auto operator=(const RHIBuffer&) -> RHIBuffer& = delete;
+    RHIBuffer(RHIBuffer&&)                         = delete;
+    auto operator=(RHIBuffer&&) -> RHIBuffer&      = delete;
+    virtual ~RHIBuffer()                           = default;
 
-    [[nodiscard]] virtual auto GetWidth() const -> Uint32          = 0;
-    [[nodiscard]] virtual auto GetHeight() const -> Uint32         = 0;
-    [[nodiscard]] virtual auto GetFormat() const -> RHIFormat      = 0;
-    [[nodiscard]] virtual auto GetUsage() const -> RHITextureUsage = 0;
-    /// Mip level count is a creation-time property (RHIRenderTargetDesc::MipLevels);
-    /// per-mip views are backend-owned attachments of the image (D2).
-    [[nodiscard]] virtual auto GetMipLevelCount() const -> Uint32  = 0;
-
-    [[nodiscard]] auto GetShaderBindingType() const -> ShaderResourceType override {
-        const auto Usage = static_cast<Uint32>(GetUsage());
-        if ((Usage & static_cast<Uint32>(RHITextureUsage::ShaderStorage)) != 0)
-            return ShaderResourceType::StorageTexture;
-        if ((Usage & static_cast<Uint32>(RHITextureUsage::ShaderResource)) != 0)
-            return ShaderResourceType::SampledTexture;
-        return ShaderResourceType::Unknown;
+    [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
+        return m_Size;
+    }
+    [[nodiscard]] auto GetUsage() const noexcept -> RHIBufferUsage {
+        return m_Usage;
+    }
+    [[nodiscard]] auto GetMemoryUsage() const noexcept -> RHIMemoryUsage {
+        return m_MemoryUsage;
+    }
+    /// Lifetime is fixed at creation (validated Desc or a hardcoded backend
+    /// flavor), so a constructed buffer never holds Unknown.
+    [[nodiscard]] auto GetLifetime() const noexcept -> RHILifetime {
+        return m_Lifetime;
+    }
+    /// Buffer device address (Vulkan BDA). Every GpuOnly buffer carries one;
+    /// host-visible and transient flavors return 0.
+    [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
+        return 0;
     }
 
   protected:
-    explicit RHIRenderTarget(String Name) : RHIObject(std::move(Name)) {}
+    explicit RHIBuffer(String Name, Uint64 Size, RHIBufferUsage Usage, RHIMemoryUsage MemoryUsage, RHILifetime Lifetime)
+        : RHIObject(std::move(Name)),
+          m_Size(Size),
+          m_Usage(Usage),
+          m_MemoryUsage(MemoryUsage),
+          m_Lifetime(Lifetime) {}
+
+  private:
+    Uint64         m_Size        = 0;
+    RHIBufferUsage m_Usage       = RHIBufferUsage::Unknown;
+    RHIMemoryUsage m_MemoryUsage = RHIMemoryUsage::Unknown;
+    RHILifetime    m_Lifetime    = RHILifetime::Unknown;
 };
 
-struct RHISampledTextureDesc {
-    std::span<const std::byte> Data     = {};
-    Uint32                     Width    = 1;
-    Uint32                     Height   = 1;
-    Uint32                     Channels = 4;
-    RHIFormat                  Format   = RHIFormat::R8G8B8A8_UNORM;
-    // Sampled textures have fixed backend upload/sampled semantics (ADR 05):
-    // no usage field.
+/// @brief GPU→CPU readback identity — a consumer object, not a resource kind (RHISampler's category).
+///
+/// Flow: RHIRenderDevice::CreateReadback (synchronous, Ready at return) → a transfer-stage pass records
+/// ReadbackTexture each frame → the game thread polls TryRead(). At most one write per frame per readback.
+/// TryRead() is valid on the game thread while the device is alive.
+class RHIReadback : public RHIObject {
+  public:
+    RHIReadback(const RHIReadback&)                    = delete;
+    auto operator=(const RHIReadback&) -> RHIReadback& = delete;
+    RHIReadback(RHIReadback&&)                         = delete;
+    auto operator=(RHIReadback&&) -> RHIReadback&      = delete;
+    virtual ~RHIReadback()                             = default;
+
+    /// Per-slot payload capacity in bytes, fixed at creation.
+    [[nodiscard]] auto GetSize() const noexcept -> Uint64 {
+        return m_Size;
+    }
+
+    /// @brief Poll the newest GPU-completed payload.
+    ///
+    /// Non-blocking latest-value read; an empty vector means no submission has completed a write yet. Bytes
+    /// are the honest currency — the caller knows the payload layout it asked the pass to copy.
+    [[nodiscard]] virtual auto TryRead() const -> std::vector<std::byte> = 0;
+
+  protected:
+    explicit RHIReadback(String Name, Uint64 Size) : RHIObject(std::move(Name)), m_Size(Size) {}
+
+  private:
+    Uint64 m_Size = 0;
 };
 
-struct RHIRenderTargetDesc {
-    Uint32          Width     = 1;
-    Uint32          Height    = 1;
-    Uint32          MipLevels = 1;
-    RHIFormat       Format    = RHIFormat::B8G8R8A8_UNORM;
-    RHITextureUsage Usage     = RHITextureUsage::RenderTarget;
+struct RHITextureDesc {
+    Uint32                                    Width       = 1;
+    Uint32                                    Height      = 1;
+    Uint32                                    MipLevels   = 1;
+    RHIFormat                                 Format      = RHIFormat::B8G8R8A8_UNORM;
+    /// Flags default to None: a role is always an explicit choice (the RenderGraph validates None at
+    /// registration). The RenderGraph rule: creation usage is explicit here; a pass view's declared usage
+    /// must stay a subset of it.
+    RHITextureUsage                           Usage       = RHITextureUsage::None;
+    /// Allocation placement, same axis as RHIBufferDesc: GpuOnly derives
+    /// transfer-dst capability at creation and uploads through the frame-start
+    /// staging batch (UploadTexture); host-visible placements are not
+    /// supported for images. Unknown fails validation — a Desc is explicit.
+    RHIMemoryUsage                            MemoryUsage = RHIMemoryUsage::Unknown;
+    /// Texel channel count (bytes per texel for the upload path);
+    /// UploadTexture validates its byte count against Width × Height × Channels.
+    Uint32                                    Channels    = 4;
 };
 
-// ── Clear values ─────────────────────────────────────────────────────────────
+/// Unified texture identity: merges the old sampled-texture and
+/// render-target types. Color vs depth vs sampled is distinguished by
+/// GetFormat()/GetUsage(), never by type.
+class RHITexture : public RHIObject {
+  public:
+    RHITexture(const RHITexture&)                    = delete;
+    auto operator=(const RHITexture&) -> RHITexture& = delete;
+    RHITexture(RHITexture&&)                         = delete;
+    auto operator=(RHITexture&&) -> RHITexture&      = delete;
+    virtual ~RHITexture()                            = default;
+
+    [[nodiscard]] auto GetWidth() const noexcept -> Uint32 {
+        return m_Width;
+    }
+    [[nodiscard]] auto GetHeight() const noexcept -> Uint32 {
+        return m_Height;
+    }
+    [[nodiscard]] auto GetFormat() const noexcept -> RHIFormat {
+        return m_Format;
+    }
+    [[nodiscard]] auto GetUsage() const noexcept -> RHITextureUsage {
+        return m_Usage;
+    }
+    [[nodiscard]] auto GetMipLevelCount() const noexcept -> Uint32 {
+        return m_MipLevels;
+    }
+    [[nodiscard]] auto GetMemoryUsage() const noexcept -> RHIMemoryUsage {
+        return m_MemoryUsage;
+    }
+    [[nodiscard]] auto GetChannels() const noexcept -> Uint32 {
+        return m_Channels;
+    }
+
+  protected:
+    explicit RHITexture(String Name, const RHITextureDesc& Desc)
+        : RHIObject(std::move(Name)),
+          m_Width(Desc.Width),
+          m_Height(Desc.Height),
+          m_Format(Desc.Format),
+          m_Usage(Desc.Usage),
+          m_MipLevels(Desc.MipLevels),
+          m_MemoryUsage(Desc.MemoryUsage),
+          m_Channels(Desc.Channels) {}
+
+  private:
+    Uint32          m_Width       = 0;
+    Uint32          m_Height      = 0;
+    RHIFormat       m_Format      = RHIFormat::Unknown;
+    RHITextureUsage m_Usage       = RHITextureUsage::None;
+    Uint32          m_MipLevels   = 1;
+    RHIMemoryUsage  m_MemoryUsage = RHIMemoryUsage::Unknown;
+    Uint32          m_Channels    = 4;
+};
+
+// ── Ray-tracing acceleration structures ─────────────────────────────────────
+
+/// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
+/// BLAS triangle inputs. Geometry metadata (counts, stride) is mesh data,
+/// carried here by the caller — buffers are unified identities and do not
+/// know vertex semantics.
+struct RHIBottomLevelAccelerationStructureDesc {
+    RHIRef<RHIBuffer> VertexBufferRef = nullptr;
+    RHIRef<RHIBuffer> IndexBufferRef  = nullptr;
+    Uint64            VertexCount     = 0;
+    Uint32            VertexStride    = 0;
+    Uint64            IndexCount      = 0;
+};
+
+/// GPU payload containing reusable object-space triangle geometry.
+class RHIBottomLevelAccelerationStructure : public RHIObject {
+  public:
+    RHIBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructure&)                    = delete;
+    auto operator=(const RHIBottomLevelAccelerationStructure&) -> RHIBottomLevelAccelerationStructure& = delete;
+    RHIBottomLevelAccelerationStructure(RHIBottomLevelAccelerationStructure&&)                         = delete;
+    auto operator=(RHIBottomLevelAccelerationStructure&&) -> RHIBottomLevelAccelerationStructure&      = delete;
+    virtual ~RHIBottomLevelAccelerationStructure()                                                     = default;
+
+  protected:
+    explicit RHIBottomLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
+};
+
+/// One TLAS instance: a BLAS plus its world transform for this frame.
+struct RHITopLevelAccelerationStructureInstance {
+    RHIRef<RHIBottomLevelAccelerationStructure> Blas      = nullptr;
+    hlslpp::float4x4                            Transform = hlslpp::float4x4::identity();
+};
+
+/// Descriptor for a per-frame TLAS.
+///
+/// Instances slot order is the canonical TLAS instance order: the device
+/// packs them 1:1, so Slang InstanceIndex() indexes the renderer's sorted
+/// instance table by the same slot.
+struct RHITopLevelAccelerationStructureDesc {
+    std::vector<RHITopLevelAccelerationStructureInstance> Instances = {};
+};
+
+/// Per-frame TLAS handle: instances are packed and storage is materialized at
+/// creation; the device builds it at frame start.
+class RHITopLevelAccelerationStructure : public RHIObject {
+  public:
+    RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
+    auto operator=(const RHITopLevelAccelerationStructure&) -> RHITopLevelAccelerationStructure& = delete;
+    RHITopLevelAccelerationStructure(RHITopLevelAccelerationStructure&&)                         = delete;
+    auto operator=(RHITopLevelAccelerationStructure&&) -> RHITopLevelAccelerationStructure&      = delete;
+    virtual ~RHITopLevelAccelerationStructure()                                                  = default;
+
+  protected:
+    explicit RHITopLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
+};
+
+inline constexpr Uint32 kRHIRemainingSubresources = std::numeric_limits<Uint32>::max();
+inline constexpr Uint64 kRHIWholeBuffer           = std::numeric_limits<Uint64>::max();
+
+/// @brief Read/Write direction of a view
+enum class RHIAccess : Uint8 {
+    None  = 0,
+    Read  = 1 << 0,
+    Write = 1 << 1,
+};
+
+/// @brief Mip-level window into a texture; defaults to the whole chain.
+struct RHISubresourceRange {
+    Uint32 BaseMipLevel  = 0;
+    Uint32 MipLevelCount = kRHIRemainingSubresources;
+};
+
+/// @brief Value-semantic texture view: identity, role, extent, direction.
+/// Plain data, not an RHIObject — lifetime comes from the embedded ref and
+/// the backend resolves/caches native views at record time. One view, one
+/// role: Usage is a single-role selector, never the creation union.
+struct RHITextureView {
+    RHIRef<RHITexture>  Texture = nullptr;
+    RHIAccess           Access  = RHIAccess::Read;
+    RHITextureUsage     Usage   = RHITextureUsage::None;
+    RHISubresourceRange Range   = {};
+};
+
+/// @brief Buffer counterpart: (buffer, usage, offset, range, access).
+struct RHIBufferView {
+    RHIRef<RHIBuffer> Buffer = nullptr;
+    RHIAccess         Access = RHIAccess::Read;
+    RHIBufferUsage    Usage  = RHIBufferUsage::Unknown;
+    Uint64            Offset = 0;
+    Uint64            Range  = kRHIWholeBuffer;
+};
+
+/// @brief Degenerate sampler view: identity only.
+///
+/// A sampler is a state object with no role, extent, or direction axis, so the view is a plain ref wrapper —
+/// it exists so bindings retain the payload like every other view kind.
+struct RHISamplerView {
+    RHIRef<RHISampler> Sampler = nullptr;
+};
+
+/// @brief Degenerate TLAS view: identity only.
+///
+/// An acceleration structure binds whole, so the view is a plain ref wrapper — it exists so bindings retain
+/// the payload like every other view kind.
+struct RHITlasView {
+    RHIRef<RHITopLevelAccelerationStructure> Tlas = nullptr;
+};
 
 using RHIClearColorValue =
     std::variant<std::monostate, std::array<Float32, 4>, std::array<Int32, 4>, std::array<Uint32, 4>>;
@@ -552,25 +481,101 @@ struct RHIClearDepthStencilValue {
     Uint32  Stencil = 0;
 };
 
+/// @brief One color attachment: the RenderTarget view plus its clear policy.
 struct RHIColorAttachmentDesc {
-    RHIRef<RHIRenderTarget> TextureRef = nullptr;
-    RHIClearColorValue      ClearValue = {};
-    bool                    Clear      = true;
+    RHITextureView     View       = {};  ///< Range selects the rendered mip(s)
+    RHIClearColorValue ClearValue = {};
+    bool               Clear      = true;
 };
 
+/// @brief Depth/stencil counterpart of RHIColorAttachmentDesc.
 struct RHIDepthAttachmentDesc {
-    RHIRef<RHIRenderTarget>   TextureRef = nullptr;
+    RHITextureView            View       = {};
     RHIClearDepthStencilValue ClearValue = {};
     bool                      Clear      = true;
 };
 
-/// @brief Fixed rendering attachments owned by one graphics pass.
-///
-/// Attachments define the pass execution context and therefore travel with
-/// IRHIPass instead of being encoded as an individual RHICommand.
+/// @brief Fixed rendering attachments owned by one graphics pass — the pass
+/// execution context, traveling with IRHIPass rather than any RHICommand.
 struct RHIGraphicsAttachments {
     std::vector<RHIColorAttachmentDesc>   ColorAttachments = {};
     std::optional<RHIDepthAttachmentDesc> DepthAttachment  = std::nullopt;
 };
 
+
+// ── Synchronization vocabulary ─────────────────────────────────────────────
+// The RenderGraph produces dst-only prologue transitions from declared pass
+// accesses; the backend's emission-side diff tracker materializes a native
+// barrier only when tracked state differs. A transition is view + stage: the
+// native access mask and the image layout are pure functions of the view's
+// (Usage, Access), and that derivation lives in the backend's native mapping
+// at emission, so this vocabulary carries no access-widening or layout axis.
+// The stage schema is a fine-grained bit mask (D3D12 barrier-state shape) so
+// precision upgrades are mapping-table data changes, not schema changes.
+
+/// @brief Pipeline-stage mask of one endpoint of a resource state.
+///
+/// The initial mapping table only ever produces coarse values (AllGraphics
+/// for shader accesses in graphics passes); precise stages (VertexShader vs
+/// FragmentShader) are reserved for future per-view stage hints.
+enum class RHISyncStage : Uint32 {
+    None                  = 0,
+    VertexShader          = 1 << 0,
+    FragmentShader        = 1 << 1,
+    ComputeShader         = 1 << 2,
+    RayTracingShader      = 1 << 3,
+    DrawIndirect          = 1 << 4,
+    ColorAttachmentOutput = 1 << 5,
+    EarlyFragmentTests    = 1 << 6,
+    LateFragmentTests     = 1 << 7,
+    Transfer              = 1 << 8,
+    Host                  = 1 << 9,
+    AllGraphics           = VertexShader | FragmentShader | DrawIndirect | ColorAttachmentOutput |
+                  EarlyFragmentTests | LateFragmentTests,
+};
+
+/// @brief A dst-only state requirement for one buffer: "the pass needs this
+/// buffer accessed as View at Stage before its commands run". A transition is
+/// a declaration, not a barrier — it carries no src/dst pair; the backend's
+/// diff tracker decides whether a barrier materializes. The View travels by
+/// value: a pass declaring several views of one buffer merges them into one
+/// transition whose View accumulates the usage and access union.
+struct RHIBufferTransition {
+    RHIBufferView View  = {};
+    RHISyncStage  Stage = RHISyncStage::None;
+};
+
+/// @brief Texture counterpart of RHIBufferTransition. The view's
+/// subresource range defaults to the whole chain; the backend tracker
+/// resolves per-subresource state from it.
+struct RHITextureTransition {
+    RHITextureView View  = {};
+    RHISyncStage   Stage = RHISyncStage::None;
+};
+
+/// @brief One pass's prologue: the complete set of state requirements its
+/// declared accesses map to, deduplicated per resource.
+struct RHIBarrierList {
+    std::vector<RHIBufferTransition>  Buffers  = {};
+    std::vector<RHITextureTransition> Textures = {};
+};
 } // namespace SoulEngine
+
+export namespace magic_enum::customize {
+template <>
+struct enum_range<SoulEngine::RHITextureUsage> {
+    static constexpr bool is_flags = true;
+};
+template <>
+struct enum_range<SoulEngine::RHIBufferUsage> {
+    static constexpr bool is_flags = true;
+};
+template <>
+struct enum_range<SoulEngine::RHIAccess> {
+    static constexpr bool is_flags = true;
+};
+template <>
+struct enum_range<SoulEngine::RHISyncStage> {
+    static constexpr bool is_flags = true;
+};
+} // namespace magic_enum::customize

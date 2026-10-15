@@ -19,6 +19,8 @@ These apply to every module. Per-module `CONTEXT.md` files may add module-specif
 
 Cross-module ADRs live in [`Docs/ADR/`](Docs/ADR/). Module-scoped decisions should be recorded in `Docs/ADR/` within the relevant module directory.
 
+Conventions: **one ADR per topic** — a design's evolution revises its existing ADR; never open a new number for related content. ADRs carry design and decisions only (no field layouts, message strings, or type inventories — those live in module CONTEXT.md files, which may cite the ADR). Code comments must not cite ADR numbers.
+
 - [ADR 03 — Three-thread pipeline and variant commands](Docs/ADR/03-three-thread-pipeline-variant-commands.md)
-- [ADR 05 — RenderGraph pooled transients, derived usage, and explicit present](Docs/ADR/05-rendergraph-pooled-transients-and-explicit-present.md)
+- [ADR 05 — RenderGraph: resource model, declaration-driven sync, explicit present](Docs/ADR/05-rendergraph.md)
 - [ADR 11 — Editor active-Scene system inspection](Docs/ADR/11-editor-active-scene-system-inspection.md)

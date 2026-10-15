@@ -88,7 +88,8 @@ TEST_F(RayTracingCompilerTest, ReflectsTopLevelAccelerationStructureAndStorageOu
     ASSERT_NE(Output, nullptr);
     EXPECT_EQ(Output->Set, 0U);
     EXPECT_EQ(Output->BindingIndex, 1U);
-    EXPECT_EQ(Output->Type, ShaderResourceType::StorageTexture);
+    EXPECT_EQ(Output->Type, ShaderResourceType::Texture);
+    EXPECT_EQ(Output->Access, ShaderBindingAccess::ReadWrite);
 }
 
 TEST_F(RayTracingCompilerTest, ReflectsParameterBlockTopLevelAccelerationStructure) {
@@ -101,7 +102,8 @@ TEST_F(RayTracingCompilerTest, ReflectsParameterBlockTopLevelAccelerationStructu
 
     const auto* Output = FindBinding(Result->Reflection, "g_rayTracingResources.output");
     ASSERT_NE(Output, nullptr);
-    EXPECT_EQ(Output->Type, ShaderResourceType::StorageTexture);
+    EXPECT_EQ(Output->Type, ShaderResourceType::Texture);
+    EXPECT_EQ(Output->Access, ShaderBindingAccess::ReadWrite);
 }
 
 TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadataBinding) {

@@ -60,7 +60,7 @@ auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer&
 ///       confirmed to never trigger the report (2026-09-21).
 class LabelScope final {
   public:
-    LabelScope(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer,
+    LabelScope(const VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer,
                StringView Name, std::source_location SourceLocation = std::source_location::current())
         : m_ResourceContext(ResourceContext)
         , m_CommandBuffer(CommandBuffer)
@@ -81,7 +81,7 @@ class LabelScope final {
     LabelScope& operator=(LabelScope&&)      = delete;
 
   private:
-    [[nodiscard]] static auto TracyCtx(VulkanResourceContext& ResourceContext) -> tracy::VkCtx* {
+    [[nodiscard]] static auto TracyCtx(const VulkanResourceContext& ResourceContext) -> tracy::VkCtx* {
         return ResourceContext.GetTracyCtx();
     }
 
@@ -114,9 +114,9 @@ class LabelScope final {
         return Iterator->second;
     }
 
-    VulkanResourceContext&   m_ResourceContext;
-    vk::raii::CommandBuffer& m_CommandBuffer;
-    tracy::VkCtxScope        m_Zone;
+    const VulkanResourceContext& m_ResourceContext;
+    vk::raii::CommandBuffer&     m_CommandBuffer;
+    tracy::VkCtxScope            m_Zone;
 };
 
 } // namespace SoulEngine

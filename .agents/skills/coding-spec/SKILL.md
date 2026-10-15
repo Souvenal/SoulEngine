@@ -20,6 +20,7 @@ Before reading, writing, modifying, reviewing, refactoring, debugging, or genera
 Current rule files:
 
 - `.agents/rules/cpp-coding-spec.md` for `Engine/Source/**/*.h`, `Engine/Source/**/*.hpp`, `Engine/Source/**/*.cpp`, and `Engine/Source/**/*.cppm`.
+- `.agents/rules/comment-coding-spec.md` for `Engine/Source/**/*.h`, `Engine/Source/**/*.hpp`, `Engine/Source/**/*.cpp`, `Engine/Source/**/*.cppm`, `Engine/Shaders/**/*.slang`, and `Applications/*/Shaders/**/*.slang`.
 - `.agents/rules/slang-coding-spec.md` for `Engine/Shaders/**/*.slang` and `Applications/*/Shaders/**/*.slang`.
 - `.agents/rules/vulkan-coding-spec.md` for `Engine/Source/Runtime/RHI/Vulkan/**/*.cpp` and `Engine/Source/Runtime/RHI/Vulkan/**/*.cppm`.
 

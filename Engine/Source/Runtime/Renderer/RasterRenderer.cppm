@@ -108,7 +108,10 @@ class RasterRenderer final : public IRenderer {
             return Result;
 
         const auto Instances        = FilterInstances(Scene.Instances);
-        const auto DrawData         = SceneGpuData::Create(Instances, Scene.Lights, Scene.Textures);
+        auto TextureIndices = ResolveBindlessTextureIndices(Scene.Textures);
+        if (!TextureIndices)
+            return std::unexpected(TextureIndices.error().Append("Raster bindless texture resolution failed"));
+        const auto DrawData = SceneGpuData::Create(Instances, Scene.Lights, *TextureIndices);
         const auto IndirectCommands = BuildRasterIndirectCommands(DrawData);
 
         Uint32 ViewIndex = 0;
@@ -162,9 +165,7 @@ class RasterRenderer final : public IRenderer {
                                   const GameSnapshot&               Scene,
                                   const EditorSnapshot&             Editor,
                                   const EditorViewRecord*     EditorView) -> std::expected<void, ErrorMessage> {
-        using magic_enum::bitwise_operators::operator|;
-
-        // View targets are created on the graph below (ADR 05); the only
+        // View targets are created on the graph below; the only
         // readiness gate left is the renderer-owned samplers.
         const auto& SamplerLinearRef = m_SamplerLinear;
         const auto& SamplerAnisoRef  = m_SamplerAniso;
@@ -185,10 +186,8 @@ class RasterRenderer final : public IRenderer {
         // ── RenderGraph wiring ───────────────────────────────────────────
         RenderGraphBuilder ViewGraph{};
 
-        // View targets are pooled graph transients (ADR 05): the descriptor
-        // carries only extent + format; Compile derives usage from the passes'
-        // views (e.g. EntityId additionally gets TransferSrc when the picking
-        // pass survives).
+        // View targets are pooled graph transients. Creation usage is explicit in the descriptor (see
+        // RasterViewTargets::Create); a pass's view declaration must stay a subset of it.
         const auto Targets =
             RasterViewTargets::Create(ViewGraph, ViewName, View.GetWidth(), View.GetHeight());
 
@@ -197,86 +196,84 @@ class RasterRenderer final : public IRenderer {
         const auto ViewData = RendererViewConstants{View};
 
         const auto MaterialBytes = std::as_bytes(std::span{DrawData.MaterialRecords});
-        const auto MaterialTable = ViewGraph.CreateShaderStorageBuffer(
+        const auto MaterialTable = ViewGraph.CreateBuffer(
             "FrameMaterials",
-            RGShaderStorageBufferDesc{
+            RHIBufferDesc{
                 .SizeBytes = static_cast<Uint64>(MaterialBytes.size()),
-                .Stride = static_cast<Uint32>(sizeof(MaterialRecord::GpuData)),
-                .Usage = RHITransientBufferUsage::ShaderRead,
-                .InitialData = MaterialBytes,
-            });
+                .Usage     = RHIBufferUsage::Storage,
+                .Lifetime = RHILifetime::Transient},
+            MaterialBytes);
 
-        const auto FrameCB = ViewGraph.CreateConstantBuffer(
+        const auto FrameCB = ViewGraph.CreateBuffer(
             "FrameConstants",
-            RGConstantBufferDesc{
+            RHIBufferDesc{
                 .SizeBytes = static_cast<Uint64>(sizeof(FrameData)),
-                .InitialData = std::as_bytes(std::span{&FrameData, 1}),
-            });
-        const auto ViewCB = ViewGraph.CreateConstantBuffer(
+                .Usage     = RHIBufferUsage::Constant,
+                .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{&FrameData, 1}));
+        const auto ViewCB = ViewGraph.CreateBuffer(
             "ViewConstants",
-            RGConstantBufferDesc{
+            RHIBufferDesc{
                 .SizeBytes = static_cast<Uint64>(sizeof(ViewData)),
-                .InitialData = std::as_bytes(std::span{&ViewData, 1}),
-            });
-        const auto DeferredFrameCB = ViewGraph.CreateConstantBuffer(
+                .Usage     = RHIBufferUsage::Constant,
+                .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{&ViewData, 1}));
+        const auto DeferredFrameCB = ViewGraph.CreateBuffer(
             "DeferredFrameConstants",
-            RGConstantBufferDesc{
+            RHIBufferDesc{
                 .SizeBytes = static_cast<Uint64>(sizeof(FrameData)),
-                .InitialData = std::as_bytes(std::span{&FrameData, 1}),
-            });
-        const auto DeferredViewCB = ViewGraph.CreateConstantBuffer(
+                .Usage     = RHIBufferUsage::Constant,
+                .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{&FrameData, 1}));
+        const auto DeferredViewCB = ViewGraph.CreateBuffer(
             "DeferredViewConstants",
-            RGConstantBufferDesc{
+            RHIBufferDesc{
                 .SizeBytes = static_cast<Uint64>(sizeof(ViewData)),
-                .InitialData = std::as_bytes(std::span{&ViewData, 1}),
-            });
+                .Usage     = RHIBufferUsage::Constant,
+                .Lifetime = RHILifetime::Transient},
+            std::as_bytes(std::span{&ViewData, 1}));
 
-        RGStorageBufferHandle SceneInstances = {};
-        RGStorageBufferHandle SceneIndirect  = {};
-        RGStorageBufferHandle GeometryTable  = {};
+        RGBuffer SceneInstances = {};
+        RGBuffer SceneIndirect  = {};
+        RGBuffer GeometryTable  = {};
         if (HasInstances) {
             const auto InstanceBytes = std::as_bytes(std::span{DrawData.InstanceRecords});
             const auto GeometryBytes = std::as_bytes(std::span{DrawData.GeometryRecords});
             const auto IndirectBytes = std::as_bytes(IndirectCommands);
-            SceneInstances = ViewGraph.CreateShaderStorageBuffer(
+            SceneInstances = ViewGraph.CreateBuffer(
                 "SceneInstances",
-                RGShaderStorageBufferDesc{
+                RHIBufferDesc{
                     .SizeBytes = static_cast<Uint64>(InstanceBytes.size()),
-                    .Stride = static_cast<Uint32>(sizeof(InstanceRecord::GpuData)),
-                    .Usage = RHITransientBufferUsage::ShaderRead,
-                    .InitialData = InstanceBytes,
-                });
-            GeometryTable = ViewGraph.CreateShaderStorageBuffer(
+                    .Usage     = RHIBufferUsage::Storage,
+                    .Lifetime = RHILifetime::Transient},
+                InstanceBytes);
+            GeometryTable = ViewGraph.CreateBuffer(
                 "SceneGeometry",
-                RGShaderStorageBufferDesc{
+                RHIBufferDesc{
                     .SizeBytes = static_cast<Uint64>(GeometryBytes.size()),
-                    .Stride = static_cast<Uint32>(sizeof(GeometryRecord::GpuData)),
-                    .Usage = RHITransientBufferUsage::ShaderRead,
-                    .InitialData = GeometryBytes,
-                });
-            SceneIndirect = ViewGraph.CreateShaderStorageBuffer(
+                    .Usage     = RHIBufferUsage::Storage,
+                    .Lifetime = RHILifetime::Transient},
+                GeometryBytes);
+            SceneIndirect = ViewGraph.CreateBuffer(
                 "SceneIndirect",
-                RGShaderStorageBufferDesc{
+                RHIBufferDesc{
                     .SizeBytes = static_cast<Uint64>(IndirectBytes.size()),
-                    .Stride = static_cast<Uint32>(sizeof(RasterIndirectCommand)),
-                    .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
-                    .InitialData = IndirectBytes,
-                });
+                    .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
+                    .Lifetime = RHILifetime::Transient},
+                IndirectBytes);
         }
 
         // Empty light list still needs a live SSBO binding for deferred lighting;
         // a zeroed 4-byte InitialData keeps the resource contentful.
         static constexpr std::array<std::byte, sizeof(Uint32)> ZeroLightSlot{};
         const auto LightBytes = std::as_bytes(std::span{DrawData.LightRecords});
-        const auto LightTable = ViewGraph.CreateShaderStorageBuffer(
+        const auto LightTable = ViewGraph.CreateBuffer(
             "FrameLights",
-            RGShaderStorageBufferDesc{
+            RHIBufferDesc{
                 .SizeBytes = LightBytes.empty() ? sizeof(Uint32) : static_cast<Uint64>(LightBytes.size()),
-                .Usage = RHITransientBufferUsage::ShaderRead,
-                .InitialData = LightBytes.empty()
-                                   ? std::optional<std::span<const std::byte>>{ZeroLightSlot}
-                                   : std::optional<std::span<const std::byte>>{LightBytes},
-            });
+                .Usage     = RHIBufferUsage::Storage,
+                .Lifetime = RHILifetime::Transient},
+            LightBytes.empty() ? std::span<const std::byte>{ZeroLightSlot} : LightBytes);
 
         // The GBuffer handles are shared between Geometry (the writer,
         // inside the instance block below) and Lighting/EntityPicking/Outline
@@ -289,107 +286,101 @@ class RasterRenderer final : public IRenderer {
 
         // Selection filter outputs live at view scope: the mask pass consumes
         // them and is registered outside the instance block.
-        RGStorageBufferHandle SelectedInstances = {};
-        RGStorageBufferHandle SelectedIndirect  = {};
+        RGBuffer SelectedInstances = {};
+        RGBuffer SelectedIndirect  = {};
 
         if (HasInstances) {
             const auto InstanceDataSize = DrawData.InstanceRecords.size() * sizeof(InstanceRecord::GpuData);
             const auto IndirectDataSize = IndirectCommands.size() * sizeof(RasterIndirectCommand);
 
-            const auto ViewInstances = ViewGraph.CreateShaderStorageBuffer(
+            const auto ViewInstances = ViewGraph.CreateBuffer(
                 "ViewInstances",
-                RGShaderStorageBufferDesc{
+                RHIBufferDesc{
                     .SizeBytes = InstanceDataSize,
-                    .Stride = static_cast<Uint32>(sizeof(InstanceRecord::GpuData)),
-                    .Usage = RHITransientBufferUsage::ShaderRead,
-                });
-            const auto ViewIndirect = ViewGraph.CreateShaderStorageBuffer(
+                    .Usage     = RHIBufferUsage::Storage,
+                    .Lifetime = RHILifetime::Transient});
+            const auto ViewIndirect = ViewGraph.CreateBuffer(
                 "ViewIndirect",
-                RGShaderStorageBufferDesc{
+                RHIBufferDesc{
                     .SizeBytes = IndirectDataSize,
-                    .Stride = static_cast<Uint32>(sizeof(RasterIndirectCommand)),
-                    .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
-                });
-            const auto ViewCounter = ViewGraph.CreateShaderStorageBuffer(
+                    .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
+                    .Lifetime = RHILifetime::Transient});
+            const auto ViewCounter = ViewGraph.CreateBuffer(
                 "ViewCounter",
-                RGShaderStorageBufferDesc{
+                RHIBufferDesc{
                     .SizeBytes = sizeof(Uint32),
-                    .Usage = RHITransientBufferUsage::ShaderRead,
-                });
+                    .Usage     = RHIBufferUsage::Storage,
+                    .Lifetime = RHILifetime::Transient});
 
-            ViewGraph.AddPass<CullingPass>(CullingPass::Parameter{
-                .ViewInstances  = RGStorageBufferUAV{.Buffer = ViewInstances},
-                .ViewIndirect   = RGStorageBufferUAV{.Buffer = ViewIndirect},
-                .ViewCounter    = RGStorageBufferUAV{.Buffer = ViewCounter},
-                .SceneInstances = RGStorageBufferSRV{.Buffer = SceneInstances},
-                .SceneIndirect  = RGStorageBufferSRV{.Buffer = SceneIndirect},
-                .GeometryTable  = RGStorageBufferSRV{.Buffer = GeometryTable},
+            ViewGraph.AddPass<CullingPass>({
+                .ViewInstances  = ViewInstances,
+                .ViewIndirect   = ViewIndirect,
+                .ViewCounter    = ViewCounter,
+                .SceneInstances = SceneInstances,
+                .SceneIndirect  = SceneIndirect,
+                .GeometryTable  = GeometryTable,
                 .InstanceCount  = static_cast<Uint32>(DrawData.InstanceRecords.size()),
                 .CommandCount   = static_cast<Uint32>(IndirectCommands.size()),
             });
 
             if (EditorView && Editor.SelectedEntity) {
-                SelectedInstances = ViewGraph.CreateShaderStorageBuffer(
+                SelectedInstances = ViewGraph.CreateBuffer(
                     "SelectedInstances",
-                    RGShaderStorageBufferDesc{
+                    RHIBufferDesc{
                         .SizeBytes = InstanceDataSize,
-                        .Stride = static_cast<Uint32>(sizeof(InstanceRecord::GpuData)),
-                        .Usage = RHITransientBufferUsage::ShaderRead,
-                    });
-                SelectedIndirect = ViewGraph.CreateShaderStorageBuffer(
+                        .Usage     = RHIBufferUsage::Storage,
+                        .Lifetime = RHILifetime::Transient});
+                SelectedIndirect = ViewGraph.CreateBuffer(
                     "SelectedIndirect",
-                    RGShaderStorageBufferDesc{
+                    RHIBufferDesc{
                         .SizeBytes = IndirectDataSize,
-                        .Stride = static_cast<Uint32>(sizeof(RasterIndirectCommand)),
-                        .Usage = RHITransientBufferUsage::ShaderRead | RHITransientBufferUsage::IndirectCommandRead,
-                    });
+                        .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
+                        .Lifetime = RHILifetime::Transient});
                 // The filter shader accumulates per-command instance counts via
                 // InterlockedAdd, so the counters must start at zero every frame.
                 const std::vector<std::byte> ZeroCounters(
                     IndirectCommands.size() * sizeof(Uint32), std::byte{0});
-                const auto SelectedCounters = ViewGraph.CreateShaderStorageBuffer(
+                const auto SelectedCounters = ViewGraph.CreateBuffer(
                     "SelectedCounters",
-                    RGShaderStorageBufferDesc{
-                        .SizeBytes   = ZeroCounters.size(),
-                        .Usage       = RHITransientBufferUsage::ShaderRead,
-                        .InitialData = ZeroCounters,
-                    });
+                    RHIBufferDesc{
+                        .SizeBytes = ZeroCounters.size(),
+                        .Usage     = RHIBufferUsage::Storage,
+                        .Lifetime = RHILifetime::Transient},
+                    ZeroCounters);
 
-                ViewGraph.AddPass<SelectionFilterPass>(SelectionFilterPass::Parameter{
-                    .ViewInstances     = RGStorageBufferSRV{.Buffer = ViewInstances},
-                    .ViewIndirect      = RGStorageBufferSRV{.Buffer = ViewIndirect},
-                    .SelectedInstances = RGStorageBufferUAV{.Buffer = SelectedInstances},
-                    .SelectedIndirect  = RGStorageBufferUAV{.Buffer = SelectedIndirect},
-                    .SelectedCounters  = RGStorageBufferUAV{.Buffer = SelectedCounters},
+                ViewGraph.AddPass<SelectionFilterPass>({
+                    .ViewInstances     = ViewInstances,
+                    .ViewIndirect      = ViewIndirect,
+                    .SelectedInstances = SelectedInstances,
+                    .SelectedIndirect  = SelectedIndirect,
+                    .SelectedCounters  = SelectedCounters,
                     .CommandCount      = static_cast<Uint32>(IndirectCommands.size()),
                     .SelectedEntityId  = static_cast<Uint32>(entt::to_integral(*Editor.SelectedEntity)),
                 });
             }
 
-            ViewGraph.AddPass<GeometryPass>(GeometryPass::Parameter{
-                .Albedo         = RGColorRT{.Texture = Albedo},
-                .Normal         = RGColorRT{.Texture = Normal},
-                .MaterialId     = RGColorRT{.Texture = MaterialId},
-                .EntityId       = RGColorRT{.Texture = EntityId},
-                .Depth          = RGDepthRT{.Texture = Depth},
-                .InstanceBuffer = RGStorageBufferSRV{.Buffer = ViewInstances},
-                .IndirectBuffer = RGIndirectBuffer{.Buffer = ViewIndirect},
-                .GeometryBuffer = RGStorageBufferSRV{.Buffer = GeometryTable},
-                .MaterialBuffer = RGStorageBufferSRV{.Buffer = MaterialTable},
-                .FrameBuffer    = {.Buffer = FrameCB},
-                .ViewBuffer     = {.Buffer = ViewCB},
+            ViewGraph.AddPass<GeometryPass>({
+                .Albedo             = Albedo,
+                .Normal             = Normal,
+                .MaterialId         = MaterialId,
+                .EntityId           = EntityId,
+                .Depth              = Depth,
+                .InstanceBuffer     = ViewInstances,
+                .IndirectBuffer     = ViewIndirect,
+                .GeometryBuffer     = GeometryTable,
+                .MaterialBuffer     = MaterialTable,
+                .FrameBuffer        = FrameCB,
+                .ViewBuffer         = ViewCB,
                 .LinearSampler      = SamplerLinearRef,
                 .AnisotropicSampler = SamplerAnisoRef,
-                .Textures           = Scene.Textures,
                 .DrawCount          = static_cast<Uint32>(IndirectCommands.size()),
             });
         }
 
         if (Editor.IsHovering && Editor.ReadbackTarget) {
-            const auto Readback = ViewGraph.Import(Editor.ReadbackTarget);
-            ViewGraph.AddPass<EntityPickingPass>(EntityPickingPass::Parameter{
-                .EntityId = RGCopySrc{.Texture = EntityId},
-                .Readback = RGCopyDst{.Buffer = Readback},
+            ViewGraph.AddPass<EntityPickingPass>({
+                .EntityId = EntityId,
+                .Readback = Editor.ReadbackTarget,
                 .Pixel    = Editor.HoverPixel,
             });
         }
@@ -397,56 +388,57 @@ class RasterRenderer final : public IRenderer {
         const auto SceneColor = Targets.SceneColor;
         // Lighting writes SceneColor; the explicit BlitToSwapchainPass below
         // reads it (with the outline RMW in between when the feature is on).
-        ViewGraph.AddPass<DeferredLightingPass>(DeferredLightingPass::Parameter{
-            .SceneColor     = RGColorRT{.Texture = SceneColor},
-            .Albedo         = RGTextureSRV{.Texture = Albedo},
-            .Normal         = RGTextureSRV{.Texture = Normal},
-            .MaterialId     = RGTextureSRV{.Texture = MaterialId},
-            .EntityId       = RGTextureSRV{.Texture = EntityId},
-            .Depth          = RGTextureSRV{.Texture = Depth},
-            .MaterialBuffer = RGStorageBufferSRV{.Buffer = MaterialTable},
-            .FrameBuffer    = {.Buffer = DeferredFrameCB},
-            .ViewBuffer     = {.Buffer = DeferredViewCB},
-            .LightBuffer    = RGStorageBufferSRV{.Buffer = LightTable},
+        ViewGraph.AddPass<DeferredLightingPass>({
+            .SceneColor         = SceneColor,
+            .Albedo             = Albedo,
+            .Normal             = Normal,
+            .MaterialId         = MaterialId,
+            .EntityId           = EntityId,
+            .Depth              = Depth,
+            .MaterialBuffer     = MaterialTable,
+            .FrameBuffer        = DeferredFrameCB,
+            .ViewBuffer         = DeferredViewCB,
+            .LightBuffer        = LightTable,
             .LinearSampler      = SamplerLinearRef,
             .AnisotropicSampler = SamplerAnisoRef,
-            .Textures           = Scene.Textures,
         });
 
         if (WantOutline) {
             // The selection mask is a pooled transient like any other view
-            // target (ADR 05): RGColorRT write + RGTextureSRV read derive
-            // RenderTarget | ShaderResource.
+            // target: the mask pass's RenderTarget write and the
+            // outline pass's Sampled read derive its usage union.
             const auto Mask = ViewGraph.CreateTexture(
                 Format("{}/SelectionMask", ViewName),
-                RGTextureDesc{.Width = View.GetWidth(), .Height = View.GetHeight(), .Format = RHIFormat::R8_UNORM});
-            ViewGraph.AddPass<SelectionMaskPass>(SelectionMaskPass::Parameter{
-                .Mask              = RGColorRT{.Texture = Mask},
-                .SelectedInstances = RGStorageBufferSRV{.Buffer = SelectedInstances},
-                .SelectedIndirect  = RGIndirectBuffer{.Buffer = SelectedIndirect},
-                .GeometryTable     = RGStorageBufferSRV{.Buffer = GeometryTable},
-                .MaterialTable     = RGStorageBufferSRV{.Buffer = MaterialTable},
-                .FrameBuffer       = {.Buffer = FrameCB},
-                .ViewBuffer        = {.Buffer = ViewCB},
+                RHITextureDesc{.Width  = View.GetWidth(),
+                               .Height = View.GetHeight(),
+                               .Format = RHIFormat::R8_UNORM,
+                               .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::Sampled});
+            ViewGraph.AddPass<SelectionMaskPass>({
+                .Mask              = Mask,
+                .SelectedInstances = SelectedInstances,
+                .SelectedIndirect  = SelectedIndirect,
+                .GeometryTable     = GeometryTable,
+                .MaterialTable     = MaterialTable,
+                .FrameBuffer       = FrameCB,
+                .ViewBuffer        = ViewCB,
                 .LinearSampler     = SamplerLinearRef,
-                .Textures          = Scene.Textures,
                 .DrawCount         = static_cast<Uint32>(IndirectCommands.size()),
             });
-            ViewGraph.AddPass<SelectionOutlinePass>(SelectionOutlinePass::Parameter{
-                .SceneColor    = RGColorRT{.Texture = SceneColor, .Load = true},
-                .Mask          = RGTextureSRV{.Texture = Mask},
-                .LinearSampler = SamplerLinearRef,
+            ViewGraph.AddPass<SelectionOutlinePass>({
+                .SceneColor     = SceneColor,
+                .Mask           = Mask,
+                .LinearSampler  = SamplerLinearRef,
                 .ViewportWidth  = static_cast<Float32>(View.GetWidth()),
                 .ViewportHeight = static_cast<Float32>(View.GetHeight()),
             });
         }
 
-        // Present is explicit (ADR 05): blit the view's final SceneColor
+        // Present is explicit: blit the view's final SceneColor
         // into the swapchain. Reading SceneColor orders the blit after
         // lighting (and after the outline RMW when enabled) via the
         // last-writer chain; NeverPrune keeps it alive without consumers.
-        ViewGraph.AddPass<BlitToSwapchainPass>(BlitToSwapchainPass::Parameter{
-            .Source    = RGCopySrc{.Texture = SceneColor},
+        ViewGraph.AddPass<BlitToSwapchainPass>({
+            .Source    = SceneColor,
             .DstX      = View.Viewport.X,
             .DstY      = View.Viewport.Y,
             .DstWidth  = View.GetWidth(),
@@ -458,9 +450,9 @@ class RasterRenderer final : public IRenderer {
         auto ViewGraphPasses = ViewGraph.Compile();
         if (!ViewGraphPasses)
             return std::unexpected(ViewGraphPasses.error().Append("Raster view render-graph compile failed"));
-        CmdList.Passes.insert(CmdList.Passes.end(),
-                              std::make_move_iterator(ViewGraphPasses->Passes.begin()),
-                              std::make_move_iterator(ViewGraphPasses->Passes.end()));
+        CmdList.Entries.insert(CmdList.Entries.end(),
+                               std::make_move_iterator(ViewGraphPasses->Entries.begin()),
+                               std::make_move_iterator(ViewGraphPasses->Entries.end()));
         return {};
     }
 

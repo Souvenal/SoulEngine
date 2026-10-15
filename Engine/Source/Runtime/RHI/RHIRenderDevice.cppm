@@ -15,9 +15,6 @@ import :Command;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by
-// the exported code below — see Core:CVar's linkage note.
-
 /// Error for backend methods a concrete device leaves unimplemented. Tests
 /// run a base RHIRenderDevice (or a small override) to keep RenderGraph's
 /// realize step off the real GPU; reaching this default there is expected,
@@ -40,10 +37,6 @@ export namespace SoulEngine {
 /// referenced payload alive until GPU completion.
 struct RenderResult {
     RenderPassList CmdList = {};
-    /// Hollow BLAS descriptors the device builds at frame start, before any pass.
-    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> PendingBlasBuilds = {};
-    /// Hollow per-frame TLAS handles, built after the BLAS batch.
-    std::vector<RHIRef<RHITopLevelAccelerationStructure>> PendingTlasBuilds = {};
     /// Editor ImGui draw data for this frame, consumed on the RHI thread.
     UPtr<ImDrawDataSnapshot> ImGuiSnapshot = nullptr;
 };
@@ -78,26 +71,49 @@ class RHIRenderDevice {
     /// @brief Return the concrete RHI backend tag for integration dispatch.
     [[nodiscard]] virtual auto GetBackendType() const -> RHIBackendType { return RHIBackendType::Unknown; }
 
-    // ── Resource creation ────────────────────────────────────────────────────
+    // @brief Buffer creation
+    [[nodiscard]] virtual auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateBuffer")); }
 
-    [[nodiscard]] virtual auto CreateVertexBuffer(StringView Name, const RHIVertexBufferDesc& Desc)
-        -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateVertexBuffer")); }
+    /// @brief Create a GPU→CPU readback object (a consumer object, not a resource).
+    ///
+    /// Synchronous pure creation on the calling thread (same contract as CreateBuffer): Ready at return.
+    /// SizeBytes is the per-frame payload capacity; the backend derives the ring depth from frames in flight.
+    [[nodiscard]] virtual auto CreateReadback(StringView Name, Uint64 SizeBytes)
+        -> std::expected<RHIRef<RHIReadback>, ErrorMessage> { return std::unexpected(NotImplemented("CreateReadback")); }
 
-    [[nodiscard]] virtual auto CreateIndexBuffer(StringView Name, const RHIIndexBufferDesc& Desc)
-        -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateIndexBuffer")); }
+    /// @brief Upload a buffer's full contents, callable from any thread.
+    ///
+    /// The bytes are snapshotted at the call site and become visible to GPU consumers in the issuing frame —
+    /// all of one frame's uploads land together. Data.size() must equal the buffer's SizeBytes.
+    [[nodiscard]] virtual auto UploadBuffer(RHIRef<RHIBuffer> Buffer, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("UploadBuffer")); }
 
-    [[nodiscard]] virtual auto CreateSampledTexture(StringView Name, const RHISampledTextureDesc& Desc)
-        -> std::expected<RHIRef<RHISampledTexture>, ErrorMessage> { return std::unexpected(NotImplemented("CreateSampledTexture")); }
+    /// @brief Create a texture: sampled and render-target flows converge here.
+    ///
+    /// Synchronous pure creation on the calling thread (same contract as CreateBuffer): the ref publishes
+    /// Ready at return, and texel bytes flow through UploadTexture.
+    [[nodiscard]] virtual auto CreateTexture(StringView Name, const RHITextureDesc& Desc)
+        -> std::expected<RHIRef<RHITexture>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTexture")); }
+
+    /// @brief Queue registration of sampled textures in the device-wide bindless table.
+    ///
+    /// The request copies its references and executes on the RHI thread for the current frame. The completed
+    /// descriptor index becomes observable through FindBindlessTextureIndex after the task publishes it.
+    [[nodiscard]] virtual auto RegisterBindlessTextures(std::span<const RHIRef<RHITexture>> Textures)
+        -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("RegisterBindlessTextures")); }
+
+    /// @brief Find a completed device-wide bindless index for a texture.
+    [[nodiscard]] virtual auto FindBindlessTextureIndex(const RHIRef<RHITexture>& Texture) const
+        -> std::optional<Uint32> { return std::nullopt; }
+
+    /// @brief Upload a texture's full mip-0 texels, callable from any thread. Same call-site snapshot
+    /// and same-frame visibility contract as UploadBuffer. Data.size() must equal Width × Height × Channels.
+    [[nodiscard]] virtual auto UploadTexture(RHIRef<RHITexture> Texture, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("UploadTexture")); }
 
     [[nodiscard]] virtual auto CreateSampler(StringView Name, const RHISamplerDesc& Desc)
         -> std::expected<RHIRef<RHISampler>, ErrorMessage> { return std::unexpected(NotImplemented("CreateSampler")); }
-
-    [[nodiscard]] virtual auto CreateRenderTarget(StringView Name, const RHIRenderTargetDesc& Desc)
-        -> std::expected<RHIRef<RHIRenderTarget>, ErrorMessage> { return std::unexpected(NotImplemented("CreateRenderTarget")); }
-
-    /// @brief Create a persistent host-visible GPU-to-CPU readback buffer.
-    [[nodiscard]] virtual auto CreateReadbackBuffer(StringView Name, const RHIReadbackBufferDesc& Desc)
-        -> std::expected<RHIRef<RHIReadbackBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateReadbackBuffer")); }
 
     [[nodiscard]] virtual auto CreateShaderBindingSet(StringView Name, const RHIShaderBindingSetDesc& Desc)
         -> std::expected<RHIRef<RHIShaderBindingSet>, ErrorMessage> { return std::unexpected(NotImplemented("CreateShaderBindingSet")); }
@@ -119,29 +135,21 @@ class RHIRenderDevice {
                                                                    const RHITopLevelAccelerationStructureDesc& Desc)
         -> std::expected<RHIRef<RHITopLevelAccelerationStructure>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTopLevelAccelerationStructure")); }
 
-    /// @brief Retire backend-native completion callbacks. Called once per frame on the RHI thread.
+    /// @brief Build a BLAS, callable from any thread.
+    ///
+    /// The call enqueues a frame-affined task carrying the ref; the build is recorded in the
+    /// frame-start AS batch of the issuing frame, after the upload batch, so same-frame consumers
+    /// are safe by submission order. The ref must be Ready at the call site.
+    [[nodiscard]] virtual auto BuildBlas(RHIRef<RHIBottomLevelAccelerationStructure> Blas)
+        -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("BuildBlas")); }
+
+    /// @brief Build a per-frame TLAS, callable from any thread. Same frame-affined task
+    /// contract as BuildBlas; the build is recorded after the BLAS batch, ahead of every pass.
+    [[nodiscard]] virtual auto BuildTlas(RHIRef<RHITopLevelAccelerationStructure> Tlas)
+        -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("BuildTlas")); }
+
+    /// @brief Frame-begin hook on the RHI thread. Called once per frame.
     [[nodiscard]] virtual auto Tick() -> std::expected<void, ErrorMessage> { return std::unexpected(NotImplemented("Tick")); }
-
-    /// @brief Create a frame-affined transient constant buffer from a data snapshot.
-    [[nodiscard]] virtual auto CreateTransientConstantBuffer(StringView                         Name,
-                                                             const RHITransientConstantBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTransientConstantBuffer")); }
-
-    [[nodiscard]] auto CreateTransientConstantBuffer(const RHITransientConstantBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientConstantBuffer>, ErrorMessage> {
-        return CreateTransientConstantBuffer("Transient/ConstantBuffer", Desc);
-    }
-
-    /// @brief Create a frame-affined transient shader-storage buffer from a data snapshot.
-    [[nodiscard]] virtual auto CreateTransientShaderStorageBuffer(
-        StringView                              Name,
-        const RHITransientShaderStorageBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> { return std::unexpected(NotImplemented("CreateTransientShaderStorageBuffer")); }
-
-    [[nodiscard]] auto CreateTransientShaderStorageBuffer(const RHITransientShaderStorageBufferDesc& Desc)
-        -> std::expected<RHIRef<RHITransientShaderStorageBuffer>, ErrorMessage> {
-        return CreateTransientShaderStorageBuffer("Transient/ShaderStorageBuffer", Desc);
-    }
 
     // ── RHI frame lifecycle and command execution ─────────────────────────
 

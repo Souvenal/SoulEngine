@@ -21,7 +21,6 @@ import std;
 
 import :Capability;
 import :Debug;
-import :ImmediateContext;
 import :SurfaceProvider;
 import :Semaphore;
 import WindowSystem;
@@ -64,18 +63,19 @@ struct VulkanImageSubresourceKeyHash {
 ///
 /// State is keyed by (image, aspect, mip, layer); barrier granularity matches the key —
 /// no whole-image over-sync, no coalescing (all engine images have arrayLayers == 1 and
-/// at most ~13 mips, so per-subresource barrier counts stay small). Register() records
-/// the image's (mipLevels, arrayLayers) at creation and seeds color-aspect subresources;
-/// Transition() resolves vk::RemainingMipLevels/vk::RemainingArrayLayers against the
-/// registered dimensions, defaulting to 1 for unregistered images (legacy fallback).
+/// at most ~13 mips, so per-subresource barrier counts stay small). Ranges are always
+/// concrete: every call site resolves subresource counts from the payload it already
+/// holds, so the tracker stores no image metadata and creation never touches it.
+/// RHI-thread confined — Seed/Forget/Transition all run there.
 class VulkanImageTracker {
   public:
     VulkanImageTracker() = default;
 
-    /// Record an image's subresource dimensions and seed every (color, mip, layer)
-    /// subresource with State. Depth/stencil aspect keys are created lazily by Transition.
-    auto Register(vk::Image Image, Uint32 MipLevels, Uint32 ArrayLayers, VulkanImageState State = {}) -> void {
-        m_ImageInfos[Image] = {.MipLevels = MipLevels, .ArrayLayers = ArrayLayers};
+    /// Seed every (color, mip, layer) subresource with State. Only for images whose
+    /// initial state is not Undefined (swapchain images seed their transfer stage);
+    /// a default-constructed state needs no seeding — Transition's missing-key default
+    /// is already Undefined. Depth/stencil aspect keys are created lazily by Transition.
+    auto Seed(vk::Image Image, Uint32 MipLevels, Uint32 ArrayLayers, VulkanImageState State) -> void {
         for (Uint32 Mip = 0; Mip < MipLevels; ++Mip)
             for (Uint32 Layer = 0; Layer < ArrayLayers; ++Layer)
                 m_SubresourceStates[VulkanImageSubresourceKey{
@@ -85,10 +85,9 @@ class VulkanImageTracker {
 
     /// Drop a destroyed image's tracked state. Without this, a driver-reused
     /// VkImage handle would make the new image inherit a stale layout and
-    /// emit an invalid oldLayout barrier (ADR 05 pool era: eviction destroys
+    /// emit an invalid oldLayout barrier (pool era: eviction destroys
     /// idle images while their entries would otherwise linger).
     auto Forget(vk::Image Image) -> void {
-        m_ImageInfos.erase(Image);
         for (auto It = m_SubresourceStates.begin(); It != m_SubresourceStates.end();) {
             if (It->first.Image == Image)
                 It = m_SubresourceStates.erase(It);
@@ -97,30 +96,15 @@ class VulkanImageTracker {
         }
     }
 
-    /// Whole-image range: every mip and layer, resolved against the registered
-    /// dimensions at transition time. Use for view-based usages whose VkImageView
-    /// spans the full mip chain (attachments, whole-image sampled/storage bindings).
-    [[nodiscard]] static auto FullRange(vk::ImageAspectFlags Aspect) -> vk::ImageSubresourceRange {
-        return {.aspectMask     = Aspect,
-                .baseMipLevel   = 0,
-                .levelCount     = vk::RemainingMipLevels,
-                .baseArrayLayer = 0,
-                .layerCount     = vk::RemainingArrayLayers};
-    }
-
     /// Drive every subresource in Range to DesiredState, emitting one image memory
     /// barrier per subresource whose tracked state differs (or after a prior write).
+    /// Range must be concrete — no vk::RemainingMipLevels/vk::RemainingArrayLayers.
     auto Transition(const vk::raii::CommandBuffer& CmdBuf,
                     vk::Image                    Image,
                     const vk::ImageSubresourceRange Range,
                     const VulkanImageState&        DesiredState) -> void {
-        const auto   InfoIt     = m_ImageInfos.find(Image);
-        const Uint32 RegisteredMips   = (InfoIt != m_ImageInfos.end()) ? InfoIt->second.MipLevels   : 1;
-        const Uint32 RegisteredLayers = (InfoIt != m_ImageInfos.end()) ? InfoIt->second.ArrayLayers : 1;
-        const Uint32 MipCount =
-            (Range.levelCount == vk::RemainingMipLevels) ? RegisteredMips : Range.levelCount;
-        const Uint32 LayerCount =
-            (Range.layerCount == vk::RemainingArrayLayers) ? RegisteredLayers : Range.layerCount;
+        const Uint32 MipCount   = Range.levelCount;
+        const Uint32 LayerCount = Range.layerCount;
 
         static constexpr vk::ImageAspectFlagBits KnownAspects[] = {
             vk::ImageAspectFlagBits::eColor,
@@ -178,12 +162,6 @@ class VulkanImageTracker {
     }
 
   private:
-    struct VulkanImageInfo {
-        Uint32 MipLevels   = 1;
-        Uint32 ArrayLayers = 1;
-    };
-
-    std::unordered_map<vk::Image, VulkanImageInfo>                            m_ImageInfos        = {};
     std::unordered_map<VulkanImageSubresourceKey, VulkanImageState, VulkanImageSubresourceKeyHash>
         m_SubresourceStates = {};
 };
@@ -200,9 +178,10 @@ struct VulkanBufferState {
 
 /// @brief Device-level buffer state tracker shared by Vulkan command recording.
 ///
-/// State is keyed by (buffer, offset). Transient arena slices are disjoint
-/// within a frame and every frame slot occupies a distinct arena region, so
-/// keys never collide with another slice's live range; persistent buffers
+/// State is keyed by (buffer, offset). Transient belt slices are disjoint
+/// within a frame and an in-flight frame's ranges stay ring-owned until the
+/// timeline retires them, so keys never collide with another slice's live
+/// range; persistent buffers
 /// simply always use offset 0. The tracker is Reset() at every BeginFrame:
 /// the frame-slot fence guarantees the previous occupant's GPU work has
 /// completed, so a range's first use within a frame needs no barrier and is
@@ -276,6 +255,105 @@ class VulkanBufferTracker {
     std::unordered_map<Key, VulkanBufferState, KeyHash> m_BufferStates = {};
 };
 
+/// @brief Backend-owned deferred destruction queue for VMA resources (buffers and images).
+///
+/// Destruction is treated as a virtual timeline event: Enqueue stamps the entry with a fresh
+/// host value (IncreaseHostValue) that no submission ever signals directly — the monotonic
+/// device counter covers it once the NEXT real submission completes. No new command can
+/// reference a resource after its last ref is gone, so the destruction frame's own submission is
+/// an upper bound on its last GPU use, and "covered by the next submission" is always safe.
+/// Each lane's entries arrive in non-decreasing stamp order, so retirement pops from the front.
+///
+/// Distinct from the RHI-level deferred deletion queue: that one is the cross-thread transport
+/// (any thread -> RHI thread); this one is the GPU-retirement hop (RHI thread -> GPU
+/// completion). Tick() retires entries the device timeline has passed; Flush() destroys
+/// unconditionally (shutdown, after the device is idle). RHI-thread confined — buffer
+/// destructors only run there; the stamp itself comes from an atomic counter.
+class VulkanDeferredDeletionQueue {
+  public:
+    VulkanDeferredDeletionQueue() = default;
+    /// Safety net: the proper flush point is device Shutdown after the device is idle.
+    ~VulkanDeferredDeletionQueue() {
+        Flush();
+    }
+
+    VulkanDeferredDeletionQueue(const VulkanDeferredDeletionQueue&)                    = delete;
+    auto operator=(const VulkanDeferredDeletionQueue&) -> VulkanDeferredDeletionQueue& = delete;
+    VulkanDeferredDeletionQueue(VulkanDeferredDeletionQueue&&)                         = delete;
+    auto operator=(VulkanDeferredDeletionQueue&&) -> VulkanDeferredDeletionQueue&      = delete;
+
+    /// One dying VMA buffer: the handles destruction needs, plus its retirement stamp.
+    struct BufferEntry {
+        Uint64        RetireValue = 0;        ///< virtual event value; retired once the device timeline passes it
+        vk::Buffer    Buffer      = nullptr;  ///< native buffer handle
+        VmaAllocation Allocation  = nullptr;  ///< VMA allocation destroyed together with the handle
+    };
+
+    /// One dying VMA image: the handles destruction needs, plus its retirement stamp.
+    struct ImageEntry {
+        Uint64        RetireValue = 0;        ///< virtual event value; retired once the device timeline passes it
+        vk::Image     Image       = nullptr;  ///< native image handle
+        VmaAllocation Allocation  = nullptr;  ///< VMA allocation destroyed together with the handle
+    };
+
+    /// Bind the allocator and timeline the queue destroys and stamps through.
+    auto Init(VmaAllocator Allocator, VulkanTimelineSemaphore& Timeline) -> void {
+        m_Allocator = Allocator;
+        m_Timeline  = &Timeline;
+    }
+
+    /// @brief Queue a dying buffer, stamped with a fresh virtual event value.
+    ///
+    /// The handles stay valid until Tick() retires the entry, so a same-frame consumer that
+    /// snapshotted the raw handle (the frame-start upload batch) records safely.
+    auto Enqueue(vk::Buffer Buffer, VmaAllocation Allocation) -> void {
+        m_BufferEntries.push_back(BufferEntry{.RetireValue = m_Timeline->IncreaseHostValue(),
+                                              .Buffer       = Buffer,
+                                              .Allocation   = Allocation});
+    }
+
+    /// @brief Queue a dying image, stamped with a fresh virtual event value. Same contract as the
+    /// buffer overload: the frame-start upload batch's image lane snapshots raw image handles.
+    auto Enqueue(vk::Image Image, VmaAllocation Allocation) -> void {
+        m_ImageEntries.push_back(ImageEntry{.RetireValue = m_Timeline->IncreaseHostValue(),
+                                            .Image        = Image,
+                                            .Allocation   = Allocation});
+    }
+
+    /// Retire every entry whose stamp the device timeline has passed.
+    auto Tick() -> void {
+        const Uint64 Completed = m_Timeline->GetDeviceValue();
+        while (!m_BufferEntries.empty() && m_BufferEntries.front().RetireValue <= Completed) {
+            vmaDestroyBuffer(m_Allocator, static_cast<VkBuffer>(m_BufferEntries.front().Buffer),
+                             m_BufferEntries.front().Allocation);
+            m_BufferEntries.pop_front();
+        }
+        while (!m_ImageEntries.empty() && m_ImageEntries.front().RetireValue <= Completed) {
+            vmaDestroyImage(m_Allocator, static_cast<VkImage>(m_ImageEntries.front().Image),
+                            m_ImageEntries.front().Allocation);
+            m_ImageEntries.pop_front();
+        }
+    }
+
+    /// Destroy every remaining entry regardless of stamps. Shutdown only, after the device is idle.
+    auto Flush() -> void {
+        if (!m_Allocator)
+            return;
+        for (const BufferEntry& E : m_BufferEntries)
+            vmaDestroyBuffer(m_Allocator, static_cast<VkBuffer>(E.Buffer), E.Allocation);
+        m_BufferEntries.clear();
+        for (const ImageEntry& E : m_ImageEntries)
+            vmaDestroyImage(m_Allocator, static_cast<VkImage>(E.Image), E.Allocation);
+        m_ImageEntries.clear();
+    }
+
+  private:
+    VmaAllocator             m_Allocator     = nullptr;  ///< borrowed from the resource context
+    VulkanTimelineSemaphore* m_Timeline      = nullptr;  ///< borrowed graphics timeline
+    std::deque<BufferEntry>  m_BufferEntries = {};
+    std::deque<ImageEntry>   m_ImageEntries  = {};
+};
+
 /// Owns Vulkan objects and services shared by backend resource factories.
 class VulkanResourceContext final {
   public:
@@ -342,18 +420,8 @@ class VulkanResourceContext final {
         // ── VMA ───────────────────────────────────────────────────────────
         if (auto Res = Result->CreateVMA(Context); !Res)
             return std::unexpected(Res.error());
+        Result->m_DeferredDeletionQueue.Init(Result->m_Allocator, Result->m_Timeline);
 
-        // ── Immediate Context ──────────────────────────────────────────────
-        auto Immediate = VulkanImmediateContext::Create(
-            Result->m_Device,
-            Result->m_DebugUtils,
-            Result->m_TransferQueue,
-            Result->m_TransferFamily,
-            Result->m_GraphicsQueue,
-            Result->m_GraphicsFamily);
-        if (!Immediate)
-            return std::unexpected(Immediate.error().Append("VulkanImmediateContext creation failed"));
-        Result->m_ImmediateContext = std::move(*Immediate);
         Result->CreateTracyCtx();
 
         return Result;
@@ -422,9 +490,6 @@ class VulkanResourceContext final {
     [[nodiscard]] auto GetTransferQueue() const -> vk::raii::Queue& {
         return const_cast<vk::raii::Queue&>(m_TransferQueue);
     }
-    [[nodiscard]] auto GetImmediateContext() const -> VulkanImmediateContext& {
-        return const_cast<VulkanImmediateContext&>(m_ImmediateContext);
-    }
     [[nodiscard]] auto GetImageTracker() const -> VulkanImageTracker& {
         return const_cast<VulkanImageTracker&>(m_ImageTracker);
     }
@@ -445,6 +510,9 @@ class VulkanResourceContext final {
     auto SetCurrentFrameIndex(Uint32 FrameIndex) -> void { m_CurrentFrameIndex = FrameIndex; }
     [[nodiscard]] auto GetTimeline() const -> VulkanTimelineSemaphore& {
         return const_cast<VulkanTimelineSemaphore&>(m_Timeline);
+    }
+    [[nodiscard]] auto GetDeferredDeletionQueue() const -> VulkanDeferredDeletionQueue& {
+        return const_cast<VulkanDeferredDeletionQueue&>(m_DeferredDeletionQueue);
     }
 
   private:
@@ -725,11 +793,11 @@ class VulkanResourceContext final {
     vk::raii::Queue                  m_ComputeQueue   = nullptr;
     vk::raii::Queue                  m_TransferQueue  = nullptr;
     VmaAllocator                     m_Allocator      = nullptr;
-    VulkanImmediateContext           m_ImmediateContext;
     // ── Global descriptor manager ─────────────────────────────────────────
     VulkanImageTracker               m_ImageTracker;
     VulkanBufferTracker              m_BufferTracker;
     VulkanTimelineSemaphore           m_Timeline;
+    VulkanDeferredDeletionQueue       m_DeferredDeletionQueue;
     Uint32                           m_FramesInFlight = 2;
     Uint32                           m_CurrentFrameIndex = 0;
 };

@@ -169,7 +169,8 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             .polygonMode             = vk::PolygonMode::eFill,
             // none / back / front
             // TODO: support all of these in RHI
-            // .cullMode = Desc.Rasterizer.CullMode ? vk::CullModeFlagBits::eBack : vk::CullModeFlagBits::eNone,
+            // .cullMode = Desc.Rasterizer.CullMode ? vk::CullModeFlagBits::eBack
+            //                                        : vk::CullModeFlagBits::eNone,
             .cullMode                = vk::CullModeFlagBits::eNone,
             // clockwise / counter-clockwise
             // TODO: support changing in RHI
@@ -312,15 +313,6 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         return m_Bindings;
     }
 
-    [[nodiscard]] auto FindBinding(StringView ParameterPath, ShaderResourceType Type) const
-        -> const VulkanReflectedDescriptorBinding* {
-        for (const auto& Binding : m_Bindings) {
-            if (Binding.Type == Type && Binding.ParameterPath == ParameterPath)
-                return &Binding;
-        }
-        return nullptr;
-    }
-
     [[nodiscard]] auto GetDynamicOffsetCount() const -> Uint32 {
         return m_DynamicOffsetCount;
     }
@@ -374,10 +366,9 @@ class VulkanComputePipeline final : public RHIComputePipeline {
             Context.GetDebugUtils().SetObjectName(*ShaderModule, Name);
         }
 
-        // Specialization constants (WT3): validate host values against the
-        // reflection, then lower them to VkSpecializationInfo. Constants the
-        // host omits keep their shader-declared defaults (Q2). Every value is
-        // 32-bit (Q1), so one word of backing storage per entry suffices.
+        // Specialization constants: validate host values against the reflection, then lower them to
+        // VkSpecializationInfo. Constants the host omits keep their shader-declared defaults. Every value is
+        // 32-bit, so one word of backing storage per entry suffices.
         std::vector<vk::SpecializationMapEntry> MapEntries;
         std::vector<Uint32>                     SpecData;
         if (!Desc.SpecializationConstants.empty()) {

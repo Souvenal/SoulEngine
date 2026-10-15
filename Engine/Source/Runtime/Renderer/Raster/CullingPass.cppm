@@ -37,49 +37,49 @@ class CullingPass final : public IRHIComputePass {
     }
 
     struct Parameter {
-        RGStorageBufferUAV ViewInstances  = {};
-        RGStorageBufferUAV ViewIndirect   = {};
-        RGStorageBufferUAV ViewCounter    = {};
-        RGStorageBufferSRV SceneInstances = {};
-        RGStorageBufferSRV SceneIndirect  = {};
-        RGStorageBufferSRV GeometryTable  = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> ViewInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> ViewIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> ViewCounter;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  SceneInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  SceneIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  GeometryTable;
         Uint32 InstanceCount = 0;  ///< CPU passthrough: dispatch size.
         Uint32 CommandCount  = 0;
     };
 
-    CullingPass(Parameter In, RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass(std::move(Pipeline)), m_Parameter(std::move(In)) {}
+    CullingPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
 
-        if (!m_Parameter.SceneInstances.Ref || !m_Parameter.SceneIndirect.Ref ||
-            !m_Parameter.GeometryTable.Ref || !m_Parameter.ViewInstances.Ref || !m_Parameter.ViewIndirect.Ref ||
-            !m_Parameter.ViewCounter.Ref || m_Parameter.InstanceCount == 0)
+        if (!m_Parameter->SceneInstances.Resolved || !m_Parameter->SceneIndirect.Resolved ||
+            !m_Parameter->GeometryTable.Resolved || !m_Parameter->ViewInstances.Resolved ||
+            !m_Parameter->ViewIndirect.Resolved || !m_Parameter->ViewCounter.Resolved ||
+            m_Parameter->InstanceCount == 0)
             return std::unexpected(ErrorMessage("Culling pass resources are not ready"));
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_cullPass.sceneInstances", m_Parameter.SceneInstances.Ref, true},
-                RHIShaderBindingRequest{"g_cullPass.sceneIndirectCommands", m_Parameter.SceneIndirect.Ref, true},
-                RHIShaderBindingRequest{"g_cullPass.geometryTable.records", m_Parameter.GeometryTable.Ref, true},
-                RHIShaderBindingRequest{"g_cullPass.viewInstances", m_Parameter.ViewInstances.Ref, false},
-                RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", m_Parameter.ViewIndirect.Ref, false},
-                RHIShaderBindingRequest{"g_cullPass.viewCounter", m_Parameter.ViewCounter.Ref, false},
+                RHIShaderBindingRequest{"g_cullPass.sceneInstances", m_Parameter->SceneInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.sceneIndirectCommands", m_Parameter->SceneIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.geometryTable.records", m_Parameter->GeometryTable.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.viewInstances", m_Parameter->ViewInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", m_Parameter->ViewIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.viewCounter", m_Parameter->ViewCounter.ResolvedView()},
             }); !R)
             return std::unexpected(R.error());
 
         if (auto R = PushConstants(0, CullingPushConstants{
-                .InstanceCount = m_Parameter.InstanceCount,
-                .CommandCount = m_Parameter.CommandCount,
+                .InstanceCount = m_Parameter->InstanceCount,
+                .CommandCount = m_Parameter->CommandCount,
             }); !R)
             return std::unexpected(R.error());
 
-        Dispatch((std::max(m_Parameter.InstanceCount, m_Parameter.CommandCount) + 63) / 64);
+        Dispatch((std::max(m_Parameter->InstanceCount, m_Parameter->CommandCount) + 63) / 64);
         return {};
     }
 
   private:
-    Parameter m_Parameter = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

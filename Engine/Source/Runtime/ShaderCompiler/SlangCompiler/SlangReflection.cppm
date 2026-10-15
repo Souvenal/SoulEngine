@@ -135,9 +135,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
     std::optional<Int64> DefaultValue = std::nullopt;
     if (ScalarType != ShaderScalarType::Float32) {
-        // Slang exposes integer/bool defaults through the integer getter on
-        // the variable (not its layout); float has no SDK getter and stays
-        // empty (WT3 Q2).
+        // Slang exposes integer/bool defaults through the integer getter on the variable (not its layout);
+        // float has no SDK getter and stays empty.
         Int64 Value = 0;
         if (auto* Variable = Var->getVariable(); Variable && SLANG_SUCCEEDED(Variable->getDefaultValueInt(&Value)))
             DefaultValue = Value;
@@ -178,9 +177,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         return EmitPushConstantRange(Var, Parent.PushBase, slang::ParameterCategory::PushConstantBuffer, Path, Sinks);
     }
 
-    // Slang [SpecializationConstant] globals live on the
-    // SpecializationConstant category axis: the offset is the Vulkan
-    // constant id.  They occupy no descriptor slot (WT3).
+    // Slang [SpecializationConstant] globals live on the SpecializationConstant category axis: the offset is
+    // the Vulkan constant id.  They occupy no descriptor slot.
     if (HasCategory(Var, slang::ParameterCategory::SpecializationConstant))
         return EmitSpecializationConstant(Var, Path, Sinks);
 
@@ -283,10 +281,10 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
         if (!ArrayCount)
             return std::unexpected(std::move(ArrayCount.error()));
 
-        auto ResourceType = ToShaderResourceTypeFromLeafLayout(LeafLayout);
-        if (!ResourceType) {
+        auto Shape = ToShaderBindingShapeFromLeafLayout(LeafLayout);
+        if (!Shape) {
             return std::unexpected(
-                ResourceType.error().Append(Format("Failed to normalize shader parameter '{}'", Path)));
+                Shape.error().Append(Format("Failed to normalize shader parameter '{}'", Path)));
         }
 
         Sinks.Bindings->emplace_back(ShaderBinding{
@@ -294,7 +292,8 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
             .Set           = static_cast<Uint32>(SpaceIndex != UnknownBindingIndex ? Parent.Set + SpaceIndex
                                                                                    : Parent.Set),
             .BindingIndex  = static_cast<Uint32>(Parent.BindingBase + SlotIndex),
-            .Type          = *ResourceType,
+            .Type          = Shape->Type,
+            .Access        = Shape->Access,
             .ArrayCount    = *ArrayCount,
         });
         return {};

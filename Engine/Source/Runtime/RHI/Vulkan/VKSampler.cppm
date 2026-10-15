@@ -37,8 +37,7 @@ class VulkanSampler final : public RHISampler {
   public:
     VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
         : RHISampler(std::move(Name), Desc),
-          m_Sampler(std::make_shared<vk::raii::Sampler>(std::move(VulkanSampler))),
-          m_DescriptorInfo{.sampler = **m_Sampler} {}
+          m_Sampler(std::move(VulkanSampler)) {}
 
     ~VulkanSampler() override = default;
 
@@ -84,27 +83,11 @@ class VulkanSampler final : public RHISampler {
     }
 
     [[nodiscard]] auto GetVkSampler() const -> vk::Sampler {
-        return **m_Sampler;
-    }
-
-    /// Build a sampler descriptor write for this sampler.
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             bool              /*IsReadOnly*/) const
-        -> vk::WriteDescriptorSet {
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eSampler,
-            .pImageInfo      = &m_DescriptorInfo,
-        };
+        return *m_Sampler;
     }
 
   private:
-    SPtr<vk::raii::Sampler>         m_Sampler        = nullptr;
-    vk::DescriptorImageInfo m_DescriptorInfo = {};
+    vk::raii::Sampler m_Sampler;
 };
 
 } // namespace SoulEngine

@@ -74,6 +74,10 @@ uv run pre-commit install
 ### Build & Run
 
 ```bash
+xmake repo -u      # sync package repositories (required once after cloning,
+                   # and again whenever .xmake/ is deleted — the project's
+                   # souvenal-repo clone lives under .xmake/ and xmake does
+                   # not re-clone it automatically in private network mode)
 xmake f -m release # configure
 xmake              # build
 xmake run          # run SoulEngine

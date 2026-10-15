@@ -9,10 +9,32 @@ import Core;
 import Material;
 import RHI;
 import Scene;
+import magic_enum;
 
 import std;
 
 export namespace SoulEngine {
+
+/// @brief Resolve completed global bindless indices and enqueue missing textures for the next RHI frame.
+[[nodiscard]] auto ResolveBindlessTextureIndices(std::span<const RHIRef<RHITexture>> Textures)
+    -> std::expected<std::unordered_map<Uint64, Uint32>, ErrorMessage> {
+    auto& Device = RHIRenderDevice::Get();
+    std::vector<RHIRef<RHITexture>> Missing = {};
+    for (const auto& Texture : Textures)
+        if (Texture && !Device.FindBindlessTextureIndex(Texture))
+            Missing.push_back(Texture);
+    if (!Missing.empty())
+        if (auto R = Device.RegisterBindlessTextures(Missing); !R)
+            return std::unexpected(R.error().Append("Bindless texture registration failed"));
+
+    std::unordered_map<Uint64, Uint32> Result = {};
+    Result.reserve(Textures.size());
+    for (const auto& Texture : Textures)
+        if (Texture)
+            if (const auto Index = Device.FindBindlessTextureIndex(Texture))
+                Result.emplace(Texture->GetId(), *Index);
+    return Result;
+}
 
 /// @brief Shared frame constant-buffer ABI used by every renderer.
 struct alignas(16) RendererFrameConstants {
@@ -70,18 +92,21 @@ static_assert(offsetof(RendererViewConstants, ViewportSize) == 144);
 /// Queries live on the record itself (IsUploadRequested / IsReadyOnGpu);
 /// mutation is never a member operation.
 ///
-/// Buffers are queued on the first call; the BLAS follows once the buffers
-/// are Ready (the BLAS descriptor bakes their device addresses). A deferred
-/// stage is normal progress, not an error; the caller retries next frame. A
-/// failed stage leaves its flag unset, so the next call re-attempts exactly
-/// that stage.
+/// Buffers are created and uploaded on the first call: CreateBuffer is a
+/// synchronous pure allocation (Ready at return, device address bakable) and
+/// UploadBuffer hands the bytes to a frame-affined RHI task whose copies land
+/// in the frame-start upload batch — the record is drawable from the same
+/// frame. The BLAS follows once the buffers are Ready (the BLAS descriptor
+/// bakes their device addresses). A deferred stage is normal progress, not
+/// an error; the caller retries next frame. A failed stage leaves its flag
+/// unset, so the next call re-attempts exactly that stage.
 ///
-/// BLAS builds are collected, not executed: the BLAS stage creates the
-/// hollow descriptor (synchronously — Create performs no device calls) and
-/// enters it into the pending batch in the same step, guarded by
-/// `BlasRequested` so each BLAS joins exactly once. The renderer drains the
-/// batch at the end of Render() into RenderResult, and the device builds the
-/// whole batch at the start of the frame's execution.
+/// The BLAS stage creates and materializes the descriptor (synchronously —
+/// VMA and the device-level calls are thread-safe) and enqueues its build
+/// through BuildBlas in the same step, guarded by BlasRequested so each BLAS
+/// is built exactly once.
+/// The build task is frame-affined: the device records the whole BLAS batch
+/// at the start of the frame's execution, after the upload batch.
 class GeometryUploader {
   public:
     GeometryUploader() = default;
@@ -97,22 +122,11 @@ class GeometryUploader {
             if (auto R = UploadBuffers(Record); !R)
                 return R;
 
-        if (NeedBLAS && !Record.BlasRequested && Record.IsReadyOnGpu(false)) {
+        if (NeedBLAS && !Record.BlasRequested && Record.IsReadyOnGpu(false))
             if (auto R = UploadBlas(Record); !R)
                 return R;
-            // Geometries excluded at the gate below set BlasRequested without
-            // producing a BLAS; they never join the pending build batch.
-            if (Record.Blas)
-                m_PendingBlasBuilds.push_back(Record.Blas);
-        }
 
         return {};
-    }
-
-    /// Drain the pending BLAS build batch for this frame's RenderResult.
-    [[nodiscard]] auto DrainPendingBlasBuilds()
-        -> std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> {
-        return std::exchange(m_PendingBlasBuilds, {});
     }
 
   private:
@@ -126,87 +140,94 @@ class GeometryUploader {
         auto&      Device = RHIRenderDevice::Get();
         const auto Base   = Format("Geometry/{}", Record.Name.empty() ? String{"Unnamed"} : Record.Name);
 
-        const auto CreateVertexBuffer = [&Device, &Base](StringView                 AttributeName,
-                                                         std::span<const std::byte> Data,
-                                                         Uint64 VertexCount,
-                                                         Uint32 Stride)
-            -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> {
-            auto Result = Device.CreateVertexBuffer(Format("{}/{}", Base, AttributeName),
-                                                    {
-                                                        .Data        = Data,
-                                                        .VertexCount = VertexCount,
-                                                        .Stride      = Stride,
-                                                    });
+        const auto CreateAttributeBuffer = [&Device, &Base](StringView                 AttributeName,
+                                                            std::span<const std::byte> Data)
+            -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> {
+            auto Result = Device.CreateBuffer(Format("{}/{}", Base, AttributeName),
+                                              RHIBufferDesc{
+                                                  .SizeBytes   = static_cast<Uint64>(Data.size_bytes()),
+                                                  .Usage       = RHIBufferUsage::Vertex | RHIBufferUsage::Storage,
+                                                  .MemoryUsage = RHIMemoryUsage::GpuOnly,
+                                                  .Lifetime    = RHILifetime::Persistent,
+                                              });
             if (!Result)
                 return std::unexpected(Result.error().Append(
                     Format("GeometryUploader: {} buffer creation failed", AttributeName)));
+            if (auto R = Device.UploadBuffer(*Result, Data); !R)
+                return std::unexpected(R.error().Append(
+                    Format("GeometryUploader: {} buffer upload failed", AttributeName)));
             return std::move(*Result);
         };
 
-        auto Position = CreateVertexBuffer("Position",
-                                           std::as_bytes(std::span{Record.Positions}),
-                                           Record.Positions.size(),
-                                           sizeof(Record.Positions[0]));
+        auto Position = CreateAttributeBuffer("Position", std::as_bytes(std::span{Record.Positions}));
         if (!Position)
             return std::unexpected(std::move(Position.error()));
-        auto Normal = CreateVertexBuffer("Normal",
-                                         std::as_bytes(std::span{Record.Normals}),
-                                         Record.Normals.size(),
-                                         sizeof(Record.Normals[0]));
+        auto Normal = CreateAttributeBuffer("Normal", std::as_bytes(std::span{Record.Normals}));
         if (!Normal)
             return std::unexpected(std::move(Normal.error()));
 
-        RHIRef<RHIVertexBuffer> Tangent = nullptr;
+        RHIRef<RHIBuffer> Tangent = nullptr;
         if (Record.HasTangents && !Record.Tangents.empty()) {
-            auto Result = CreateVertexBuffer("Tangent",
-                                             std::as_bytes(std::span{Record.Tangents}),
-                                             Record.Tangents.size(),
-                                             sizeof(Record.Tangents[0]));
+            auto Result = CreateAttributeBuffer("Tangent", std::as_bytes(std::span{Record.Tangents}));
             if (!Result)
                 return std::unexpected(std::move(Result.error()));
             Tangent = std::move(*Result);
         }
 
-        RHIRef<RHIVertexBuffer> TexCoord = nullptr;
+        RHIRef<RHIBuffer> TexCoord = nullptr;
         if (Record.HasUV0 && !Record.UVs.empty()) {
-            auto Result = CreateVertexBuffer("TexCoord",
-                                             std::as_bytes(std::span{Record.UVs}),
-                                             Record.UVs.size(),
-                                             sizeof(Record.UVs[0]));
+            auto Result = CreateAttributeBuffer("TexCoord", std::as_bytes(std::span{Record.UVs}));
             if (!Result)
                 return std::unexpected(std::move(Result.error()));
             TexCoord = std::move(*Result);
         }
 
-        auto Index = Device.CreateIndexBuffer(Format("{}/Index", Base),
-                                              {
-                                                  .Data       = std::as_bytes(std::span{Record.Indices}),
-                                                  .IndexCount = Record.Indices.size(),
-                                              });
+        auto Index = Device.CreateBuffer(Format("{}/Index", Base),
+                                         RHIBufferDesc{
+                                             .SizeBytes   = static_cast<Uint64>(Record.Indices.size() * sizeof(Uint32)),
+                                             .Usage       = RHIBufferUsage::Index | RHIBufferUsage::Storage,
+                                             .MemoryUsage = RHIMemoryUsage::GpuOnly,
+                                             .Lifetime    = RHILifetime::Persistent,
+                                         });
         if (!Index)
             return std::unexpected(Index.error().Append("GeometryUploader: index buffer creation failed"));
+        if (auto R = Device.UploadBuffer(*Index, std::as_bytes(std::span{Record.Indices})); !R)
+            return std::unexpected(R.error().Append("GeometryUploader: index buffer upload failed"));
 
         Record.PositionBuffer        = std::move(*Position);
         Record.NormalBuffer          = std::move(*Normal);
         Record.TangentBuffer         = std::move(Tangent);
         Record.TexCoordBuffer        = std::move(TexCoord);
         Record.IndexBuffer           = std::move(*Index);
+        Record.VertexCount           = Record.Positions.size();
+        Record.PositionStride        = sizeof(Record.Positions[0]);
+        Record.IndexCount            = Record.Indices.size();
         Record.BufferUploadRequested = true;
+
+        // UploadBuffer snapshots the bytes at the call site, so the CPU
+        // streams are no longer needed. UploadBlas reads IndexCount, not
+        // Indices. Move-assigning {} releases the backing storage.
+        Record.Positions = {};
+        Record.Normals   = {};
+        Record.Tangents  = {};
+        Record.UVs       = {};
+        Record.Indices   = {};
         return {};
     }
 
-    /// Queue the geometry-owned static BLAS descriptor (hollow until its
-    /// deferred first build materializes storage at the frame-start build
-    /// batch). Caller guarantees the buffers are Ready. Failures leave the
-    /// flag unset so a later frame retries.
+    /// @brief Create and materialize the geometry-owned static BLAS and enqueue its build through BuildBlas.
+    ///
+    /// Caller guarantees the buffers are Ready. Failures leave the flag unset so a later frame retries.
     [[nodiscard]] static auto UploadBlas(GeometryRecord& Record) -> std::expected<void, ErrorMessage> {
         // Ray-tracing gate: a BLAS needs at least one complete triangle. A
         // geometry failing it is excluded exactly once — BlasRequested stays
         // set while Record.Blas stays null — so it never joins the pending
         // build batch and stays invisible to ray tracing; raster rendering is
-        // unaffected. Downstream (hollow Create aside) the Vulkan batch trusts
+        // unaffected. Downstream the Vulkan batch trusts
         // this gate by comment instead of re-validating or asserting.
-        if (Record.Indices.empty() || Record.Indices.size() % 3 != 0) {
+        // Note: reads IndexCount, not Indices — the CPU streams are
+        // released once the buffer stage succeeds.
+        if (Record.IndexCount == 0 || Record.IndexCount % 3 != 0) {
             LogWarning("GeometryUploader: '{}' has no complete triangles; excluded from ray tracing BLAS builds",
                        Record.Name.empty() ? String{"Unnamed"} : Record.Name);
             Record.BlasRequested = true;
@@ -215,6 +236,9 @@ class GeometryUploader {
         const RHIBottomLevelAccelerationStructureDesc BlasDesc{
             .VertexBufferRef = Record.PositionBuffer,
             .IndexBufferRef  = Record.IndexBuffer,
+            .VertexCount     = Record.VertexCount,
+            .VertexStride    = Record.PositionStride,
+            .IndexCount      = Record.IndexCount,
         };
         auto Blas = RHIRenderDevice::Get().CreateBottomLevelAccelerationStructure(
             Format("BLAS/Geometry/{}", Record.Name.empty() ? String{"Unnamed"} : Record.Name), BlasDesc);
@@ -222,12 +246,16 @@ class GeometryUploader {
             return std::unexpected(Blas.error().Append(
                 Format("GeometryUploader: BLAS allocation failed for '{}'", Record.Name)));
 
+        // Frame-affined build task: the BLAS batch records at frame start,
+        // after the upload batch that lands this geometry's buffers.
+        if (auto R = RHIRenderDevice::Get().BuildBlas(*Blas); !R)
+            return std::unexpected(R.error().Append(
+                Format("GeometryUploader: BLAS build enqueue failed for '{}'", Record.Name)));
+
         Record.Blas          = std::move(*Blas);
         Record.BlasRequested = true;
         return {};
     }
-
-    std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> m_PendingBlasBuilds = {};
 };
 
 /// @brief Per-frame renderer-neutral GPU table bundle built from the
@@ -257,7 +285,7 @@ struct SceneGpuData {
 
     [[nodiscard]] static auto Create(std::span<const InstanceRecord>        Instances,
                                      std::span<const LightRecord>           Lights,
-                                     const RHIRefArray<RHISampledTexture>& Textures) -> SceneGpuData {
+                                     const std::unordered_map<Uint64, Uint32>& TextureIndices) -> SceneGpuData {
         SceneGpuData Result = {};
         std::unordered_map<const GeometryRecord*, Uint32> GeometryIDs = {};
         std::unordered_map<const MaterialRecord*, Uint32> MaterialIDs = {};
@@ -278,18 +306,19 @@ struct SceneGpuData {
             const auto GeometryID = It->second;
             if (Inserted) {
                 Result.GeometryRecords.emplace_back(Geometry.BuildGpuData());
-                Result.GeometryIndexCounts.emplace_back(
-                    static_cast<Uint32>(Geometry.IndexBuffer->GetIndexCount()));
+                Result.GeometryIndexCounts.emplace_back(static_cast<Uint32>(Geometry.IndexCount));
                 Result.GeometryBlas.emplace_back(Geometry.Blas);
             }
             Uint32 MaterialID = 0;
             if (SourceInstance.Material) {
                 const auto* Record = std::addressof(*SourceInstance.Material);
+                if (Record->HasUnresolvedBindlessTextures(TextureIndices))
+                    continue;
                 const auto [MaterialIt, MaterialInserted] =
                     MaterialIDs.emplace(Record, static_cast<Uint32>(Result.MaterialRecords.size()));
                 MaterialID = MaterialIt->second;
                 if (MaterialInserted) {
-                    Result.MaterialRecords.emplace_back(Record->BuildGpuData(Textures));
+                    Result.MaterialRecords.emplace_back(Record->BuildGpuData(TextureIndices));
                 }
             }
             Result.InstanceRecords.emplace_back(SourceInstance.BuildGpuData(GeometryID, MaterialID));

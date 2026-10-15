@@ -211,7 +211,7 @@ class VulkanSwapchain {
         Result.m_Images = std::move(ImagesResult.value);
         for (Uint32 Index = 0; Index < Result.m_Images.size(); ++Index) {
             Context.GetDebugUtils().SetObjectName(Result.m_Images[Index], Format("Internal/Image/Swapchain{}", Index));
-            Result.m_ImageTracker->Register(Result.m_Images[Index],
+            Result.m_ImageTracker->Seed(Result.m_Images[Index],
                 1,
                 SwapchainCI.imageArrayLayers,
                 VulkanImageState{

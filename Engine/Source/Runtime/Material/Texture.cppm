@@ -40,19 +40,26 @@ struct TextureDataLoader {
         std::vector<Uint8> PixelData(Pixels, Pixels + PixelByteCount);
         stbi_image_free(Pixels);
 
-        auto Texture = RHIRenderDevice::Get().CreateSampledTexture(
+        auto Texture = RHIRenderDevice::Get().CreateTexture(
             NormalizedPath.string(),
-            RHISampledTextureDesc{
-                .Data     = std::as_bytes(std::span{PixelData}),
-                .Width    = static_cast<Uint32>(Width),
-                .Height   = static_cast<Uint32>(Height),
-                .Channels = 4,
-                .Format   = RHIFormat::R8G8B8A8_UNORM,
+            RHITextureDesc{
+                .Width       = static_cast<Uint32>(Width),
+                .Height      = static_cast<Uint32>(Height),
+                .Format      = RHIFormat::R8G8B8A8_UNORM,
+                .Usage       = RHITextureUsage::Sampled,
+                .MemoryUsage = RHIMemoryUsage::GpuOnly,
+                .Channels    = 4,
             });
         if (!Texture) {
             LogWarning("TextureDataLoader: failed to create RHI texture '{}': {}",
                        NormalizedPath.string(),
                        Texture.error().ToString());
+            return nullptr;
+        }
+        if (auto R = RHIRenderDevice::Get().UploadTexture(*Texture, std::as_bytes(std::span{PixelData})); !R) {
+            LogWarning("TextureDataLoader: failed to upload RHI texture '{}': {}",
+                       NormalizedPath.string(),
+                       R.error().ToString());
             return nullptr;
         }
 

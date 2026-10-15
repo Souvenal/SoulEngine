@@ -1,5 +1,5 @@
 /// @file   SpecializationConstant.cpp
-/// @brief  Tests for Slang [SpecializationConstant] reflection (WT3, Q5):
+/// @brief  Tests for Slang [SpecializationConstant] reflection:
 /// reflected entries (name / constant id / scalar type / default) plus a
 /// SPIR-V byte-level assertion that the constants lower to OpSpecConstant*.
 
@@ -99,7 +99,7 @@ TEST_F(SpecializationConstantTest, ReflectsSpecializationConstants) {
     It = FindByName("BLEND_FACTOR");
     ASSERT_NE(It, Constants.end());
     EXPECT_EQ(It->ScalarType, ShaderScalarType::Float32);
-    // Float has no Slang SDK default getter (WT3 Q2).
+    // Float has no Slang SDK default getter.
     EXPECT_FALSE(It->DefaultValue.has_value());
 }
 
