@@ -1,18 +1,19 @@
-# Branch Model and Merge Discipline
+# Main-Only Branch Model
 
 ## Branch Model
 
-Development flows through three levels of branches:
+Development uses short-lived feature branches created from the latest `main`. `main` is the only long-lived integration branch. The retired integration branch is not part of the workflow.
 
-1. **`dev/xxx`** — short-lived feature branches, one per piece of work.
-2. **`dev/feature`** — the permanent integration branch where finished features land and interact before release.
-3. **`main`** — the stable branch. Always green; every commit on it has passed CI.
+## Pull Request Workflow
 
-## Merge Discipline
+1. Update local refs and create a feature branch from the current `origin/main`.
+2. Open a pull request from the feature branch directly to `main`. Ordinary pull request CI reports separate macOS and Windows build checks; the existing `pre-commit.ci - pr` check remains an independent required gate.
+3. After review and ordinary checks pass, add the pull request to the `main` merge queue. The queue processes candidates in order and creates a temporary merge group containing the candidate and preceding queued changes. The `merge_group` workflow validates that exact combination against the latest `main` baseline.
+4. The queue merges an accepted pull request with squash merge, preserving one coherent commit on `main`.
+5. Delete the feature branch after the pull request merges.
 
-The two integration edges use different merge strategies, and the asymmetry is deliberate:
+A queued pull request that conflicts or fails validation can be removed or fixed without indefinitely blocking unrelated candidates. A new pull request run and its merge-group run cancel obsolete work for the same candidate, while distinct pull requests and branches retain separate concurrency groups.
 
-- **`dev/xxx` → `dev/feature`: squash merge, then delete the feature branch.** A feature branch accumulates WIP commits that have no long-term value; squashing collapses them into a single coherent change on `dev/feature`. The branch does not outlive the merge, so the classic repeated-diff problem of re-merging a long-lived branch never arises.
-- **`dev/feature` → `main`: merge commit, never squash.** `dev/feature` lives permanently. A merge commit keeps the two branches' histories continuous, so `dev/feature` carries on after each release with no force-push or reset dance. Squashing here would recreate the branch with divergent history every cycle.
+## Scope
 
-In short: **squash where branches are disposable, merge-commit where branches are permanent.**
+This workflow covers contribution CI and mainline integration only. Versioning, releases, nightly builds, and publishing binary artifacts are outside its scope and remain independent decisions.
