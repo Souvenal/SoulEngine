@@ -52,7 +52,7 @@ jobs:
           clang --version
 
       # Package cache key hashes the project's xmake build files. Known limitation: a stale cache after
-      # dependency changes is resolved by bumping the v2 component.
+      # dependency changes is resolved by bumping the v1 component.
       - name: Set up xmake
         uses: xmake-io/github-action-setup-xmake@v1
         with:
