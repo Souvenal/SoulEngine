@@ -6,4 +6,4 @@ This section is distinct from [`docs/adr/`](../adr/), which is reserved for code
 
 ## Documents
 
-- [Branch Model and Merge Discipline](branch-model.md) — the `dev/xxx` → `dev/feature` → `main` flow and the asymmetric squash/merge convention
+- [Main-Only Branch Model](branch-model.md) — feature branches, direct pull requests to `main`, merge-queue validation, and squash integration

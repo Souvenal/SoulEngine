@@ -1,6 +1,7 @@
 # SoulEngine
 
-[![CI](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml)
+[![macOS build](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml/badge.svg?branch=main&job=build-macos)](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml)
+[![Windows build](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml/badge.svg?branch=main&job=build-windows)](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml)
 
 SoulEngine is a personal lightweight game engine built from scratch with modern C++23 and xmake. It is first and foremost a **learning project** — a vehicle for studying low-level GPU APIs, hardware architecture, advanced rendering algorithms, and large-scale software engineering.
 
