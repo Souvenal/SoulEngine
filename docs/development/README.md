@@ -7,3 +7,4 @@ This section is distinct from [`docs/adr/`](../adr/), which is reserved for code
 ## Documents
 
 - [Branch Model and Merge Discipline](branch-model.md) — the `dev/xxx` → `dev/feature` → `main` flow, squash integration, and linear rebase promotion
+- [Agent Development Workflow](agent-workflow.md) — issue-first scope, isolated worktrees, review handoff, approval gates, and cleanup for agent-initiated changes
