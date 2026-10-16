@@ -37,10 +37,41 @@ This workflow applies to every agent-initiated repository change, regardless of 
 
 ## Integration And Cleanup
 
-1. Before integration, fetch `origin/dev/feature` again and rebase or merge the temporary branch as needed to account for newly accepted work. Stop and coordinate if the shared branch changed unexpectedly.
-2. Integrate `dev/<ticket>` into `dev/feature` with **squash merge**, producing one coherent integration commit. Follow the repository's [branch model](branch-model.md) for promotion from `dev/feature` to `main`.
-3. After integration, verify the resulting `dev/feature` state and required validation.
-4. Delete the temporary branch and its dedicated worktree after the change is integrated and accepted. Do not leave abandoned agent worktrees or branches behind.
+1. Perform integration from the primary worktree after maintainer approval. Fetch the shared branch and confirm its tip has not changed unexpectedly:
+
+   ```text
+   git fetch origin dev/feature
+   git log --oneline -1 origin/dev/feature
+   git diff --check dev/<ticket>...origin/dev/feature
+   ```
+
+   If the shared tip changed after the review handoff, stop and coordinate before rebasing or merging. Resolve any accepted update in the temporary worktree, rerun validation, and obtain review approval again.
+2. From the primary worktree, create the squash integration commit:
+
+   ```text
+   git switch dev/feature
+   git pull --ff-only origin dev/feature
+   git merge --squash dev/<ticket>
+   git commit -m "<coherent integration message>"
+   ```
+
+   Resolve conflicts only with maintainer coordination; abort the merge and return to review if the result changes the agreed scope. Follow the repository's [branch model](branch-model.md) for promotion from `dev/feature` to `main`.
+3. Verify the integrated state before cleanup. Confirm the new commit is on `dev/feature`, inspect the final diff, run the required validation, and confirm the worktree is clean:
+
+   ```text
+   git log --oneline -1 dev/feature
+   git diff --check origin/dev/feature..dev/feature
+   git status --short --branch
+   ```
+4. Remove temporary state only after verification and acceptance. Remove the worktree first, then delete its branch:
+
+   ```text
+   git worktree remove ../<repository>-<ticket>
+   git branch -d dev/<ticket>
+   git worktree prune
+   ```
+
+   Do not leave abandoned agent worktrees or branches behind.
 
 ## External Contract Checks
 

@@ -2,6 +2,10 @@
 
 Guidance for AI agents on this repo.
 
+## Development Workflow
+
+Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
+
 ## Build & Run
 
 - Sync package repos: `xmake repo -u` (required before configuring — the project's souvenal-repo clone lives under `.xmake/`, so any fresh checkout or deleted `.xmake` needs this; xmake does not auto-clone it when the global network mode is `private`, and the resulting "package not found in any repository" error does not mention the real cause)
@@ -53,9 +57,6 @@ Multi-context — root `GLOSSARY-MAP.md` indexes one `GLOSSARY.md` per module; A
 
 ## Coding Specs
 
-- **No exceptions, no RTTI.** Every fallible function returns `std::expected<T, Core::ErrorMessage>` (ADR 01/02); `ErrorMessage` is a human-readable error chain for logging, not programmatic branching.
-- **Runtime constant-buffer ABI:** Slang/Vulkan constant buffers use std140 layout; shader structs declare semantic fields only (never named padding), and CPU mirrors lock reflected offsets with sizeof/offsetof assertions (see the Shader glossary).
-
 Coding standards live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md), which indexes the per-language specs in `docs/standards/`; they are consumed at review time by /code-review. One exception fires at implementation time: before writing or modifying ANY comment, read [`docs/standards/comments.md`](docs/standards/comments.md) — its mechanical rules are enforced by `Tools/check_comments.py`.
 
 ## Code Editing Rules
@@ -65,17 +66,7 @@ Coding standards live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md), which ind
 ## Build System Notes
 
 - **Build System:** xmake `set_languages()` needs string quoting (e.g., `set_languages('c++23')`, NOT `set_languages(c++23)`). Clean generated build artifacts (`xmake clean --all`) when C++ module compilation gives inexplicable errors.
-- **Dear ImGui:** built from a local source checkout (core and the `imgui_impl_glfw` backend must share one version), not xrepo. Path configurable via `xmake f --imgui_dir=<path>` (default `C:/Users/22067/Projects/imgui`).
 - **Package Dependencies:** When using local xmake package repos, prefer inline `package()` definitions in `xmake.lua` over `add_repositories()` — xmake may silently ignore local repos for official ones.
-
-## Subagent Delegation
-
-Do work inline by default. Spawn a subagent only when it is clearly cheaper: broad searches you cannot scope with 1-2 greps, large multi-file batches, or independent subtasks that would bloat this conversation.
-
-- Cross-module caller/definition mapping → `cavecrew-investigator`
-- Review of a large diff → `cavecrew-reviewer`
-
-Never delegate: lookups answerable by a grep/glob, edits at ≤2 known sites, anything needing this conversation's context. Small fix (≤2 files)? Locate, edit, and verify inline. Full decision guide: `cavecrew` skill.
 
 ## Vulkan / RHI Conventions
 
