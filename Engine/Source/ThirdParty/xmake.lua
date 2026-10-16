@@ -67,6 +67,11 @@ add_requires("slang[embed_stdlib_source=false] vulkan-sdk-1.4.350.0")
 -- by souvenal-repo's assimp recipe.
 add_requires("assimp", {configs = {use_ccache = false}})
 
+-- Force assimp's zlib dependency onto a source build. Resolved as a system package, zlib comes from the
+-- Xcode SDK and assimp's FindZLIB injects the SDK's usr/include as a plain -I, which puts C headers ahead
+-- of libc++'s and breaks the build under Homebrew clang ("<cmath> tried including <math.h> ...").
+add_requireconfs("assimp.zlib", {override = true, system = false})
+
 -- system = false is required because add_tests() creates a test wrapper
 -- that resolves packages through its own independent path, which does
 -- not inherit the parent add_requires configs.  When gtest is found as
