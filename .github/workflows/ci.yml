@@ -43,7 +43,7 @@ jobs:
       # silently resolves to Apple Clang, which cannot compile this project's C++23 modules.
       - name: Install LLVM 23
         run: |
-          brew install llvm@23
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@23
           echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
 
       - name: Verify compiler
@@ -56,9 +56,11 @@ jobs:
       - name: Set up xmake
         uses: xmake-io/github-action-setup-xmake@v1
         with:
-          xmake-version: latest
+          xmake-version: 3.1.1
+          actions-cache-folder: '.xmake-cache'
+          actions-cache-key: xmake-${{ runner.os }}-3.1.1
           package-cache: true
-          package-cache-key: pkg-v1-${{ runner.os }}-${{ hashFiles('**/xmake.lua') }}
+          package-cache-key: pkg-v2-${{ runner.os }}-${{ hashFiles('xmake.lua', 'Engine/**/xmake.lua') }}
 
       # Required on fresh checkouts: the project's souvenal-repo clone lives under .xmake/ and xmake does not
       # re-clone it automatically; omitting it yields a misleading "package not found in any repository" error.
