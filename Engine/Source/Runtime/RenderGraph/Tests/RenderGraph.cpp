@@ -551,21 +551,44 @@ TEST(RenderGraphPrune, ImportedWriteKeepsItsProducerChainAlive) {
     EXPECT_EQ(PassNames(*List), (std::vector<StringView>{"WriteStorage", "Filter", "Bridge"}));
     EXPECT_EQ(DeviceInjector::Get().CreatedStorageBuffers, 1u);
 }
-// Blit to swapchain (explicit present)
+/// @brief Generic non-prunable transfer pass used to anchor graph behavior tests.
+struct NeverPruneTransferPass final : IRHITransferPass {
+    static constexpr StringView Name       = "NeverPruneTransfer";
+    static constexpr bool       NeverPrune = true;
 
-TEST(RenderGraphBlitToSwapchain, NeverPruneSurvivesWithoutConsumers) {
+    [[nodiscard]] auto GetName() const noexcept -> StringView override {
+        return Name;
+    }
+
+    struct Parameter {
+        RGTextureView<RHITextureUsage::TransferSrc, RHIAccess::Read> Source;
+    };
+
+    explicit NeverPruneTransferPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
+
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+
+  private:
+    UPtr<Parameter> m_Parameter;
+};
+
+// Generic transfer-pass anchoring
+
+TEST(RenderGraphTransfer, NeverPruneSurvivesWithoutConsumers) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
     const auto         Target = Graph.Import(RHIRef<RHITexture>{});
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
     ASSERT_EQ(List->Entries.size(), 1u);
-    EXPECT_EQ(List->Entries.front().Pass->GetName(), "BlitToSwapchainPass");
+    EXPECT_EQ(List->Entries.front().Pass->GetName(), "NeverPruneTransfer");
 }
 
-TEST(RenderGraphBlitToSwapchain, OrdersAfterTheSourceWriter) {
+TEST(RenderGraphTransfer, OrdersAfterTheSourceWriter) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
     const auto Target = Graph.CreateTexture("SceneColor",
@@ -574,11 +597,11 @@ TEST(RenderGraphBlitToSwapchain, OrdersAfterTheSourceWriter) {
                                              .Format = RHIFormat::B8G8R8A8_UNORM,
                                              .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc});
     Graph.AddPass<WriteColorPass>({.Output = Target});
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
-    EXPECT_EQ(PassNames(*List), (std::vector<StringView>{"WriteColor", "BlitToSwapchainPass"}));
+    EXPECT_EQ(PassNames(*List), (std::vector<StringView>{"WriteColor", "NeverPruneTransfer"}));
 }
 
 // Creation usage
@@ -594,7 +617,7 @@ TEST(RenderGraphCreationUsage, CreationUsageFlowsThroughVerbatim) {
                                              .Format = RHIFormat::B8G8R8A8_UNORM,
                                              .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc});
     Graph.AddPass<WriteColorPass>({.Output = Target});
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
@@ -606,7 +629,7 @@ TEST(RenderGraphCreationUsage, CreationUsageFlowsThroughVerbatim) {
 }
 
 TEST(RenderGraphCreationUsage, SurvivingViewOutsideCreationUsageIsAFrameError) {
-    // The blit is NeverPrune, so its TransferSrc read always survives — and the texture was created
+    // The transfer pass is NeverPrune, so its TransferSrc read always survives — and the texture was created
     // RenderTarget-only. Compile must say why.
     ResetMockCounters();
     RenderGraphBuilder Graph;
@@ -614,7 +637,7 @@ TEST(RenderGraphCreationUsage, SurvivingViewOutsideCreationUsageIsAFrameError) {
         "SceneColor",
         {.Width = 8, .Height = 8, .Format = RHIFormat::B8G8R8A8_UNORM, .Usage = RHITextureUsage::RenderTarget});
     Graph.AddPass<WriteColorPass>({.Output = Target});
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_FALSE(List);
@@ -635,7 +658,7 @@ TEST(RenderGraphCreationUsage, PrunedPassEscapesTheUsageCheck) {
     // No side effect and nothing required depends on it: this sampled read is dead code; Sampled is outside
     // the creation usage but unchecked.
     Graph.AddPass<ReadColorPass>({.Input = Target});
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
@@ -656,7 +679,7 @@ TEST(RenderGraphPool, ReusesAcrossBuilderLifetimes) {
                                  .Format = RHIFormat::B8G8R8A8_UNORM,
                                  .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc});
         Graph.AddPass<WriteColorPass>({.Output = Target});
-        Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+        Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
         auto List = Graph.Compile();
         EXPECT_TRUE(List);
         // Builder dies here: pooled refs return immediately (no GPU gate).
@@ -682,7 +705,7 @@ TEST(RenderGraphPool, KeyDistinguishesCreationUsage) {
             Graph.AddPass<WriteStorageTexturePass>({.Output = Target});
         else
             Graph.AddPass<WriteColorPass>({.Output = Target});
-        Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+        Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
         auto List = Graph.Compile();
         EXPECT_TRUE(List);
     };
@@ -702,7 +725,7 @@ TEST(RenderGraphPool, TickEvictsIdleEntries) {
                                  .Format = RHIFormat::B8G8R8A8_UNORM,
                                  .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc});
         Graph.AddPass<WriteColorPass>({.Output = Target});
-        Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+        Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
         auto List = Graph.Compile();
         ASSERT_TRUE(List);
     }
@@ -720,7 +743,7 @@ TEST(RenderGraphPool, TickEvictsIdleEntries) {
                                  .Format = RHIFormat::B8G8R8A8_UNORM,
                                  .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc});
         Graph.AddPass<WriteColorPass>({.Output = Target});
-        Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+        Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
         auto List = Graph.Compile();
         ASSERT_TRUE(List);
     }
@@ -737,7 +760,7 @@ TEST(RenderGraphCreationUsage, DepthAttachmentCreationUsageFlowsThrough) {
                                              .Usage  = RHITextureUsage::DepthStencil | RHITextureUsage::TransferSrc});
     Graph.AddPass<WriteDepthPass>({.Depth = Target});
     // A depth write alone is dead code; the NeverPrune reader anchors it.
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
@@ -756,7 +779,7 @@ TEST(RenderGraphCreationUsage, StorageImageCreationUsageFlowsThrough) {
                                                      .Format = RHIFormat::B8G8R8A8_UNORM,
                                                      .Usage = RHITextureUsage::Storage | RHITextureUsage::TransferSrc});
     Graph.AddPass<WriteStorageTexturePass>({.Output = Target});
-    Graph.AddPass<BlitToSwapchainPass>({.Source = Target, .DstWidth = 8, .DstHeight = 8});
+    Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
