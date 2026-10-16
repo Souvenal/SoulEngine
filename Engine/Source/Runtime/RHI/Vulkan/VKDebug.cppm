@@ -39,7 +39,8 @@ class VulkanDebugUtils final {
             return {};
         auto DebugMessenger = Instance.createDebugUtilsMessengerEXT(CreateDebugMessengerCI(), nullptr);
         if (DebugMessenger.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage(Format("Failed to create Vulkan debug messenger: {}", vk::to_string(DebugMessenger.result))));
+            return std::unexpected(ErrorMessage(
+                Format("Failed to create Vulkan debug messenger: {}", vk::to_string(DebugMessenger.result))));
         m_Messenger = std::move(DebugMessenger.value);
         return {};
     }
@@ -69,7 +70,9 @@ class VulkanDebugUtils final {
             LogWarning("Failed to name Vulkan object '{}': {}", ObjectName, vk::to_string(Result));
     }
 
-    [[nodiscard]] auto IsEnabled() const noexcept -> bool { return m_Enabled; }
+    [[nodiscard]] auto IsEnabled() const noexcept -> bool {
+        return m_Enabled;
+    }
 
     [[nodiscard]] static auto IsConfigEnabled() -> bool {
         return CVarRhiVulkanDebugUtils.Get();
@@ -79,29 +82,27 @@ class VulkanDebugUtils final {
     [[nodiscard]] static auto CreateDebugMessengerCI() -> vk::DebugUtilsMessengerCreateInfoEXT {
         return vk::DebugUtilsMessengerCreateInfoEXT{
             .messageSeverity =
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-            .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                           vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                               vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                               vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
             .pfnUserCallback = &VulkanDebugCallback,
         };
     }
 
     static VKAPI_ATTR auto VKAPI_CALL VulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT      MessageSeverity,
-                                                           vk::DebugUtilsMessageTypeFlagsEXT             MessageTypes,
-                                                           const vk::DebugUtilsMessengerCallbackDataEXT* CallbackData,
-                                                           void*) -> vk::Bool32 {
+                                                          vk::DebugUtilsMessageTypeFlagsEXT             MessageTypes,
+                                                          const vk::DebugUtilsMessengerCallbackDataEXT* CallbackData,
+                                                          void*) -> vk::Bool32 {
         if (!CallbackData) {
             LogError("[Vulkan] Debug callback data is empty");
             return vk::True;
         }
         const StringView MessageId = CallbackData->pMessageIdName ? CallbackData->pMessageIdName : "UnknownMessage";
         const StringView Message   = CallbackData->pMessage ? CallbackData->pMessage : "No Vulkan debug message";
-        const auto Types = vk::to_string(MessageTypes);
-        String DetailedMessage{Message};
+        const auto       Types     = vk::to_string(MessageTypes);
+        String           DetailedMessage{Message};
         if (CallbackData->objectCount > 0) {
             DetailedMessage += Format("\nObjects: {}", CallbackData->objectCount);
             for (Uint32 Index = 0; Index < CallbackData->objectCount; ++Index) {
@@ -117,8 +118,7 @@ class VulkanDebugUtils final {
             LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
             break;
         case vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo:
-            // There are too much `eInfo` messages,
-            // so we use `LogDebug`.
+            // There are too much `eInfo` messages, so we use `LogDebug`.
             LogDebug("[Vulkan][{}][{}] {}", Types, MessageId, DetailedMessage);
             break;
         case vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning:

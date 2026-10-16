@@ -1,8 +1,7 @@
 implementing Common;
 
-// Sampler resources are shared by shaders that access sampled textures.
-// uSamplerLinear = linear-repeat
-// uSamplerAniso  = linear-repeat + max anisotropy
+// Sampler resources are shared by shaders that access sampled textures. uSamplerLinear = linear-repeat
+// uSamplerAniso = linear-repeat + max anisotropy
 public struct SamplerResources {
     public SamplerState uSamplerLinear;
     public SamplerState uSamplerAniso;

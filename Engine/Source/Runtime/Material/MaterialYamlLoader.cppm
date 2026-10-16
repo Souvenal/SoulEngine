@@ -11,8 +11,8 @@ import :Texture;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by
-// the exported code below — see Core:CVar's linkage note.
+// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
+// Core:CVar's linkage note.
 
 [[nodiscard]] auto IsRelativeAssetPath(StringView Value) -> bool {
     const Path Asset{String(Value)};
@@ -54,13 +54,18 @@ struct MaterialYamlLoader {
             const auto  Field     = MetaType.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
             if (!Field) {
                 LogWarning("MaterialYamlLoader: unknown field '{}' at {} in '{}'",
-                           FieldName, FieldNode.Location(), MaterialPath.string());
+                           FieldName,
+                           FieldNode.Location(),
+                           MaterialPath.string());
                 return nullptr;
             }
             // Invalid values keep the record's declared default for that field.
             if (auto Result = AssignYamlValue(Field, Record, FieldNode); !Result)
                 LogWarning("MaterialYamlLoader: field '{}' at {} in '{}': {}",
-                           FieldName, FieldNode.Location(), MaterialPath.string(), Result.error().ToString());
+                           FieldName,
+                           FieldNode.Location(),
+                           MaterialPath.string(),
+                           Result.error().ToString());
         }
 
         // Texture paths must stay relative to the Assets root before resolving.
@@ -68,8 +73,8 @@ struct MaterialYamlLoader {
             if (Text.empty())
                 return;
             if (!IsRelativeAssetPath(Text)) {
-                LogWarning("MaterialYamlLoader: texture '{}' must be relative to Assets in '{}'",
-                           Text, MaterialPath.string());
+                LogWarning(
+                    "MaterialYamlLoader: texture '{}' must be relative to Assets in '{}'", Text, MaterialPath.string());
                 Text.clear();
                 return;
             }
@@ -83,39 +88,39 @@ struct MaterialYamlLoader {
         ResolveTexture(Value.OcclusionTexture);
         ResolveTexture(Value.EmissiveTexture);
 
-        auto Result = std::make_shared<MaterialRecord>();
-        Result->Source = MaterialSource::Yaml;
-        Result->SourceAsset = MaterialPath.lexically_normal();
-        Result->Name = Value.Name.empty() ? String{"<unnamed>"} : Value.Name;
-        Result->Ambient = Value.Ambient;
-        Result->Diffuse = Value.Diffuse;
-        Result->Specular = Value.Specular;
-        Result->Emissive = Value.Emissive;
-        Result->Transparent = Value.Transparent;
-        Result->Reflective = Value.Reflective;
-        Result->BaseColorFactor = Value.BaseColorFactor;
-        Result->MetallicFactor = Value.MetallicFactor;
-        Result->RoughnessFactor = Value.RoughnessFactor;
-        Result->SheenColorFactor = Value.SheenColorFactor;
-        Result->SheenRoughnessFactor = Value.SheenRoughnessFactor;
-        Result->ClearcoatFactor = Value.ClearcoatFactor;
-        Result->ClearcoatRoughnessFactor = Value.ClearcoatRoughnessFactor;
-        Result->TransmissionFactor = Value.TransmissionFactor;
-        Result->VolumeThicknessFactor = Value.VolumeThicknessFactor;
+        auto Result                       = std::make_shared<MaterialRecord>();
+        Result->Source                    = MaterialSource::Yaml;
+        Result->SourceAsset               = MaterialPath.lexically_normal();
+        Result->Name                      = Value.Name.empty() ? String{"<unnamed>"} : Value.Name;
+        Result->Ambient                   = Value.Ambient;
+        Result->Diffuse                   = Value.Diffuse;
+        Result->Specular                  = Value.Specular;
+        Result->Emissive                  = Value.Emissive;
+        Result->Transparent               = Value.Transparent;
+        Result->Reflective                = Value.Reflective;
+        Result->BaseColorFactor           = Value.BaseColorFactor;
+        Result->MetallicFactor            = Value.MetallicFactor;
+        Result->RoughnessFactor           = Value.RoughnessFactor;
+        Result->SheenColorFactor          = Value.SheenColorFactor;
+        Result->SheenRoughnessFactor      = Value.SheenRoughnessFactor;
+        Result->ClearcoatFactor           = Value.ClearcoatFactor;
+        Result->ClearcoatRoughnessFactor  = Value.ClearcoatRoughnessFactor;
+        Result->TransmissionFactor        = Value.TransmissionFactor;
+        Result->VolumeThicknessFactor     = Value.VolumeThicknessFactor;
         Result->VolumeAttenuationDistance = Value.VolumeAttenuationDistance;
-        Result->VolumeAttenuationColor = Value.VolumeAttenuationColor;
-        Result->Opacity = Value.Opacity;
-        Result->BumpScaling = Value.BumpScaling;
-        Result->Shininess = Value.Shininess;
-        Result->ShininessStrength = Value.ShininessStrength;
-        Result->RefractionIndex = Value.RefractionIndex;
-        Result->Reflectivity = Value.Reflectivity;
-        Result->EnableWireframe = Value.EnableWireframe;
-        Result->TwoSided = Value.TwoSided;
-        Result->BlendFunction = Value.BlendFunction;
-        Result->ShadingModel = Value.ShadingModel;
-        Result->AlphaMode = Value.AlphaMode;
-        Result->AlphaCutoff = Value.AlphaCutoff;
+        Result->VolumeAttenuationColor    = Value.VolumeAttenuationColor;
+        Result->Opacity                   = Value.Opacity;
+        Result->BumpScaling               = Value.BumpScaling;
+        Result->Shininess                 = Value.Shininess;
+        Result->ShininessStrength         = Value.ShininessStrength;
+        Result->RefractionIndex           = Value.RefractionIndex;
+        Result->Reflectivity              = Value.Reflectivity;
+        Result->EnableWireframe           = Value.EnableWireframe;
+        Result->TwoSided                  = Value.TwoSided;
+        Result->BlendFunction             = Value.BlendFunction;
+        Result->ShadingModel              = Value.ShadingModel;
+        Result->AlphaMode                 = Value.AlphaMode;
+        Result->AlphaCutoff               = Value.AlphaCutoff;
 
         LoadTexture(*Result, TextureType::BaseColor, Value.BaseColorTexture);
         LoadTexture(*Result, TextureType::Normals, Value.NormalTexture);
@@ -134,12 +139,15 @@ struct MaterialYamlLoader {
   private:
     // TODO: Share this cache with MaterialAssimpLoader once material loading performance matters.
     TextureDataCache m_TextureCache = {};
-    auto LoadTexture(MaterialRecord& Material, TextureType Type, const String& Path) -> void {
-        if (Path.empty()) return;
-        const auto Id = entt::hashed_string{Path.data(), Path.size()};
+    auto             LoadTexture(MaterialRecord& Material, TextureType Type, const String& Path) -> void {
+        if (Path.empty())
+            return;
+        const auto Id     = entt::hashed_string{Path.data(), Path.size()};
         auto [It, Loaded] = m_TextureCache.load(Id, SoulEngine::Path(Path));
-        if (It->second) Material.Textures.emplace_back(TextureRecord{.Type = Type, .Texture = It->second});
-        else LogWarning("MaterialYamlLoader: failed to load texture '{}'", Path);
+        if (It->second)
+            Material.Textures.emplace_back(TextureRecord{.Type = Type, .Texture = It->second});
+        else
+            LogWarning("MaterialYamlLoader: failed to load texture '{}'", Path);
     }
 };
 

@@ -5,16 +5,15 @@
 /// Usage:
 ///   auto Result = ShaderCompiler::Get().CompileGraphics(Desc);
 ///
-/// Thread safety: each compiler backend has its own mutex.  Compiling
-/// concurrently; same-language compilations are serialized.
+/// Thread safety: each compiler backend has its own mutex. Compiling concurrently; same-language compilations
+/// are serialized.
 ///
-/// ShaderBackend selection: explicit ShaderBackend enum in shader compile descriptors. File extension
-/// is validated against the enum value (warning on mismatch) but never overrides it.
+/// ShaderBackend selection: explicit ShaderBackend enum in shader compile descriptors. File extension is
+/// validated against the enum value (warning on mismatch) but never overrides it.
 ///
-/// ShaderBackend registration: backend modules (e.g., Slang) self-register with
-/// ShaderBackendFactory via AutoRegistrar constructors when the shared library
-/// is loaded.  ShaderCompiler never references concrete backend types directly.
-/// Adding a new backend requires zero changes to this file.
+/// ShaderBackend registration: backend modules (e.g., Slang) self-register with ShaderBackendFactory via
+/// AutoRegistrar constructors when the shared library is loaded. ShaderCompiler never references concrete
+/// backend types directly. Adding a new backend requires zero changes to this file.
 
 module;
 
@@ -27,25 +26,22 @@ import std;
 import Core;
 import Shader;
 
-
 export namespace SoulEngine {
 
 /// @brief Singleton facade over shader-language compiler backends.
 ///
-/// Holds one backend slot per supported source language and initializes
-/// each lazily on first use.  Each slot carries its own mutex so that
-/// compilations in different languages can run concurrently.
+/// Holds one backend slot per supported source language and initializes each lazily on first use. Each slot
+/// carries its own mutex so that compilations in different languages can run concurrently.
 ///
 /// Obtain via:
 ///   auto& Compiler = ShaderCompiler::Get();
 ///   auto Result    = Compiler.CompileGraphics(Desc);
 class ShaderCompiler : public Singleton<ShaderCompiler> {
     friend class Singleton<ShaderCompiler>;
-
-    // ── Internal types ──────────────────────────────────────────────
+    // Internal types
 
     struct BackendSlot {
-        std::mutex     Mutex;
+        std::mutex           Mutex;
         UPtr<IShaderBackend> Instance = nullptr;
     };
 
@@ -99,11 +95,12 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
         if (Desc.RayGeneration.EntryPoint.empty())
             return std::unexpected(ErrorMessage("Ray-tracing shader compile requires a ray-generation entry point"));
 
-        const auto Backend = Desc.RayGeneration.Backend;
-        auto ValidateBackend = [this, Backend](const ShaderEntry& Entry) -> std::expected<void, ErrorMessage> {
+        const auto Backend         = Desc.RayGeneration.Backend;
+        auto       ValidateBackend = [this, Backend](const ShaderEntry& Entry) -> std::expected<void, ErrorMessage> {
             ValidateEntryBackendConsistency(Entry);
             if (Entry.Backend != Backend)
-                return std::unexpected(ErrorMessage("Ray-tracing shader compile requires matching entry-point backends"));
+                return std::unexpected(
+                    ErrorMessage("Ray-tracing shader compile requires matching entry-point backends"));
             return {};
         };
 
@@ -142,8 +139,7 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
   private:
     ShaderCompiler()  = default;
     ~ShaderCompiler() = default;
-
-    // ── ShaderBackend router ──────────────────────────────────────────────
+    // ShaderBackend router
 
     auto ValidateEntryBackendConsistency(const ShaderEntry& Entry) -> void {
         auto ExpectedExt = StringView{};
@@ -162,9 +158,9 @@ class ShaderCompiler : public Singleton<ShaderCompiler> {
                        magic_enum::enum_name(Entry.Backend));
     }
 
-    /// Create a new backend instance via the factory.
-    /// The factory registry is populated by AutoRegistrar instances in
-    /// each backend's translation unit.
+    /// @brief Create a new backend instance via the factory.
+    ///
+    /// The factory registry is populated by AutoRegistrar instances in each backend's translation unit.
     [[nodiscard]] auto CreateBackend(ShaderBackend Kind) -> std::expected<UPtr<IShaderBackend>, ErrorMessage> {
         auto Name = magic_enum::enum_name(Kind);
         auto Inst = ShaderBackendFactory::Get().Create(Name);

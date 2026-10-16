@@ -4,20 +4,19 @@ import Core;
 import std;
 
 export import :IRenderer;
-// :GBuffer is exported for the cross-module EntityId picking contract
-// (GBuffer::BackgroundEntityId; the editor maps readback values against it).
+// :GBuffer is exported for the cross-module EntityId picking contract (GBuffer::BackgroundEntityId; the
+// editor maps readback values against it).
 export import :GBuffer;
-// Note: :Common and :RasterRenderer are module-internal partitions; nothing here
-// or in consumers of `import Renderer;` references their declarations, and the
-// xmake moduleonly target links every partition object file directly, so the
-// RasterRenderer AutoRegistrar runs without an import from this interface.
+// Note: :Common and :RasterRenderer are module-internal partitions; nothing here or in consumers of `import
+// Renderer;` references their declarations, and the xmake moduleonly target links every partition object file
+// directly, so the RasterRenderer AutoRegistrar runs without an import from this interface.
 
 namespace SoulEngine {
 
 namespace {
 
 std::unordered_map<String, SPtr<IRenderer>> g_RendererCache       = {};
-SPtr<IRenderer>                             g_CurrentRenderer    = nullptr;
+SPtr<IRenderer>                             g_CurrentRenderer     = nullptr;
 String                                      g_CurrentRendererName = {};
 
 } // namespace
@@ -29,9 +28,8 @@ export namespace SoulEngine {
 /// @brief Renderer selected at startup for applications that use the shared
 ///        default.  Supported values: "Raster", "RayTracing" (concrete
 ///        renderers self-register with RendererFactory in their own partitions).
-CVar<String> CVarRenderDefaultRenderer{"Render.DefaultRenderer",
-                                              "Raster",
-                                              "Renderer selected by applications that support the shared default"};
+CVar<String> CVarRenderDefaultRenderer{
+    "Render.DefaultRenderer", "Raster", "Renderer selected by applications that support the shared default"};
 
 /// @brief Create the renderer configured by the `Render.DefaultRenderer` CVar.
 ///
@@ -44,15 +42,15 @@ CVar<String> CVarRenderDefaultRenderer{"Render.DefaultRenderer",
     LogInfo("Configured default renderer: '{}'", Name);
 
     if (!RendererFactory::Get().Contains(Name)) {
-        String Supported = {};
-        const auto Names = RendererFactory::Get().Keys();
+        String     Supported = {};
+        const auto Names     = RendererFactory::Get().Keys();
         for (std::size_t Index = 0; Index < Names.size(); ++Index) {
             if (Index > 0)
                 Supported += ", ";
             Supported += Names[Index];
         }
-        return std::unexpected(ErrorMessage(
-            Format("Unsupported default renderer: '{}'. Supported renderers: {}", Name, Supported)));
+        return std::unexpected(
+            ErrorMessage(Format("Unsupported default renderer: '{}'. Supported renderers: {}", Name, Supported)));
     }
 
     return RendererFactory::Get().Create(Name);
@@ -68,8 +66,8 @@ CVar<String> CVarRenderDefaultRenderer{"Render.DefaultRenderer",
 
     auto Candidate = RendererFactory::Get().Create(Name);
     if (!Candidate) {
-        String Supported = {};
-        const auto Names = RendererFactory::Get().Keys();
+        String     Supported = {};
+        const auto Names     = RendererFactory::Get().Keys();
         for (std::size_t Index = 0; Index < Names.size(); ++Index) {
             if (Index > 0)
                 Supported += ", ";

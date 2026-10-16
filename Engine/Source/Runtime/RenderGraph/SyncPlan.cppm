@@ -14,29 +14,32 @@ import std;
 
 namespace SoulEngine {
 
-// ── Stage mapping ──────────────────────────────────────────────────────────
-// The prologue derives only the stage; the backend derives the native access
-// mask and the image layout from the view's (Usage, Access) at emission. The
-// declared direction translates faithfully: a shader that read-modify-writes
-// (atomic append, counters) declares Read|Write on the view. Initial mapping
-// is coarse: shader accesses in graphics passes map to AllGraphics;
-// Transfer/Compute/Indirect/Attachment kinds map precisely. Refining
-// precision is a table-data change, never a schema change.
+// Stage mapping
+// The prologue derives only the stage; the backend derives the native access mask and the image layout from
+// the view's (Usage, Access) at emission. The declared direction translates faithfully: a shader that
+// read-modify-writes (atomic append, counters) declares Read|Write on the view. Initial mapping is coarse:
+// shader accesses in graphics passes map to AllGraphics; Transfer/Compute/Indirect/Attachment kinds map
+// precisely. Refining precision is a table-data change, never a schema change.
 
 [[nodiscard]] auto ShaderStageFor(RHIPassType Class) -> RHISyncStage {
     switch (Class) {
-    case RHIPassType::Graphics:   return RHISyncStage::AllGraphics;
-    case RHIPassType::Compute:    return RHISyncStage::ComputeShader;
-    case RHIPassType::RayTracing: return RHISyncStage::RayTracingShader;
-    case RHIPassType::Transfer:   return RHISyncStage::Transfer;
-    default:                      return RHISyncStage::None;
+    case RHIPassType::Graphics:
+        return RHISyncStage::AllGraphics;
+    case RHIPassType::Compute:
+        return RHISyncStage::ComputeShader;
+    case RHIPassType::RayTracing:
+        return RHISyncStage::RayTracingShader;
+    case RHIPassType::Transfer:
+        return RHISyncStage::Transfer;
+    default:
+        return RHISyncStage::None;
     }
 }
 
 [[nodiscard]] auto BufferStageFor(RHIBufferUsage Usage, RHIPassType Class) -> RHISyncStage {
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Indirect))
-        // The indirect buffer may be produced by an earlier compute pass
-        // (e.g. GPU culling); the DrawIndirect stage is exact here.
+        // The indirect buffer may be produced by an earlier compute pass (e.g. GPU culling); the DrawIndirect
+        // stage is exact here.
         return RHISyncStage::DrawIndirect;
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Constant) ||
         magic_enum::enum_flags_test(Usage, RHIBufferUsage::Storage))
@@ -48,9 +51,8 @@ namespace SoulEngine {
     if (magic_enum::enum_flags_test(Usage, RHITextureUsage::RenderTarget))
         return RHISyncStage::ColorAttachmentOutput;
     if (magic_enum::enum_flags_test(Usage, RHITextureUsage::DepthStencil))
-        // Depth attachment writes, including the final store operation, may
-        // occur in either fragment-test stage. This is synchronization
-        // coverage, not a request to force Early-Z or Late-Z execution.
+        // Depth attachment writes, including the final store operation, may occur in either fragment-test
+        // stage. This is synchronization coverage, not a request to force Early-Z or Late-Z execution.
         return RHISyncStage::EarlyFragmentTests | RHISyncStage::LateFragmentTests;
     if (magic_enum::enum_flags_test(Usage, RHITextureUsage::TransferSrc) ||
         magic_enum::enum_flags_test(Usage, RHITextureUsage::TransferDst))
@@ -65,17 +67,13 @@ export namespace SoulEngine {
 /// @brief Map one pass's declared accesses into its prologue: the complete,
 /// per-resource-deduplicated set of dst-only state requirements.
 ///
-/// Graph-created and imported resources both participate; uniform-belt
-/// buffers and readback copy targets stay covered by backend-reserved sites
-/// (the host-write visibility barrier, the readback ring). Views of one
-/// resource (and, for textures, one subresource range) merge into a single
-/// transition that accumulates the usage, access, and stage union — a mixed
-/// union (e.g. Sampled | Storage on one range) is exactly what the backend's
-/// layout derivation maps to its shared layout. Views over disjoint ranges
-/// of one texture produce independent transitions, which the per-subresource
-/// tracker resolves at emission.
-[[nodiscard]] inline auto BuildPassPrologue(const RGPassNode&               Node,
-                                            const std::vector<RGResourceEntry>& Resources)
+/// Graph-created and imported resources both participate; uniform-belt buffers and readback copy targets stay
+/// covered by backend-reserved sites (the host-write visibility barrier, the readback ring). Views of one
+/// resource (and, for textures, one subresource range) merge into a single transition that accumulates the
+/// usage, access, and stage union — a mixed union (e.g. Sampled | Storage on one range) is exactly what the
+/// backend's layout derivation maps to its shared layout. Views over disjoint ranges of one texture produce
+/// independent transitions, which the per-subresource tracker resolves at emission.
+[[nodiscard]] inline auto BuildPassPrologue(const RGPassNode& Node, const std::vector<RGResourceEntry>& Resources)
     -> RHIBarrierList {
     RHIBarrierList Prologue = {};
 
@@ -86,8 +84,8 @@ export namespace SoulEngine {
             return;
         if (magic_enum::enum_flags_test(Decl->Usage, RHIBufferUsage::Constant) ||
             magic_enum::enum_flags_test(Decl->Usage, RHIBufferUsage::TransferDst))
-            return;  // uniform-belt buffers are covered by the host-write
-                     // visibility barrier; copy-dst targets are readback buffers
+            return; // uniform-belt buffers are covered by the host-write
+                    // visibility barrier; copy-dst targets are readback buffers
         const auto Stage = BufferStageFor(Decl->Usage, Node.StageClass);
         for (auto& T : Prologue.Buffers) {
             if (T.View.Buffer == Prop->Resolved) {
@@ -98,8 +96,7 @@ export namespace SoulEngine {
             }
         }
         Prologue.Buffers.push_back(
-            {.View  = {.Buffer = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage},
-             .Stage = Stage});
+            {.View = {.Buffer = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage}, .Stage = Stage});
     };
     const auto AddTexture = [&](const RGTextureViewData* Decl) {
         const auto& Resource = Resources[Decl->Texture.Index];
@@ -116,11 +113,9 @@ export namespace SoulEngine {
                 return;
             }
         }
-        Prologue.Textures.push_back({.View  = {.Texture = Prop->Resolved,
-                                               .Access  = Decl->Access,
-                                               .Usage   = Decl->Usage,
-                                               .Range   = Decl->Range},
-                                     .Stage = Stage});
+        Prologue.Textures.push_back(
+            {.View  = {.Texture = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage, .Range = Decl->Range},
+             .Stage = Stage});
     };
 
     for (const auto* Decl : Node.Buffers)

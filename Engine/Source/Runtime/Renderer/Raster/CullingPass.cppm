@@ -21,12 +21,14 @@ struct CullingPushConstants {
 
 /// @brief Per-view culling pass (placeholder: copies instances one-to-one).
 ///
-/// Future: frustum-culls instances into ViewInstanceBuffer via atomic append
-/// and regenerates ViewIndirectBuffer grouped by geometryID on the GPU.
+/// Future: frustum-culls instances into ViewInstanceBuffer via atomic append and regenerates
+/// ViewIndirectBuffer grouped by geometryID on the GPU.
 class CullingPass final : public IRHIComputePass {
   public:
     static constexpr StringView Name = "CullingPass";
-    [[nodiscard]] auto GetName() const noexcept -> StringView override { return Name; }
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
 
     /// Static pipeline descriptor for PipelineRegistry::Register<CullingPass>().
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
@@ -43,8 +45,8 @@ class CullingPass final : public IRHIComputePass {
         RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  SceneInstances;
         RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  SceneIndirect;
         RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  GeometryTable;
-        Uint32 InstanceCount = 0;  ///< CPU passthrough: dispatch size.
-        Uint32 CommandCount  = 0;
+        Uint32                                                  InstanceCount = 0; ///< CPU passthrough: dispatch size.
+        Uint32                                                  CommandCount  = 0;
     };
 
     CullingPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
@@ -65,13 +67,16 @@ class CullingPass final : public IRHIComputePass {
                 RHIShaderBindingRequest{"g_cullPass.viewInstances", m_Parameter->ViewInstances.ResolvedView()},
                 RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", m_Parameter->ViewIndirect.ResolvedView()},
                 RHIShaderBindingRequest{"g_cullPass.viewCounter", m_Parameter->ViewCounter.ResolvedView()},
-            }); !R)
+            });
+            !R)
             return std::unexpected(R.error());
 
-        if (auto R = PushConstants(0, CullingPushConstants{
-                .InstanceCount = m_Parameter->InstanceCount,
-                .CommandCount = m_Parameter->CommandCount,
-            }); !R)
+        if (auto R = PushConstants(0,
+                                   CullingPushConstants{
+                                       .InstanceCount = m_Parameter->InstanceCount,
+                                       .CommandCount  = m_Parameter->CommandCount,
+                                   });
+            !R)
             return std::unexpected(R.error());
 
         Dispatch((std::max(m_Parameter->InstanceCount, m_Parameter->CommandCount) + 63) / 64);

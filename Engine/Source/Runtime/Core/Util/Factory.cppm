@@ -1,11 +1,10 @@
 /// @file   Core/Util/Factory.cppm
 /// @brief  Type-safe object factory with automatic registration.
 ///
-/// Factory<Interface, CtorArgs...> creates named instances of Interface
-/// subclasses.  It inherits Singleton so that AutoRegistrar can safely
-/// register implementations from any translation unit without static
-/// initialization order fiasco — the singleton ensures the registry map
-/// is constructed on first use, before any registrar touches it.
+/// Factory<Interface, CtorArgs...> creates named instances of Interface subclasses. It inherits Singleton so
+/// that AutoRegistrar can safely register implementations from any translation unit without static
+/// initialization order fiasco — the singleton ensures the registry map is constructed on first use, before
+/// any registrar touches it.
 
 module;
 
@@ -67,9 +66,8 @@ class Factory : public Singleton<Factory<Interface, CtorArgs...>> {
     }
 
     /// @brief Return all registered implementation names.
-    /// The returned StringViews point into the factory's owned keys,
-    /// which live as long as the factory itself (forever, since
-    /// Factory is a singleton).
+    /// The returned StringViews point into the factory's owned keys, which live as long as the factory itself
+    /// (forever, since Factory is a singleton).
     [[nodiscard]] auto Keys() const -> std::vector<StringView> {
         std::vector<StringView> Result;
         Result.reserve(m_Registry.size());

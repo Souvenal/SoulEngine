@@ -36,8 +36,7 @@ struct VulkanSamplerProfileInfo {
 class VulkanSampler final : public RHISampler {
   public:
     VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
-        : RHISampler(std::move(Name), Desc),
-          m_Sampler(std::move(VulkanSampler)) {}
+        : RHISampler(std::move(Name), Desc), m_Sampler(std::move(VulkanSampler)) {}
 
     ~VulkanSampler() override = default;
 

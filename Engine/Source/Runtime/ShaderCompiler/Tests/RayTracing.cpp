@@ -14,18 +14,24 @@ namespace {
 
 [[nodiscard]] auto MakeCompileDesc(const Path& SourcePath) -> RayTracingCompileDesc {
     return RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
-        .MissEntries   = {ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang}},
-        .HitGroups = {
-            RayTracingHitGroupCompileDesc{
-                .Type       = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
+        .RayGeneration =
+            ShaderEntry{.SourcePath = SourcePath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
+        .MissEntries = {ShaderEntry{
+            .SourcePath = SourcePath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang}},
+        .HitGroups =
+            {
+                RayTracingHitGroupCompileDesc{
+                    .Type       = ShaderRayTracingHitGroupType::Triangles,
+                    .ClosestHit = ShaderEntry{.SourcePath = SourcePath,
+                                              .EntryPoint = "closestHitMain",
+                                              .Backend    = ShaderBackend::Slang},
+                },
             },
-        },
     };
 }
 
-[[nodiscard]] auto FindBinding(const ShaderReflection& ReflectionValue, StringView ParameterPath) -> const ShaderBinding* {
+[[nodiscard]] auto FindBinding(const ShaderReflection& ReflectionValue, StringView ParameterPath)
+    -> const ShaderBinding* {
     const auto It = std::ranges::find_if(ReflectionValue.Bindings, [ParameterPath](const ShaderBinding& Candidate) {
         return Candidate.ParameterPath == ParameterPath;
     });
@@ -34,19 +40,19 @@ namespace {
 
 class RayTracingCompilerTest : public ::testing::Test {
   protected:
-    static inline Path m_ShaderPath = {};
-    static inline Path m_ParameterBlockShaderPath = {};
-    static inline Path m_BdaShaderPath = {};
+    static inline Path m_ShaderPath                  = {};
+    static inline Path m_ParameterBlockShaderPath    = {};
+    static inline Path m_BdaShaderPath               = {};
     static inline Path m_MultipleHitGroupsShaderPath = {};
 
     static auto SetUpTestSuite() -> void {
         const auto* TestSourceDir = std::getenv("SOUL_ENGINE_TEST_SOURCE_DIR");
         ASSERT_NE(TestSourceDir, nullptr) << "Missing SOUL_ENGINE_TEST_SOURCE_DIR";
-        m_ShaderPath = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
-        m_ParameterBlockShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingParameterBlock.slang";
-        m_BdaShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingBda.slang";
+        m_ShaderPath                  = Path(TestSourceDir) / "Slang" / "RayTracing.slang";
+        m_ParameterBlockShaderPath    = Path(TestSourceDir) / "Slang" / "RayTracingParameterBlock.slang";
+        m_BdaShaderPath               = Path(TestSourceDir) / "Slang" / "RayTracingBda.slang";
         m_MultipleHitGroupsShaderPath = Path(TestSourceDir) / "Slang" / "RayTracingMultipleHitGroups.slang";
-        auto Source = ReadFile(m_ShaderPath);
+        auto Source                   = ReadFile(m_ShaderPath);
         ASSERT_TRUE(Source.has_value()) << Source.error().ToString();
         auto ParameterBlockSource = ReadFile(m_ParameterBlockShaderPath);
         ASSERT_TRUE(ParameterBlockSource.has_value()) << ParameterBlockSource.error().ToString();
@@ -119,21 +125,33 @@ TEST_F(RayTracingCompilerTest, CompilesPhysicalStorageBdaAndReflectsFixedMetadat
 
 TEST_F(RayTracingCompilerTest, CompilesMultipleMissEntriesAndHitGroups) {
     auto Result = ShaderCompiler::Get().CompileRayTracing(RayTracingCompileDesc{
-        .RayGeneration = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "rayGenMain", .Backend = ShaderBackend::Slang},
-        .MissEntries = {
-            ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "missMain", .Backend = ShaderBackend::Slang},
-            ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "secondaryMissMain", .Backend = ShaderBackend::Slang},
-        },
-        .HitGroups = {
-            RayTracingHitGroupCompileDesc{
-                .Type = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "closestHitMain", .Backend = ShaderBackend::Slang},
+        .RayGeneration = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath,
+                                     .EntryPoint = "rayGenMain",
+                                     .Backend    = ShaderBackend::Slang},
+        .MissEntries =
+            {
+                ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath,
+                            .EntryPoint = "missMain",
+                            .Backend    = ShaderBackend::Slang},
+                ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath,
+                            .EntryPoint = "secondaryMissMain",
+                            .Backend    = ShaderBackend::Slang},
             },
-            RayTracingHitGroupCompileDesc{
-                .Type = ShaderRayTracingHitGroupType::Triangles,
-                .ClosestHit = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath, .EntryPoint = "secondaryClosestHitMain", .Backend = ShaderBackend::Slang},
+        .HitGroups =
+            {
+                RayTracingHitGroupCompileDesc{
+                    .Type       = ShaderRayTracingHitGroupType::Triangles,
+                    .ClosestHit = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath,
+                                              .EntryPoint = "closestHitMain",
+                                              .Backend    = ShaderBackend::Slang},
+                },
+                RayTracingHitGroupCompileDesc{
+                    .Type       = ShaderRayTracingHitGroupType::Triangles,
+                    .ClosestHit = ShaderEntry{.SourcePath = m_MultipleHitGroupsShaderPath,
+                                              .EntryPoint = "secondaryClosestHitMain",
+                                              .Backend    = ShaderBackend::Slang},
+                },
             },
-        },
     });
     ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
     EXPECT_EQ(Result->MissEntryPointNames.size(), 2U);
@@ -146,7 +164,7 @@ TEST_F(RayTracingCompilerTest, CompilesMultipleMissEntriesAndHitGroups) {
     EXPECT_EQ(Result->HitGroups[1].ClosestHitEntryPointName, "secondaryClosestHitMain");
 }
 TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
-    auto Desc = MakeCompileDesc(m_ShaderPath);
+    auto Desc                     = MakeCompileDesc(m_ShaderPath);
     Desc.RayGeneration.EntryPoint = "doesNotExist";
 
     auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
@@ -156,7 +174,7 @@ TEST_F(RayTracingCompilerTest, MissingRayGenerationEntryReportsContext) {
 }
 
 TEST_F(RayTracingCompilerTest, StageMismatchReportsContext) {
-    auto Desc = MakeCompileDesc(m_ShaderPath);
+    auto Desc                     = MakeCompileDesc(m_ShaderPath);
     Desc.RayGeneration.EntryPoint = "missMain";
 
     auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);
@@ -165,7 +183,7 @@ TEST_F(RayTracingCompilerTest, StageMismatchReportsContext) {
 }
 
 TEST_F(RayTracingCompilerTest, TriangleHitGroupRequiresClosestHitEntry) {
-    auto Desc = MakeCompileDesc(m_ShaderPath);
+    auto Desc                    = MakeCompileDesc(m_ShaderPath);
     Desc.HitGroups[0].ClosestHit = std::nullopt;
 
     auto Result = ShaderCompiler::Get().CompileRayTracing(Desc);

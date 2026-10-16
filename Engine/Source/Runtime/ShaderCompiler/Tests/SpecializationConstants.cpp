@@ -9,8 +9,7 @@ import ShaderCompiler;
 import std;
 
 using namespace SoulEngine;
-
-// ── Helpers ────────────────────────────────────────────────────────────────
+// Helpers
 
 static auto CompileComputeForReflection(const Path& SourcePath, StringView Entry = "computeMain")
     -> std::expected<ShaderComputeProgram, ErrorMessage> {
@@ -37,8 +36,7 @@ class SpecializationConstantTest : public ::testing::Test {
         return m_SlangDir / Path(String(Name));
     }
 };
-
-// ── SpecializationConstant reflection ──────────────────────────────────────
+// SpecializationConstant reflection
 
 TEST_F(SpecializationConstantTest, ReflectionEntries) {
     auto Result = CompileComputeForReflection(ShaderPath("ReflectionSpecializationConstants.slang"));
@@ -48,9 +46,8 @@ TEST_F(SpecializationConstantTest, ReflectionEntries) {
     ASSERT_EQ(Constants.size(), 3UL);
 
     const auto FindByName = [&Constants](StringView Name) {
-        return std::ranges::find_if(Constants, [Name](const ShaderSpecializationConstant& C) {
-            return C.Name == Name;
-        });
+        return std::ranges::find_if(Constants,
+                                    [Name](const ShaderSpecializationConstant& C) { return C.Name == Name; });
     };
 
     // bool constant: integer-channel default reads back as 0/1.
@@ -69,16 +66,14 @@ TEST_F(SpecializationConstantTest, ReflectionEntries) {
     ASSERT_TRUE(IntIt->DefaultValue.has_value());
     EXPECT_EQ(*IntIt->DefaultValue, 7);
 
-    // float constant: the Slang API exposes no float default getter, so the
-    // reflected default stays unknown.
+    // float constant: the Slang API exposes no float default getter, so the reflected default stays unknown.
     const auto FloatIt = FindByName("kScale");
     ASSERT_NE(FloatIt, Constants.end());
     EXPECT_EQ(FloatIt->ConstantId, 2U);
     EXPECT_EQ(FloatIt->ScalarType, ShaderScalarType::Float32);
     EXPECT_FALSE(FloatIt->DefaultValue.has_value());
 }
-
-// ── SPIR-V spec-constant emission ──────────────────────────────────────────
+// SPIR-V spec-constant emission
 
 TEST_F(SpecializationConstantTest, SpirvEmitsSpecConstants) {
     auto Result = CompileComputeForReflection(ShaderPath("ReflectionSpecializationConstants.slang"));
@@ -88,12 +83,11 @@ TEST_F(SpecializationConstantTest, SpirvEmitsSpecConstants) {
     ASSERT_GE(Code.size(), 5UL);
     EXPECT_EQ(Code[0], 0x07230203UL);
 
-    // Slang may emit OpSpecConstantTrue (48) / OpSpecConstantFalse (49) or
-    // OpSpecConstant (50); all carry the SpecId decoration (decoration 1)
-    // via OpDecorate (71).  The fixture declares three used constants.
+    // Slang may emit OpSpecConstantTrue (48) / OpSpecConstantFalse (49) or OpSpecConstant (50); all carry the
+    // SpecId decoration (decoration 1) via OpDecorate (71). The fixture declares three used constants.
     constexpr std::array<Uint32, 3> SpecConstantOpcodes{48U, 49U, 50U};
-    Uint32                           SpecConstantCount = 0;
-    Uint32                           SpecIdDecorations = 0;
+    Uint32                          SpecConstantCount = 0;
+    Uint32                          SpecIdDecorations = 0;
     for (size_t Index = 5; Index < Code.size();) {
         const Uint32 WordCount = Code[Index] >> 16U;
         const Uint32 Opcode    = Code[Index] & 0xFFFFU;
@@ -102,7 +96,7 @@ TEST_F(SpecializationConstantTest, SpirvEmitsSpecConstants) {
         if (Opcode == 71U && WordCount >= 3U && Index + 2 < Code.size() && Code[Index + 2] == 1U)
             ++SpecIdDecorations;
         if (WordCount == 0U)
-            break;  // Defensive: malformed stream would loop forever.
+            break; // Defensive: malformed stream would loop forever.
         Index += WordCount;
     }
     EXPECT_EQ(SpecConstantCount, 3U);

@@ -10,21 +10,19 @@ using namespace SoulEngine;
 
 namespace {
 
-// Namespace-scope registration: these self-register with CVarManager at
-// static-init time, before any TEST runs.
+// Namespace-scope registration: these self-register with CVarManager at static-init time, before any TEST
+// runs.
 CVar<bool>    CVarTestCheckbox{"Test.Checkbox", false, "test bool"};
-CVar<Int32> CVarTestInt{"Test.Int", 42, "test int"};
+CVar<Int32>   CVarTestInt{"Test.Int", 42, "test int"};
 CVar<Float32> CVarTestFloat{"Test.Float", 1.5F, "test float"};
 CVar<String>  CVarTestString{"Test.String", "hello", "test string"};
 
-// Dedicated to the LoadConfig sweep test so other tests never observe
-// swept values.
+// Dedicated to the LoadConfig sweep test so other tests never observe swept values.
 CVar<Int32> CVarTestSweepInt{"Test.Sweep.Int", 1, "sweep target"};
-CVar<bool>    CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
+CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
 
-// Same name registered under two different types — legal: the registry
-// key is (name, type).
-CVar<bool>    CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
+// Same name registered under two different types — legal: the registry key is (name, type).
+CVar<bool>  CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
 CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"};
 
 } // namespace
@@ -93,9 +91,9 @@ TEST(CVarTest, LoadConfigAppliesMatchingLeavesAndToleratesUnknownKeys) {
         Out << "[Test.Sweep]\n"
                "Int = 99\n"
                "Bool = true\n"
-               "Unknown = 5\n"          // no registered CVar: warned, skipped
+               "Unknown = 5\n" // no registered CVar: warned, skipped
                "\n"
-               "[Elsewhere]\n"           // unknown table: warned, skipped
+               "[Elsewhere]\n" // unknown table: warned, skipped
                "Key = \"value\"\n";
     }
 

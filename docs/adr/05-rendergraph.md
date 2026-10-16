@@ -95,4 +95,3 @@ The resource layer beneath the graph had its own fragmentation: usage, lifetime,
 - The type zoo, tag-encoded declarations, parallel desc types, flattened product enums, and the binding bridge are gone; misuse modes (whole-field wiring assignment, usage-less creation, under-declared creation usage) fail loudly at registration or Compile.
 - Deferred: per-view shader-stage hints, intra-pass self-synchronization, graph-side texture upload paths.
 - A second backend must implement the blit-to-swapchain command, the diff tracker under the two-source discipline, and view resolution — nothing more.
-

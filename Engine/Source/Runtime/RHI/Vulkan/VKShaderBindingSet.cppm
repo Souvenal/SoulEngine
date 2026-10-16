@@ -19,19 +19,17 @@ import Core;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by
-// the exported code below — see Core:CVar's linkage note.
+// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
+// Core:CVar's linkage note.
 
-CVar<Int32> CVarRhiVulkanMaxTextures{"RHI.Vulkan.MaxTextures",
-                                       4096,
-                                       "Bindless descriptor array size cap"};
+CVar<Int32> CVarRhiVulkanMaxTextures{"RHI.Vulkan.MaxTextures", 4096, "Bindless descriptor array size cap"};
 
 [[nodiscard]] auto ToVkShaderStageFlags(ShaderStage Stages) -> vk::ShaderStageFlags {
     if (Stages == ShaderStage::Unknown)
         return vk::ShaderStageFlagBits::eAll;
 
-    // Manual bit tests: magic_enum's bitwise operators would be ambiguous with
-    // vulkan-hpp's own flag operators in this scope.
+    // Manual bit tests: magic_enum's bitwise operators would be ambiguous with vulkan-hpp's own flag
+    // operators in this scope.
     const auto Raw = std::to_underlying(Stages);
     const auto Has = [Raw](ShaderStage Flag) { return (Raw & std::to_underlying(Flag)) != 0; };
 
@@ -103,11 +101,10 @@ CVar<Int32> CVarRhiVulkanMaxTextures{"RHI.Vulkan.MaxTextures",
     return (std::min)(static_cast<Uint32>(CVarRhiVulkanMaxTextures.Get()), (std::min)(PerStage, PerSet));
 }
 
-// Slang's default SPIR-V lowering assigns read-only textures to binding 2
-// inside the reflected bindless descriptor space. The descriptor set index is
-// not hard-coded here; it comes from ShaderReflection::BindlessSpace. The
-// descriptor array's slot 0 is reserved for the zero/null material handle;
-// RHIRefArray supplies descriptor-facing slots starting at 1.
+// Slang's default SPIR-V lowering assigns read-only textures to binding 2 inside the reflected bindless
+// descriptor space. The descriptor set index is not hard-coded here; it comes from
+// ShaderReflection::BindlessSpace. The descriptor array's slot 0 is reserved for the zero/null material
+// handle; RHIRefArray supplies descriptor-facing slots starting at 1.
 
 [[nodiscard]] auto ValidateDescriptorSetIndices(const ShaderReflection& Reflection)
     -> std::expected<void, ErrorMessage> {
@@ -134,8 +131,7 @@ CVar<Int32> CVarRhiVulkanMaxTextures{"RHI.Vulkan.MaxTextures",
 
 [[nodiscard]] auto ValidateBindlessSpace(std::span<const RHIShaderBindingSet::Slot> Bindings)
     -> std::expected<void, ErrorMessage> {
-    // The bindless space is synthesized by the backend and must not overlap
-    // with ordinary reflected bindings.
+    // The bindless space is synthesized by the backend and must not overlap with ordinary reflected bindings.
     if (!Bindings.empty())
         return std::unexpected(ErrorMessage("Bindless descriptor space overlaps ordinary shader bindings"));
 
@@ -235,8 +231,8 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
 
                     Uint32 DescriptorCount = Binding.Info.ArrayCount;
                     if (DescriptorCount == kShaderReflectionArrayUnboundedSize) {
-                        // Vulkan requires a variable descriptor count binding to be the
-                        // set's last binding; shader side declares it last in the struct.
+                        // Vulkan requires a variable descriptor count binding to be the set's last binding;
+                        // shader side declares it last in the struct.
                         if (Binding.Info.BindingIndex != MaxBindingIndexInSet)
                             return std::unexpected(ErrorMessage(
                                 Format("Unbounded descriptor array '{}' must be the last binding in set {}; declare it "
@@ -336,8 +332,10 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         return *m_PipelineLayout;
     }
 
-    /// Resolves the current resource combination for every set through the
-    /// device-wide descriptor cache. Cache hits also refresh the entry LRU.
+    /// @brief The current resource combination resolved for every set through the device-wide descriptor
+    /// cache.
+    ///
+    /// Cache hits also refresh the entry LRU.
     struct PipelineBindingState {
         std::vector<vk::DescriptorSet> DescriptorSets = {};
         std::vector<Uint32>            DynamicOffsets = {};
@@ -368,13 +366,12 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
             for (const auto& Slot : SetBindings) {
                 if (Slot.Info.Type == ShaderResourceType::ConstantBuffer ||
                     Slot.Info.Type == ShaderResourceType::StorageBuffer) {
-                    const auto* View = std::get_if<RHIBufferView>(&Slot.Bound);
-                    const auto* Buffer =
-                        View ? static_cast<const VulkanBuffer*>(View->Buffer.TryGet()) : nullptr;
+                    const auto* View   = std::get_if<RHIBufferView>(&Slot.Bound);
+                    const auto* Buffer = View ? static_cast<const VulkanBuffer*>(View->Buffer.TryGet()) : nullptr;
                     const auto* Prop   = Buffer ? Buffer->GetProp<TransientBufferProp>() : nullptr;
                     if (!Prop)
-                        return std::unexpected(ErrorMessage(Format(
-                            "Shader binding '{}' has no ready transient buffer", Slot.Info.ParameterPath)));
+                        return std::unexpected(ErrorMessage(
+                            Format("Shader binding '{}' has no ready transient buffer", Slot.Info.ParameterPath)));
                     auto& BeltSlot =
                         Slot.Info.Type == ShaderResourceType::ConstantBuffer ? UniformBuffer : StorageBuffer;
                     const auto CurrentBuffer = Buffer->GetVkBuffer();
@@ -396,22 +393,21 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         : RHIShaderBindingSet(std::move(Name), Desc), m_Descriptors(Descriptors) {}
 
   protected:
-    /// Updates the current set snapshot for the pass being recorded. RHI
-    /// validation has already resolved and updated every slot in this set.
-    /// Execute()
-    /// calls Pass::Record() immediately before constructing its command visitor,
-    /// so replacing this snapshot is intentional: CaptureBindingState() observes
-    /// the bindings of the current pass and refreshes their cache LRU entries.
+    /// @brief Update the current set snapshot for the pass being recorded.
+    ///
+    /// RHI validation has already resolved and updated every slot in this set. Execute() calls Pass::Record()
+    /// immediately before constructing its command visitor, so replacing this snapshot is intentional:
+    /// CaptureBindingState() observes the bindings of the current pass and refreshes their cache LRU entries.
     [[nodiscard]] auto OnResourcesBound(Uint32 SetIndex) -> std::expected<void, ErrorMessage> override {
-        // we update descriptor set key, so that `CaptureBindingState()` later
-        // fetches the corresponding descriptor set from the manager
-        const auto&           SetBindings = m_BindingsBySet[SetIndex];
+        // we update descriptor set key, so that `CaptureBindingState()` later fetches the corresponding
+        // descriptor set from the manager
+        const auto& SetBindings = m_BindingsBySet[SetIndex];
         if (m_BindlessSpace && SetIndex == *m_BindlessSpace)
             return {};
         DescriptorSetCacheKey Key{.Layout = m_SetLayouts[SetIndex]};
         for (const auto& Slot : SetBindings) {
-            // The cache key captures the full view identity: resource id plus
-            // role and range, so a re-view of the same resource refreshes.
+            // The cache key captures the full view identity: resource id plus role and range, so a re-view of
+            // the same resource refreshes.
             if (const auto* View = std::get_if<RHITextureView>(&Slot.Bound)) {
                 Key.ResourceIds.push_back(View->Texture ? View->Texture->GetId() : 0);
                 Key.ResourceIds.push_back(static_cast<Uint32>(View->Usage));
@@ -427,8 +423,8 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
             } else {
                 Key.ResourceIds.push_back(0);
             }
-            // Array slots: one (index, resource id, role, range) tuple per bound element. The sequence
-            // also pins the variable count.
+            // Array slots: one (index, resource id, role, range) tuple per bound element. The sequence also
+            // pins the variable count.
             for (const auto& Element : Slot.ArrayElements) {
                 Key.ResourceIds.push_back(Element.ArrayIndex);
                 Key.ResourceIds.push_back(Element.View.Texture ? Element.View.Texture->GetId() : 0);
@@ -443,8 +439,8 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
 
   private:
     VulkanDescriptorManager&                   m_Descriptors;
-    std::vector<vk::DescriptorSetLayout>       m_SetLayouts       = {};
-    std::vector<vk::raii::DescriptorSetLayout> m_OwnedSetLayouts = {};
+    std::vector<vk::DescriptorSetLayout>       m_SetLayouts         = {};
+    std::vector<vk::raii::DescriptorSetLayout> m_OwnedSetLayouts    = {};
     std::vector<DescriptorSetCacheKey>         m_SetKeys            = {};
     std::vector<vk::PushConstantRange>         m_PushConstantRanges = {};
     vk::raii::PipelineLayout                   m_PipelineLayout     = nullptr;

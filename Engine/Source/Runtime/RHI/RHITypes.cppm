@@ -49,10 +49,10 @@ struct RHISamplerDesc {
     RHISamplerProfile Profile = RHISamplerProfile::LinearRepeat;
 };
 
-/// Shader-visible sampling state object.
+/// @brief Shader-visible sampling state object.
 ///
-/// Backends own the native sampler handle. Higher-level owners keep RHIRef
-/// instances; command lists only observe them.
+/// Backends own the native sampler handle. Higher-level owners keep RHIRef instances; command lists only
+/// observe them.
 class RHISampler : public RHIObject {
   public:
     RHISampler(const RHISampler&)                    = delete;
@@ -71,8 +71,7 @@ class RHISampler : public RHIObject {
   private:
     RHISamplerDesc m_Desc = {};
 };
-
-// ── Texture ──────────────────────────────────────────────────────────────────
+// Texture
 
 enum class RHIFormat : Uint8 {
     Unknown             = 0,
@@ -172,16 +171,15 @@ enum class RHITextureUsage : Uint32 {
 };
 
 /// @brief Allocation-legality usage flags for a unified buffer.
-/// Mirrors VkBufferUsageFlagBits roles; the creation union must cover every
-/// future use. TransferSrc/TransferDst double as the RenderGraph view/sync
-/// declaration axis.
+/// Mirrors VkBufferUsageFlagBits roles; the creation union must cover every future use.
+/// TransferSrc/TransferDst double as the RenderGraph view/sync declaration axis.
 enum class RHIBufferUsage : Uint32 {
     Unknown     = 0,
     Vertex      = 1u << 0,
     Index       = 1u << 1,
-    /// Constant-buffer role (D3D/UE "constant buffer" = Vulkan "uniform
-    /// buffer"); named Constant to match the shader-side vocabulary
-    /// (ShaderResourceType::ConstantBuffer).
+    /// @brief Constant-buffer role (D3D/UE "constant buffer" = Vulkan "uniform buffer").
+    ///
+    /// Named Constant to match the shader-side vocabulary (ShaderResourceType::ConstantBuffer).
     Constant    = 1u << 2,
     Storage     = 1u << 3,
     Indirect    = 1u << 4,
@@ -208,16 +206,18 @@ enum class RHIMemoryUsage : Uint8 {
 };
 
 struct RHIBufferDesc {
-    Uint64            SizeBytes   = 0;
-    RHIBufferUsage    Usage       = RHIBufferUsage::Unknown;
-    RHIMemoryUsage    MemoryUsage = RHIMemoryUsage::Unknown;
-    RHILifetime       Lifetime    = RHILifetime::Unknown;
+    Uint64         SizeBytes   = 0;
+    RHIBufferUsage Usage       = RHIBufferUsage::Unknown;
+    RHIMemoryUsage MemoryUsage = RHIMemoryUsage::Unknown;
+    RHILifetime    Lifetime    = RHILifetime::Unknown;
 };
 
-/// Unified buffer identity. Vertex/index/uniform/storage/indirect are usages, not types — GPU→CPU readback is
-/// not a buffer at all, it is the RHIReadback consumer object below. Lifetime is stored on the identity and
-/// discriminates the backend's per-flavor state (persistent allocation vs transient belt slice), whose
-/// allocation strategy the backend concrete class owns.
+/// @brief Unified buffer identity.
+///
+/// Vertex/index/uniform/storage/indirect are usages, not types — GPU→CPU readback is not a buffer at all, it
+/// is the RHIReadback consumer object below. Lifetime is stored on the identity and discriminates the
+/// backend's per-flavor state (persistent allocation vs transient belt slice), whose allocation strategy the
+/// backend concrete class owns.
 class RHIBuffer : public RHIObject {
   public:
     RHIBuffer(const RHIBuffer&)                    = delete;
@@ -235,24 +235,23 @@ class RHIBuffer : public RHIObject {
     [[nodiscard]] auto GetMemoryUsage() const noexcept -> RHIMemoryUsage {
         return m_MemoryUsage;
     }
-    /// Lifetime is fixed at creation (validated Desc or a hardcoded backend
-    /// flavor), so a constructed buffer never holds Unknown.
+    /// @brief Lifetime of this buffer.
+    ///
+    /// Fixed at creation (validated Desc or a hardcoded backend flavor), so a constructed buffer never holds
+    /// Unknown.
     [[nodiscard]] auto GetLifetime() const noexcept -> RHILifetime {
         return m_Lifetime;
     }
-    /// Buffer device address (Vulkan BDA). Every GpuOnly buffer carries one;
-    /// host-visible and transient flavors return 0.
+    /// @brief Buffer device address (Vulkan BDA).
+    ///
+    /// Every GpuOnly buffer carries one; host-visible and transient flavors return 0.
     [[nodiscard]] virtual auto GetDeviceAddress() const noexcept -> Uint64 {
         return 0;
     }
 
   protected:
     explicit RHIBuffer(String Name, Uint64 Size, RHIBufferUsage Usage, RHIMemoryUsage MemoryUsage, RHILifetime Lifetime)
-        : RHIObject(std::move(Name)),
-          m_Size(Size),
-          m_Usage(Usage),
-          m_MemoryUsage(MemoryUsage),
-          m_Lifetime(Lifetime) {}
+        : RHIObject(std::move(Name)), m_Size(Size), m_Usage(Usage), m_MemoryUsage(MemoryUsage), m_Lifetime(Lifetime) {}
 
   private:
     Uint64         m_Size        = 0;
@@ -293,27 +292,31 @@ class RHIReadback : public RHIObject {
 };
 
 struct RHITextureDesc {
-    Uint32                                    Width       = 1;
-    Uint32                                    Height      = 1;
-    Uint32                                    MipLevels   = 1;
-    RHIFormat                                 Format      = RHIFormat::B8G8R8A8_UNORM;
-    /// Flags default to None: a role is always an explicit choice (the RenderGraph validates None at
-    /// registration). The RenderGraph rule: creation usage is explicit here; a pass view's declared usage
-    /// must stay a subset of it.
-    RHITextureUsage                           Usage       = RHITextureUsage::None;
-    /// Allocation placement, same axis as RHIBufferDesc: GpuOnly derives
-    /// transfer-dst capability at creation and uploads through the frame-start
-    /// staging batch (UploadTexture); host-visible placements are not
-    /// supported for images. Unknown fails validation — a Desc is explicit.
-    RHIMemoryUsage                            MemoryUsage = RHIMemoryUsage::Unknown;
-    /// Texel channel count (bytes per texel for the upload path);
+    Uint32          Width       = 1;
+    Uint32          Height      = 1;
+    Uint32          MipLevels   = 1;
+    RHIFormat       Format      = RHIFormat::B8G8R8A8_UNORM;
+    /// @brief Flags default to None: a role is always an explicit choice (the RenderGraph validates None at
+    /// registration).
+    ///
+    /// The RenderGraph rule: creation usage is explicit here; a pass view's declared usage must stay a subset
+    /// of it.
+    RHITextureUsage Usage       = RHITextureUsage::None;
+    /// @brief Allocation placement, same axis as RHIBufferDesc.
+    ///
+    /// GpuOnly derives transfer-dst capability at creation and uploads through the frame-start staging batch
+    /// (UploadTexture); host-visible placements are not supported for images. Unknown fails validation — a
+    /// Desc is explicit.
+    RHIMemoryUsage  MemoryUsage = RHIMemoryUsage::Unknown;
+    /// @brief Texel channel count (bytes per texel for the upload path).
+    ///
     /// UploadTexture validates its byte count against Width × Height × Channels.
-    Uint32                                    Channels    = 4;
+    Uint32          Channels    = 4;
 };
 
-/// Unified texture identity: merges the old sampled-texture and
-/// render-target types. Color vs depth vs sampled is distinguished by
-/// GetFormat()/GetUsage(), never by type.
+/// @brief Unified texture identity covering both sampled and render-target roles.
+///
+/// Color vs depth vs sampled is distinguished by GetFormat()/GetUsage(), never by type.
 class RHITexture : public RHIObject {
   public:
     RHITexture(const RHITexture&)                    = delete;
@@ -364,13 +367,12 @@ class RHITexture : public RHIObject {
     RHIMemoryUsage  m_MemoryUsage = RHIMemoryUsage::Unknown;
     Uint32          m_Channels    = 4;
 };
+// Ray-tracing acceleration structures
 
-// ── Ray-tracing acceleration structures ─────────────────────────────────────
-
-/// One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
-/// BLAS triangle inputs. Geometry metadata (counts, stride) is mesh data,
-/// carried here by the caller — buffers are unified identities and do not
-/// know vertex semantics.
+/// @brief One position-only Float32x3 triangle geometry entry in a bottom-level acceleration structure.
+///
+/// BLAS triangle inputs. Geometry metadata (counts, stride) is mesh data, carried here by the caller —
+/// buffers are unified identities and do not know vertex semantics.
 struct RHIBottomLevelAccelerationStructureDesc {
     RHIRef<RHIBuffer> VertexBufferRef = nullptr;
     RHIRef<RHIBuffer> IndexBufferRef  = nullptr;
@@ -398,17 +400,17 @@ struct RHITopLevelAccelerationStructureInstance {
     hlslpp::float4x4                            Transform = hlslpp::float4x4::identity();
 };
 
-/// Descriptor for a per-frame TLAS.
+/// @brief Descriptor for a per-frame TLAS.
 ///
-/// Instances slot order is the canonical TLAS instance order: the device
-/// packs them 1:1, so Slang InstanceIndex() indexes the renderer's sorted
-/// instance table by the same slot.
+/// Instances slot order is the canonical TLAS instance order: the device packs them 1:1, so Slang
+/// InstanceIndex() indexes the renderer's sorted instance table by the same slot.
 struct RHITopLevelAccelerationStructureDesc {
     std::vector<RHITopLevelAccelerationStructureInstance> Instances = {};
 };
 
-/// Per-frame TLAS handle: instances are packed and storage is materialized at
-/// creation; the device builds it at frame start.
+/// @brief Per-frame TLAS handle.
+///
+/// Instances are packed and storage is materialized at creation; the device builds it at frame start.
 class RHITopLevelAccelerationStructure : public RHIObject {
   public:
     RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
@@ -438,9 +440,8 @@ struct RHISubresourceRange {
 };
 
 /// @brief Value-semantic texture view: identity, role, extent, direction.
-/// Plain data, not an RHIObject — lifetime comes from the embedded ref and
-/// the backend resolves/caches native views at record time. One view, one
-/// role: Usage is a single-role selector, never the creation union.
+/// Plain data, not an RHIObject — lifetime comes from the embedded ref and the backend resolves/caches native
+/// views at record time. One view, one role: Usage is a single-role selector, never the creation union.
 struct RHITextureView {
     RHIRef<RHITexture>  Texture = nullptr;
     RHIAccess           Access  = RHIAccess::Read;
@@ -483,7 +484,7 @@ struct RHIClearDepthStencilValue {
 
 /// @brief One color attachment: the RenderTarget view plus its clear policy.
 struct RHIColorAttachmentDesc {
-    RHITextureView     View       = {};  ///< Range selects the rendered mip(s)
+    RHITextureView     View       = {}; ///< Range selects the rendered mip(s)
     RHIClearColorValue ClearValue = {};
     bool               Clear      = true;
 };
@@ -502,22 +503,18 @@ struct RHIGraphicsAttachments {
     std::optional<RHIDepthAttachmentDesc> DepthAttachment  = std::nullopt;
 };
 
-
-// ── Synchronization vocabulary ─────────────────────────────────────────────
-// The RenderGraph produces dst-only prologue transitions from declared pass
-// accesses; the backend's emission-side diff tracker materializes a native
-// barrier only when tracked state differs. A transition is view + stage: the
-// native access mask and the image layout are pure functions of the view's
-// (Usage, Access), and that derivation lives in the backend's native mapping
-// at emission, so this vocabulary carries no access-widening or layout axis.
-// The stage schema is a fine-grained bit mask (D3D12 barrier-state shape) so
+// Synchronization vocabulary
+// The RenderGraph produces dst-only prologue transitions from declared pass accesses; the backend's
+// emission-side diff tracker materializes a native barrier only when tracked state differs. A transition is
+// view + stage: the native access mask and the image layout are pure functions of the view's (Usage, Access),
+// and that derivation lives in the backend's native mapping at emission, so this vocabulary carries no
+// access-widening or layout axis. The stage schema is a fine-grained bit mask (D3D12 barrier-state shape) so
 // precision upgrades are mapping-table data changes, not schema changes.
 
 /// @brief Pipeline-stage mask of one endpoint of a resource state.
 ///
-/// The initial mapping table only ever produces coarse values (AllGraphics
-/// for shader accesses in graphics passes); precise stages (VertexShader vs
-/// FragmentShader) are reserved for future per-view stage hints.
+/// The initial mapping table only ever produces coarse values (AllGraphics for shader accesses in graphics
+/// passes); precise stages (VertexShader vs FragmentShader) are reserved for future per-view stage hints.
 enum class RHISyncStage : Uint32 {
     None                  = 0,
     VertexShader          = 1 << 0,
@@ -530,24 +527,22 @@ enum class RHISyncStage : Uint32 {
     LateFragmentTests     = 1 << 7,
     Transfer              = 1 << 8,
     Host                  = 1 << 9,
-    AllGraphics           = VertexShader | FragmentShader | DrawIndirect | ColorAttachmentOutput |
-                  EarlyFragmentTests | LateFragmentTests,
+    AllGraphics           = VertexShader | FragmentShader | DrawIndirect | ColorAttachmentOutput | EarlyFragmentTests |
+        LateFragmentTests,
 };
 
 /// @brief A dst-only state requirement for one buffer: "the pass needs this
-/// buffer accessed as View at Stage before its commands run". A transition is
-/// a declaration, not a barrier — it carries no src/dst pair; the backend's
-/// diff tracker decides whether a barrier materializes. The View travels by
-/// value: a pass declaring several views of one buffer merges them into one
-/// transition whose View accumulates the usage and access union.
+/// buffer accessed as View at Stage before its commands run". A transition is a declaration, not a barrier —
+/// it carries no src/dst pair; the backend's diff tracker decides whether a barrier materializes. The View
+/// travels by value: a pass declaring several views of one buffer merges them into one transition whose View
+/// accumulates the usage and access union.
 struct RHIBufferTransition {
     RHIBufferView View  = {};
     RHISyncStage  Stage = RHISyncStage::None;
 };
 
 /// @brief Texture counterpart of RHIBufferTransition. The view's
-/// subresource range defaults to the whole chain; the backend tracker
-/// resolves per-subresource state from it.
+/// subresource range defaults to the whole chain; the backend tracker resolves per-subresource state from it.
 struct RHITextureTransition {
     RHITextureView View  = {};
     RHISyncStage   Stage = RHISyncStage::None;

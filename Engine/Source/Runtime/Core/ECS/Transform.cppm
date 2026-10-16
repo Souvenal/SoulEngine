@@ -14,8 +14,7 @@ export namespace SoulEngine {
 
 /// @brief Transform component for spatial entities.
 ///
-/// Contains local translation, rotation, and scale.
-/// World transform is derived through the entity hierarchy.
+/// Contains local translation, rotation, and scale. World transform is derived through the entity hierarchy.
 struct TransformComponent {
     hlslpp::float3   Translation    = hlslpp::float3(0.0f, 0.0f, 0.0f);
     hlslpp::float3   Rotation       = hlslpp::float3(0.0f, 0.0f, 0.0f); ///< Euler angles in degrees
@@ -24,8 +23,8 @@ struct TransformComponent {
 
     /// @brief Get the local transform matrix from translation, rotation, and scale.
     ///
-    /// Rotation composes as Rx * Ry * Rz (row-vector convention): the X, Y,
-    /// then Z rotations are applied about the fixed parent-space axes.
+    /// Rotation composes as Rx * Ry * Rz (row-vector convention): the X, Y, then Z rotations are applied
+    /// about the fixed parent-space axes.
     [[nodiscard]] auto GetLocalMatrix() const -> hlslpp::float4x4 {
         const auto TranslationMatrix = hlslpp::float4x4::translation(Translation);
 
@@ -42,8 +41,8 @@ struct TransformComponent {
 
 /// @brief System for updating transform hierarchies.
 ///
-/// Updates world transforms based on parent-child relationships.
-/// Uses registry-owned reactive storage to track dirty transforms.
+/// Updates world transforms based on parent-child relationships. Uses registry-owned reactive storage to
+/// track dirty transforms.
 class TransformSystem : public ISystem {
   public:
     explicit TransformSystem(entt::registry& Registry) : ISystem(Registry) {}
@@ -58,8 +57,8 @@ class TransformSystem : public ISystem {
         std::unordered_set<entt::entity>                                         Scheduled;
 
         const auto Schedule = [&](const entt::entity Entity) -> void {
-            // Return value of emplace is `std::pair<iterator, bool>`,
-            // where the bool indicates whether the insertion took place.
+            // Return value of emplace is `std::pair<iterator, bool>`, where the bool indicates whether the
+            // insertion took place.
             //
             // I didn't know that before.
             if (!Scheduled.emplace(Entity).second)
@@ -124,9 +123,9 @@ class TransformSystem : public ISystem {
 
 namespace SoulEngine {
 
-// Note: this namespace must stay named. In a named module, clang 23 silently
-// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
-// which would skip this entt meta registration at program startup.
+// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
+// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
+// startup.
 namespace MetaRegistration {
 
 using namespace entt::literals;

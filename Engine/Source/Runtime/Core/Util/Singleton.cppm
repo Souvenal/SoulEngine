@@ -5,39 +5,33 @@ export namespace SoulEngine {
 ///
 /// Derive your singleton class publicly from `Singleton<Derived>`:
 ///
-/// ```cpp
-/// class A : public Singleton<Renderer>
-/// {
+/// ```cpp class A : public Singleton<Renderer> {
 ///     friend class Singleton<A>;
 /// public:
 ///     // ...
 /// private:
 ///     A();
 ///     ~A();
-/// };
-/// ```
+/// }; ```
 ///
 /// @tparam T  The derived singleton type.
 ///
 /// ## Friend declaration
 ///
-/// `Singleton<T>::Get()` must be able to construct `T`, but the singleton
-/// class should hide its constructor/destructor from all other callers.
-/// Add `friend class Singleton<T>;` inside `T` so that `Get()` can access
-/// the private constructor.  Without the friendship, `Get()` cannot
-/// instantiate the static local `T`.
+/// `Singleton<T>::Get()` must be able to construct `T`, but the singleton class should hide its
+/// constructor/destructor from all other callers. Add `friend class Singleton<T>;` inside `T` so that `Get()`
+/// can access the private constructor. Without the friendship, `Get()` cannot instantiate the static local
+/// `T`.
 ///
 /// ## Thread safety
 ///
-/// The function-local `static T Instance` (Meyer's singleton) is
-/// guaranteed to initialise exactly once in a thread-safe manner by the
-/// C++ standard (since C++11).  No external synchronisation is needed.
+/// The function-local `static T Instance` (Meyer's singleton) is guaranteed to initialise exactly once in a
+/// thread-safe manner by the C++ standard (since C++11). No external synchronisation is needed.
 ///
 /// ## Lifecycle
 ///
-/// The instance is destroyed in reverse order of construction during
-/// static deinitialisation.  Avoid accessing one singleton from the
-/// destructor of another singleton that may have already been destroyed.
+/// The instance is destroyed in reverse order of construction during static deinitialisation. Avoid accessing
+/// one singleton from the destructor of another singleton that may have already been destroyed.
 template <typename T>
 class Singleton {
   public:

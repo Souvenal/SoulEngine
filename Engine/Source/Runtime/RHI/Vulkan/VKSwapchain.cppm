@@ -1,7 +1,7 @@
 module;
 
-// Clang 22 named-modules bug: bare uint32_t is shadowed through the
-// std re-export chain (import RHI); a textual include restores it.
+// Clang 22 named-modules bug: bare uint32_t is shadowed through the std re-export chain (import RHI); a
+// textual include restores it.
 #include <cstdint>
 
 export module Vulkan:Swapchain;
@@ -29,17 +29,17 @@ namespace SoulEngine {
 [[nodiscard]] auto ResolvePresentMode(std::span<const vk::PresentModeKHR> Modes) -> vk::PresentModeKHR {
     // Vulkan present modes:
     //
-    // eImmediate    — frames are pushed to the display immediately; will tear.
+    // eImmediate — frames are pushed to the display immediately; will tear.
     //
-    // eFifo         — swapchain is a queue.  Display pops from the front at
+    // eFifo — swapchain is a queue. Display pops from the front at
     //                 vblank; application pushes to the back.  Blocks when full.
     //                 Equivalent to classic vsync.  Always available.
     //
-    // eFifoRelaxed  — like eFifo, but if the app was late and the queue is
+    // eFifoRelaxed — like eFifo, but if the app was late and the queue is
     //                 empty at vblank, the image is transferred immediately upon
     //                 arrival instead of waiting for the next vblank.  May tear.
     //
-    // eMailbox      — like eFifo, but when the queue is full, new frames replace
+    // eMailbox — like eFifo, but when the queue is full, new frames replace
     //                 the oldest queued frame instead of blocking.  Tear-free
     //                 while letting the app render as fast as possible ("triple
     //                 buffering").
@@ -53,19 +53,18 @@ namespace SoulEngine {
 
 [[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps)
     -> vk::Extent2D {
-    // currentExtent is the window size in pixels, clamped to surface limits.
-    // When it equals UINT32_MAX the surface doesn't dictate a size (e.g. some
-    // compositors) — we must query the framebuffer dimensions.
+    // currentExtent is the window size in pixels, clamped to surface limits. When it equals UINT32_MAX the
+    // surface doesn't dictate a size (e.g. some compositors) — we must query the framebuffer dimensions.
     //
     // GLFW has two coordinate systems:
     //
     //   glfwGetWindowSize()      → screen coordinates (e.g. 1280×720)
     //   glfwGetFramebufferSize() → physical pixels  (e.g. 2560×1440 on Retina)
     //
-    // On high-DPI displays, screen coordinates and physical pixels differ because
-    // each screen point maps to multiple pixels (e.g. 2× on Retina).
+    // On high-DPI displays, screen coordinates and physical pixels differ because each screen point maps to
+    // multiple pixels (e.g. 2× on Retina).
     //
-    // Vulkan works in pixels.  So we use the framebuffer pixel size.
+    // Vulkan works in pixels. So we use the framebuffer pixel size.
     if (Caps.currentExtent.width != std::numeric_limits<Uint32>::max())
         return Caps.currentExtent;
 
@@ -79,8 +78,8 @@ namespace SoulEngine {
 }
 
 [[nodiscard]] auto ResolveSwapImageCount(const vk::SurfaceCapabilitiesKHR& Caps) -> uint32_t {
-    // Request at least one more than the surface minimum so the driver
-    // doesn't have to stall internally while we acquire the next image.
+    // Request at least one more than the surface minimum so the driver doesn't have to stall internally while
+    // we acquire the next image.
     //
     // maxImageCount == 0 means the implementation has no upper bound.
     uint32_t Count = std::max(Caps.minImageCount + 1, 3u);
@@ -91,22 +90,21 @@ namespace SoulEngine {
     return Count;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
 // VulkanSwapchain
-// ═════════════════════════════════════════════════════════════════════════════
 //
-// Owns the VkSwapchainKHR and its image views.  Does NOT own the device,
-// physical device, or surface — those are held by VulkanRenderDevice.
+// Owns the VkSwapchainKHR and its image views. Does NOT own the device, physical device, or surface — those
+// are held by VulkanRenderDevice.
 //
-// VulkanSwapchain operations (AcquireNextImage, Present) are not thread-safe
-// and must be serialized by the caller (typically the main thread).
+// VulkanSwapchain operations (AcquireNextImage, Present) are not thread-safe and must be serialized by the
+// caller (typically the main thread).
 
 class VulkanSwapchain {
   public:
     VulkanSwapchain() = default;
 
-    /// Create a fully initialized VulkanSwapchain. Stores a non-owning reference
-    /// to Vulkan objects owned by VulkanResourceContext.
+    /// @brief Create a fully initialized VulkanSwapchain.
+    ///
+    /// Stores a non-owning reference to Vulkan objects owned by VulkanResourceContext.
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context)
         -> std::expected<VulkanSwapchain, ErrorMessage> {
         VulkanSwapchain Result;
@@ -116,8 +114,8 @@ class VulkanSwapchain {
         Result.m_Surface      = &Context.GetSurface();
         Result.m_DebugUtils   = &Context.GetDebugUtils();
         Result.m_ImageTracker = &Context.GetImageTracker();
+        // Query surface capabilities
 
-        // ── Query surface capabilities ──────────────────────────────────
         auto CapsResult = Result.m_PhysDevice->getSurfaceCapabilitiesKHR(*Result.m_Surface);
         if (CapsResult.result != vk::Result::eSuccess)
             return std::unexpected(ErrorMessage("Failed to query surface capabilities"));
@@ -133,17 +131,17 @@ class VulkanSwapchain {
         auto& Caps         = CapsResult.value;
         auto& Formats      = FormatsResult.value;
         auto& PresentModes = PresentResult.value;
+        // Choose surface format and present mode
 
-        // ── Choose surface format and present mode ────────────────────
         vk::SurfaceFormatKHR ChosenFormat = ResolveSurfaceFormat(Formats);
         Result.m_Format                   = ChosenFormat;
         vk::PresentModeKHR PresentMode    = ResolvePresentMode(PresentModes);
         LogInfo("Swapchain PresentMode: {}", vk::to_string(PresentMode));
+        // Resolve extent
 
-        // ── Resolve extent ────────────────────────────────────────────
         Result.m_Extent = ResolveExtent(Context.GetSurfaceProvider(), Caps);
+        // Resolve image count
 
-        // ── Resolve image count ────────────────────────────────────────
         uint32_t ImageCount = ResolveSwapImageCount(Caps);
 
         LogInfo("Surface format: {}, color space: {}, present mode: {}, extent: {}x{}, image count: {}",
@@ -158,42 +156,41 @@ class VulkanSwapchain {
         if ((Caps.supportedUsageFlags & RequiredUsage) != RequiredUsage)
             return std::unexpected(ErrorMessage(
                 "VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
+        // Create swapchain
 
-        // ── Create swapchain ────────────────────────────────────────────
         vk::SwapchainCreateInfoKHR SwapchainCI{
             .surface          = *Result.m_Surface,
             .minImageCount    = ImageCount,
             .imageFormat      = ChosenFormat.format,
             .imageColorSpace  = ChosenFormat.colorSpace,
             .imageExtent      = Result.m_Extent,
-            // specifies the number of layers each image consists of,
-            // always 1 unless developing for stereoscopic 3D applications.
+            // specifies the number of layers each image consists of, always 1 unless developing for
+            // stereoscopic 3D applications.
             .imageArrayLayers = 1,
-            // The engine renders to its own color RT and blits that output to
-            // swapchain; render passes must not use swapchain images directly.
-            // Presentation overlays are the exception: they load the blitted
-            // image and render UI directly before presentation.
+            // The engine renders to its own color RT and blits that output to swapchain; render passes must
+            // not use swapchain images directly. Presentation overlays are the exception: they load the
+            // blitted image and render UI directly before presentation.
             .imageUsage       = RequiredUsage,
-            // eExclusive means that an image is owned by one queue family at a time,
-            // and ownership must be explicitly transferred before using the image in another queue family.
+            // eExclusive means that an image is owned by one queue family at a time, and ownership must be
+            // explicitly transferred before using the image in another queue family.
             //
-            // eConcurrent means that images can be used across multiple queue families,
-            // without explicit ownership transfers.
+            // eConcurrent means that images can be used across multiple queue families, without explicit
+            // ownership transfers.
             //
             // Concurrent is a complex topic, we'll extend to it in the future.
             .imageSharingMode = vk::SharingMode::eExclusive,
             // we can do a 90-degree clockwise rotation or horizontal flip, or keep it as-is.
             .preTransform     = Caps.currentTransform,
-            // Specifies if the alpha channel should be used for blending with other windows
-            // almost always eOpaque for games.
+            // Specifies if the alpha channel should be used for blending with other windows almost always
+            // eOpaque for games.
             .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
             .presentMode      = PresentMode,
-            // When clipped is true, it means we don't care about the pixels that are obscured
-            // (e.g. by another window or off-screen) and the implementation can optimize for that.
-            // Unless we want to read back the pixels, we can enable it for better performance.
+            // When clipped is true, it means we don't care about the pixels that are obscured (e.g. by
+            // another window or off-screen) and the implementation can optimize for that. Unless we want to
+            // read back the pixels, we can enable it for better performance.
             .clipped          = vk::True,
-            // for swapchain recreation; set to the current swapchain handle when recreating
-            // recreation is a future topic, so we set it to nullptr for now
+            // for swapchain recreation; set to the current swapchain handle when recreating recreation is a
+            // future topic, so we set it to nullptr for now
             .oldSwapchain     = nullptr,
         };
 
@@ -202,8 +199,8 @@ class VulkanSwapchain {
             return std::unexpected(ErrorMessage(Format("Failed to create swapchain: {}", vk::to_string(Res))));
         Result.m_Swapchain = std::move(SC);
         Context.GetDebugUtils().SetObjectName(*Result.m_Swapchain, "Internal/Swapchain");
+        // Retrieve swapchain images
 
-        // ── Retrieve swapchain images ───────────────────────────────────
         auto ImagesResult = Result.m_Swapchain.getImages();
         if (ImagesResult.result != vk::Result::eSuccess)
             return std::unexpected(
@@ -212,14 +209,14 @@ class VulkanSwapchain {
         for (Uint32 Index = 0; Index < Result.m_Images.size(); ++Index) {
             Context.GetDebugUtils().SetObjectName(Result.m_Images[Index], Format("Internal/Image/Swapchain{}", Index));
             Result.m_ImageTracker->Seed(Result.m_Images[Index],
-                1,
-                SwapchainCI.imageArrayLayers,
-                VulkanImageState{
-                    // The first time a swapchain image is used in a frame,
-                    // is when the scene color blits to the swapchain.
-                    // So we declare swapchain images as in tranfer stage.
-                    .stage  = vk::PipelineStageFlagBits2::eTransfer,
-                });
+                                        1,
+                                        SwapchainCI.imageArrayLayers,
+                                        VulkanImageState{
+                                            // The first time a swapchain image is used in a frame, is when
+                                            // the scene color blits to the swapchain. So we declare swapchain
+                                            // images as in tranfer stage.
+                                            .stage = vk::PipelineStageFlagBits2::eTransfer,
+                                        });
         }
 
         Result.m_ImageViews.reserve(Result.m_Images.size());
@@ -241,19 +238,19 @@ class VulkanSwapchain {
             if (ViewResult.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage(
                     Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
-            Context.GetDebugUtils().SetObjectName(
-                *ViewResult.value, Format("Internal/ImageView/Swapchain{}", Result.m_ImageViews.size()));
+            Context.GetDebugUtils().SetObjectName(*ViewResult.value,
+                                                  Format("Internal/ImageView/Swapchain{}", Result.m_ImageViews.size()));
             Result.m_ImageViews.emplace_back(std::move(ViewResult.value));
         }
 
-        // ── Create render-complete binary semaphores (one per swapchain image) ──
+        // Create render-complete binary semaphores (one per swapchain image)
         Result.m_RenderComplete.reserve(Result.m_Images.size());
         for (std::size_t i = 0; i < Result.m_Images.size(); ++i) {
             auto SemRes = Result.m_Device->createSemaphore({});
             if (SemRes.result != vk::Result::eSuccess)
                 return std::unexpected(ErrorMessage("Failed to create render-complete semaphore"));
-            Context.GetDebugUtils().SetObjectName(
-                *SemRes.value, Format("Internal/Semaphore/RenderComplete/Swapchain{}", i));
+            Context.GetDebugUtils().SetObjectName(*SemRes.value,
+                                                  Format("Internal/Semaphore/RenderComplete/Swapchain{}", i));
             Result.m_RenderComplete.emplace_back(std::move(SemRes.value));
         }
 
@@ -284,8 +281,7 @@ class VulkanSwapchain {
         *this = std::move(*NewSc);
         return {};
     }
-
-    // ── Per-frame operations ─────────────────────────────────────────────
+    // Per-frame operations
 
     [[nodiscard]] auto AcquireNextImage(vk::Semaphore PresentCompleteSema) -> vk::Result {
         // Note: the image index value is return immediatedly, but,
@@ -315,8 +311,7 @@ class VulkanSwapchain {
 
         return PresentQueue.presentKHR(PresentInfo);
     }
-
-    // ── Accessors ────────────────────────────────────────────────────────
+    // Accessors
 
     [[nodiscard]] auto GetExtent() const -> vk::Extent2D {
         return m_Extent;
@@ -339,24 +334,22 @@ class VulkanSwapchain {
         return (m_CurrentIndex < m_ImageViews.size()) ? *m_ImageViews[m_CurrentIndex] : vk::ImageView{};
     }
 
-    /// Returns the render-complete semaphore for the currently acquired
-    /// swapchain image.  Used by VulkanRenderDevice::EndFrame to build the
-    /// semaphore-submit info for queue submit.
+    /// @brief The render-complete semaphore for the currently acquired swapchain image.
+    ///
+    /// Used by VulkanRenderDevice::EndFrame to build the semaphore-submit info for queue submit.
     [[nodiscard]] auto GetCurrentRenderCompleteSemaphore() const -> vk::Semaphore {
         return *m_RenderComplete[m_CurrentIndex];
     }
 
+    // Non-owning pointers (set in Create)
   private:
-    // ── Non-owning pointers (set in Create) ─────────────────────────────
-
-    const VulkanResourceContext* m_Context       = nullptr;
-    vk::raii::Device*            m_Device        = nullptr;
-    vk::raii::PhysicalDevice*    m_PhysDevice    = nullptr;
-    vk::raii::SurfaceKHR*        m_Surface       = nullptr;
-    VulkanDebugUtils*            m_DebugUtils    = nullptr;
-    VulkanImageTracker*          m_ImageTracker  = nullptr;
-
-    // ── Owned resources ──────────────────────────────────────────────────
+    const VulkanResourceContext* m_Context      = nullptr;
+    vk::raii::Device*            m_Device       = nullptr;
+    vk::raii::PhysicalDevice*    m_PhysDevice   = nullptr;
+    vk::raii::SurfaceKHR*        m_Surface      = nullptr;
+    VulkanDebugUtils*            m_DebugUtils   = nullptr;
+    VulkanImageTracker*          m_ImageTracker = nullptr;
+    // Owned resources
 
     vk::raii::SwapchainKHR           m_Swapchain = nullptr;
     vk::SurfaceFormatKHR             m_Format    = {};

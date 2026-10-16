@@ -4,12 +4,10 @@
 
 module;
 
-// spdlog is textually included in the global module fragment.  The toolchain
-// is Clang-only, which handles mixing header-provided standard-library
-// declarations with the named std module in one translation unit.  GMF types
-// used by the exported interface (the LogManager members below and the
-// bodies of its inline member functions) are retained per
-// [module.global.frag]/3 and stay reachable-but-not-nameable for importers
+// spdlog is textually included in the global module fragment. The toolchain is Clang-only, which handles
+// mixing header-provided standard-library declarations with the named std module in one translation unit. GMF
+// types used by the exported interface (the LogManager members below and the bodies of its inline member
+// functions) are retained per [module.global.frag]/3 and stay reachable-but-not-nameable for importers
 // ([module.reach]/3.1.2, /6).
 #include <spdlog/common.h>
 #include <spdlog/pattern_formatter.h>
@@ -37,9 +35,8 @@ export enum class LogThreadRole : Uint8 {
     Worker,
 };
 
-// Non-exported module-scope state: these are odr-used by exported inline
-// functions below, so they live in a plain (non-exported) namespace scope,
-// not an anonymous namespace — see Core:CVar's linkage note.
+// Non-exported module-scope state: these are odr-used by exported inline functions below, so they live in a
+// plain (non-exported) namespace scope, not an anonymous namespace — see Core:CVar's linkage note.
 thread_local LogThreadRole CurrentLogThreadRole = LogThreadRole::Main;
 
 export auto SetLogThreadRole(LogThreadRole Role) -> void {
@@ -87,8 +84,7 @@ export auto SetLogThreadRole(LogThreadRole Role) -> void {
 
 class ThreadRoleFormatter final : public spdlog::custom_flag_formatter {
   public:
-    explicit ThreadRoleFormatter(bool Color)
-        : m_Color(Color) {}
+    explicit ThreadRoleFormatter(bool Color) : m_Color(Color) {}
 
     auto format(const spdlog::details::log_msg&, const std::tm&, spdlog::memory_buf_t& Dest) -> void override {
         const auto RoleText = FormatLogThreadRole(m_Color);
@@ -128,7 +124,10 @@ class ThreadRoleFormatter final : public spdlog::custom_flag_formatter {
     return magic_enum::enum_cast<LogLevel>(Name);
 }
 
-auto ApplySinkLevel(spdlog::logger* Logger, spdlog::sinks::sink* Sink, StringView ConfiguredLevel, LogLevel DefaultLevel) -> void {
+auto ApplySinkLevel(spdlog::logger*      Logger,
+                    spdlog::sinks::sink* Sink,
+                    StringView           ConfiguredLevel,
+                    LogLevel             DefaultLevel) -> void {
     if (Sink == nullptr)
         return;
 
@@ -146,24 +145,21 @@ auto ApplySinkLevel(spdlog::logger* Logger, spdlog::sinks::sink* Sink, StringVie
 export class LogManager final : public Singleton<LogManager> {
     friend class Singleton<LogManager>;
 
-    // spdlog types live in the global module fragment, so importers cannot
-    // name these member types — they stay reachable-but-not-nameable via the
-    // BMI ([module.reach]/6), which is exactly the encapsulation we want.
+    // spdlog types live in the global module fragment, so importers cannot name these member types — they
+    // stay reachable-but-not-nameable via the BMI ([module.reach]/6), which is exactly the encapsulation we
+    // want.
     UPtr<spdlog::logger> m_Logger      = nullptr;
     spdlog::sinks::sink* m_EditorSink  = nullptr;
     spdlog::sinks::sink* m_ConsoleSink = nullptr;
 
-    // Defined out-of-class below: an implicitly-defined constructor or
-    // destructor of an exported class needs the complete type of every
-    // member, and importer TUs cannot emit that code from the BMI — only
-    // this TU can.  (Bodies that merely *call* spdlog members, like Init
-    // or Log, inline fine.)
+    // Defined out-of-class below: an implicitly-defined constructor or destructor of an exported class needs
+    // the complete type of every member, and importer TUs cannot emit that code from the BMI — only this TU
+    // can. (Bodies that merely *call* spdlog members, like Init or Log, inline fine.)
     LogManager();
 
   public:
-    // Defaulted (out-of-class) rather than calling spdlog::shutdown():
-    // spdlog's internal registry is a function-local static created during
-    // Init(), i.e. after this singleton, so it is destroyed before us —
+    // Defaulted (out-of-class) rather than calling spdlog::shutdown(): spdlog's internal registry is a
+    // function-local static created during Init(), i.e. after this singleton, so it is destroyed before us —
     // shutdown() here would touch the registry's already-destroyed mutex.
     ~LogManager();
 
@@ -179,8 +175,9 @@ export class LogManager final : public Singleton<LogManager> {
         std::filesystem::create_directories(LogDirPath);
 
         // Create file sink — logger will hold its own shared_ptr copy.
-        auto FileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>((LogDirPath / "SoulEngine.log").string(), true);
-        m_EditorSink  = FileSink.get();
+        auto FileSink =
+            std::make_shared<spdlog::sinks::basic_file_sink_mt>((LogDirPath / "SoulEngine.log").string(), true);
+        m_EditorSink = FileSink.get();
 
         auto ConsoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         m_ConsoleSink    = ConsoleSink.get();
@@ -230,15 +227,17 @@ export class LogManager final : public Singleton<LogManager> {
     /// @note The logger-level is kept at `trace` so that each sink's
     ///       individual level is the sole gate.
     auto SetSinkLevels(const std::optional<String>& FileLevel, const std::optional<String>& ConsoleLevel) -> void {
-        ApplySinkLevel(m_Logger.get(), m_EditorSink, FileLevel ? StringView{*FileLevel} : StringView{}, LogLevel::Debug);
-        ApplySinkLevel(m_Logger.get(), m_ConsoleSink, ConsoleLevel ? StringView{*ConsoleLevel} : StringView{}, LogLevel::Info);
+        ApplySinkLevel(
+            m_Logger.get(), m_EditorSink, FileLevel ? StringView{*FileLevel} : StringView{}, LogLevel::Debug);
+        ApplySinkLevel(
+            m_Logger.get(), m_ConsoleSink, ConsoleLevel ? StringView{*ConsoleLevel} : StringView{}, LogLevel::Info);
     }
 
     auto LogToFile(LogLevel Level, StringView Filename, StringView Message) -> void {
         static std::atomic<Uint32> FileCounter = 0;
 
         // Create file sink — logger will hold its own shared_ptr copy.
-        auto FileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(String{Filename}, true);
+        auto FileSink   = std::make_shared<spdlog::sinks::basic_file_sink_mt>(String{Filename}, true);
         auto TempLogger = std::make_shared<spdlog::logger>(
             "file_" + std::to_string(FileCounter.fetch_add(1, std::memory_order_relaxed)), FileSink);
         TempLogger->set_formatter(CreateLogFormatter("[%m-%d %H:%M:%S.%e] [%=7l] %q %v", false));

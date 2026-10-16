@@ -17,8 +17,8 @@ struct PixelCoordinate {
 };
 
 /// @brief Immutable render data for one editor camera view (no RHI
-/// render targets — the view's targets, including the selection mask, are
-/// renderer-created pooled graph transients).
+/// render targets — the view's targets, including the selection mask, are renderer-created pooled graph
+/// transients).
 struct EditorViewRecord {
     CameraViewRecord Camera = {};
 
@@ -39,11 +39,11 @@ struct EditorViewRecord {
 };
 
 struct EditorSnapshot {
-    std::vector<EditorViewRecord> Views = {};
-    std::optional<entt::entity>         SelectedEntity = std::nullopt;
-    PixelCoordinate                     HoverPixel = {};
-    bool                                IsHovering = false;
-    RHIRef<RHIReadback>                 ReadbackTarget = nullptr;
+    std::vector<EditorViewRecord> Views          = {};
+    std::optional<entt::entity>   SelectedEntity = std::nullopt;
+    PixelCoordinate               HoverPixel     = {};
+    bool                          IsHovering     = false;
+    RHIRef<RHIReadback>           ReadbackTarget = nullptr;
 };
 
 } // namespace SoulEngine

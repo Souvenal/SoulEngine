@@ -1,8 +1,8 @@
 module;
 
-// Clang 22 named-modules bug: importing a module that re-exports std (Core)
-// breaks concept lookup via the re-export chain; a textual <concepts> in the
-// GMF restores visibility. Safe to drop once clang fixes concept re-export.
+// Clang 22 named-modules bug: importing a module that re-exports std (Core) breaks concept lookup via the
+// re-export chain; a textual <concepts> in the GMF restores visibility. Safe to drop once clang fixes concept
+// re-export.
 #include <concepts>
 
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
@@ -36,8 +36,7 @@ struct RHIShaderBindingSetDesc {
 ///
 /// Sampler and TLAS views are degenerate (identity only), so every alternative retains its payload through
 /// the embedded RHIRef.
-using RHIBoundResource =
-    std::variant<std::monostate, RHITextureView, RHIBufferView, RHISamplerView, RHITlasView>;
+using RHIBoundResource = std::variant<std::monostate, RHITextureView, RHIBufferView, RHISamplerView, RHITlasView>;
 
 } // namespace SoulEngine
 
@@ -67,8 +66,7 @@ namespace SoulEngine {
 /// Unknown, and access validation skips Unknown on either side.
 [[nodiscard]] inline auto ResolveBindingAccess(const RHIBoundResource& Bound) -> ShaderBindingAccess {
     if (const auto* View = std::get_if<RHITextureView>(&Bound))
-        return View->Usage == RHITextureUsage::Storage ? ShaderBindingAccess::ReadWrite
-                                                       : ShaderBindingAccess::Read;
+        return View->Usage == RHITextureUsage::Storage ? ShaderBindingAccess::ReadWrite : ShaderBindingAccess::Read;
     return ShaderBindingAccess::Unknown;
 }
 
@@ -117,8 +115,8 @@ struct RHIArrayBindingElement {
 };
 
 /// @brief Request binding a shader-side resource array (fixed or unbounded).
-/// Elements may address arbitrary array indices; gaps stay unbound
-/// (partially-bound descriptor sets make that legal).
+/// Elements may address arbitrary array indices; gaps stay unbound (partially-bound descriptor sets make that
+/// legal).
 struct RHIShaderArrayBindingRequest {
     StringView                              ParameterPath = {};
     std::span<const RHIArrayBindingElement> Elements      = {};
@@ -130,22 +128,22 @@ class RHIShaderBindingSet : public RHIObject {
     /// @brief One reflected binding slot: the shader-side contract plus the
     /// bound resource.
     struct Slot {
-        ShaderBinding      Info           = {};
+        ShaderBinding                       Info                 = {};
         /// @brief The bound resource as a view.
         ///
         /// Sampler/TLAS views are degenerate identity wrappers. Replaces the old raw-pointer + flag
         /// smuggling.
-        RHIBoundResource   Bound          = {};
+        RHIBoundResource                    Bound                = {};
         /// @brief Backend-filled effective descriptor count.
         ///
         /// ArrayCount for fixed arrays, the chosen layout count for unbounded ones.
-        Uint32             ArrayCapacity  = 1;
+        Uint32                              ArrayCapacity        = 1;
         /// True when the slot backs an unbounded (variable descriptor count) array.
-        bool               IsVariableCountArray = false;
+        bool                                IsVariableCountArray = false;
         /// @brief Bound array elements; empty for scalar slots.
         ///
         /// Indices may have gaps — unbound elements are never written.
-        std::vector<RHIArrayBindingElement> ArrayElements = {};
+        std::vector<RHIArrayBindingElement> ArrayElements        = {};
     };
 
     RHIShaderBindingSet(const RHIShaderBindingSet&)                    = delete;
@@ -197,8 +195,8 @@ class RHIShaderBindingSet : public RHIObject {
                                                            magic_enum::enum_name((*It)->Info.Type),
                                                            magic_enum::enum_name(BoundType))));
             const auto BoundAccess = ResolveBindingAccess(Request.Bound);
-            if (BoundAccess != ShaderBindingAccess::Unknown &&
-                (*It)->Info.Access != ShaderBindingAccess::Unknown && BoundAccess != (*It)->Info.Access)
+            if (BoundAccess != ShaderBindingAccess::Unknown && (*It)->Info.Access != ShaderBindingAccess::Unknown &&
+                BoundAccess != (*It)->Info.Access)
                 return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {} access, received {}",
                                                            Request.ParameterPath,
                                                            magic_enum::enum_name((*It)->Info.Access),
@@ -213,12 +211,11 @@ class RHIShaderBindingSet : public RHIObject {
         for (Uint32 Index = 0; Index < BindingLocations.size(); ++Index)
             for (Uint32 Previous = 0; Previous < Index; ++Previous)
                 if (BindingLocations[Index] == BindingLocations[Previous])
-                    return std::unexpected(ErrorMessage(
-                        Format("Shader parameter '{}' appears more than once in a binding batch",
-                               Resources[Index].ParameterPath)));
-        if (std::ranges::any_of(BindingLocations, [SetIndex](const auto& Location) {
-                return Location.first != SetIndex;
-            })) {
+                    return std::unexpected(
+                        ErrorMessage(Format("Shader parameter '{}' appears more than once in a binding batch",
+                                            Resources[Index].ParameterPath)));
+        if (std::ranges::any_of(BindingLocations,
+                                [SetIndex](const auto& Location) { return Location.first != SetIndex; })) {
             String Details;
             for (Uint32 Index = 0; Index < Resources.size(); ++Index) {
                 if (!Details.empty())
@@ -231,12 +228,10 @@ class RHIShaderBindingSet : public RHIObject {
             return std::unexpected(
                 ErrorMessage(Format("Shader binding batch contains multiple descriptor sets: {}", Details)));
         }
-        // Sets that contain array slots are completed by separate
-        // BindArrayResources batches, so the whole-set count check only
-        // applies to purely scalar sets.
-        const bool SetHasArraySlots = std::ranges::any_of(m_BindingsBySet[SetIndex], [](const Slot& Binding) {
-            return Binding.Info.ArrayCount != 1;
-        });
+        // Sets that contain array slots are completed by separate BindArrayResources batches, so the
+        // whole-set count check only applies to purely scalar sets.
+        const bool SetHasArraySlots = std::ranges::any_of(
+            m_BindingsBySet[SetIndex], [](const Slot& Binding) { return Binding.Info.ArrayCount != 1; });
         if (!SetHasArraySlots && Resources.size() != m_BindingsBySet[SetIndex].size())
             return std::unexpected(ErrorMessage(Format("Shader binding set {} requires {} resources, received {}",
                                                        SetIndex,
@@ -246,9 +241,9 @@ class RHIShaderBindingSet : public RHIObject {
         // After checking, we write the resource info into the slot
         for (Uint32 Index = 0; Index < Resources.size(); ++Index) {
             const auto [BindingSet, BindingIndex] = BindingLocations[Index];
-            auto& SetBindings = m_BindingsBySet[BindingSet];
-            const auto Slot = std::ranges::find_if(
-                SetBindings, [BindingIndex](const RHIShaderBindingSet::Slot& Candidate) {
+            auto&      SetBindings                = m_BindingsBySet[BindingSet];
+            const auto Slot =
+                std::ranges::find_if(SetBindings, [BindingIndex](const RHIShaderBindingSet::Slot& Candidate) {
                     return Candidate.Info.BindingIndex == BindingIndex;
                 });
             Slot->Bound = Resources[Index].Bound;
@@ -266,7 +261,7 @@ class RHIShaderBindingSet : public RHIObject {
             return std::unexpected(ErrorMessage("Shader array binding batch must not be empty"));
 
         struct ResolvedRequest {
-            Slot*       Target = nullptr;
+            Slot*                               Target  = nullptr;
             const RHIShaderArrayBindingRequest* Request = nullptr;
         };
         std::vector<ResolvedRequest> Resolved;
@@ -275,8 +270,8 @@ class RHIShaderBindingSet : public RHIObject {
 
         for (const auto& Request : Requests) {
             if (Request.Elements.empty())
-                return std::unexpected(ErrorMessage(
-                    Format("Shader array parameter '{}' has no elements", Request.ParameterPath)));
+                return std::unexpected(
+                    ErrorMessage(Format("Shader array parameter '{}' has no elements", Request.ParameterPath)));
 
             Slot* Target = nullptr;
             for (auto& SetBindings : m_BindingsBySet)
@@ -289,8 +284,8 @@ class RHIShaderBindingSet : public RHIObject {
                 return std::unexpected(ErrorMessage(Format(
                     "Shader parameter '{}' is not present in the shader binding layout", Request.ParameterPath)));
             if (Target->Info.ArrayCount == 1)
-                return std::unexpected(ErrorMessage(Format(
-                    "Shader parameter '{}' is not an array; use BindResources instead", Request.ParameterPath)));
+                return std::unexpected(ErrorMessage(
+                    Format("Shader parameter '{}' is not an array; use BindResources instead", Request.ParameterPath)));
             const auto BoundType = ResolveBindingType(Request.Elements.front().View);
             if (BoundType != Target->Info.Type)
                 return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {}, received {}",
@@ -298,8 +293,8 @@ class RHIShaderBindingSet : public RHIObject {
                                                            magic_enum::enum_name(Target->Info.Type),
                                                            magic_enum::enum_name(BoundType))));
             const auto BoundAccess = ResolveBindingAccess(Request.Elements.front().View);
-            if (BoundAccess != ShaderBindingAccess::Unknown &&
-                Target->Info.Access != ShaderBindingAccess::Unknown && BoundAccess != Target->Info.Access)
+            if (BoundAccess != ShaderBindingAccess::Unknown && Target->Info.Access != ShaderBindingAccess::Unknown &&
+                BoundAccess != Target->Info.Access)
                 return std::unexpected(ErrorMessage(Format("Shader parameter '{}' expects {} access, received {}",
                                                            Request.ParameterPath,
                                                            magic_enum::enum_name(Target->Info.Access),
@@ -307,10 +302,10 @@ class RHIShaderBindingSet : public RHIObject {
             if (!SetIndex)
                 SetIndex = Target->Info.Set;
             else if (*SetIndex != Target->Info.Set)
-                return std::unexpected(ErrorMessage(
-                    Format("Shader array binding batch contains multiple descriptor sets: '{}' (set {})",
-                           Request.ParameterPath,
-                           Target->Info.Set)));
+                return std::unexpected(
+                    ErrorMessage(Format("Shader array binding batch contains multiple descriptor sets: '{}' (set {})",
+                                        Request.ParameterPath,
+                                        Target->Info.Set)));
 
             // Reject duplicate (path, index) pairs and out-of-capacity indices.
             std::vector<Uint32> SeenIndices;
@@ -320,15 +315,17 @@ class RHIShaderBindingSet : public RHIObject {
                     return std::unexpected(ErrorMessage(Format(
                         "Shader array parameter '{}' has an element with no ready resource", Request.ParameterPath)));
                 if (std::ranges::find(SeenIndices, Element.ArrayIndex) != SeenIndices.end())
-                    return std::unexpected(ErrorMessage(Format(
-                        "Shader array parameter '{}' binds index {} more than once", Request.ParameterPath, Element.ArrayIndex)));
+                    return std::unexpected(
+                        ErrorMessage(Format("Shader array parameter '{}' binds index {} more than once",
+                                            Request.ParameterPath,
+                                            Element.ArrayIndex)));
                 SeenIndices.push_back(Element.ArrayIndex);
                 if (Element.ArrayIndex >= Target->ArrayCapacity)
-                    return std::unexpected(ErrorMessage(Format(
-                        "Shader array parameter '{}' index {} exceeds the array capacity of {}",
-                        Request.ParameterPath,
-                        Element.ArrayIndex,
-                        Target->ArrayCapacity)));
+                    return std::unexpected(
+                        ErrorMessage(Format("Shader array parameter '{}' index {} exceeds the array capacity of {}",
+                                            Request.ParameterPath,
+                                            Element.ArrayIndex,
+                                            Target->ArrayCapacity)));
             }
             Resolved.push_back(ResolvedRequest{.Target = Target, .Request = &Request});
         }
@@ -394,18 +391,17 @@ class RHIShaderBindingSet : public RHIObject {
 
     [[nodiscard]] virtual auto OnResourcesBound(Uint32) -> std::expected<void, ErrorMessage> = 0;
 
-    std::vector<std::vector<Slot>>                m_BindingsBySet        = {};
-    std::vector<PushConstantWrite>                m_PendingPushConstants = {};
-    std::optional<Uint32>                         m_BindlessSpace        = std::nullopt;
-    std::vector<ShaderPushConstantRange>          m_PushConstantRanges   = {};
-    ShaderStage                                   m_Stages               = ShaderStage::Unknown;
+    std::vector<std::vector<Slot>>       m_BindingsBySet        = {};
+    std::vector<PushConstantWrite>       m_PendingPushConstants = {};
+    std::optional<Uint32>                m_BindlessSpace        = std::nullopt;
+    std::vector<ShaderPushConstantRange> m_PushConstantRanges   = {};
+    ShaderStage                          m_Stages               = ShaderStage::Unknown;
 };
-
-// ── Pipeline base ───────────────────────────────────────────────────────────
+// Pipeline base
 
 /// @brief Polymorphic base for all pipeline resources.
-/// Backend concrete classes (e.g. VulkanGraphicsPipeline) own native pipeline state.
-/// Higher-level owners keep RHIRef instances; command lists only observe them.
+/// Backend concrete classes (e.g. VulkanGraphicsPipeline) own native pipeline state. Higher-level owners keep
+/// RHIRef instances; command lists only observe them.
 class RHIPipeline : public RHIObject {
   public:
     RHIPipeline(const RHIPipeline&)                    = delete;
@@ -427,8 +423,7 @@ class RHIPipeline : public RHIObject {
   private:
     RHIRef<RHIShaderBindingSet> m_ShaderBindingSet = nullptr;
 };
-
-// ── Graphics pipeline ───────────────────────────────────────────────────────
+// Graphics pipeline
 
 struct RHIGraphicsPipelineDesc {
     ShaderGraphicsProgram       Program           = {};
@@ -458,15 +453,14 @@ class RHIGraphicsPipeline : public RHIPipeline {
     explicit RHIGraphicsPipeline(String Name, RHIRef<RHIShaderBindingSet> BindingSet)
         : RHIPipeline(std::move(Name), std::move(BindingSet)) {}
 };
-
-// ── Compute pipeline ────────────────────────────────────────────────────────
+// Compute pipeline
 
 /// @brief One host-provided specialization constant value.
 ///
 /// The reflection remains the type authority: a variant holding the wrong scalar type for the reflected
 /// constant is a hard error.
 struct RHISpecializationConstant {
-    String                                  Name  = {};
+    String                                     Name  = {};
     std::variant<bool, Int32, Uint32, Float32> Value = false;
 
     bool operator==(const RHISpecializationConstant&) const = default;
@@ -477,19 +471,18 @@ struct RHISpecializationConstant {
 ///
 /// Device-independent, so it lives here rather than in a backend.
 [[nodiscard]] inline auto ValidateSpecializationConstants(std::span<const RHISpecializationConstant> Values,
-                                                          const ShaderReflection& Reflection)
+                                                          const ShaderReflection&                    Reflection)
     -> std::expected<void, ErrorMessage> {
     std::vector<StringView> Seen;
     Seen.reserve(Values.size());
     for (const auto& Value : Values) {
         if (std::ranges::find(Seen, StringView{Value.Name}) != Seen.end())
-            return std::unexpected(ErrorMessage(
-                Format("Specialization constant '{}' is provided more than once", Value.Name)));
+            return std::unexpected(
+                ErrorMessage(Format("Specialization constant '{}' is provided more than once", Value.Name)));
         Seen.push_back(Value.Name);
 
-        const auto It = std::ranges::find_if(Reflection.SpecializationConstants, [&](const auto& Reflected) {
-            return Reflected.Name == Value.Name;
-        });
+        const auto It = std::ranges::find_if(Reflection.SpecializationConstants,
+                                             [&](const auto& Reflected) { return Reflected.Name == Value.Name; });
         if (It == Reflection.SpecializationConstants.end())
             return std::unexpected(ErrorMessage(
                 Format("Specialization constant '{}' is not present in the shader reflection", Value.Name)));
@@ -506,19 +499,20 @@ struct RHISpecializationConstant {
                 return Type == ShaderScalarType::Float32;
         };
         if (!std::visit([&](const auto& Held) { return Matches(Held, It->ScalarType); }, Value.Value))
-            return std::unexpected(ErrorMessage(Format(
-                "Specialization constant '{}' holds a value of the wrong scalar type (reflected as {})",
-                Value.Name,
-                magic_enum::enum_name(It->ScalarType))));
+            return std::unexpected(ErrorMessage(
+                Format("Specialization constant '{}' holds a value of the wrong scalar type (reflected as {})",
+                       Value.Name,
+                       magic_enum::enum_name(It->ScalarType))));
     }
     return {};
 }
 
 struct RHIComputePipelineDesc {
-    ShaderComputeProgram                  Program                 = {};
-    RHIRef<RHIShaderBindingSet>           BindingSet              = nullptr;
-    /// Values fixed at pipeline creation (VkSpecializationInfo). They are
-    /// part of the pipeline identity: two value sets must yield two pipelines.
+    ShaderComputeProgram                   Program                 = {};
+    RHIRef<RHIShaderBindingSet>            BindingSet              = nullptr;
+    /// @brief Values fixed at pipeline creation (VkSpecializationInfo).
+    ///
+    /// They are part of the pipeline identity: two value sets must yield two pipelines.
     std::vector<RHISpecializationConstant> SpecializationConstants = {};
 };
 
@@ -538,8 +532,7 @@ class RHIComputePipeline : public RHIPipeline {
     explicit RHIComputePipeline(String Name, RHIRef<RHIShaderBindingSet> BindingSet)
         : RHIPipeline(std::move(Name), std::move(BindingSet)) {}
 };
-
-// ── Ray-tracing pipeline ────────────────────────────────────────────────────
+// Ray-tracing pipeline
 
 enum class RHIRayTracingShaderGroupType : Uint8 {
     Unknown = 0,

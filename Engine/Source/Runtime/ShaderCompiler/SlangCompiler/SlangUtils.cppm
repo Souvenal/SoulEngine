@@ -24,20 +24,20 @@ CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug inf
 /// Build the session-level compiler options vector from the engine config.
 [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry> {
     std::vector<slang::CompilerOptionEntry> Options;
+    // EmitSpirvDirectly
 
-    // ── EmitSpirvDirectly ─────────────────────────────────────────────────
     Options.push_back({
         .name  = slang::CompilerOptionName::EmitSpirvDirectly,
         .value = {.intValue0 = 1},
     });
+    // VulkanUseEntryPointName
 
-    // ── VulkanUseEntryPointName ───────────────────────────────────────────
     Options.push_back({
         .name  = slang::CompilerOptionName::VulkanUseEntryPointName,
         .value = {.intValue0 = 1},
     });
+    // DebugInformation
 
-    // ── DebugInformation ──────────────────────────────────────────────────
     const bool WantDebug = CVarShaderDebugInfo.Get();
     if (WantDebug) {
         Options.push_back({
@@ -45,8 +45,8 @@ CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug inf
             .value = {.intValue0 = SLANG_DEBUG_INFO_LEVEL_STANDARD},
         });
     }
+    // Optimization
 
-    // ── Optimization ──────────────────────────────────────────────────
     Options.push_back({
         .name  = slang::CompilerOptionName::Optimization,
         .value = {.intValue0 = SLANG_OPTIMIZATION_LEVEL_HIGH},

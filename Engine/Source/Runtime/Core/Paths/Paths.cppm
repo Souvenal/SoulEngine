@@ -6,12 +6,10 @@ export namespace SoulEngine {
 
 /// @brief Well-known engine directory paths.
 ///
-/// Pure path provider split out of the retired ConfigManager: it answers
-/// "where is X" and nothing else.  Paths are engine-environment facts, not
-/// configuration values — runtime-tunable settings belong to CVarManager.
+/// Pure path provider split out of the retired ConfigManager: it answers "where is X" and nothing else. Paths
+/// are engine-environment facts, not configuration values — runtime-tunable settings belong to CVarManager.
 ///
-/// Usage:
-/// ~~~{.cpp}
+/// Usage: ~~~{.cpp}
 ///     EnginePaths::Get().Init(EngineDir);   // once, at startup
 ///     const Path& Shaders = EnginePaths::Get().EngineShadersDirPath();
 /// ~~~

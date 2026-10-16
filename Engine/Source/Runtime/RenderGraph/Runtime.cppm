@@ -10,19 +10,16 @@ export namespace SoulEngine {
 
 /// @brief Module-level RenderGraph singleton.
 ///
-/// Owns the cross-frame facilities: the transient texture pool and the
-/// PipelineRegistry lifecycle. Per-frame graphs are RenderGraphBuilder
-/// objects; they never hold cross-frame state.
+/// Owns the cross-frame facilities: the transient texture pool and the PipelineRegistry lifecycle. Per-frame
+/// graphs are RenderGraphBuilder objects; they never hold cross-frame state.
 ///
-/// Lifecycle is owned by Launch: Init() before SelectRenderer, Tick() once per
-/// frame in RenderLoop before IRenderer::Render(), Shutdown() before
-/// RHIRenderDevice::Destroy().
+/// Lifecycle is owned by Launch: Init() before SelectRenderer, Tick() once per frame in RenderLoop before
+/// IRenderer::Render(), Shutdown() before RHIRenderDevice::Destroy().
 class RenderGraph final : public Singleton<RenderGraph> {
     friend class Singleton<RenderGraph>;
 
+    // Lifecycle (Launch calls these explicitly)
   public:
-    // ── Lifecycle (Launch calls these explicitly) ───────────────────────
-
     /// Clear and reset cross-frame state (idempotent; call before SelectRenderer).
     auto Init() -> void {
         PipelineRegistry::Get().Init();
@@ -30,14 +27,14 @@ class RenderGraph final : public Singleton<RenderGraph> {
         m_Pool.Activate();
     }
 
-    /// Per-frame pool maintenance (LRU eviction). Call in RenderLoop before
-    /// IRenderer::Render().
+    /// Per-frame pool maintenance (LRU eviction). Call in RenderLoop before IRenderer::Render().
     auto Tick() -> void {
         m_Pool.Tick();
     }
 
-    /// Release the pool and all cross-frame pipeline refs. Must run before
-    /// RHIRenderDevice::Destroy() — payload destruction needs a live queue.
+    /// @brief Release the pool and all cross-frame pipeline refs.
+    ///
+    /// Must run before RHIRenderDevice::Destroy() — payload destruction needs a live queue.
     auto Shutdown() -> void {
         m_Pool.Shutdown();
         PipelineRegistry::Get().Clear();

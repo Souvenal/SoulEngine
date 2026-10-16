@@ -11,8 +11,8 @@ export namespace SoulEngine {
 /// @brief Identifies the concrete window-system implementation behind
 /// IWindowSystem.
 ///
-/// RTTI is disabled engine-wide, so consumers dispatch on this tag before
-/// static_cast-ing an IWindowSystem reference to the concrete implementation.
+/// RTTI is disabled engine-wide, so consumers dispatch on this tag before static_cast-ing an IWindowSystem
+/// reference to the concrete implementation.
 enum class WindowSystemType {
     Unknown = 0,
     Glfw,
@@ -20,9 +20,9 @@ enum class WindowSystemType {
 
 /// @brief Drawable framebuffer size in physical pixels.
 ///
-/// Vulkan swapchains and render targets must use framebuffer pixels, not GLFW
-/// window coordinates. On HiDPI/Retina displays these can differ, for example
-/// a 1920x1080 window may have a larger framebuffer backing store.
+/// Vulkan swapchains and render targets must use framebuffer pixels, not GLFW window coordinates. On
+/// HiDPI/Retina displays these can differ, for example a 1920x1080 window may have a larger framebuffer
+/// backing store.
 struct FramebufferExtent {
     int Width  = 0;
     int Height = 0;
@@ -30,8 +30,8 @@ struct FramebufferExtent {
 
 /// @brief Notification that the drawable framebuffer size changed.
 ///
-/// Published synchronously from the framebuffer callback. The initial window
-/// extent is triggered by the consumer after it subscribes.
+/// Published synchronously from the framebuffer callback. The initial window extent is triggered by the
+/// consumer after it subscribes.
 struct FramebufferResizeEvent {
     FramebufferExtent PreviousExtent = {};
     FramebufferExtent CurrentExtent  = {};
@@ -156,11 +156,11 @@ struct KeyboardFrameEvent {
 ///
 /// Cursor movement and scroll values are accumulated between frame polls.
 struct MouseFrameEvent {
-    std::array<InputState, magic_enum::enum_count<WindowMouseButton>()> ButtonStates = {};
-    CursorPosition PreviousCursorPosition = {};
-    CursorPosition CurrentCursorPosition  = {};
-    Float32 ScrollX      = 0.0f;
-    Float32 ScrollY      = 0.0f;
+    std::array<InputState, magic_enum::enum_count<WindowMouseButton>()> ButtonStates           = {};
+    CursorPosition                                                      PreviousCursorPosition = {};
+    CursorPosition                                                      CurrentCursorPosition  = {};
+    Float32                                                             ScrollX                = 0.0f;
+    Float32                                                             ScrollY                = 0.0f;
 
     /// @brief Return cursor movement since the previous published frame.
     [[nodiscard]] auto GetCursorDelta() const -> CursorPosition {

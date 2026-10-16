@@ -31,7 +31,8 @@ class RendererSelectionTestRenderer final : public IRenderer {
         m_IsAttached = false;
     }
 
-    [[nodiscard]] auto Render(const GameSnapshot&, const EditorSnapshot&) -> std::expected<RenderResult, ErrorMessage> override {
+    [[nodiscard]] auto Render(const GameSnapshot&, const EditorSnapshot&)
+        -> std::expected<RenderResult, ErrorMessage> override {
         return RenderResult{};
     }
 
@@ -42,8 +43,7 @@ class RendererSelectionTestRenderer final : public IRenderer {
     bool m_IsAttached = false;
 };
 
-RendererFactory::AutoRegistrar<RendererSelectionTestRenderer> RegRendererSelectionTestRenderer{
-    "RendererSelectionTest"};
+RendererFactory::AutoRegistrar<RendererSelectionTestRenderer> RegRendererSelectionTestRenderer{"RendererSelectionTest"};
 
 TEST(RendererSelection, CachesSuccessfulSelectionAndPreservesCurrentRendererOnFailure) {
     CloseRenderers();

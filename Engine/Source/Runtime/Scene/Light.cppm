@@ -4,8 +4,8 @@ module;
 #include <cstddef>
 #include <hlsl++.h>
 
-// magic_enum::case_insensitive is not exported in v0.9.8.
-// Until the fix lands in a released version, use the header directly here.
+// magic_enum::case_insensitive is not exported in v0.9.8. Until the fix lands in a released version, use the
+// header directly here.
 #include <magic_enum/magic_enum.hpp>
 
 export module Scene:Light;
@@ -24,16 +24,16 @@ enum class LightType : Uint32 {
 
 /// @brief Physically authored light attached to a spatial Scene Entity.
 struct LightComponent {
-    LightType Type                  = LightType::Unknown;
-    Float32   ColorR                = 1.0f;
-    Float32   ColorG                = 1.0f;
-    Float32   ColorB                = 1.0f;
-    Float32   Intensity             = 0.0f;
-    Float32   RangeMeters           = 10.0f;
+    LightType Type        = LightType::Unknown;
+    Float32   ColorR      = 1.0f;
+    Float32   ColorG      = 1.0f;
+    Float32   ColorB      = 1.0f;
+    Float32   Intensity   = 0.0f;
+    Float32   RangeMeters = 10.0f;
 
-    // Enum field bridges to the YAML string vocabulary so generic meta assignment works.
-    // Unknown strings keep the current value and log a warning; LightSystem skips
-    // components whose Type stays LightType::Unknown, so they remain inert.
+    // Enum field bridges to the YAML string vocabulary so generic meta assignment works. Unknown strings keep
+    // the current value and log a warning; LightSystem skips components whose Type stays LightType::Unknown,
+    // so they remain inert.
     [[nodiscard]] auto GetType() const -> String {
         return String(magic_enum::enum_name(Type));
     }
@@ -49,13 +49,13 @@ struct LightComponent {
 
 /// @brief Immutable world-space light record consumed by renderers.
 struct LightRecord {
-    entt::entity    EntityId        = entt::null;
-    LightType      Type            = LightType::Unknown;
-    hlslpp::float3 Color           = hlslpp::float3(1.0f, 1.0f, 1.0f);
-    Float32        Intensity       = 0.0f;
-    hlslpp::float3 Position        = hlslpp::float3(0.0f, 0.0f, 0.0f);
-    Float32        RangeMeters     = 0.0f;
-    hlslpp::float3 Direction       = hlslpp::float3(0.0f, 0.0f, -1.0f);
+    entt::entity   EntityId    = entt::null;
+    LightType      Type        = LightType::Unknown;
+    hlslpp::float3 Color       = hlslpp::float3(1.0f, 1.0f, 1.0f);
+    Float32        Intensity   = 0.0f;
+    hlslpp::float3 Position    = hlslpp::float3(0.0f, 0.0f, 0.0f);
+    Float32        RangeMeters = 0.0f;
+    hlslpp::float3 Direction   = hlslpp::float3(0.0f, 0.0f, -1.0f);
 
     /// @brief GPU light ABI shared by Raster and RayTracing renderers.
     struct alignas(16) GpuData {
@@ -73,12 +73,10 @@ struct LightRecord {
 
     [[nodiscard]] auto BuildGpuData() const -> GpuData {
         return GpuData{
-            .ColorIntensity = hlslpp::interop::float4{
-                hlslpp::float4{Color.x, Color.y, Color.z, Intensity}},
-            .PositionRange = hlslpp::interop::float4{
-                hlslpp::float4{Position.x, Position.y, Position.z, RangeMeters}},
-            .DirectionType = hlslpp::interop::float4{
-                hlslpp::float4{Direction.x, Direction.y, Direction.z, static_cast<Float32>(Type)}},
+            .ColorIntensity = hlslpp::interop::float4{hlslpp::float4{Color.x, Color.y, Color.z, Intensity}},
+            .PositionRange  = hlslpp::interop::float4{hlslpp::float4{Position.x, Position.y, Position.z, RangeMeters}},
+            .DirectionType  = hlslpp::interop::float4{hlslpp::float4{
+                Direction.x, Direction.y, Direction.z, static_cast<Float32>(Type)}},
         };
     }
 };
@@ -119,8 +117,8 @@ class LightSystem : public ISystem {
                 .Intensity = Light.Intensity,
                 .Position  = hlslpp::float3(
                     Transform.WorldTransform[3].x, Transform.WorldTransform[3].y, Transform.WorldTransform[3].z),
-                .RangeMeters     = Light.RangeMeters,
-                .Direction       = Direction,
+                .RangeMeters = Light.RangeMeters,
+                .Direction   = Direction,
             });
         }
 
@@ -132,9 +130,9 @@ class LightSystem : public ISystem {
 
 namespace SoulEngine {
 
-// Note: this namespace must stay named. In a named module, clang 23 silently
-// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
-// which would skip this entt meta registration at program startup.
+// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
+// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
+// startup.
 namespace MetaRegistration {
 
 using namespace entt::literals;
