@@ -39,7 +39,7 @@ jobs:
       # invalidate.
       - name: Cache Homebrew downloads
         if: matrix.os == 'macos-latest'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ steps.brew-cache.outputs.dir }}
           key: brew-v1-${{ runner.os }}-${{ matrix.compiler }}
