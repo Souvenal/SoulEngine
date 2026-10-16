@@ -1,8 +1,8 @@
 module;
 
-export module RenderGraph:BlitToSwapchain;
+export module Renderer:Common.BlitToSwapchainPass;
 
-import :Types;
+import RenderGraph;
 import Core;
 import RHI;
 
