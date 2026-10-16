@@ -314,7 +314,7 @@ struct RHITextureDesc {
     Uint32          Channels    = 4;
 };
 
-/// @brief Unified texture identity: merges the old sampled-texture and render-target types.
+/// @brief Unified texture identity covering both sampled and render-target roles.
 ///
 /// Color vs depth vs sampled is distinguished by GetFormat()/GetUsage(), never by type.
 class RHITexture : public RHIObject {

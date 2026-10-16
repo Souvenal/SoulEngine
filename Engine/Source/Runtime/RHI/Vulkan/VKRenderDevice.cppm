@@ -907,8 +907,7 @@ class VulkanRenderDevice final : public RHIRenderDevice {
     VulkanBufferManager                m_BufferManager                = {};
     /// @brief All texture concerns (creation dispatch, upload front-end).
     VulkanTextureManager               m_TextureManager               = {};
-    /// @brief All acceleration-structure concerns (creation, the frame-start build batch, the scratch and
-    /// instance rings).
+    /// @brief All acceleration-structure concerns (creation, frame-start build batch, AS rings).
     VulkanAccelerationStructureManager m_AccelerationStructureManager = {};
     bool                               m_NeedsShutdown                = false;
 };

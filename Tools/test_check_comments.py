@@ -4,7 +4,7 @@
 Run from the repo root: uv run python Tools/test_check_comments.py
 
 Tests assert external behavior only: exit codes, file:line diagnostics on
-stdout, and post---fix file contents. They never import the checker.
+stdout, and post---fix file contents (after running with --fix). They never import the checker.
 """
 import subprocess
 import sys

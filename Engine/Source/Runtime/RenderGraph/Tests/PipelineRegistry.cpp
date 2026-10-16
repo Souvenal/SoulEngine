@@ -38,7 +38,7 @@ class PipelineRegistryTest : public testing::Test {
     }
 };
 
-/// @brief Graphics pass whose async pipeline never finishes in these tests.
+/// @brief Graphics pass whose async pipeline stalls completion in these tests.
 ///
 /// With the TaskGraph stopped, Ensure fails outright (Failed); with zero workers the compile is queued but
 /// never runs (stays Pending).

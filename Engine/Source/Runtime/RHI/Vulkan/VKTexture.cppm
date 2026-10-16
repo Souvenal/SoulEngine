@@ -20,7 +20,7 @@ import :Staging;
 
 namespace SoulEngine {
 
-/// @brief Unified backend texture: one identity covering the old sampled texture and render target.
+/// @brief Unified backend texture: one identity covering sampled and render-target roles.
 ///
 /// Usage bits come from the creation Desc union. Owns VkImage + whole-chain VkImageView + per-mip
 /// VkImageViews + the VMA allocation lifecycle directly (no intermediate device-texture wrapper). Creation is
