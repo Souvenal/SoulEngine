@@ -2,7 +2,7 @@
 
 ## Branch Model
 
-Development uses short-lived feature branches created from the latest `main`. `main` is the only long-lived integration branch. The retired `dev/feature` branch is not part of the workflow.
+Development uses short-lived feature branches created from the latest `main`. `main` is the only long-lived integration branch. The retired integration branch is not part of the workflow.
 
 ## Pull Request Workflow
 
