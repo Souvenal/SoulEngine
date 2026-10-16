@@ -26,13 +26,11 @@ jobs:
 
       - name: Locate Homebrew download cache
         id: brew-cache
-        if: runner.os == 'macOS'
         run: echo "dir=$(brew --cache)" >> "$GITHUB_OUTPUT"
 
       # Caches downloaded bottles so the pinned LLVM bottle does not re-download every run. Bump v1 to
       # invalidate.
       - name: Cache Homebrew downloads
-        if: runner.os == 'macOS'
         uses: actions/cache@v4
         with:
           path: ${{ steps.brew-cache.outputs.dir }}
@@ -40,7 +38,6 @@ jobs:
 
       # Select the required LLVM toolchain explicitly so xmake does not use the runner default compiler.
       - name: Install LLVM 23 on macOS
-        if: runner.os == 'macOS'
         run: |
           HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@23
           echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
