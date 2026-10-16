@@ -68,12 +68,13 @@ jobs:
       - name: Sync package repositories
         run: xmake repo -u
 
+      # -y: xmake asks before installing required packages, which hangs a non-interactive runner.
       - name: Configure
-        run: xmake f -m release
+        run: xmake f -y -m release
 
       # Default targets only; test targets are excluded by set_default(false).
       - name: Build
-        run: xmake
+        run: xmake -y
 
   # Single fan-in check with a stable name: branch protection tracks only this
   # job, so future matrix expansion cannot silently invalidate the rule.
