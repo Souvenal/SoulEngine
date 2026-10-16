@@ -51,8 +51,9 @@ class VulkanCmdVisitor {
         Error = ErrorMessage("Command is not supported by this Vulkan pass visitor");
     }
 
-    /// Bind a pipeline-owned shader binding set and apply the committed dynamic-offset and push-constant
-    /// snapshot for the current pass.
+    /// @brief Bind a pipeline-owned shader binding set for the current pass.
+    ///
+    /// Applies the committed dynamic-offset and push-constant snapshot.
     auto BindShaderBindingSet(VulkanShaderBindingSet& BindingSet, vk::PipelineBindPoint BindPoint) -> void {
         const vk::PipelineLayout Layout = BindingSet.GetPipelineLayout();
 

@@ -361,7 +361,7 @@ export auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize,
     return Result;
 }
 
-/// Vulkan realization of a ray-tracing pipeline and its immutable shader-binding table.
+/// @brief Vulkan realization of a ray-tracing pipeline and its immutable shader-binding table.
 ///
 /// The SBT lives in self-owned device-local storage created with the pipeline (the base address is aligned to
 /// shaderGroupBaseAlignment at creation, so the strided regions bake synchronously); the packed bytes stage
@@ -372,8 +372,9 @@ class VulkanRayTracingPipeline final : public RHIRayTracingPipeline {
     explicit VulkanRayTracingPipeline(String Name, const RHIRayTracingPipelineDesc& Desc)
         : RHIRayTracingPipeline(std::move(Name), Desc.BindingSet) {}
 
-    /// The SBT buffer's native destruction rides the backend deferred deletion queue: a virtual timeline
-    /// event keeps it valid until the submission that referenced it has drained.
+    /// @brief The SBT buffer's native destruction rides the backend deferred deletion queue.
+    ///
+    /// A virtual timeline event keeps it valid until the submission that referenced it has drained.
     ~VulkanRayTracingPipeline() override {
         if (m_SbtAllocation)
             m_DeferredQueue->Enqueue(m_SbtBuffer, m_SbtAllocation);

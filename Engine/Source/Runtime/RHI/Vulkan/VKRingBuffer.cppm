@@ -223,8 +223,9 @@ class VulkanRingBuffer {
         vk::Buffer        Buffer      = nullptr;
         VmaAllocation     Allocation  = nullptr;
         std::byte*        Mapped      = nullptr; ///< persistent map of the whole instance (HostMapped only)
-        /// Base device address; queried once at creation when the ring's usage carries eShaderDeviceAddress,
-        /// 0 otherwise.
+        /// @brief Base device address.
+        ///
+        /// Queried once at creation when the ring's usage carries eShaderDeviceAddress, 0 otherwise.
         vk::DeviceAddress BaseAddress = 0;
         Uint64            Capacity    = 0;
         Uint64            Head = 0; ///< next bump offset; Head == Tail means empty (exact fills divert to growth)

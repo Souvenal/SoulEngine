@@ -210,8 +210,9 @@ class VulkanCapability : public Singleton<VulkanCapability> {
     }
     // Phase 3: Query device properties
 
-    /// Fill the properties chain via vkGetPhysicalDeviceProperties2. Call after physical-device selection and
-    /// before device creation.
+    /// @brief Fill the properties chain via vkGetPhysicalDeviceProperties2.
+    ///
+    /// Call after physical-device selection and before device creation.
     auto ResolveDeviceProperties(vk::raii::PhysicalDevice& PD) -> void {
         m_Properties = PD.getProperties2<vk::PhysicalDeviceProperties2,
                                          vk::PhysicalDeviceVulkan11Properties,

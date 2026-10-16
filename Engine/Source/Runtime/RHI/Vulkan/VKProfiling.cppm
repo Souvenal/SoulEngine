@@ -41,9 +41,11 @@ auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer&
     Ctx->Collect(static_cast<VkCommandBuffer>(*CommandBuffer));
 }
 
-/// RAII command-buffer annotation: emits a VK_EXT_debug_utils label and a Tracy GPU zone for the same region.
-/// The label is emitted when debug utils are enabled (checked at construction and destruction); the zone
-/// no-ops when no Tracy GPU context is available or the name is empty.
+/// @brief RAII command-buffer annotation: debug label and Tracy GPU zone for the same region.
+///
+/// Emits a VK_EXT_debug_utils label and a Tracy GPU zone. The label is emitted when debug utils are enabled
+/// (checked at construction and destruction); the zone no-ops when no Tracy GPU context is available or the
+/// name is empty.
 ///
 /// @note Validation-layer false positive: every pass zone recorded through
 ///       this scope writes its timestamps into a *secondary* command buffer,

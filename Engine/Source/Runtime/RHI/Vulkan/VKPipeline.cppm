@@ -64,8 +64,9 @@ struct VulkanReflectedDescriptorBinding {
 
 // VulkanGraphicsPipeline — concrete Vulkan pipeline kept alive by RHIRef owners.
 
-/// Vulkan graphics pipeline using the layout owned by its shader binding set. Created via the static `Create`
-/// factory. RHICommand lists only observe it.
+/// @brief Vulkan graphics pipeline using the layout owned by its shader binding set.
+///
+/// Created via the static `Create` factory. RHICommand lists only observe it.
 class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
   public:
     explicit VulkanGraphicsPipeline(String Name, const RHIGraphicsPipelineDesc& Desc)
@@ -76,7 +77,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     VulkanGraphicsPipeline(const VulkanGraphicsPipeline&)                    = delete;
     auto operator=(const VulkanGraphicsPipeline&) -> VulkanGraphicsPipeline& = delete;
 
-    /// Create a Vulkan graphics pipeline from an RHI descriptor.
+    /// @brief Create a Vulkan graphics pipeline from an RHI descriptor.
     ///
     /// Shader modules are transient — destroyed when this function returns.
     [[nodiscard]] static auto

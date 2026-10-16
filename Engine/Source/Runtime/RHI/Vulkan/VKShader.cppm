@@ -1,4 +1,4 @@
-/// Vulkan shader reflection helpers and shader-module management.
+/// @brief Vulkan shader reflection helpers and shader-module management.
 ///
 /// Converts RHI shader resource and vertex-input types to their Vulkan equivalents, and provides
 /// CreateShaderStages for turning a RHIGraphicsPipelineDesc into live VkShaderModule +
@@ -200,7 +200,8 @@ namespace SoulEngine {
 //
 // Shader-module management
 
-/// Collects shader modules, stage-create-infos, and vertex input state for graphics pipeline creation.
+/// @brief Collects shader modules, stage-create-infos, and vertex input state for graphics pipeline
+/// creation.
 ///
 /// Owns VkShaderModule lifetimes; all modules are destroyed when this object is destroyed.
 class VulkanGraphicsShaderStates {

@@ -145,7 +145,8 @@ struct VulkanDescriptorWriteBatch {
     }
 };
 
-/// Owns the global descriptor pool, persistent descriptor set allocation, and descriptor write primitives.
+/// @brief Global descriptor pool, persistent descriptor set allocation, and descriptor write primitives.
+///
 /// Descriptor set layouts and pipeline layouts are created from shader reflection by VulkanShaderBindingSet.
 class VulkanDescriptorManager {
   public:
@@ -419,9 +420,10 @@ class VulkanDescriptorManager {
     }
 
   public:
-    /// Applies descriptor writes to already allocated descriptor sets. Returns the cached descriptor set for
-    /// `Key`, allocating it on a miss. The returned handle is owned by the descriptor cache and remains valid
-    /// until the entry is removed by `Tick()`.
+    /// @brief Apply descriptor writes to already allocated descriptor sets.
+    ///
+    /// Returns the cached descriptor set for `Key`, allocating it on a miss. The returned handle is owned by
+    /// the descriptor cache and remains valid until the entry is removed by `Tick()`.
     [[nodiscard]] auto AcquireDescriptorSet(const DescriptorSetCacheKey&               Key,
                                             std::span<const RHIShaderBindingSet::Slot> Bindings) -> vk::DescriptorSet {
         // Step 1: Check cache for existing set. Refresh LRU and return if found

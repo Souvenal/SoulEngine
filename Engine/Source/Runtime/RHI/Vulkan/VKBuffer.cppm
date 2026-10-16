@@ -213,9 +213,10 @@ struct PersistentBufferProp {
 /// host-coherent: callers write the range directly, no flush is needed.
 struct TransientBufferProp {
     RingAllocation Allocation         = {}; ///< backing belt range (handle, mapped base, offset)
-    /// Belt generation stamped at slice creation. A cross-frame upload targets a range the belt may already
-    /// have recycled or handed to a new frame, so the upload task compares generations and rejects
-    /// mismatches.
+    /// @brief Belt generation stamped at slice creation.
+    ///
+    /// A cross-frame upload targets a range the belt may already have recycled or handed to a new frame, so
+    /// the upload task compares generations and rejects mismatches.
     Uint32         CreationGeneration = 0;
 };
 
@@ -253,9 +254,10 @@ class VulkanBuffer final : public RHIBuffer {
         m_Prop = std::move(Prop);
     }
 
-    /// Destruction rides the backend deferred deletion queue: a virtual timeline event keeps the handles
-    /// valid until the next real submission completes (the last GPU use cannot be later than the destruction
-    /// frame's own submission).
+    /// @brief Destruction rides the backend deferred deletion queue.
+    ///
+    /// A virtual timeline event keeps the handles valid until the next real submission completes (the last
+    /// GPU use cannot be later than the destruction frame's own submission).
     ~VulkanBuffer() override {
         if (const auto* Prop = GetProp<PersistentBufferProp>(); Prop && Prop->Allocation)
             Prop->DeferredQueue->Enqueue(Prop->Buffer, Prop->Allocation);

@@ -17,8 +17,10 @@ import Core;
 
 namespace SoulEngine {
 
-/// Auto-register the Vulkan backend with the RHI factory. Safe at global/namespace scope -- RHIBackendFactory
-/// inherits Singleton, so the registry map is guaranteed to exist when this constructor runs.
+/// @brief Auto-register the Vulkan backend with the RHI factory.
+///
+/// Safe at global/namespace scope -- RHIBackendFactory inherits Singleton, so the registry map is guaranteed
+/// to exist when this constructor runs.
 RHIBackendFactory::AutoRegistrar<VulkanRenderDevice> RegVulkan{"Vulkan"};
 
 } // namespace SoulEngine
