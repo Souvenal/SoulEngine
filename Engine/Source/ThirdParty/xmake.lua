@@ -2,8 +2,8 @@
 -- See https://xmake.io/api/description/global-interfaces.html#add-requireconfs
 -- add_requireconfs("*", {configs = {shared = true}})
 
--- HTTPS rather than SSH: the repo is public, so HTTPS works with zero
--- credentials both locally and on CI runners (which have no SSH keys).
+-- HTTPS rather than SSH: the repo is public, so HTTPS works with zero credentials both locally and on
+-- CI runners (which have no SSH keys).
 add_repositories("souvenal-repo https://github.com/Souvenal/xmake-repo.git")
 
 local vulkan_header_configs = {

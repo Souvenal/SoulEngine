@@ -48,22 +48,20 @@ Each runtime module has its own `xmake.lua` for module-specific build configurat
 - A C++23 modules-capable compiler
   - **Windows:** LLVM Clang is **required** — MSVC currently cannot compile the project (see [Known Issues](#known-issues)). The root `xmake.lua` already pins the `clang` toolchain, so a plain `xmake f` picks it up automatically.
   - **macOS/Linux:** Clang is the configured toolchain.
-- **Vulkan SDK** — Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home). Before building or running, source the environment setup script:
+- **Vulkan SDK** — needed at **runtime**, not at build time. The build resolves Vulkan headers through the `vulkan-headers` xmake package, and the engine discovers the Vulkan loader dynamically at runtime via volk, so CI builds the project with no Vulkan SDK installed. Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home), and before running, source the environment setup script:
 
   ```bash
   source /path/to/VulkanSDK/x.x.x.x/setup-env.sh
   ```
 
-  It is recommended to add this to your shell profile (e.g. `~/.zshrc` or `~/.bash_profile`) so `VULKAN_SDK` is always set:
+  It is recommended to add this to your shell profile (e.g. `~/.zshrc` or `~/.bash_profile`):
 
   ```bash
   # Vulkan SDK
   source /path/to/VulkanSDK/x.x.x.x/setup-env.sh
   ```
 
-  The `VULKAN_SDK` environment variable is how xmake locates the Vulkan headers and libraries. Without it, the build system will not find the Vulkan dependency.
-
-  In addition, `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so that Vulkan SDK shared libraries can be resolved at runtime. Skipping this step will result in missing dylib errors when launching the executable.
+  `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so the Vulkan loader and driver (see [`docs/platform/macOS.md`](docs/platform/macOS.md) for the driver choice) resolve at runtime. Skipping this step results in missing dylib errors when launching the executable.
 
 ### Git Hooks
 
