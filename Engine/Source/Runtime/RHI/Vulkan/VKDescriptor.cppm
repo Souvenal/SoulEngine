@@ -82,7 +82,7 @@ struct VulkanDescriptorWriteBatch {
     std::deque<vk::AccelerationStructureKHR>                   AsHandles   = {};
     std::deque<vk::WriteDescriptorSetAccelerationStructureKHR> AsInfos     = {};
 
-    auto Apply(vk::Device Device) const -> void {
+    auto Apply(const vk::raii::Device& Device) const -> void {
         if (!Writes.empty())
             Device.updateDescriptorSets(Writes, {});
     }
