@@ -1,4 +1,4 @@
 export module Renderer:Common;
 
-export import :Utilities;
-export import :BlitToSwapchainPass;
+export import Renderer : Common.Utilities;
+export import Renderer : Common.BlitToSwapchainPass;
