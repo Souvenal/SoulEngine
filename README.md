@@ -1,5 +1,7 @@
 # SoulEngine
 
+[![CI](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml)
+
 SoulEngine is a personal lightweight game engine built from scratch with modern C++23 and xmake. It is first and foremost a **learning project** — a vehicle for studying low-level GPU APIs, hardware architecture, advanced rendering algorithms, and large-scale software engineering.
 
 The project structure is inspired by Unreal Engine's modular design (see the `Engine/` directory), but where UE uses a directory convention (`Public/` vs `Private/`) to indicate module visibility, SoulEngine leverages **C++ modules** as a first-class language mechanism to enforce the same boundary natively.
