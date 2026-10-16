@@ -51,9 +51,6 @@ A resource registered on the graph and realized by Compile from the pool. Note t
 Cross-frame reuse pool for transient textures, keyed by the full descriptor. Return is immediate with no GPU-completion gate, safe by single-queue submission ordering and per-frame state initialization (ADR 05).
 _Avoid_: pooling inside the RHI backend
 
-**Blit to swapchain**:
-The only present path: a NeverPrune transfer pass issues the explicit blit-to-swapchain command into the camera's viewport rect (ADR 05). There is no present flag on passes, views, or usage bits.
-_Avoid_: present bits, FrameOutput usage, backend-implicit present
 
 **Import**:
 Registering an externally-owned RHI resource with the graph. Imported resources are never realized; writes to them are side effects; imported views join the prologue like graph-created ones (ADR 05).

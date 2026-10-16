@@ -3,7 +3,7 @@ module;
 #include <cstddef>
 #include <hlsl++.h>
 
-export module Renderer:Common;
+export module Renderer:Common.Utilities;
 
 import Core;
 import Material;
