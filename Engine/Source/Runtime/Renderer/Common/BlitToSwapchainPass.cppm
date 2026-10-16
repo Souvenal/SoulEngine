@@ -2,7 +2,7 @@ module;
 
 export module Renderer:Common.BlitToSwapchainPass;
 
-import RenderGraph;
+import RenderGraph : Types;
 import Core;
 import RHI;
 
