@@ -6,92 +6,122 @@ export module Renderer:RasterPasses.GeometryPass;
 
 import Core;
 import RHI;
-import Scene;
+import RenderGraph;
+import :GBuffer;
 
-export import std;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
 
-struct GeometryPassInput {
-    RHIRef<RHIRenderTarget>                    Albedo = nullptr;
-    RHIRef<RHIRenderTarget>                    Normal = nullptr;
-    RHIRef<RHIRenderTarget>                    MaterialId = nullptr;
-    RHIRef<RHIRenderTarget>                    EntityId = nullptr;
-    RHIRef<RHIRenderTarget>                    Depth = nullptr;
-    RHIRef<RHISampler>                         LinearSampler = nullptr;
-    RHIRef<RHISampler>                         AnisotropicSampler = nullptr;
-    RHIRefArray<RHISampledTexture>             Textures = {};
-    RHIRef<RHITransientConstantBuffer>         FrameBuffer = nullptr;
-    RHIRef<RHITransientConstantBuffer>         ViewBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer>    InstanceBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer>    GeometryBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer>    MaterialBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer>    IndirectBuffer = nullptr;
-    Uint32                                      DrawCount = 0;
-};
-
 class GeometryPass final : public IRHIGraphicsPass {
   public:
-    explicit GeometryPass(RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass("GeometryPass", std::move(Pipeline)) {}
-
-    auto SetInput(GeometryPassInput Input) -> void {
-        m_Input = std::move(Input);
+    static constexpr StringView Name = "GeometryPass";
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
     }
+
+    /// Static pipeline descriptor for PipelineRegistry::Register<GeometryPass>().
+    [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "RasterGeometry.slang";
+        return GraphicsPipelineRequest{
+            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .ColorFormats = {RHIFormat::B8G8R8A8_UNORM,
+                             RHIFormat::R16G16B16A16_SFLOAT,
+                             RHIFormat::R32_UINT,
+                             RHIFormat::R32_UINT},
+            .DepthFormat  = RHIFormat::D32_SFLOAT,
+        };
+    }
+
+    /// @brief The pass's resource declaration.
+    ///
+    /// The Parameter IS the resource declaration: each view declares its role and access here; the wiring
+    /// site assigns identities only. The remaining fields are passthrough (bindless table, samplers, draw
+    /// count).
+    struct Parameter {
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Albedo;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Normal;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> MaterialId;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> EntityId;
+        RGTextureView<RHITextureUsage::DepthStencil, RHIAccess::Write> Depth;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         InstanceBuffer;
+        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>        IndirectBuffer;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         GeometryBuffer;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         MaterialBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        FrameBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        ViewBuffer;
+        RHIRef<RHISampler>                                             LinearSampler      = nullptr;
+        RHIRef<RHISampler>                                             AnisotropicSampler = nullptr;
+        Uint32                                                         DrawCount          = 0;
+    };
+
+    GeometryPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
         m_Attachments = {};
-        auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet() || !Input.Albedo || !Input.Normal || !Input.MaterialId || !Input.EntityId ||
-            !Input.Depth || !Input.LinearSampler || !Input.AnisotropicSampler || !Input.Textures ||
-            !Input.FrameBuffer || !Input.ViewBuffer || !Input.InstanceBuffer ||
-            !Input.GeometryBuffer || !Input.MaterialBuffer || !Input.IndirectBuffer || Input.DrawCount == 0)
-            return std::unexpected(ErrorMessage("Geometry pass resources are not ready"));
+        if (!m_Parameter->Albedo.Resolved || !m_Parameter->Normal.Resolved || !m_Parameter->MaterialId.Resolved ||
+            !m_Parameter->EntityId.Resolved || !m_Parameter->Depth.Resolved)
+            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: gbuffer attachment"));
+        if (!m_Parameter->LinearSampler || !m_Parameter->AnisotropicSampler)
+            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: sampler"));
+        if (!m_Parameter->FrameBuffer.Resolved || !m_Parameter->ViewBuffer.Resolved)
+            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: frame/view constant buffer"));
+        if (!m_Parameter->InstanceBuffer.Resolved || !m_Parameter->GeometryBuffer.Resolved ||
+            !m_Parameter->MaterialBuffer.Resolved || !m_Parameter->IndirectBuffer.Resolved)
+            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: storage buffer"));
+        if (m_Parameter->DrawCount == 0)
+            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: draw count"));
 
         m_Attachments = RHIGraphicsAttachments{
             .ColorAttachments =
                 {
-                    {.TextureRef = Input.Albedo,
+                    {.View       = m_Parameter->Albedo.ResolvedView(),
                      .ClearValue = std::array<Float32, 4>{0.025f, 0.035f, 0.055f, 1.0f}},
-                    {.TextureRef = Input.Normal, .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 1.0f, 1.0f}},
-                    {.TextureRef = Input.MaterialId,
+                    {.View       = m_Parameter->Normal.ResolvedView(),
+                     .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 1.0f, 1.0f}},
+                    {.View       = m_Parameter->MaterialId.ResolvedView(),
                      .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 0.0f, 1.0f}},
-                    {.TextureRef = Input.EntityId,
+                    {.View       = m_Parameter->EntityId.ResolvedView(),
                      .ClearValue = std::array<Uint32, 4>{GBuffer::BackgroundEntityId, 0, 0, 0}},
                 },
-            .DepthAttachment = RHIDepthAttachmentDesc{
-                .TextureRef = Input.Depth,
-                .ClearValue = {.Depth = 1.0f, .Stencil = 0},
-            },
+            .DepthAttachment =
+                RHIDepthAttachmentDesc{
+                    .View       = m_Parameter->Depth.ResolvedView(),
+                    .ClearValue = {.Depth = 1.0f, .Stencil = 0},
+                },
         };
         SetViewport(0.0f,
                     0.0f,
-                    static_cast<Float32>(Input.Albedo->GetWidth()),
-                    static_cast<Float32>(Input.Albedo->GetHeight()));
-        SetScissorRect(0, 0, Input.Albedo->GetWidth(), Input.Albedo->GetHeight());
+                    static_cast<Float32>(m_Parameter->Albedo.Resolved->GetWidth()),
+                    static_cast<Float32>(m_Parameter->Albedo.Resolved->GetHeight()));
+        SetScissorRect(0, 0, m_Parameter->Albedo.Resolved->GetWidth(), m_Parameter->Albedo.Resolved->GetHeight());
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_rasterFrameView.frame", std::move(Input.FrameBuffer), true},
-                RHIShaderBindingRequest{"g_rasterFrameView.view", std::move(Input.ViewBuffer), true},
-                RHIShaderBindingRequest{"g_rasterFrameView.linearSampler", std::move(Input.LinearSampler), true},
-            }); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
+                RHIShaderBindingRequest{"g_rasterFrameView.frame", m_Parameter->FrameBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_rasterFrameView.view", m_Parameter->ViewBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_rasterFrameView.linearSampler",
+                                        RHISamplerView{.Sampler = m_Parameter->LinearSampler}},
+            });
+            !R)
             return std::unexpected(R.error());
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_rasterDraw.instances", std::move(Input.InstanceBuffer), true},
-                RHIShaderBindingRequest{"g_rasterDraw.geometryTable.records", std::move(Input.GeometryBuffer), true},
-                RHIShaderBindingRequest{"g_rasterDraw.materials", std::move(Input.MaterialBuffer), true},
-            }); !R)
+                RHIShaderBindingRequest{"g_rasterDraw.instances", m_Parameter->InstanceBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_rasterDraw.geometryTable.records",
+                                        m_Parameter->GeometryBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_rasterDraw.materials", m_Parameter->MaterialBuffer.ResolvedView()},
+            });
+            !R)
             return std::unexpected(R.error());
-        DrawIndirect(std::move(Input.IndirectBuffer), 0, Input.DrawCount);
+        DrawIndirect(m_Parameter->IndirectBuffer.Resolved, 0, m_Parameter->DrawCount);
         return {};
     }
 
   private:
-    GeometryPassInput m_Input = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

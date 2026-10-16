@@ -1,32 +1,28 @@
 /// @file   SlangCompiler/SlangCompiler.cppm
 /// @brief  Slang-backed concrete shader compiler backend.
 ///
-/// Standalone module — self-registers with ShaderBackendFactory via static
-/// AutoRegistrar when the shared library is loaded.
-/// Slang SDK dependencies live in this file and the :Reflection partition.
+/// Standalone module — self-registers with ShaderBackendFactory via static AutoRegistrar when the shared
+/// library is loaded. Slang SDK dependencies live in this file and the :Reflection partition.
 ///
 /// Based on the official minimal example:
 ///   https://docs.shader-slang.org/en/latest/compilation-api.html
 ///
-/// TODO(Session caching): currently a fresh slang::ISession is created for
-/// every pipeline compile.  Reusing an ISession across compiles would cache
-/// parsed modules and compiled SPIR-V, at the cost of holding that memory
-/// until the backend is destroyed.  The current usage pattern (compile all
-/// shaders at startup, then done) doesn't need it, but it's a win for
-/// runtime PSO generation or hot-reload.  To implement: move the session
-/// creation into Init() (currently in CreateSession()), store the ISession as
-/// a member, and skip per-compile session creation.
+/// TODO(Session caching): currently a fresh slang::ISession is created for every pipeline compile. Reusing an
+/// ISession across compiles would cache parsed modules and compiled SPIR-V, at the cost of holding that
+/// memory until the backend is destroyed. The current usage pattern (compile all shaders at startup, then
+/// done) doesn't need it, but it's a win for runtime PSO generation or hot-reload. To implement: move the
+/// session creation into Init() (currently in CreateSession()), store the ISession as a member, and skip
+/// per-compile session creation.
 
 module;
 
-// MSVC bug, fstream is needed here
-// TODO: remove this guard
+// MSVC bug, fstream is needed here TODO: remove this guard
 #include <fstream>
 
 #include <slang.h>
-// Slang follows the COM ABI convention (vtable layout, addRef/release lifecycle).
-// Its COM-style interfaces require a dedicated smart pointer instead of
-// unique_ptr/shared_ptr — hence slang-com-ptr.h provides Slang::ComPtr<T>.
+// Slang follows the COM ABI convention (vtable layout, addRef/release lifecycle). Its COM-style interfaces
+// require a dedicated smart pointer instead of unique_ptr/shared_ptr — hence slang-com-ptr.h provides
+// Slang::ComPtr<T>.
 #include <slang-com-ptr.h>
 
 export module Slang;
@@ -39,18 +35,19 @@ import :Reflection;
 import std;
 import Core;
 import ShaderCompiler;
+import Shader;
 
 namespace SoulEngine {
 
 namespace {
 
-[[nodiscard]] auto CreateSession(slang::IGlobalSession*                       GlobalSession,
+[[nodiscard]] auto CreateSession(slang::IGlobalSession*                      GlobalSession,
                                  std::span<const slang::CompilerOptionEntry> CompilerOptions,
                                  std::span<const Path>                       IncludeDirs,
-                                 bool                                         bEnableRayTracing)
+                                 bool                                        bEnableRayTracing)
     -> std::expected<Slang::ComPtr<slang::ISession>, ErrorMessage> {
-    // Session concept: https://docs.shader-slang.org/en/latest/compilation-api.html#about-sessions
-    // My understanding: a session holds caches and states for modules.
+    // Session concept: https://docs.shader-slang.org/en/latest/compilation-api.html#about-sessions My
+    // understanding: a session holds caches and states for modules.
     slang::TargetDesc TargetDesc{.format  = SLANG_SPIRV,
                                  // target SPIR-V 1.6 (Vulkan 1.3 feature set)
                                  .profile = GlobalSession->findProfile("spirv_1_6")};
@@ -62,7 +59,8 @@ namespace {
             return std::unexpected(ErrorMessage("Slang does not expose the spvRayTracingKHR capability"));
         const auto PhysicalStorageCapability = GlobalSession->findCapability("SPV_EXT_physical_storage_buffer");
         if (PhysicalStorageCapability == SLANG_CAPABILITY_UNKNOWN)
-            return std::unexpected(ErrorMessage("Slang does not expose the SPV_EXT_physical_storage_buffer capability"));
+            return std::unexpected(
+                ErrorMessage("Slang does not expose the SPV_EXT_physical_storage_buffer capability"));
 
         TargetOptions[0] = slang::CompilerOptionEntry{
             .name  = slang::CompilerOptionName::Capability,
@@ -76,8 +74,8 @@ namespace {
         TargetDesc.compilerOptionEntryCount = static_cast<Uint32>(TargetOptions.size());
     }
 
-    // Compiler options (EmitSpirvDirectly, DebugInformation, etc.) are
-    // pre-resolved during Init() by ResolveCompilerOptions().
+    // Compiler options (EmitSpirvDirectly, DebugInformation, etc.) are pre-resolved during Init() by
+    // ResolveCompilerOptions().
     slang::SessionDesc SessionDesc{
         .targets                  = &TargetDesc,
         .targetCount              = 1,
@@ -86,9 +84,8 @@ namespace {
         .compilerOptionEntryCount = static_cast<uint32_t>(CompilerOptions.size()),
     };
 
-    // Convert IncludeDirs to C-strings for Slang search paths.
-    // Strings must be stored separately — Dir.string() returns a
-    // temporary that would dangle if we only kept the c_str().
+    // Convert IncludeDirs to C-strings for Slang search paths. Strings must be stored separately —
+    // Dir.string() returns a temporary that would dangle if we only kept the c_str().
     std::vector<String>      SearchPathStrings;
     std::vector<const char*> SearchPathCStrs;
     SearchPathStrings.reserve(IncludeDirs.size());
@@ -109,9 +106,9 @@ namespace {
     return Session;
 }
 
-[[nodiscard]] auto LoadModuleFromSource(slang::ISession*            Session,
-                                        const ShaderEntry&          Entry,
-                                        std::vector<String>&        SourceStorage,
+[[nodiscard]] auto LoadModuleFromSource(slang::ISession*             Session,
+                                        const ShaderEntry&           Entry,
+                                        std::vector<String>&         SourceStorage,
                                         Slang::ComPtr<slang::IBlob>& DiagBlob)
     -> std::expected<slang::IModule*, ErrorMessage> {
     auto SourceContent = ReadFile(Entry.SourcePath);
@@ -135,26 +132,22 @@ namespace {
     //     — path is a backup key for the session's module cache.  It matters
     //       when a shader uses path-based imports like import "../foo.slang";
     //       nullptr caches by moduleName only.
+    // Future optimisation
     //
-    // ── Future optimisation ──────────────────────────────────────────
     //
-    // Currently a fresh ISession is created per pipeline compile (see the
-    // TODO at the top of this file).  The session's module cache is therefore
-    // empty every time, so loadModuleFromSourceString is the only viable path.
+    // Currently a fresh ISession is created per pipeline compile (see the TODO at the top of this file). The
+    // session's module cache is therefore empty every time, so loadModuleFromSourceString is the only viable
+    // path.
     //
-    // Once the ISession is reused across compiles (move createSession into
-    // Init()), the flow changes:
+    // Once the ISession is reused across compiles (move createSession into Init()), the flow changes:
     //   1. Compile path calls loadModule(ModuleName) first.
     //   2. If found -> cached result returned instantly (no recompile).
     //   3. If not found -> fall back to loadModuleFromSourceString, which
     //      populates the cache for subsequent calls.
     //
-    // This avoids re-parsing and re-compiling unchanged modules and is the
-    // primary benefit of session reuse.
-    auto* Module = Session->loadModuleFromSourceString(ModuleName.c_str(),
-                                                       Entry.SourcePath.string().c_str(),
-                                                       SourceStorage.back().c_str(),
-                                                       DiagBlob.writeRef());
+    // This avoids re-parsing and re-compiling unchanged modules and is the primary benefit of session reuse.
+    auto* Module = Session->loadModuleFromSourceString(
+        ModuleName.c_str(), Entry.SourcePath.string().c_str(), SourceStorage.back().c_str(), DiagBlob.writeRef());
     if (!Module) {
         return std::unexpected(
             ErrorMessage(Format("Failed to load module '{}': {}", Entry.SourcePath.string(), DiagView(DiagBlob))));
@@ -167,30 +160,26 @@ namespace {
     Slang::ComPtr<slang::IEntryPoint> EntryPoint;
     if (auto Rc = Module->findEntryPointByName(Entry.EntryPoint.c_str(), EntryPoint.writeRef());
         SLANG_FAILED(Rc) || !EntryPoint) {
-        return std::unexpected(ErrorMessage(
-            Format("Entry point '{}' not found in '{}'", Entry.EntryPoint, Entry.SourcePath.string())));
+        return std::unexpected(
+            ErrorMessage(Format("Entry point '{}' not found in '{}'", Entry.EntryPoint, Entry.SourcePath.string())));
     }
     return EntryPoint;
 }
 
-// Slang's "component" is a compiler/linker unit. Modules and entry points are 
-// both `IComponentType` values.
-// A graphics shader program is represented by composing the module(s) plus
-// all pipeline entry points into one component, then linking it so
-// code generation and reflection see the final pipeline interface instead of isolated stages.
-[[nodiscard]] auto ComposeAndLink(slang::ISession*                   Session,
+// Slang's "component" is a compiler/linker unit. Modules and entry points are both `IComponentType` values. A
+// graphics shader program is represented by composing the module(s) plus all pipeline entry points into one
+// component, then linking it so code generation and reflection see the final pipeline interface instead of
+// isolated stages.
+[[nodiscard]] auto ComposeAndLink(slang::ISession*                  Session,
                                   std::span<slang::IComponentType*> Components,
-                                  Slang::ComPtr<slang::IBlob>&       DiagBlob)
+                                  Slang::ComPtr<slang::IBlob>&      DiagBlob)
     -> std::expected<Slang::ComPtr<slang::IComponentType>, ErrorMessage> {
     // Compose into a unified GPU program.
     Slang::ComPtr<slang::IComponentType> Composite;
-    if (auto Rc = Session->createCompositeComponentType(Components.data(),
-                                                        static_cast<SlangInt>(Components.size()),
-                                                        Composite.writeRef(),
-                                                        DiagBlob.writeRef());
+    if (auto Rc = Session->createCompositeComponentType(
+            Components.data(), static_cast<SlangInt>(Components.size()), Composite.writeRef(), DiagBlob.writeRef());
         SLANG_FAILED(Rc) || !Composite) {
-        return std::unexpected(
-            ErrorMessage(Format("Failed to compose shader program: {}", DiagView(DiagBlob))));
+        return std::unexpected(ErrorMessage(Format("Failed to compose shader program: {}", DiagView(DiagBlob))));
     }
 
     // Ensure that there are no missing dependencies in the composed program.
@@ -201,12 +190,10 @@ namespace {
     return Linked;
 }
 
-[[nodiscard]] auto GetTargetCode(slang::IComponentType* Linked,
-                                 Slang::ComPtr<slang::IBlob>& DiagBlob)
+[[nodiscard]] auto GetTargetCode(slang::IComponentType* Linked, Slang::ComPtr<slang::IBlob>& DiagBlob)
     -> std::expected<std::vector<Uint32>, ErrorMessage> {
     Slang::ComPtr<slang::IBlob> CodeBlob;
-    if (auto Rc = Linked->getTargetCode(0, CodeBlob.writeRef(), DiagBlob.writeRef());
-        SLANG_FAILED(Rc) || !CodeBlob) {
+    if (auto Rc = Linked->getTargetCode(0, CodeBlob.writeRef(), DiagBlob.writeRef()); SLANG_FAILED(Rc) || !CodeBlob) {
         return std::unexpected(ErrorMessage(Format("Failed to generate target code: {}", DiagView(DiagBlob))));
     }
 
@@ -219,12 +206,11 @@ namespace {
 
 /// @brief Concrete shader compiler backed by the Slang C++ API.
 ///
-/// Pipeline compiles load the requested modules, find all pipeline entry points,
-/// compose them into one linked Slang program, then emit SPIR-V plus linked
-/// pipeline-level reflection.
+/// Pipeline compiles load the requested modules, find all pipeline entry points, compose them into one linked
+/// Slang program, then emit SPIR-V plus linked pipeline-level reflection.
 ///
-/// Init is lazy: the constructor is cheap; the first pipeline compile triggers
-/// the one-time creation of the global session.
+/// Init is lazy: the constructor is cheap; the first pipeline compile triggers the one-time creation of the
+/// global session.
 class SlangBackend final : public IShaderBackend {
   public:
     SlangBackend() = default;
@@ -243,7 +229,8 @@ class SlangBackend final : public IShaderBackend {
                 return std::unexpected(std::move(R.error()));
 
         if (Desc.Vertex.EntryPoint.empty() || Desc.Fragment.EntryPoint.empty()) {
-            return std::unexpected(ErrorMessage("Graphics shader compile requires non-empty vertex and fragment entry points"));
+            return std::unexpected(
+                ErrorMessage("Graphics shader compile requires non-empty vertex and fragment entry points"));
         }
 
         auto Session = CreateSession(m_GlobalSession.get(), m_CompilerOptions, Desc.IncludeDirs, false);
@@ -256,16 +243,17 @@ class SlangBackend final : public IShaderBackend {
 
         auto VertexModule = LoadModuleFromSource(Session->get(), Desc.Vertex, SourceStorage, DiagBlob);
         if (!VertexModule)
-            return std::unexpected(VertexModule.error().Append(
-                Format("Graphics pipeline vertex shader '{}'/'{}'", Desc.Vertex.SourcePath.string(), Desc.Vertex.EntryPoint)));
+            return std::unexpected(VertexModule.error().Append(Format(
+                "Graphics pipeline vertex shader '{}'/'{}'", Desc.Vertex.SourcePath.string(), Desc.Vertex.EntryPoint)));
 
         slang::IModule* FragmentModule = *VertexModule;
         if (Desc.Fragment.SourcePath.lexically_normal() != Desc.Vertex.SourcePath.lexically_normal()) {
             auto LoadedFragmentModule = LoadModuleFromSource(Session->get(), Desc.Fragment, SourceStorage, DiagBlob);
             if (!LoadedFragmentModule)
-                return std::unexpected(LoadedFragmentModule.error().Append(Format("Graphics pipeline fragment shader '{}'/'{}'",
-                                                                                  Desc.Fragment.SourcePath.string(),
-                                                                                  Desc.Fragment.EntryPoint)));
+                return std::unexpected(
+                    LoadedFragmentModule.error().Append(Format("Graphics pipeline fragment shader '{}'/'{}'",
+                                                               Desc.Fragment.SourcePath.string(),
+                                                               Desc.Fragment.EntryPoint)));
             FragmentModule = *LoadedFragmentModule;
         }
 
@@ -314,7 +302,8 @@ class SlangBackend final : public IShaderBackend {
 
         String VertexEntryPointName = String(VertexInfo->getName());
         if (ToShaderStage(VertexInfo->getStage()) != ShaderStage::Vertex) {
-            return std::unexpected(ErrorMessage(Format("Entry point '{}' is not a vertex shader", VertexEntryPointName)));
+            return std::unexpected(
+                ErrorMessage(Format("Entry point '{}' is not a vertex shader", VertexEntryPointName)));
         }
 
         String FragmentEntryPointName = String(FragmentInfo->getName());
@@ -374,19 +363,19 @@ class SlangBackend final : public IShaderBackend {
 
         auto* EntryInfo = Layout->findEntryPointByName(Desc.Compute.EntryPoint.c_str());
         if (!EntryInfo)
-            return std::unexpected(ErrorMessage(
-                Format("Linked compute reflection is missing entry point '{}'", Desc.Compute.EntryPoint)));
+            return std::unexpected(
+                ErrorMessage(Format("Linked compute reflection is missing entry point '{}'", Desc.Compute.EntryPoint)));
 
         if (ToShaderStage(EntryInfo->getStage()) != ShaderStage::Compute)
-            return std::unexpected(ErrorMessage(
-                Format("Entry point '{}' is not a compute shader", EntryInfo->getName())));
+            return std::unexpected(
+                ErrorMessage(Format("Entry point '{}' is not a compute shader", EntryInfo->getName())));
 
         auto PipelineReflection = BuildComputeShaderReflection(Layout, EntryInfo);
         if (!PipelineReflection)
             return std::unexpected(PipelineReflection.error().Append("Failed to build compute pipeline reflection"));
 
         return ShaderComputeProgram{
-            .Code                 = std::move(*Code),
+            .Code                  = std::move(*Code),
             .ComputeEntryPointName = String(EntryInfo->getName()),
             .Reflection            = std::move(*PipelineReflection),
         };
@@ -412,8 +401,8 @@ class SlangBackend final : public IShaderBackend {
                     ErrorMessage(Format("Ray-tracing hit group {} requires a closest-hit entry point", GroupIndex)));
             }
             if (Group.Type == ShaderRayTracingHitGroupType::Triangles && Group.Intersection.has_value()) {
-                return std::unexpected(ErrorMessage(
-                    Format("Triangle ray-tracing hit group {} must not declare an intersection entry point", GroupIndex)));
+                return std::unexpected(ErrorMessage(Format(
+                    "Triangle ray-tracing hit group {} must not declare an intersection entry point", GroupIndex)));
             }
             if (Group.Type == ShaderRayTracingHitGroupType::Procedural && !Group.Intersection.has_value()) {
                 return std::unexpected(ErrorMessage(
@@ -430,16 +419,16 @@ class SlangBackend final : public IShaderBackend {
             slang::IModule* Module     = nullptr;
         };
         struct LoadedEntry {
-            const ShaderEntry*                  Request      = nullptr;
+            const ShaderEntry*                Request       = nullptr;
             ShaderStage                       ExpectedStage = ShaderStage::Unknown;
-            StringView                          StageName    = {};
-            Slang::ComPtr<slang::IEntryPoint>   EntryPoint   = {};
+            StringView                        StageName     = {};
+            Slang::ComPtr<slang::IEntryPoint> EntryPoint    = {};
         };
         struct LoadedHitGroup {
             ShaderRayTracingHitGroupType Type         = ShaderRayTracingHitGroupType::Unknown;
-            std::optional<Uint32>          ClosestHit   = std::nullopt;
-            std::optional<Uint32>          AnyHit       = std::nullopt;
-            std::optional<Uint32>          Intersection = std::nullopt;
+            std::optional<Uint32>        ClosestHit   = std::nullopt;
+            std::optional<Uint32>        AnyHit       = std::nullopt;
+            std::optional<Uint32>        Intersection = std::nullopt;
         };
 
         Slang::ComPtr<slang::IBlob> DiagBlob;
@@ -447,10 +436,11 @@ class SlangBackend final : public IShaderBackend {
         std::vector<LoadedModule>   Modules       = {};
         std::vector<LoadedEntry>    Entries       = {};
 
-        auto LoadEntry = [&](const ShaderEntry& Entry, ShaderStage ExpectedStage, StringView StageName)
-            -> std::expected<Uint32, ErrorMessage> {
-            const Path NormalizedPath = Entry.SourcePath.lexically_normal();
-            slang::IModule* Module = nullptr;
+        auto LoadEntry = [&](const ShaderEntry& Entry,
+                             ShaderStage        ExpectedStage,
+                             StringView         StageName) -> std::expected<Uint32, ErrorMessage> {
+            const Path      NormalizedPath = Entry.SourcePath.lexically_normal();
+            slang::IModule* Module         = nullptr;
             for (const auto& Loaded : Modules) {
                 if (Loaded.SourcePath == NormalizedPath) {
                     Module = Loaded.Module;
@@ -460,8 +450,8 @@ class SlangBackend final : public IShaderBackend {
             if (!Module) {
                 auto LoadedModuleResult = LoadModuleFromSource(Session->get(), Entry, SourceStorage, DiagBlob);
                 if (!LoadedModuleResult)
-                    return std::unexpected(LoadedModuleResult.error().Append(
-                        Format("Ray-tracing {} shader '{}'/'{}'", StageName, Entry.SourcePath.string(), Entry.EntryPoint)));
+                    return std::unexpected(LoadedModuleResult.error().Append(Format(
+                        "Ray-tracing {} shader '{}'/'{}'", StageName, Entry.SourcePath.string(), Entry.EntryPoint)));
                 Module = *LoadedModuleResult;
                 Modules.emplace_back(LoadedModule{.SourcePath = NormalizedPath, .Module = Module});
             }
@@ -496,7 +486,7 @@ class SlangBackend final : public IShaderBackend {
         HitGroups.reserve(Desc.HitGroups.size());
         for (const auto& Group : Desc.HitGroups) {
             LoadedHitGroup LoadedGroup{.Type = Group.Type};
-            auto ClosestHit = LoadEntry(*Group.ClosestHit, ShaderStage::ClosestHit, "Closest-hit");
+            auto           ClosestHit = LoadEntry(*Group.ClosestHit, ShaderStage::ClosestHit, "Closest-hit");
             if (!ClosestHit)
                 return std::unexpected(std::move(ClosestHit.error()));
             LoadedGroup.ClosestHit = *ClosestHit;
@@ -546,17 +536,17 @@ class SlangBackend final : public IShaderBackend {
 
         std::vector<slang::EntryPointReflection*> EntryPointInfos(Entries.size(), nullptr);
         auto ResolveEntry = [&](Uint32 EntryIndex) -> std::expected<String, ErrorMessage> {
-            const auto& Entry = Entries[EntryIndex];
-            auto* EntryInfo = Layout->findEntryPointByName(Entry.Request->EntryPoint.c_str());
+            const auto& Entry     = Entries[EntryIndex];
+            auto*       EntryInfo = Layout->findEntryPointByName(Entry.Request->EntryPoint.c_str());
             if (!EntryInfo) {
-                return std::unexpected(ErrorMessage(Format("Linked ray-tracing reflection is missing {} entry point '{}'",
-                                                           Entry.StageName,
-                                                           Entry.Request->EntryPoint)));
+                return std::unexpected(
+                    ErrorMessage(Format("Linked ray-tracing reflection is missing {} entry point '{}'",
+                                        Entry.StageName,
+                                        Entry.Request->EntryPoint)));
             }
             if (ToShaderStage(EntryInfo->getStage()) != Entry.ExpectedStage) {
-                return std::unexpected(ErrorMessage(Format("Entry point '{}' is not a {} shader",
-                                                           EntryInfo->getName(),
-                                                           Entry.StageName)));
+                return std::unexpected(
+                    ErrorMessage(Format("Entry point '{}' is not a {} shader", EntryInfo->getName(), Entry.StageName)));
             }
             EntryPointInfos[EntryIndex] = EntryInfo;
             return String(EntryInfo->getName());
@@ -579,7 +569,7 @@ class SlangBackend final : public IShaderBackend {
         ProgramHitGroups.reserve(HitGroups.size());
         for (const auto& Group : HitGroups) {
             ShaderRayTracingHitGroup ProgramGroup{.Type = Group.Type};
-            auto ClosestName = ResolveEntry(*Group.ClosestHit);
+            auto                     ClosestName = ResolveEntry(*Group.ClosestHit);
             if (!ClosestName)
                 return std::unexpected(std::move(ClosestName.error()));
             ProgramGroup.ClosestHitEntryPointName = std::move(*ClosestName);
@@ -609,21 +599,21 @@ class SlangBackend final : public IShaderBackend {
 
         auto PipelineReflection = BuildRayTracingShaderReflection(Layout, EntryPointInfos);
         if (!PipelineReflection)
-            return std::unexpected(PipelineReflection.error().Append("Failed to build ray-tracing pipeline reflection"));
+            return std::unexpected(
+                PipelineReflection.error().Append("Failed to build ray-tracing pipeline reflection"));
 
         return ShaderRayTracingProgram{
             .Code                        = std::move(*Code),
             .RayGenerationEntryPointName = std::move(*RayGenerationName),
-            .MissEntryPointNames          = std::move(MissNames),
-            .HitGroups                    = std::move(ProgramHitGroups),
-            .CallableEntryPointNames      = std::move(CallableNames),
-            .Reflection                   = std::move(*PipelineReflection),
+            .MissEntryPointNames         = std::move(MissNames),
+            .HitGroups                   = std::move(ProgramHitGroups),
+            .CallableEntryPointNames     = std::move(CallableNames),
+            .Reflection                  = std::move(*PipelineReflection),
         };
     }
 
   private:
-    /// One-time initialization of the Slang global session.
-    /// Called from the first pipeline compile request.
+    /// One-time initialization of the Slang global session. Called from the first pipeline compile request.
     [[nodiscard]] auto Init() -> std::expected<void, ErrorMessage> {
         if (auto Rc = slang::createGlobalSession(m_GlobalSession.writeRef()); SLANG_FAILED(Rc)) {
             return std::unexpected(ErrorMessage(Format("Failed to create Slang global session (error code: {})", Rc)));
@@ -635,8 +625,9 @@ class SlangBackend final : public IShaderBackend {
 
     bool                                    m_bInitialized = false;
     Slang::ComPtr<slang::IGlobalSession>    m_GlobalSession;
-    /// Pre-built compiler options, populated once by ResolveCompilerOptions()
-    /// during Init() and reused across all pipeline compile calls.
+    /// @brief Pre-built compiler options reused across all pipeline compile calls.
+    ///
+    /// Populated once by ResolveCompilerOptions() during Init().
     std::vector<slang::CompilerOptionEntry> m_CompilerOptions;
 };
 

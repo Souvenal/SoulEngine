@@ -9,12 +9,12 @@ import ShaderCompiler;
 import Vulkan;
 import WindowSystem;
 import std;
+import Core;
 
 using namespace SoulEngine;
 
 TEST(ShaderBindingTableLayoutTest, AlignsRecordsAndRegions) {
-    auto Layout = VulkanCreateShaderBindingTableLayout(
-        24, 32, 64, 4096, 1, 2, 1, 0);
+    auto Layout = VulkanCreateShaderBindingTableLayout(24, 32, 64, 4096, 1, 2, 1, 0);
 
     ASSERT_TRUE(Layout.has_value()) << Layout.error().ToString();
     EXPECT_EQ(Layout->HandleSize, 24);
@@ -31,8 +31,7 @@ TEST(ShaderBindingTableLayoutTest, AlignsRecordsAndRegions) {
 }
 
 TEST(ShaderBindingTableLayoutTest, SupportsEmptyCallableRegion) {
-    auto Layout = VulkanCreateShaderBindingTableLayout(
-        32, 32, 64, 4096, 1, 1, 1, 0);
+    auto Layout = VulkanCreateShaderBindingTableLayout(32, 32, 64, 4096, 1, 1, 1, 0);
 
     ASSERT_TRUE(Layout.has_value()) << Layout.error().ToString();
     EXPECT_EQ(Layout->Callable.Offset, 0);
@@ -42,16 +41,14 @@ TEST(ShaderBindingTableLayoutTest, SupportsEmptyCallableRegion) {
 }
 
 TEST(ShaderBindingTableLayoutTest, RejectsInvalidRayGenerationRecordCount) {
-    auto Layout = VulkanCreateShaderBindingTableLayout(
-        32, 32, 64, 4096, 0, 1, 1, 0);
+    auto Layout = VulkanCreateShaderBindingTableLayout(32, 32, 64, 4096, 0, 1, 1, 0);
 
     ASSERT_FALSE(Layout.has_value());
     EXPECT_NE(Layout.error().ToString().find("exactly one ray-generation"), String::npos);
 }
 
 TEST(ShaderBindingTableLayoutTest, RejectsRecordStrideBeyondDeviceLimit) {
-    auto Layout = VulkanCreateShaderBindingTableLayout(
-        64, 128, 64, 64, 1, 1, 1, 0);
+    auto Layout = VulkanCreateShaderBindingTableLayout(64, 128, 64, 64, 1, 1, 1, 0);
 
     ASSERT_FALSE(Layout.has_value());
     EXPECT_NE(Layout.error().ToString().find("maxShaderGroupStride"), String::npos);
@@ -60,4 +57,3 @@ TEST(ShaderBindingTableLayoutTest, RejectsRecordStrideBeyondDeviceLimit) {
 TEST(RayTracingPipelineHardwareTest, DISABLED_CreatesBdaGeometryPipelineFromSlangFixture) {
     GTEST_SKIP();
 }
-

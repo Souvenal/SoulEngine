@@ -6,59 +6,77 @@ export module Renderer:EditorPasses.SelectionFilterPass;
 
 import Core;
 import RHI;
+import RenderGraph;
 import Scene;
 
-export import std;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
-
-struct SelectionFilterPassInput {
-    RHIRef<RHITransientShaderStorageBuffer> SceneInstanceBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> SceneIndirectBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> SelectedInstanceBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> SelectedIndirectBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> CommandCounterBuffer = nullptr;
-    Uint32 CommandCount = 0;
-    Uint32 SelectedEntityId = GBuffer::BackgroundEntityId;
-};
 
 /// @brief Filters culling output instances by entity ID for editor selection.
 class SelectionFilterPass final : public IRHIComputePass {
   public:
-    explicit SelectionFilterPass(RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass("SelectionFilterPass", std::move(Pipeline)) {}
-
-    auto SetInput(SelectionFilterPassInput Input) -> void {
-        m_Input = std::move(Input);
+    static constexpr StringView Name = "SelectionFilterPass";
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
     }
+
+    /// Static pipeline descriptor for PipelineRegistry::Register<SelectionFilterPass>().
+    [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionFilter.slang";
+        return ComputePipelineRequest{
+            .ComputeEntry = {.SourcePath = ShaderPath, .EntryPoint = "filterMain"},
+        };
+    }
+
+    struct Parameter {
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>                    ViewInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>                    ViewIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write>                   SelectedInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write>                   SelectedIndirect;
+        /// @brief Per-command selected counts.
+        ///
+        /// Created with zero-initialized InitialData (historical crash fix): the filter accumulates
+        /// per-command counts via InterlockedAdd — an RMW, hence the declared Read|Write.
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read | RHIAccess::Write> SelectedCounters;
+        Uint32                                                                    CommandCount     = 0;
+        Uint32                                                                    SelectedEntityId = 0;
+    };
+
+    SelectionFilterPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
-        auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet() || !Input.SceneInstanceBuffer || !Input.SceneIndirectBuffer ||
-            !Input.SelectedInstanceBuffer || !Input.SelectedIndirectBuffer || !Input.CommandCounterBuffer ||
-            Input.CommandCount == 0)
+        if (!m_Parameter->ViewInstances.Resolved || !m_Parameter->ViewIndirect.Resolved ||
+            !m_Parameter->SelectedInstances.Resolved || !m_Parameter->SelectedIndirect.Resolved ||
+            !m_Parameter->SelectedCounters.Resolved || m_Parameter->CommandCount == 0)
             return std::unexpected(ErrorMessage("Selection filter pass resources are not ready"));
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_selectionFilter.sceneInstances", std::move(Input.SceneInstanceBuffer), true},
-                RHIShaderBindingRequest{"g_selectionFilter.sceneIndirectCommands", std::move(Input.SceneIndirectBuffer), true},
-                RHIShaderBindingRequest{"g_selectionFilter.selectedInstances", std::move(Input.SelectedInstanceBuffer), false},
-                RHIShaderBindingRequest{"g_selectionFilter.selectedIndirectCommands", std::move(Input.SelectedIndirectBuffer), false},
-                RHIShaderBindingRequest{"g_selectionFilter.commandCounters", std::move(Input.CommandCounterBuffer), false},
-            }); !R)
+                RHIShaderBindingRequest{"g_selectionFilter.sceneInstances", m_Parameter->ViewInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.sceneIndirectCommands",
+                                        m_Parameter->ViewIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.selectedInstances",
+                                        m_Parameter->SelectedInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.selectedIndirectCommands",
+                                        m_Parameter->SelectedIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionFilter.commandCounters",
+                                        m_Parameter->SelectedCounters.ResolvedView()},
+            });
+            !R)
             return std::unexpected(R.error());
 
-        if (auto R = PushConstants(0, Input.SelectedEntityId); !R)
+        if (auto R = PushConstants(0, m_Parameter->SelectedEntityId); !R)
             return std::unexpected(R.error());
 
-        Dispatch(Input.CommandCount);
+        Dispatch(m_Parameter->CommandCount);
         return {};
     }
 
   private:
-    SelectionFilterPassInput m_Input = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

@@ -21,7 +21,7 @@ class TaskGraphTest : public testing::Test {
 };
 
 TEST_F(TaskGraphTest, DrainTasksExecutesAllUnboundTasks) {
-    auto& Graph = TaskGraph::Get();
+    auto&            Graph    = TaskGraph::Get();
     std::vector<int> Executed = {};
 
     ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] { Executed.push_back(1); }).has_value());
@@ -33,12 +33,15 @@ TEST_F(TaskGraphTest, DrainTasksExecutesAllUnboundTasks) {
 }
 
 TEST_F(TaskGraphTest, DrainTasksAllowsTasksToEnqueueMoreTasks) {
-    auto& Graph = TaskGraph::Get();
-    bool      FollowUpRan = false;
+    auto& Graph       = TaskGraph::Get();
+    bool  FollowUpRan = false;
 
-    ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] {
-        ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] { FollowUpRan = true; }).has_value());
-    }).has_value());
+    ASSERT_TRUE(
+        Graph
+            .EnqueueTask(
+                ThreadQueue::Render,
+                [&] { ASSERT_TRUE(Graph.EnqueueTask(ThreadQueue::Render, [&] { FollowUpRan = true; }).has_value()); })
+            .has_value());
 
     Graph.DrainTasks(ThreadQueue::Render);
     EXPECT_TRUE(FollowUpRan);
@@ -47,12 +50,12 @@ TEST_F(TaskGraphTest, DrainTasksAllowsTasksToEnqueueMoreTasks) {
 TEST_F(TaskGraphTest, FrameBoundTasksDoNotRunBeforeTheirFrame) {
     auto& Graph = TaskGraph::Get();
     Graph.IncreaseThreadFrameIndex();
-    const auto          CurrentFrame = Graph.GetThreadFrameIndex();
+    const auto          CurrentFrame   = Graph.GetThreadFrameIndex();
     std::vector<Uint64> ExecutedFrames = {};
 
-    ASSERT_TRUE(Graph.EnqueueFrameTask(ThreadQueue::RHI, CurrentFrame + 1,
-                                       [&] { ExecutedFrames.push_back(CurrentFrame + 1); })
-                    .has_value());
+    ASSERT_TRUE(
+        Graph.EnqueueFrameTask(ThreadQueue::RHI, CurrentFrame + 1, [&] { ExecutedFrames.push_back(CurrentFrame + 1); })
+            .has_value());
     ASSERT_TRUE(Graph.EnqueueFrameTask(ThreadQueue::RHI, [&] { ExecutedFrames.push_back(CurrentFrame); }).has_value());
 
     Graph.DrainFrameTasks(ThreadQueue::RHI);
@@ -74,24 +77,25 @@ TEST_F(TaskGraphTest, BackgroundWorkerExecutesTasks) {
     std::condition_variable Cv;
     bool                    Ran = false;
 
-    ASSERT_TRUE(Graph.EnqueueBackground([&] {
-        {
-            std::lock_guard Lock(Mutex);
-            Ran = true;
-        }
-        Cv.notify_one();
-    }).has_value());
+    ASSERT_TRUE(Graph
+                    .EnqueueBackground([&] {
+                        {
+                            std::lock_guard Lock(Mutex);
+                            Ran = true;
+                        }
+                        Cv.notify_one();
+                    })
+                    .has_value());
 
     {
         std::unique_lock Lock(Mutex);
         EXPECT_TRUE(Cv.wait_for(Lock, std::chrono::seconds(2), [&] { return Ran; }));
     }
-
 }
 
 TEST_F(TaskGraphTest, ShutdownRejectsTasksAndAllowsRestart) {
     auto&             Graph = TaskGraph::Get();
-    std::atomic<bool> Ran = false;
+    std::atomic<bool> Ran   = false;
 
     Graph.Shutdown();
     auto Result = Graph.EnqueueBackground([&] { Ran.store(true, std::memory_order_release); });

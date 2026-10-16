@@ -17,12 +17,11 @@ import Core;
 import EditorTypes;
 import Application;
 import RHI;
-import Resource;
 import Renderer;
 import Scene;
 import WindowSystem;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 
@@ -37,16 +36,13 @@ struct UIPanel {
 };
 
 /// @brief Editor UI subsystem: owns the ImGui context, the UI panel registry,
-/// and all GPU resources needed to render ImGui draw data through the RHI
-/// command list.
+/// and all GPU resources needed to render ImGui draw data through the RHI command list.
 ///
-/// Threading: the ImGui context lives on the engine main thread, where the
-/// GLFW platform backend feeds it input during event polling. Each game tick
-/// BuildFrame() produces a self-owning UIDrawFrame snapshot published through
-/// a latest-wins mailbox; the render thread consumes snapshots in OnRender()
-/// and emits UI passes. Backend-native GPU objects (font atlas texture,
-/// dynamic buffers) are created by a one-shot RHI-thread task enqueued at
-/// BindWindowSystem(); the render thread observes readiness through atomics.
+/// Threading: the ImGui context lives on the engine main thread, where the GLFW platform backend feeds it
+/// input during event polling. Each game tick BuildFrame() produces a self-owning UIDrawFrame snapshot
+/// published through a latest-wins mailbox; the render thread consumes snapshots in OnRender() and emits UI
+/// passes. Backend-native GPU objects (font atlas texture, dynamic buffers) are created by a one-shot
+/// RHI-thread task enqueued at BindWindowSystem(); the render thread observes readiness through atomics.
 class Editor {
   public:
     Editor() = default;
@@ -82,9 +78,8 @@ class Editor {
     }
 
     /// @brief Bind the ImGui platform backend to the main window system.
-    /// Must be called after Initialize(), window-system creation, and
-    /// RHI device creation.
-    /// Also selects the complete window-system and RHI backend combination.
+    /// Must be called after Initialize(), window-system creation, and RHI device creation. Also selects the
+    /// complete window-system and RHI backend combination.
     [[nodiscard]] auto BindPresentation(IWindowSystem* WindowSys, RHIRenderDevice* RenderDevice)
         -> std::expected<void, ErrorMessage> {
         if (!m_ImGuiContext)
@@ -119,8 +114,7 @@ class Editor {
     }
 
     /// @brief Release GPU resource refs. Must be called on the engine main
-    /// thread after the render/RHI threads have joined, before
-    /// ResourceManager::Clear() and RenderDevice::Destroy().
+    /// thread after the render/RHI threads have joined, before RenderDevice::Destroy().
     auto ReleaseRHIResources() -> void {
         if (m_ImGuiContext) {
             std::scoped_lock Lock(m_TextureQueueMutex);
@@ -181,7 +175,7 @@ class Editor {
             if (ImGui::BeginMenu("Open Application")) {
                 const auto* CurrentApplication = GetCurrentApplication();
                 for (const auto& Name : ApplicationFactory::Get().Keys()) {
-                    String Label(Name);
+                    String     Label(Name);
                     const bool IsCurrent = CurrentApplication && CurrentApplication->GetName() == Name;
                     if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
                         if (auto R = OpenApplication(Name); !R) {
@@ -203,7 +197,7 @@ class Editor {
         if (ImGui::BeginMenu("Render")) {
             const auto CurrentRendererName = GetCurrentRendererName();
             for (const auto& Name : RendererFactory::Get().Keys()) {
-                String Label(Name);
+                String     Label(Name);
                 const bool IsCurrent = CurrentRendererName == Name;
                 if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
                     if (auto R = SelectRenderer(Name); !R)
@@ -276,8 +270,7 @@ class Editor {
 
   public:
     /// @brief Render-thread entry point: consume the latest UI frame snapshot
-    /// and append its draw pass to the command list. Skips silently until a
-    /// frame has been published.
+    /// and append its draw pass to the command list. Skips silently until a frame has been published.
     auto AttachPresentationOverlay(RenderPassList& CmdList, ImDrawDataSnapshot& Snapshot) -> void {
         if (!Snapshot.DrawData.Valid)
             return;
@@ -296,13 +289,13 @@ class Editor {
     ImTextureQueue m_TextureQueue;
     std::mutex     m_TextureQueueMutex;
 
-    EditorWorld m_EditorWorld = {};
-    // Non-owning; Launch and DrawMainMenu keep this binding in sync with the
-    // active Application and clear it before the Scene is destroyed.
-    const Scene* m_Scene = nullptr;
+    EditorWorld      m_EditorWorld       = {};
+    // Non-owning; Launch and DrawMainMenu keep this binding in sync with the active Application and clear it
+    // before the Scene is destroyed.
+    const Scene*     m_Scene             = nullptr;
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
-    IWindowSystem*                       m_BoundWindowSystem = nullptr;
-    RHIRenderDevice*                     m_BoundRenderDevice = nullptr;
+    IWindowSystem*   m_BoundWindowSystem = nullptr;
+    RHIRenderDevice* m_BoundRenderDevice = nullptr;
 };
 
 } // namespace SoulEngine

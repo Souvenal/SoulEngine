@@ -1,6 +1,7 @@
 export module Core:Util;
 
 export import :Util.Types;
+export import :Util.Flags;
 export import :Util.Error;
 export import :Util.Singleton;
 export import :Util.IO;

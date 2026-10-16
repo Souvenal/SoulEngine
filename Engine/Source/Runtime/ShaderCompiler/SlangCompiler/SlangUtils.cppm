@@ -12,39 +12,41 @@ module;
 
 export module Slang:Utils;
 
-export import Core;
+import Core;
 
-export import std;
+import std;
 
 namespace SoulEngine {
+
+// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
+CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug info (OpLine/OpString) for RenderDoc"};
 
 /// Build the session-level compiler options vector from the engine config.
 [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry> {
     std::vector<slang::CompilerOptionEntry> Options;
+    // EmitSpirvDirectly
 
-    // ── EmitSpirvDirectly ─────────────────────────────────────────────────
     Options.push_back({
         .name  = slang::CompilerOptionName::EmitSpirvDirectly,
         .value = {.intValue0 = 1},
     });
+    // VulkanUseEntryPointName
 
-    // ── VulkanUseEntryPointName ───────────────────────────────────────────
     Options.push_back({
         .name  = slang::CompilerOptionName::VulkanUseEntryPointName,
         .value = {.intValue0 = 1},
     });
+    // DebugInformation
 
-    // ── DebugInformation ──────────────────────────────────────────────────
-    const auto& ShaderCfg = ConfigManager::Get().GetConfig().Shader;
-    const bool  WantDebug = ShaderCfg.DebugInfo.value_or(false);
+    const bool WantDebug = CVarShaderDebugInfo.Get();
     if (WantDebug) {
         Options.push_back({
             .name  = slang::CompilerOptionName::DebugInformation,
             .value = {.intValue0 = SLANG_DEBUG_INFO_LEVEL_STANDARD},
         });
     }
+    // Optimization
 
-    // ── Optimization ──────────────────────────────────────────────────
     Options.push_back({
         .name  = slang::CompilerOptionName::Optimization,
         .value = {.intValue0 = SLANG_OPTIMIZATION_LEVEL_HIGH},

@@ -2,7 +2,9 @@
 -- See https://xmake.io/api/description/global-interfaces.html#add-requireconfs
 -- add_requireconfs("*", {configs = {shared = true}})
 
-add_repositories("souvenal-repo git@github.com:Souvenal/xmake-repo.git")
+-- HTTPS rather than SSH: the repo is public, so HTTPS works with zero credentials both locally and on
+-- CI runners (which have no SSH keys).
+add_repositories("souvenal-repo https://github.com/Souvenal/xmake-repo.git")
 
 local vulkan_header_configs = {
     modules = true,
@@ -18,6 +20,10 @@ local vulkan_header_configs = {
     -- which uses `vkGetInstanceProcAddr` to load all vulkan APIs at runtime,
     -- rather than static dispatching, by calling the symbols exported by the library.
     dispatch_loader_dynamic = true,
+    -- drop Vulkan-Hpp's own `DynamicLoader` (dlopen-based loader discovery):
+    -- volk owns loader discovery instead, and `vk::raii::Context` is constructed
+    -- from volk's vkGetInstanceProcAddr (VKContext.cppm).
+    enable_dynamic_loader_tool = false,
     -- ban vulkan_hpp from throwing exceptions
     no_exceptions = true,
     -- enable c++20 designate initializer syntax for aggregate type
@@ -32,13 +38,21 @@ add_requires("vulkan-headers", {
 -- otherwise xmake installs a second `vulkan-headers#1` variant with the
 -- recipe defaults alongside ours.
 add_requireconfs('vulkan-memory-allocator.vulkan-headers', {
+    override = true,
     configs = vulkan_header_configs
 })
 add_requireconfs("imgui.vulkan-headers", {
+    override = true,
+    configs = vulkan_header_configs
+})
+add_requireconfs("volk.vulkan-headers", {
+    override = true,
     configs = vulkan_header_configs
 })
 
 add_requires("vulkan-memory-allocator v3.4.0")
+
+add_requires("volk")
 
 -- TODO: pack vulkan-loader on macOS
 -- add_requires("vulkan-loader 1.4.350+0")
@@ -52,6 +66,13 @@ add_requires("slang[embed_stdlib_source=false] vulkan-sdk-1.4.350.0")
 -- cl-based RC dependency scan on Windows. The use_ccache config is provided
 -- by souvenal-repo's assimp recipe.
 add_requires("assimp", {configs = {use_ccache = false}})
+
+-- Force zlib onto a source build wherever it appears as a transitive dependency (assimp, minizip).
+-- Resolved as a system package, zlib comes from the Xcode SDK and assimp's FindZLIB injects the SDK's
+-- usr/include as a plain -I, which puts C headers ahead of libc++'s and breaks the build under Homebrew
+-- clang ("<cmath> tried including <math.h> ..."). The pattern must cover every parent path, otherwise the
+-- mixed system/source resolutions of the same package race each other during dependency unification.
+add_requireconfs("**.zlib", {override = true, system = false})
 
 -- system = false is required because add_tests() creates a test wrapper
 -- that resolves packages through its own independent path, which does
@@ -69,7 +90,7 @@ add_requires("magic_enum[modules]")
 -- TODO: use module build
 add_requires("toml++")
 
-add_requires("tracy 0.13.0")
+add_requires("tracy 0.14.1")
 
 add_requires("spdlog[std_format,noexcept]")
 
@@ -93,4 +114,7 @@ local imgui_config = {
 }
 add_requires("imgui master", {configs = imgui_config})
 add_requires("imgui-club")
-add_requireconfs("imgui-club.imgui", {configs = imgui_config})
+add_requireconfs("imgui-club.imgui", {
+    override = true,
+    configs = imgui_config
+})

@@ -1,7 +1,14 @@
 #include <gtest/gtest.h>
+// MaterialTypes uses hlsl++ types in its GMF, but the header is not exported from the module: name the type
+// textually here or clang rejects hlslpp:: as an undeclared identifier (MSVC was lax about
+// reachable-but-unexported names).
+#include <hlsl++.h>
 #include <assimp/GltfMaterial.h>
 
 import Material;
+import std;
+import Core;
+import RHI;
 
 using namespace SoulEngine;
 
@@ -22,23 +29,21 @@ class ScopedTemporaryFile final {
 
 [[nodiscard]] auto MakeTemporaryMaterialFilePath(std::error_code& Error) -> Path {
     static std::atomic<Uint32> NextFileId = 0;
-    const auto Directory = std::filesystem::temp_directory_path(Error);
+    const auto                 Directory  = std::filesystem::temp_directory_path(Error);
     if (Error)
         return {};
     return Directory / Format("soulengine_material_alpha_{}.yaml", NextFileId.fetch_add(1, std::memory_order_relaxed));
 }
 
-class MockSampledTexture final : public RHISampledTexture {
+class MockSampledTexture final : public RHITexture {
   public:
-    explicit MockSampledTexture(String Name) : RHISampledTexture(std::move(Name)) {}
-
-    [[nodiscard]] auto GetWidth() const -> Uint32 override {
-        return 1;
-    }
-
-    [[nodiscard]] auto GetHeight() const -> Uint32 override {
-        return 1;
-    }
+    explicit MockSampledTexture(String Name)
+        : RHITexture(std::move(Name),
+                     RHITextureDesc{.Width       = 1,
+                                    .Height      = 1,
+                                    .Format      = RHIFormat::R8G8B8A8_UNORM,
+                                    .Usage       = RHITextureUsage::Sampled,
+                                    .MemoryUsage = RHIMemoryUsage::GpuOnly}) {}
 };
 
 class MaterialGpuDataTest : public testing::Test {
@@ -52,15 +57,15 @@ class MaterialGpuDataTest : public testing::Test {
         GDeferredDeletionQueue = nullptr;
     }
 
-    [[nodiscard]] auto CreateTexture(StringView Name) -> RHIRef<RHISampledTexture> {
-        auto Texture = RHIRef<RHISampledTexture>::Create();
+    [[nodiscard]] auto CreateTexture(StringView Name) -> RHIRef<RHITexture> {
+        auto Texture = RHIRef<RHITexture>::Create();
         if (auto Published = Texture.Publish(std::make_unique<MockSampledTexture>(String(Name)), RHIRefState::Ready);
             !Published)
             return {};
         return Texture;
     }
 
-    [[nodiscard]] auto CreateTextureData(RHIRef<RHISampledTexture> Texture) -> TextureDataHandle {
+    [[nodiscard]] auto CreateTextureData(RHIRef<RHITexture> Texture) -> TextureDataHandle {
         return TextureDataHandle{std::make_shared<TextureData>(TextureData{
             .Texture = std::move(Texture),
         })};
@@ -74,12 +79,13 @@ class MaterialGpuDataTest : public testing::Test {
 
 TEST(MaterialRecord, PreservesFlatTextureTypeOrder) {
     const MaterialRecord Material{
-        .Textures = {
-            TextureRecord{.Type = TextureType::BaseColor},
-            TextureRecord{.Type = TextureType::Normals},
-            TextureRecord{.Type = TextureType::BaseColor},
-            TextureRecord{.Type = TextureType::Metalness},
-        },
+        .Textures =
+            {
+                TextureRecord{.Type = TextureType::BaseColor},
+                TextureRecord{.Type = TextureType::Normals},
+                TextureRecord{.Type = TextureType::BaseColor},
+                TextureRecord{.Type = TextureType::Metalness},
+            },
     };
 
     ASSERT_EQ(Material.Textures.size(), 4U);
@@ -90,15 +96,15 @@ TEST(MaterialRecord, PreservesFlatTextureTypeOrder) {
 }
 
 TEST(MaterialRecord, UploadsAlphaMaskParameters) {
-    RHIRefArray<RHISampledTexture> Textures;
-    const MaterialRecord Material{
-        .Opacity = 0.8f,
-        .AlphaMode = MaterialAlphaMode::Mask,
-        .AlphaCutoff = 0.37f,
+    std::unordered_map<Uint64, Uint32> TextureIndices;
+    const MaterialRecord               Material{
+        .Opacity         = 0.8f,
+        .AlphaMode       = MaterialAlphaMode::Mask,
+        .AlphaCutoff     = 0.37f,
         .BaseColorFactor = hlslpp::float4{1.0f, 1.0f, 1.0f, 0.6f},
     };
 
-    const auto GpuData = Material.BuildGpuData(Textures);
+    const auto GpuData = Material.BuildGpuData(TextureIndices);
 
     EXPECT_EQ(GpuData.AlphaMode, static_cast<Uint32>(MaterialAlphaMode::Mask));
     EXPECT_FLOAT_EQ(GpuData.AlphaCutoff, 0.37f);
@@ -119,7 +125,7 @@ TEST(MaterialAssimpLoader, ImportsGltfAlphaModeAndCutoff) {
     };
 
     for (const auto& TestCase : AlphaModeCases) {
-        aiMaterial Source = {};
+        aiMaterial     Source = {};
         const aiString AlphaMode{std::string{TestCase.SourceValue}};
         ASSERT_EQ(Source.AddProperty(&AlphaMode, AI_MATKEY_GLTF_ALPHAMODE), AI_SUCCESS);
         ASSERT_EQ(Source.AddProperty(&TestCase.Cutoff, 1, AI_MATKEY_GLTF_ALPHACUTOFF), AI_SUCCESS);
@@ -142,8 +148,8 @@ TEST(MaterialAssimpLoader, DefaultsGltfAlphaModeAndCutoff) {
 }
 
 TEST(MaterialYamlLoader, AuthorsGltfAlphaModeAndCutoff) {
-    std::error_code Error = {};
-    const auto FilePath = MakeTemporaryMaterialFilePath(Error);
+    std::error_code Error    = {};
+    const auto      FilePath = MakeTemporaryMaterialFilePath(Error);
     ASSERT_FALSE(Error) << Error.message();
     ScopedTemporaryFile Cleanup{FilePath};
     {
@@ -171,30 +177,32 @@ TEST_F(MaterialGpuDataTest, GltfMetallicRoughnessTakesPrecedence) {
     ASSERT_TRUE(MetallicTexture);
     ASSERT_TRUE(RoughnessTexture);
 
-    RHIRefArray<RHISampledTexture> TextureArray;
-    ASSERT_TRUE(TextureArray.Append(GltfTexture).has_value());
-    ASSERT_TRUE(TextureArray.Append(MetallicTexture).has_value());
-    ASSERT_TRUE(TextureArray.Append(RoughnessTexture).has_value());
-
-    const MaterialRecord Material{
-        .Textures = {
-            TextureRecord{
-                .Type = TextureType::GltfMetallicRoughness,
-                .Texture = CreateTextureData(GltfTexture),
-            },
-            TextureRecord{
-                .Type = TextureType::Metalness,
-                .Texture = CreateTextureData(MetallicTexture),
-            },
-            TextureRecord{
-                .Type = TextureType::DiffuseRoughness,
-                .Texture = CreateTextureData(RoughnessTexture),
-            },
-        },
+    const std::unordered_map<Uint64, Uint32> TextureIndices{
+        {GltfTexture->GetId(), 1U},
+        {MetallicTexture->GetId(), 2U},
+        {RoughnessTexture->GetId(), 3U},
     };
 
-    const auto GpuData = Material.BuildGpuData(TextureArray);
-    const auto GltfHandle = std::array<Uint32, 2>{RHIRefArray<RHISampledTexture>::FirstResourceSlot, 0U};
+    const MaterialRecord Material{
+        .Textures =
+            {
+                TextureRecord{
+                    .Type    = TextureType::GltfMetallicRoughness,
+                    .Texture = CreateTextureData(GltfTexture),
+                },
+                TextureRecord{
+                    .Type    = TextureType::Metalness,
+                    .Texture = CreateTextureData(MetallicTexture),
+                },
+                TextureRecord{
+                    .Type    = TextureType::DiffuseRoughness,
+                    .Texture = CreateTextureData(RoughnessTexture),
+                },
+            },
+    };
+
+    const auto GpuData    = Material.BuildGpuData(TextureIndices);
+    const auto GltfHandle = std::array<Uint32, 2>{1U, 0U};
     const auto NullHandle = std::array<Uint32, 2>{};
     EXPECT_EQ(GpuData.MetallicRoughnessTexture, GltfHandle);
     EXPECT_EQ(GpuData.MetallicTexture, NullHandle);
@@ -205,25 +213,25 @@ TEST_F(MaterialGpuDataTest, SharedMetalnessAndRoughnessUseCombinedHandle) {
     auto SharedTexture = CreateTexture("Test/MetallicRoughness");
     ASSERT_TRUE(SharedTexture);
 
-    RHIRefArray<RHISampledTexture> TextureArray;
-    ASSERT_TRUE(TextureArray.Append(SharedTexture).has_value());
-    const auto SharedTextureData = CreateTextureData(SharedTexture);
-    const MaterialRecord Material{
-        .Textures = {
-            TextureRecord{
-                .Type = TextureType::Metalness,
-                .Texture = SharedTextureData,
+    const std::unordered_map<Uint64, Uint32> TextureIndices{{SharedTexture->GetId(), 1U}};
+    const auto                               SharedTextureData = CreateTextureData(SharedTexture);
+    const MaterialRecord                     Material{
+        .Textures =
+            {
+                TextureRecord{
+                    .Type    = TextureType::Metalness,
+                    .Texture = SharedTextureData,
+                },
+                TextureRecord{
+                    .Type    = TextureType::DiffuseRoughness,
+                    .Texture = SharedTextureData,
+                },
             },
-            TextureRecord{
-                .Type = TextureType::DiffuseRoughness,
-                .Texture = SharedTextureData,
-            },
-        },
     };
 
-    const auto GpuData = Material.BuildGpuData(TextureArray);
-    const auto CombinedHandle = std::array<Uint32, 2>{RHIRefArray<RHISampledTexture>::FirstResourceSlot, 0U};
-    const auto NullHandle = std::array<Uint32, 2>{};
+    const auto GpuData        = Material.BuildGpuData(TextureIndices);
+    const auto CombinedHandle = std::array<Uint32, 2>{1U, 0U};
+    const auto NullHandle     = std::array<Uint32, 2>{};
     EXPECT_EQ(GpuData.MetallicRoughnessTexture, CombinedHandle);
     EXPECT_EQ(GpuData.MetallicTexture, NullHandle);
     EXPECT_EQ(GpuData.RoughnessTexture, NullHandle);
@@ -235,26 +243,28 @@ TEST_F(MaterialGpuDataTest, SeparateMetalnessAndRoughnessUseSeparateHandles) {
     ASSERT_TRUE(MetallicTexture);
     ASSERT_TRUE(RoughnessTexture);
 
-    RHIRefArray<RHISampledTexture> TextureArray;
-    ASSERT_TRUE(TextureArray.Append(MetallicTexture).has_value());
-    ASSERT_TRUE(TextureArray.Append(RoughnessTexture).has_value());
+    const std::unordered_map<Uint64, Uint32> TextureIndices{
+        {MetallicTexture->GetId(), 1U},
+        {RoughnessTexture->GetId(), 2U},
+    };
     const MaterialRecord Material{
-        .Textures = {
-            TextureRecord{
-                .Type = TextureType::Metalness,
-                .Texture = CreateTextureData(MetallicTexture),
+        .Textures =
+            {
+                TextureRecord{
+                    .Type    = TextureType::Metalness,
+                    .Texture = CreateTextureData(MetallicTexture),
+                },
+                TextureRecord{
+                    .Type    = TextureType::DiffuseRoughness,
+                    .Texture = CreateTextureData(RoughnessTexture),
+                },
             },
-            TextureRecord{
-                .Type = TextureType::DiffuseRoughness,
-                .Texture = CreateTextureData(RoughnessTexture),
-            },
-        },
     };
 
-    const auto GpuData = Material.BuildGpuData(TextureArray);
-    const auto MetallicHandle = std::array<Uint32, 2>{RHIRefArray<RHISampledTexture>::FirstResourceSlot, 0U};
-    const auto RoughnessHandle = std::array<Uint32, 2>{RHIRefArray<RHISampledTexture>::FirstResourceSlot + 1U, 0U};
-    const auto NullHandle = std::array<Uint32, 2>{};
+    const auto GpuData         = Material.BuildGpuData(TextureIndices);
+    const auto MetallicHandle  = std::array<Uint32, 2>{1U, 0U};
+    const auto RoughnessHandle = std::array<Uint32, 2>{1U + 1U, 0U};
+    const auto NullHandle      = std::array<Uint32, 2>{};
     EXPECT_EQ(GpuData.MetallicRoughnessTexture, NullHandle);
     EXPECT_EQ(GpuData.MetallicTexture, MetallicHandle);
     EXPECT_EQ(GpuData.RoughnessTexture, RoughnessHandle);

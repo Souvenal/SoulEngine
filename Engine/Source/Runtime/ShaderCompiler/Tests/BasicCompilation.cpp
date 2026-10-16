@@ -9,8 +9,7 @@ import ShaderCompiler;
 import std;
 
 using namespace SoulEngine;
-
-// ── Helpers ────────────────────────────────────────────────────────────
+// Helpers
 
 /// Verify that a bytecode buffer starts with the SPIR-V magic number.
 [[nodiscard]] static auto IsValidSPIRV(std::span<const std::uint32_t> Words) -> bool {
@@ -31,8 +30,7 @@ class ShaderCompilerTest : public ::testing::Test {
         ASSERT_TRUE(SourceResult.has_value()) << SourceResult.error().ToString();
     }
 };
-
-// ── Success: graphics pipeline compilation ─────────────────────────────
+// Success: graphics pipeline compilation
 
 TEST_F(ShaderCompilerTest, CompileGraphicsProgramFromPath) {
     auto Result = ShaderCompiler::Get().CompileGraphics(GraphicsCompileDesc{

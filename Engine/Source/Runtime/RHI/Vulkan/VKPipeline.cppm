@@ -15,6 +15,7 @@ import :Shader;
 import :ShaderBindingSet;
 import :Context;
 import :Debug;
+import Core;
 
 namespace SoulEngine {
 
@@ -61,11 +62,10 @@ struct VulkanReflectedDescriptorBinding {
     return Result;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanGraphicsPipeline — concrete Vulkan pipeline owned by ResourceManager.
-// ═════════════════════════════════════════════════════════════════════════════
+// VulkanGraphicsPipeline — concrete Vulkan pipeline kept alive by RHIRef owners.
 
-/// Vulkan graphics pipeline using the layout owned by its shader binding set.
+/// @brief Vulkan graphics pipeline using the layout owned by its shader binding set.
+///
 /// Created via the static `Create` factory. RHICommand lists only observe it.
 class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
   public:
@@ -77,29 +77,28 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     VulkanGraphicsPipeline(const VulkanGraphicsPipeline&)                    = delete;
     auto operator=(const VulkanGraphicsPipeline&) -> VulkanGraphicsPipeline& = delete;
 
-    /// Create a Vulkan graphics pipeline from an RHI descriptor.
+    /// @brief Create a Vulkan graphics pipeline from an RHI descriptor.
     ///
     /// Shader modules are transient — destroyed when this function returns.
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     StringView                   Name,
-                                     const RHIGraphicsPipelineDesc& Desc)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<UPtr<VulkanGraphicsPipeline>, ErrorMessage> {
 
-        // Descriptor set layouts always come from the shader binding set, which
-        // ResourcePipeline creates before the pipeline.
+        // Descriptor set layouts always come from the shader binding set, which ResourcePipeline creates
+        // before the pipeline.
         auto* BindingSet = Desc.BindingSet.TryGet();
         if (!BindingSet)
             return std::unexpected(ErrorMessage("Graphics pipeline requires a ready shader binding set"));
         auto* VulkanBindingSet = static_cast<VulkanShaderBindingSet*>(BindingSet);
-        // ── Shader stages ──────────────────────────────────────────────
-        auto ShaderStates = VulkanGraphicsShaderStates::Create(Context.GetDevice(), Context.GetDebugUtils(), Desc);
+        // Shader stages
+        auto  ShaderStates     = VulkanGraphicsShaderStates::Create(Context.GetDevice(), Context.GetDebugUtils(), Desc);
         if (!ShaderStates)
             return std::unexpected(ShaderStates.error());
         Uint32 StageCount    = static_cast<Uint32>(ShaderStates->StageInfos.size());
         auto   VertexInputCI = ShaderStates->GetPipelineVertexInputStateCI();
 
-        // Most pipeline state is baked at creation time and cannot change,
-        // but some can be changed at draw time without recreating the pipeline.
+        // Most pipeline state is baked at creation time and cannot change, but some can be changed at draw
+        // time without recreating the pipeline.
         //
         // e.g. viewport size, line width, blend constants.
         //
@@ -115,26 +114,22 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
 
         // If specifying statically:
         //
-        // Viewport describes the region of the framebuffer to render to,
-        // and remember the size of the swapchain images may be different from
-        // the window size, so we'll stick to the swapchain extent.
+        // Viewport describes the region of the framebuffer to render to, and remember the size of the
+        // swapchain images may be different from the window size, so we'll stick to the swapchain extent.
         //
-        // Almost always (0, 0) -> (width, height)
-        // Defines the transformation from image to framebuffer,
-        // so only the targeted region of the framebuffer will be affected.
+        // Almost always (0, 0) -> (width, height) Defines the transformation from image to framebuffer, so
+        // only the targeted region of the framebuffer will be affected.
         //
-        // minDepth and maxDepth specify the depth range for the framebuffer,
-        // must be within [0.0, 1.0], but min can be higher than max.
-        // If nothing special, just use standard (0.0, 1.0).
-        // vk::Viewport Viewport{
+        // minDepth and maxDepth specify the depth range for the framebuffer, must be within [0.0, 1.0], but
+        // min can be higher than max. If nothing special, just use standard (0.0, 1.0). vk::Viewport
+        // Viewport{
         //     .x = 0.0f, .y = 0.0f,
         //     .width = static_cast<float>(SwapchainExtent.width),
         //     .height = static_cast<float>(SwapchainExtent.height),
         //     .minDepth = 0.0f, .maxDepth = 1.0f,
         // };
         //
-        // Scissor defines the region in which pixels will be stored,
-        // so outside the rect, no storage.
+        // Scissor defines the region in which pixels will be stored, so outside the rect, no storage.
         // vk::Rect2D Scissor{
         //     .offset = vk::Offset2D{0, 0},
         //     .extent = SwapchainExtent,
@@ -149,38 +144,33 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             .topology = vk::PrimitiveTopology::eTriangleList,
         };
 
-        // Besides rasterization, rasterizer in vulkan also performs
-        // depth testing, face culling and scissor test.
+        // Besides rasterization, rasterizer in vulkan also performs depth testing, face culling and scissor
+        // test.
         //
         // Can also configure fill entire polygons or just the edges (wireframe-rendering).
         //
         // TODO: shadow maps
         vk::PipelineRasterizationStateCreateInfo RasterizerCI{
-            // If true, fragments beyond the near and far planes are clamped to them
-            // instead of discarded. Useful for *shadow mapping*.
-            // Requires a GPU feature.
+            // If true, fragments beyond the near and far planes are clamped to them instead of discarded.
+            // Useful for *shadow mapping*. Requires a GPU feature.
             .depthClampEnable        = false,
             // If true, rasterization is disabled, basically disabling any output.
             .rasterizerDiscardEnable = false,
-            // fill / line / point (line and point require GPU feature)
-            // TODO: support all of these in RHI
+            // fill / line / point (line and point require GPU feature) TODO: support all of these in RHI
             // .polygonMode = Desc.Rasterizer.FillMode ? vk::PolygonMode::eFill : vk::PolygonMode::eLine,
             .polygonMode             = vk::PolygonMode::eFill,
-            // none / back / front
-            // TODO: support all of these in RHI
-            // .cullMode = Desc.Rasterizer.CullMode ? vk::CullModeFlagBits::eBack : vk::CullModeFlagBits::eNone,
+            // none / back / front TODO: support all of these in RHI .cullMode = Desc.Rasterizer.CullMode ?
+            // vk::CullModeFlagBits::eBack
+            //                                        : vk::CullModeFlagBits::eNone,
             .cullMode                = vk::CullModeFlagBits::eNone,
-            // clockwise / counter-clockwise
-            // TODO: support changing in RHI
+            // clockwise / counter-clockwise TODO: support changing in RHI
             .frontFace               = vk::FrontFace::eCounterClockwise,
-            // describe the thickness in terms of number of fragments
-            // thicker than 1.0f needs *wideLines* GPU feature
-            // .lineWidth = Desc.Rasterizer.LineWidth,
+            // describe the thickness in terms of number of fragments thicker than 1.0f needs *wideLines* GPU
+            // feature .lineWidth = Desc.Rasterizer.LineWidth,
             .lineWidth               = 1.0f};
 
-        // Why is MSAA cheaper than SSAA?
-        // Because MSAA is selective, only in edges of polygons,
-        // and there are hardware optimizations for MSAA.
+        // Why is MSAA cheaper than SSAA? Because MSAA is selective, only in edges of polygons, and there are
+        // hardware optimizations for MSAA.
         //
         // TODO: implement MSAA
         vk::PipelineMultisampleStateCreateInfo MultisampleCI{
@@ -200,40 +190,55 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             .maxDepthBounds        = 1.0f,
         };
 
-        // After fragment shader returns a color, it needs to be combined with
-        // that in the framebuffer. There are 2 ways:
+        // After fragment shader returns a color, it needs to be combined with that in the framebuffer. There
+        // are 2 ways:
         // - mix old and new
         // - combine old and new with bitwise operations
         //
-        // PipelineColorBlendAttachmentState is for per attached framebuffer
-        // PipelineColorBlendStateCreateInfo is for global settings
+        // PipelineColorBlendAttachmentState is for per attached framebuffer PipelineColorBlendStateCreateInfo
+        // is for global settings
         //
         std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments;
         RHIBlendAttachments.reserve(Desc.ColorFormats.size());
         for (size_t i = 0; i < Desc.ColorFormats.size(); ++i) {
-            const auto& Attachment = Desc.Blend.Attachments[i];
-            const auto ToVkBlendFactor = [](RHIBlendFactor F) -> vk::BlendFactor {
+            const auto& Attachment      = Desc.Blend.Attachments[i];
+            const auto  ToVkBlendFactor = [](RHIBlendFactor F) -> vk::BlendFactor {
                 switch (F) {
-                case RHIBlendFactor::Zero:             return vk::BlendFactor::eZero;
-                case RHIBlendFactor::One:              return vk::BlendFactor::eOne;
-                case RHIBlendFactor::SrcColor:         return vk::BlendFactor::eSrcColor;
-                case RHIBlendFactor::OneMinusSrcColor: return vk::BlendFactor::eOneMinusSrcColor;
-                case RHIBlendFactor::DstColor:         return vk::BlendFactor::eDstColor;
-                case RHIBlendFactor::OneMinusDstColor: return vk::BlendFactor::eOneMinusDstColor;
-                case RHIBlendFactor::SrcAlpha:         return vk::BlendFactor::eSrcAlpha;
-                case RHIBlendFactor::OneMinusSrcAlpha: return vk::BlendFactor::eOneMinusSrcAlpha;
-                case RHIBlendFactor::DstAlpha:         return vk::BlendFactor::eDstAlpha;
-                case RHIBlendFactor::OneMinusDstAlpha: return vk::BlendFactor::eOneMinusDstAlpha;
+                case RHIBlendFactor::Zero:
+                    return vk::BlendFactor::eZero;
+                case RHIBlendFactor::One:
+                    return vk::BlendFactor::eOne;
+                case RHIBlendFactor::SrcColor:
+                    return vk::BlendFactor::eSrcColor;
+                case RHIBlendFactor::OneMinusSrcColor:
+                    return vk::BlendFactor::eOneMinusSrcColor;
+                case RHIBlendFactor::DstColor:
+                    return vk::BlendFactor::eDstColor;
+                case RHIBlendFactor::OneMinusDstColor:
+                    return vk::BlendFactor::eOneMinusDstColor;
+                case RHIBlendFactor::SrcAlpha:
+                    return vk::BlendFactor::eSrcAlpha;
+                case RHIBlendFactor::OneMinusSrcAlpha:
+                    return vk::BlendFactor::eOneMinusSrcAlpha;
+                case RHIBlendFactor::DstAlpha:
+                    return vk::BlendFactor::eDstAlpha;
+                case RHIBlendFactor::OneMinusDstAlpha:
+                    return vk::BlendFactor::eOneMinusDstAlpha;
                 }
                 return vk::BlendFactor::eZero;
             };
             const auto ToVkBlendOp = [](RHIBlendOp Op) -> vk::BlendOp {
                 switch (Op) {
-                case RHIBlendOp::Add:             return vk::BlendOp::eAdd;
-                case RHIBlendOp::Subtract:        return vk::BlendOp::eSubtract;
-                case RHIBlendOp::ReverseSubtract: return vk::BlendOp::eReverseSubtract;
-                case RHIBlendOp::Min:             return vk::BlendOp::eMin;
-                case RHIBlendOp::Max:             return vk::BlendOp::eMax;
+                case RHIBlendOp::Add:
+                    return vk::BlendOp::eAdd;
+                case RHIBlendOp::Subtract:
+                    return vk::BlendOp::eSubtract;
+                case RHIBlendOp::ReverseSubtract:
+                    return vk::BlendOp::eReverseSubtract;
+                case RHIBlendOp::Min:
+                    return vk::BlendOp::eMin;
+                case RHIBlendOp::Max:
+                    return vk::BlendOp::eMax;
                 }
                 return vk::BlendOp::eAdd;
             };
@@ -250,8 +255,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             });
         }
         vk::PipelineColorBlendStateCreateInfo BlendCI{
-            // set to True if we want bitwise op,
-            // which will disable blending settings above
+            // set to True if we want bitwise op, which will disable blending settings above
             .logicOpEnable   = vk::False,
             .logicOp         = vk::LogicOp::eCopy,
             .attachmentCount = static_cast<Uint32>(RHIBlendAttachments.size()),
@@ -262,8 +266,8 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
             Desc.ColorFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
         vk::Format DepthVkFormat = HasDepth ? ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
 
-        // Dynamic rendering allows us to specify color, depth, stencil attachments directly
-        // after the pipeline is created
+        // Dynamic rendering allows us to specify color, depth, stencil attachments directly after the
+        // pipeline is created
         vk::PipelineRenderingCreateInfo RenderingCI{
             .colorAttachmentCount    = static_cast<Uint32>(ColorFormats.size()),
             .pColorAttachmentFormats = ColorFormats.data(),
@@ -293,8 +297,8 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
 
         Context.GetDebugUtils().SetObjectName(*VkPipeline, Name);
 
-        auto Ret        = std::make_unique<VulkanGraphicsPipeline>(String(Name), Desc);
-        Ret->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
+        auto Ret                  = std::make_unique<VulkanGraphicsPipeline>(String(Name), Desc);
+        Ret->m_VkPipeline         = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
         Ret->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
         Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
         Ret->m_ColorFormats       = Desc.ColorFormats;
@@ -311,15 +315,6 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         return m_Bindings;
     }
 
-    [[nodiscard]] auto FindBinding(StringView ParameterPath, ShaderResourceType Type) const
-        -> const VulkanReflectedDescriptorBinding* {
-        for (const auto& Binding : m_Bindings) {
-            if (Binding.Type == Type && Binding.ParameterPath == ParameterPath)
-                return &Binding;
-        }
-        return nullptr;
-    }
-
     [[nodiscard]] auto GetDynamicOffsetCount() const -> Uint32 {
         return m_DynamicOffsetCount;
     }
@@ -329,16 +324,14 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     }
 
   private:
-    SPtr<vk::raii::Pipeline>                         m_VkPipeline       = nullptr;
-    std::vector<VulkanReflectedDescriptorBinding>    m_Bindings       = {};
-    Uint32                                    m_DynamicOffsetCount = 0;
-    std::vector<RHIFormat>                    m_ColorFormats       = {};
-    RHIFormat                                 m_DepthFormat        = RHIFormat::Unknown;
+    SPtr<vk::raii::Pipeline>                      m_VkPipeline         = nullptr;
+    std::vector<VulkanReflectedDescriptorBinding> m_Bindings           = {};
+    Uint32                                        m_DynamicOffsetCount = 0;
+    std::vector<RHIFormat>                        m_ColorFormats       = {};
+    RHIFormat                                     m_DepthFormat        = RHIFormat::Unknown;
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
 // VulkanComputePipeline — concrete Vulkan compute pipeline.
-// ═════════════════════════════════════════════════════════════════════════════
 
 class VulkanComputePipeline final : public RHIComputePipeline {
   public:
@@ -350,9 +343,8 @@ class VulkanComputePipeline final : public RHIComputePipeline {
     VulkanComputePipeline(const VulkanComputePipeline&)                    = delete;
     auto operator=(const VulkanComputePipeline&) -> VulkanComputePipeline& = delete;
 
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     StringView                   Name,
-                                     const RHIComputePipelineDesc& Desc)
+    [[nodiscard]] static auto
+    Create(const VulkanResourceContext& Context, StringView Name, const RHIComputePipelineDesc& Desc)
         -> std::expected<UPtr<VulkanComputePipeline>, ErrorMessage> {
         auto* BindingSet = Desc.BindingSet.TryGet();
         if (!BindingSet)
@@ -373,10 +365,57 @@ class VulkanComputePipeline final : public RHIComputePipeline {
             Context.GetDebugUtils().SetObjectName(*ShaderModule, Name);
         }
 
+        // Specialization constants: validate host values against the reflection, then lower them to
+        // VkSpecializationInfo. Constants the host omits keep their shader-declared defaults. Every value is
+        // 32-bit, so one word of backing storage per entry suffices.
+        std::vector<vk::SpecializationMapEntry> MapEntries;
+        std::vector<Uint32>                     SpecData;
+        if (!Desc.SpecializationConstants.empty()) {
+            if (auto R = ValidateSpecializationConstants(Desc.SpecializationConstants, Desc.Program.Reflection); !R)
+                return std::unexpected(R.error());
+
+            MapEntries.reserve(Desc.SpecializationConstants.size());
+            for (const auto& Value : Desc.SpecializationConstants) {
+                const auto& Reflection = Desc.Program.Reflection;
+                const auto  It         = std::ranges::find_if(Reflection.SpecializationConstants,
+                                                              [&](const auto& R) { return R.Name == Value.Name; });
+
+                Uint32 Bits = 0;
+                std::visit(
+                    [&](const auto& Held) {
+                        using HeldType = std::decay_t<decltype(Held)>;
+                        if constexpr (std::same_as<HeldType, bool>)
+                            Bits = Held ? 1U : 0U;
+                        else if constexpr (std::same_as<HeldType, Uint32>)
+                            Bits = Held;
+                        else
+                            Bits = std::bit_cast<Uint32>(static_cast<Int32>(Held));
+                    },
+                    Value.Value);
+
+                MapEntries.push_back(vk::SpecializationMapEntry{
+                    .constantID = It->ConstantId,
+                    .offset     = static_cast<Uint32>(SpecData.size() * sizeof(Uint32)),
+                    .size       = sizeof(Uint32),
+                });
+                SpecData.push_back(Bits);
+            }
+        }
+
+        vk::SpecializationInfo SpecInfo{
+            .mapEntryCount = static_cast<Uint32>(MapEntries.size()),
+            .pMapEntries   = MapEntries.data(),
+            .dataSize      = SpecData.size() * sizeof(Uint32),
+            .pData         = SpecData.data(),
+        };
+
+        // VkSpecializationInfo rides the dedicated pSpecializationInfo field; it is not a pNext-chainable
+        // struct (no sType).
         vk::PipelineShaderStageCreateInfo StageCI{
-            .stage  = vk::ShaderStageFlagBits::eCompute,
-            .module = *ShaderModule,
-            .pName  = Desc.Program.ComputeEntryPointName.c_str(),
+            .stage               = vk::ShaderStageFlagBits::eCompute,
+            .module              = *ShaderModule,
+            .pName               = Desc.Program.ComputeEntryPointName.c_str(),
+            .pSpecializationInfo = MapEntries.empty() ? nullptr : &SpecInfo,
         };
 
         vk::ComputePipelineCreateInfo PipelineCI{
@@ -391,7 +430,7 @@ class VulkanComputePipeline final : public RHIComputePipeline {
 
         Context.GetDebugUtils().SetObjectName(*Pipeline, Name);
 
-        auto Ret        = std::make_unique<VulkanComputePipeline>(String(Name), Desc);
+        auto Ret          = std::make_unique<VulkanComputePipeline>(String(Name), Desc);
         Ret->m_VkPipeline = std::make_shared<vk::raii::Pipeline>(std::move(Pipeline));
         return Ret;
     }

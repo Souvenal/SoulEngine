@@ -13,16 +13,15 @@ export module Core:Util.Yaml;
 export import :Util.Types;
 export import :Util.Error;
 export import :Util.IO;
-export import std;
+import std;
 
 namespace SoulEngine {
 
-namespace {
-
+// Module linkage, not an anonymous namespace: this class is named by the exported inline YamlDocument::Create
+// below, and TU-local entities cannot be named from exported code — see Core:CVar's linkage note.
 class YamlParser {
   public:
-    [[nodiscard]] static auto Create(std::span<const unsigned char> Source)
-        -> std::expected<YamlParser, ErrorMessage> {
+    [[nodiscard]] static auto Create(std::span<const unsigned char> Source) -> std::expected<YamlParser, ErrorMessage> {
         YamlParser Result = {};
         if (!yaml_parser_initialize(&Result.m_Parser))
             return std::unexpected(ErrorMessage("Failed to initialize YAML parser"));
@@ -35,8 +34,8 @@ class YamlParser {
         if (auto Result = Validate(); !Result)
             return std::unexpected(Result.error());
 
-        // The validation pass consumed the input stream and libyaml does not support
-        // rewinding or re-setting the input on a used parser, so reset it first.
+        // The validation pass consumed the input stream and libyaml does not support rewinding or re-setting
+        // the input on a used parser, so reset it first.
         yaml_parser_delete(&m_Parser);
         if (!yaml_parser_initialize(&m_Parser)) {
             m_Initialized = false;
@@ -82,22 +81,20 @@ class YamlParser {
         yaml_event_t Event         = {};
         while (true) {
             if (!yaml_parser_parse(&m_Parser, &Event)) {
-                const auto Problem = m_Parser.problem ? StringView(m_Parser.problem)
-                                                      : StringView("unknown YAML parser error");
+                const auto Problem =
+                    m_Parser.problem ? StringView(m_Parser.problem) : StringView("unknown YAML parser error");
                 const auto Context = m_Parser.context ? StringView(m_Parser.context) : StringView();
                 if (Context.empty()) {
-                    return std::unexpected(ErrorMessage(Format(
-                        "{} at line {}, column {}",
-                        Problem,
-                        m_Parser.problem_mark.line + 1,
-                        m_Parser.problem_mark.column + 1)));
+                    return std::unexpected(ErrorMessage(Format("{} at line {}, column {}",
+                                                               Problem,
+                                                               m_Parser.problem_mark.line + 1,
+                                                               m_Parser.problem_mark.column + 1)));
                 }
-                return std::unexpected(ErrorMessage(Format(
-                    "{}: {} at line {}, column {}",
-                    Context,
-                    Problem,
-                    m_Parser.problem_mark.line + 1,
-                    m_Parser.problem_mark.column + 1)));
+                return std::unexpected(ErrorMessage(Format("{}: {} at line {}, column {}",
+                                                           Context,
+                                                           Problem,
+                                                           m_Parser.problem_mark.line + 1,
+                                                           m_Parser.problem_mark.column + 1)));
             }
 
             const auto EventType          = Event.type;
@@ -139,8 +136,7 @@ class YamlParser {
 
             yaml_event_delete(&Event);
             if (InvalidFeature)
-                return std::unexpected(
-                    ErrorMessage(Format("{} are not supported", InvalidFeatureName)));
+                return std::unexpected(ErrorMessage(Format("{} are not supported", InvalidFeatureName)));
             if (EventType == YAML_STREAM_END_EVENT)
                 break;
         }
@@ -151,22 +147,15 @@ class YamlParser {
     }
 
     std::span<const unsigned char> m_Source      = {};
-    yaml_parser_t m_Parser      = {};
-    bool          m_Initialized = false;
+    yaml_parser_t                  m_Parser      = {};
+    bool                           m_Initialized = false;
 };
-
-} // namespace
-
-} // namespace SoulEngine
-
-export namespace SoulEngine {
 
 /// @brief One node of a parsed YAML document tree.
 ///
-/// Heap-allocated through Create() only; scalar, sequence, and mapping values are
-/// distinguished via IsScalar()/IsSequence()/IsMap() and read through As<T>(),
-/// Values(), and Items().
-class YamlNode {
+/// Heap-allocated through Create() only; scalar, sequence, and mapping values are distinguished via
+/// IsScalar()/IsSequence()/IsMap() and read through As<T>(), Values(), and Items().
+export class YamlNode {
     friend class YamlDocument;
 
   public:
@@ -174,8 +163,7 @@ class YamlNode {
     using Sequence = std::vector<UPtr<YamlNode>>;
 
   private:
-    [[nodiscard]] static auto Create(yaml_document_t* Document, int Id)
-        -> std::expected<UPtr<YamlNode>, ErrorMessage> {
+    [[nodiscard]] static auto Create(yaml_document_t* Document, int Id) -> std::expected<UPtr<YamlNode>, ErrorMessage> {
         const auto* Node = Document && Id != 0 ? yaml_document_get_node(Document, Id) : nullptr;
         if (!Node)
             return std::unexpected(ErrorMessage("YAML node does not exist"));
@@ -194,8 +182,7 @@ class YamlNode {
 
         if (Node->type == YAML_SEQUENCE_NODE) {
             Sequence Result = {};
-            Result.reserve(static_cast<std::size_t>(Node->data.sequence.items.top -
-                                                    Node->data.sequence.items.start));
+            Result.reserve(static_cast<std::size_t>(Node->data.sequence.items.top - Node->data.sequence.items.start));
             for (auto* Item = Node->data.sequence.items.start; Item != Node->data.sequence.items.top; ++Item) {
                 auto Child = Create(Document, *Item);
                 if (!Child)
@@ -207,8 +194,7 @@ class YamlNode {
 
         if (Node->type == YAML_MAPPING_NODE) {
             Mapping Result = {};
-            Result.reserve(static_cast<std::size_t>(Node->data.mapping.pairs.top -
-                                                    Node->data.mapping.pairs.start));
+            Result.reserve(static_cast<std::size_t>(Node->data.mapping.pairs.top - Node->data.mapping.pairs.start));
             std::unordered_set<String> Keys = {};
             for (auto* Pair = Node->data.mapping.pairs.start; Pair != Node->data.mapping.pairs.top; ++Pair) {
                 auto Key = Create(Document, Pair->key);
@@ -220,11 +206,11 @@ class YamlNode {
                 auto KeyString = (*Key)->Scalar();
                 if (!Keys.insert(KeyString).second) {
                     const auto* KeyNode = yaml_document_get_node(Document, Pair->key);
-                    return std::unexpected(ErrorMessage(Format(
-                        "YAML mapping contains a duplicate key '{}' at line {}, column {}",
-                        KeyString,
-                        KeyNode->start_mark.line + 1,
-                        KeyNode->start_mark.column + 1)));
+                    return std::unexpected(
+                        ErrorMessage(Format("YAML mapping contains a duplicate key '{}' at line {}, column {}",
+                                            KeyString,
+                                            KeyNode->start_mark.line + 1,
+                                            KeyNode->start_mark.column + 1)));
                 }
 
                 auto Value = Create(Document, Pair->value);
@@ -277,7 +263,7 @@ class YamlNode {
     [[nodiscard]] auto As() const -> std::optional<T> {
         if constexpr (std::same_as<T, hlslpp::float3> || std::same_as<T, hlslpp::float4>) {
             constexpr std::size_t ComponentCount = std::same_as<T, hlslpp::float3> ? 3 : 4;
-            const auto*     SequenceValue      = std::get_if<Sequence>(&m_Value);
+            const auto*           SequenceValue  = std::get_if<Sequence>(&m_Value);
             if (!SequenceValue || SequenceValue->size() != ComponentCount)
                 return std::nullopt;
             float Components[ComponentCount] = {};
@@ -333,8 +319,7 @@ class YamlNode {
     }
 
     /// @brief Look up a mapping entry by key. Returns nullopt for non-mappings and missing keys.
-    [[nodiscard]] auto operator[](StringView Key) const
-        -> std::optional<std::reference_wrapper<const YamlNode>> {
+    [[nodiscard]] auto operator[](StringView Key) const -> std::optional<std::reference_wrapper<const YamlNode>> {
         if (!IsMap())
             return std::nullopt;
 
@@ -384,32 +369,31 @@ class YamlNode {
 
 /// @brief An owned, validated YAML document tree loaded from a file.
 ///
-/// Parsing accepts a single-document subset: no anchors, aliases, explicit tags, or
-/// directives, and duplicate mapping keys are rejected with line/column information.
-class YamlDocument {
+/// Parsing accepts a single-document subset: no anchors, aliases, explicit tags, or directives, and duplicate
+/// mapping keys are rejected with line/column information.
+export class YamlDocument {
   public:
     [[nodiscard]] static auto Create(const Path& FilePath) -> std::expected<YamlDocument, ErrorMessage> {
         const auto Source = ReadFile(FilePath);
         if (!Source)
             return std::unexpected(Source.error().Append(Format("Error when reading '{}'", FilePath.string())));
 
-        const auto Bytes = std::span<const unsigned char>(
-            reinterpret_cast<const unsigned char*>(Source->data()), Source->size());
+        const auto Bytes =
+            std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(Source->data()), Source->size());
         auto Parser = YamlParser::Create(Bytes);
         if (!Parser)
             return std::unexpected(Parser.error().Append(Format("Error when reading '{}'", FilePath.string())));
 
         auto ParsedDocument = Parser->LoadToDocument();
         if (!ParsedDocument)
-            return std::unexpected(
-                ParsedDocument.error().Append(Format("Error when reading '{}'", FilePath.string())));
+            return std::unexpected(ParsedDocument.error().Append(Format("Error when reading '{}'", FilePath.string())));
 
         YamlDocument Document = {};
-        const auto* Root = yaml_document_get_root_node(&ParsedDocument.value());
+        const auto*  Root     = yaml_document_get_root_node(&ParsedDocument.value());
         if (!Root)
             return std::unexpected(ErrorMessage("YAML document is empty"));
-        const auto RootId = static_cast<int>(Root - ParsedDocument->nodes.start) + 1;
-        auto RootNode = YamlNode::Create(&ParsedDocument.value(), RootId);
+        const auto RootId   = static_cast<int>(Root - ParsedDocument->nodes.start) + 1;
+        auto       RootNode = YamlNode::Create(&ParsedDocument.value(), RootId);
         yaml_document_delete(&ParsedDocument.value());
         if (!RootNode)
             return std::unexpected(RootNode.error().Append(Format("Error when reading '{}'", FilePath.string())));
@@ -417,12 +401,11 @@ class YamlDocument {
         return Document;
     }
 
-    YamlDocument()                                     = default;
-    YamlDocument(const YamlDocument&)                  = delete;
+    YamlDocument()                                       = default;
+    YamlDocument(const YamlDocument&)                    = delete;
     auto operator=(const YamlDocument&) -> YamlDocument& = delete;
 
-    YamlDocument(YamlDocument&& Other) noexcept
-        : m_Root(std::exchange(Other.m_Root, {})) {}
+    YamlDocument(YamlDocument&& Other) noexcept : m_Root(std::exchange(Other.m_Root, {})) {}
 
     auto operator=(YamlDocument&& Other) noexcept -> YamlDocument& {
         if (this == &Other)
@@ -436,16 +419,16 @@ class YamlDocument {
     }
 
   private:
-    UPtr<YamlNode>  m_Root        = {};
+    UPtr<YamlNode> m_Root = {};
 };
 
 /// @brief Decode a YAML node as the registered type of a meta field and assign it.
 ///
-/// The YAML side is untyped; the target type comes from the field's registered meta
-/// type. Fails when the node does not decode as that type or the meta assignment fails.
-[[nodiscard]] inline auto
-AssignYamlValue(const entt::meta_data& Field, entt::meta_any& Component, const YamlNode& Value)
-    -> std::expected<void, ErrorMessage> {
+/// The YAML side is untyped; the target type comes from the field's registered meta type. Fails when the node
+/// does not decode as that type or the meta assignment fails.
+export [[nodiscard]] inline auto AssignYamlValue(const entt::meta_data& Field,
+                                                 entt::meta_any&        Component,
+                                                 const YamlNode&        Value) -> std::expected<void, ErrorMessage> {
     const auto Type = Field.type().info().hash();
     if (Type == entt::type_hash<float>::value()) {
         const auto ConvertedValue = Value.As<float>();

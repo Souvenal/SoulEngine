@@ -3,46 +3,47 @@ export module Renderer:EditorPasses.EntityPicking;
 import Core;
 import EditorTypes;
 import RHI;
+import RenderGraph;
 import Scene;
 
-export import std;
+import std;
 
 export namespace SoulEngine {
 
-/// @brief Copy-only compute pass that reads back the GBuffer EntityId texel
-/// at the requested pixel into a readback buffer.
+/// @brief Copy-only transfer pass that reads back the GBuffer EntityId texel at the requested pixel into a
+/// readback.
+///
+/// The class IS the graph's TPass: a typed NON-pipeline transfer pass (no BuildPipelineRequest → no
+/// Ensure/Pending-prune participation), constructed with its Parameter. The readback is a passthrough field —
+/// a consumer object, not a graph resource; the graph sees only the source texture's TransferSrc read, which
+/// carries the ordering and layout transition. NeverPrune stands in for the graph-invisible ring write.
 class EntityPickingPass final : public IRHITransferPass {
   public:
-    EntityPickingPass() : IRHITransferPass("EntityPickingPass") {}
-
-    auto SetInput(RHIRef<RHIRenderTarget> EntityId, PixelCoordinate Pixel, RHIRef<RHIReadbackBuffer> Target) -> void {
-        m_EntityId = std::move(EntityId);
-        m_Pixel    = Pixel;
-        m_Target   = std::move(Target);
+    static constexpr StringView Name       = "EntityPickingPass";
+    static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
     }
+
+    struct Parameter {
+        RGTextureView<RHITextureUsage::TransferSrc, RHIAccess::Read> EntityId;
+        RHIRef<RHIReadback>                                          Readback = nullptr;
+        PixelCoordinate                                              Pixel    = {};
+    };
+
+    EntityPickingPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
-        if (!m_EntityId || !m_Target)
+        if (!m_Parameter->EntityId.Resolved || !m_Parameter->Readback)
             return std::unexpected(ErrorMessage("Entity picking resources are not ready"));
-        CopyTextureToBuffer(m_EntityId, m_Pixel.X, m_Pixel.Y, m_Target);
+        ReadbackTexture(
+            m_Parameter->EntityId.Resolved, m_Parameter->Pixel.X, m_Parameter->Pixel.Y, m_Parameter->Readback);
         return {};
     }
 
   private:
-    RHIRef<RHIRenderTarget> m_EntityId = nullptr;
-    PixelCoordinate         m_Pixel    = {};
-    RHIRef<RHIReadbackBuffer> m_Target = nullptr;
-};
-
-/// @brief Build the entity picking pass for one frame's picking request.
-[[nodiscard]] auto BuildEntityPickingPass(RHIRef<RHIRenderTarget> EntityId, PixelCoordinate Pixel, RHIRef<RHIReadbackBuffer> Target)
-    -> std::expected<UPtr<IRHIPass>, ErrorMessage> {
-    if (!EntityId)
-        return std::unexpected(ErrorMessage("Entity picking requires a ready EntityId target"));
-    auto Pass = std::make_unique<EntityPickingPass>();
-    Pass->SetInput(std::move(EntityId), Pixel, std::move(Target));
-    return Pass;
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

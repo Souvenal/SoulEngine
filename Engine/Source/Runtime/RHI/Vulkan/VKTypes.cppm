@@ -2,18 +2,20 @@ module;
 
 #include <vk_mem_alloc.h>
 
+// magic_enum::enum_flags_test is not exported by the v0.9.8 module.
+#include <magic_enum/magic_enum_flags.hpp>
+
 export module Vulkan:Types;
 
-export import std;
-export import vulkan;
+import vulkan;
 
 import RHI;
 
+import :Capability;
+
 namespace SoulEngine {
 
-// ═════════════════════════════════════════════════════════════════════════════
 // Conversion helpers
-// ═════════════════════════════════════════════════════════════════════════════
 
 [[nodiscard]] auto ToVkFormat(RHIFormat Fmt) -> vk::Format {
     switch (Fmt) {
@@ -46,6 +48,98 @@ namespace SoulEngine {
     }
 }
 
+/// @brief Native buffer access mask from the two declaration axes: Usage picks the mechanism,
+/// Access picks the direction.
+///
+/// Direction participates only for bidirectional mechanisms (Storage — RMW arrives as Read|Write);
+/// unidirectional usages carry an implied direction and ignore Access. Accumulates over the usage union, so
+/// both the creation union (upload batch) and single-role view declarations (pass prologue) map correctly.
+/// The declared direction translates faithfully — a read-modify-writing shader declares Read|Write on the
+/// view.
+///
+/// Not a pure flag mapping: vertex/index buffers additionally feed acceleration structure builds when ray
+/// tracing is available (mirrors ToVkBufferUsage).
+[[nodiscard]] inline auto ToVkBufferAccess(RHIBufferUsage Usage, RHIAccess Access) -> vk::AccessFlags2 {
+    const bool R   = magic_enum::enum_flags_test(Access, RHIAccess::Read);
+    const bool W   = magic_enum::enum_flags_test(Access, RHIAccess::Write);
+    auto       Out = vk::AccessFlags2{};
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex))
+        Out |= vk::AccessFlagBits2::eVertexAttributeRead;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index))
+        Out |= vk::AccessFlagBits2::eIndexRead;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Constant))
+        Out |= vk::AccessFlagBits2::eUniformRead;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Storage))
+        Out |= (R ? vk::AccessFlagBits2::eShaderStorageRead : vk::AccessFlags2{}) |
+               (W ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlags2{});
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Indirect))
+        Out |= vk::AccessFlagBits2::eIndirectCommandRead;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::TransferSrc))
+        Out |= vk::AccessFlagBits2::eTransferRead;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::TransferDst))
+        Out |= vk::AccessFlagBits2::eTransferWrite;
+    // Geometry inputs feed acceleration-structure builds (ToVkBufferUsage adds the matching usage bit
+    // unconditionally when ray tracing is available).
+    if ((magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
+         magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index)) &&
+        VulkanCapability::Get().IsRayTracingAvailable())
+        Out |= vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+    return Out;
+}
+
+/// @brief Texture counterpart of ToVkBufferAccess. RenderTarget/Storage are bidirectional and
+/// participate in direction; Sampled and the transfer usages carry an implied direction and ignore Access.
+/// DepthStencil attachment coverage is always Read|Write — a load reads the previous depth and the store
+/// writes, regardless of the declared direction. Accumulates over the usage union: merged prologue views
+/// arrive as multi-role unions and every role contributes its mask.
+[[nodiscard]] inline auto ToVkTextureAccess(RHITextureUsage Usage, RHIAccess Access) -> vk::AccessFlags2 {
+    const bool R   = magic_enum::enum_flags_test(Access, RHIAccess::Read);
+    const bool W   = magic_enum::enum_flags_test(Access, RHIAccess::Write);
+    auto       Out = vk::AccessFlags2{};
+    if (magic_enum::enum_flags_test(Usage, RHITextureUsage::RenderTarget))
+        Out |= (R ? vk::AccessFlagBits2::eColorAttachmentRead : vk::AccessFlags2{}) |
+               (W ? vk::AccessFlagBits2::eColorAttachmentWrite : vk::AccessFlags2{});
+    if (magic_enum::enum_flags_test(Usage, RHITextureUsage::DepthStencil))
+        Out |= vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    if (magic_enum::enum_flags_test(Usage, RHITextureUsage::Storage))
+        Out |= (R ? vk::AccessFlagBits2::eShaderStorageRead : vk::AccessFlags2{}) |
+               (W ? vk::AccessFlagBits2::eShaderStorageWrite : vk::AccessFlags2{});
+    if (magic_enum::enum_flags_test(Usage, RHITextureUsage::Sampled))
+        Out |= vk::AccessFlagBits2::eShaderSampledRead;
+    if (magic_enum::enum_flags_test(Usage, RHITextureUsage::TransferSrc))
+        Out |= vk::AccessFlagBits2::eTransferRead;
+    if (magic_enum::enum_flags_test(Usage, RHITextureUsage::TransferDst))
+        Out |= vk::AccessFlagBits2::eTransferWrite;
+    return Out;
+}
+
+/// @brief Image layout for a view's declared role and direction. A single-role usage maps to its
+/// optimal layout; storage and every multi-role union share only General; a depth/stencil view without Write
+/// is a read-only attachment. This is the single place where layout exists: the RHI vocabulary carries no
+/// layout axis.
+[[nodiscard]] inline auto ToVkImageLayout(RHITextureUsage Usage, RHIAccess Access) -> vk::ImageLayout {
+    const auto Bits = static_cast<Uint32>(Usage);
+    if (Bits == 0)
+        return vk::ImageLayout::eUndefined;
+    if ((Bits & (Bits - 1)) != 0 || magic_enum::enum_flags_test(Usage, RHITextureUsage::Storage))
+        return vk::ImageLayout::eGeneral;
+    switch (Usage) {
+    case RHITextureUsage::RenderTarget:
+        return vk::ImageLayout::eColorAttachmentOptimal;
+    case RHITextureUsage::DepthStencil:
+        return magic_enum::enum_flags_test(Access, RHIAccess::Write) ? vk::ImageLayout::eDepthAttachmentOptimal
+                                                                     : vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+    case RHITextureUsage::Sampled:
+        return vk::ImageLayout::eShaderReadOnlyOptimal;
+    case RHITextureUsage::TransferSrc:
+        return vk::ImageLayout::eTransferSrcOptimal;
+    case RHITextureUsage::TransferDst:
+        return vk::ImageLayout::eTransferDstOptimal;
+    default:
+        return vk::ImageLayout::eUndefined;
+    }
+}
+
 [[nodiscard]] auto ToVkImageAspect(RHIFormat Fmt) -> vk::ImageAspectFlags {
     switch (Fmt) {
     case RHIFormat::D32_SFLOAT:
@@ -56,6 +150,33 @@ namespace SoulEngine {
     default:
         return vk::ImageAspectFlagBits::eColor;
     }
+}
+
+/// @brief RHI-neutral sync vocabulary -> native Vulkan pipeline stage flags.
+/// The mapping is total; the graph-side mapping table decides precision.
+[[nodiscard]] inline auto ToVkPipelineStages(RHISyncStage Stage) -> vk::PipelineStageFlags2 {
+    vk::PipelineStageFlags2 Result{};
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::VertexShader))
+        Result |= vk::PipelineStageFlagBits2::eVertexShader;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::FragmentShader))
+        Result |= vk::PipelineStageFlagBits2::eFragmentShader;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::ComputeShader))
+        Result |= vk::PipelineStageFlagBits2::eComputeShader;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::RayTracingShader))
+        Result |= vk::PipelineStageFlagBits2::eRayTracingShaderKHR;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::DrawIndirect))
+        Result |= vk::PipelineStageFlagBits2::eDrawIndirect;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::ColorAttachmentOutput))
+        Result |= vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::EarlyFragmentTests))
+        Result |= vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::LateFragmentTests))
+        Result |= vk::PipelineStageFlagBits2::eLateFragmentTests;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::Transfer))
+        Result |= vk::PipelineStageFlagBits2::eTransfer;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::Host))
+        Result |= vk::PipelineStageFlagBits2::eHost;
+    return Result;
 }
 
 } // namespace SoulEngine

@@ -1,0 +1,93 @@
+# C++ Coding Specifications
+
+## Behavior-Changing Rules
+
+Program semantics or compiler diagnostics rules.
+
+- `[[nodiscard]]` for funcs with return values
+- No exceptions; use `std::expected<T, ErrorMessage>` (defined in `Core:Util.Error`) for all functions that can encounter an error, including void-returning ones. The error chain is for human reading (logs), not for programmatic branching — callers should not parse it. Convention:
+  - **Error (program cannot continue normally):** return an `ErrorMessage` from the callee; the terminal caller calls `.ToString()` on it and enters crash-handle flow.
+  - **Warning (non-fatal, program continues):** `LogWarning` directly in the callee, no `std::expected`.
+  - **Leaf error (first failure):** `return std::unexpected(ErrorMessage("Something failed"))`.
+  - **Appending context:** when forwarding an error across layers, call `.Append()` on it. The `Append` method adds the outer context to the end of the chain; `Format()` renders outermost first with progressive "Caused by:" indentation.
+  - `Append` and `ErrorMessage` constructors now take a plain `String` — for dynamic messages, wrap with `Format()` first:
+    ```cpp
+    // Leaf error (static):
+    return std::unexpected(ErrorMessage("TOML parse error at line 42"));
+    // Leaf error (dynamic):
+    return std::unexpected(ErrorMessage(Format("Failed to load '{}'", FilePath)));
+    // Middle layer — append:
+    return std::unexpected(R.error().Append("Failed to load config file"));
+    // Middle layer — append with formatting:
+    return std::unexpected(R.error().Append(Format("Failed to load '{}'", FilePath)));
+    // Terminal:
+    LogError("{}", R.error().ToString());
+    ```
+- In human-readable errors and logs, stringify enum values with `magic_enum::enum_name()` instead of casting them to numbers.
+- RTTI disabled (`-fno-rtti`). Use `std::variant`, `std::visit`, or virtual dispatch for type-erased polymorphism.
+- No raw `new` or `delete` expressions. Use `UPtr<T>` (`std::make_unique`) for sole ownership and `SPtr<T>` (`std::make_shared`) for shared ownership. Raw pointers are permitted only as non-owning observers (borrowed references). Interop with C APIs that require raw allocation (e.g., `malloc`/`free` callbacks, Vulkan allocation callbacks) is allowed but must be encapsulated in a RAII wrapper with a `// NOLINT-RAW-MEM` comment explaining why it cannot use standard smart pointers.
+- Use project type aliases defined in `Engine/Source/Runtime/Core/Util/Types.cppm` instead of their underlying standard types. Currently enforced: `UPtr<T>` over `std::unique_ptr<T>`, `SPtr<T>` over `std::shared_ptr<T>`. Others (`Int32`, `String`, `StringView`, `ErrorMessage`, etc.) are also available and preferred. `ErrorMessage` lives in `Core:Util.Error` (re-exported via `Core:Util` and `Core`). Core types are available under `using namespace SoulEngine::Core;`.
+
+If code violates a rule, emit a diagnostic with the rule ID and a suggested code rewrite. Example: `RULE-TRAILING-RET: Replace "int f()" with "auto f() -> int"`. Auto-fix where possible.
+
+If input code throws exceptions, transform them to explicit error-return idioms and annotate with comments. If automatic transformation is unsafe, report `RULE-NO-EXCEPTIONS` and provide a manual migration patch.
+
+## Coding Style
+
+Code form and readability only, not behavior.
+
+- Initialize structs using aggregate initialization (`MyStruct{ .Field = value }`) instead of default-construct-then-assign. If the struct has no fields or all fields use their defaults, `= {}` is preferred over `MyStruct Var;` followed by field assignments.
+
+- Apply trailing return types to:
+  - free functions
+  - non-constructor/non-destructor member functions, including static members
+  - operator overloads
+  - lambdas
+
+  Do not apply trailing return types to constructors, destructors, or conversion operators. Example: `MyClass() = default;` remains unchanged.
+
+
+- In `class` types, prefix all non-static data members with `m_`. `struct` types are exempt — their data members need no prefix. Static data members should use no prefix regardless of type. This does not apply to union members, bitfields of size 0, or anonymous struct/union members.
+
+- `bool` data members use an `Is` prefix (e.g. `m_IsCoherent`); `bool` fields of aggregate structs follow the same convention.
+
+- **DRY (Don't Repeat Yourself) — one definition per function.** A function's signature must be written exactly once, at its definition site. Function declarations (a signature without a definition) are forbidden unless necessary:
+  - Do not split a member function into an in-class declaration plus an out-of-class definition (`ReturnType Class::Method(...) { ... }`). Define member functions inline in the class body so the signature appears once.
+  - Do not use separate forward declarations for functions across translation units.
+  - Within a single translation unit, forward declarations are allowed only when necessary for mutually recursive free functions; require a comment explaining the recursion and mark with `ALLOW-FWD-RECURSION`. Prefer defining functions at first use.
+  - For public APIs intended for reuse across translation units, use module interface units; the exported definition is the single declaration.
+
+- Module partition naming: allow exactly one colon separator in the form `A:B`. To express logical nesting beyond one level, use a single dot inside the partition name, for example `A:B.C`. Treat the dot as part of the partition identifier and ensure build tools map `A:B.C` to a single module partition name.
+
+- Comment placement and content rules (Doxygen `///` usage, per-member vs type-level comments) live in [`comments.md`](comments.md).
+
+- All data member default values SHOULD be written at the declaration site (`Type m_Member = Default;`) so the default is visible at the definition. Use constructor initializer lists for simple, infallible value assignment and dependency injection, including base-class construction. Use a factory returning `std::expected` when construction requires validation, allocation, resource creation, or any other fallible work. For configurable values that may be overridden by a config file, use `m_Member = Cfg.SomeField.value_or(m_Member);` in Init/constructor body; the member's declaration-site default serves as the backup.
+
+- Every `enum class` must have its first enumerator as `Unknown = 0` (or the equivalent default sentinel). Rationale: zero-initialisation is the default in C++; an explicit `Unknown` sentinel makes it impossible to accidentally treat a default-constructed value as a valid state. Non-negative sentinel names (e.g. `None`) are acceptable when the enum represents a bitmask and zero means "nothing set".
+
+## Profiling (Tracy)
+
+- Tracy identifies instrumented strings by pointer address, not content (see the Tracy manual, "Unique pointers"): identical string literals are not guaranteed to pool to a single address, and a mismatched pointer silently splits frame sources. Never pass a fresh string literal to a Tracy macro at more than one place.
+- Define each name once as an `inline constexpr const char*` constant and pass the variable to `FrameMarkStart`/`FrameMarkEnd`/`FrameMarkNamed`/`ZoneScopedN`/`tracy::SetThreadName`. Do not use plain namespace-scope `constexpr` for this — `const` implies internal linkage, giving one address per translation unit.
+- Thread names use `<Domain>Thread` (e.g. `GameThread`, `RenderThread`, `RHIThread`); continuous frame spans use `<Domain>Frame` (e.g. `GameFrame`, `RenderFrame`, `RHIFrame`).
+- Zones record work events only. Do not add a top-level zone that duplicates a frame span; the per-frame interval is owned by `FrameMarkStart`/`FrameMarkEnd`.
+- An unnamed master `FrameMark` is emitted on the RHI thread right after `EndFrame` (submit + present); it feeds the GUI's default numbered frame set. The named continuous spans `GameFrame`/`RenderFrame`/`RHIFrame` coexist with it and carry the per-stage intervals. GPU contexts do not depend on the master mark: `TracyVulkan`/`TracyD3D12` attach GPU zones via timestamp calibration (`VK_EXT_calibrated_timestamps` + `TracyVkContextCalibrated`), not frame marks.
+- `tracy::SetThreadName` copies the string it is given, so indexed thread names (e.g. `Format("WorkerThread{}", i)`) may be formatted locals. Pointer identity applies only to names embedded in events — `FrameMarkStart`/`FrameMarkEnd`/`FrameMarkNamed`/`ZoneText` and zone names in `SourceLocationData` — those require stable pointers.
+
+## Quick Reference
+
+| Rule | Scope | Enforced |
+|------|-------|----------|
+| `[[nodiscard]]` on return values | All functions | Static analysis |
+| No exceptions, use `std::expected<T, ErrorMessage>` | All code | Code generation / review |
+| `-fno-rtti` (no `typeid`/`dynamic_cast`) | All code | Compiler flag |
+| No raw `new`/`delete` | All code | Review |
+| Trailing return types | Functions (not ctor/dtor) | Review |
+| DRY — no separate declarations; in-class member definitions | All functions | Review |
+| `m_` prefix on non-static data members | `class` types only | Review |
+| Aggregate init (`{ .Field = ... }`) | Structs | Review |
+| Declaration-site defaults | All data members | Review |
+| `UPtr<T>` / `SPtr<T>` aliases | All code | Review |
+| `Unknown = 0` first enumerator | All `enum class` | Review |
+| Tracy strings via named constants (pointer identity) | All Tracy macros | Review |
+| Zone = work event only; no zone duplicating a frame span | All Tracy zones | Review |

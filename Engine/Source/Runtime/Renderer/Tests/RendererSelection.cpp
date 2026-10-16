@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
 import Core;
+import RHI;
 import Scene;
 import Renderer;
 import TaskGraph;
+import std;
+import EditorTypes;
 
 using namespace SoulEngine;
 
@@ -28,7 +31,8 @@ class RendererSelectionTestRenderer final : public IRenderer {
         m_IsAttached = false;
     }
 
-    [[nodiscard]] auto Render(const GameSnapshot&, const EditorSnapshot&) -> std::expected<RenderResult, ErrorMessage> override {
+    [[nodiscard]] auto Render(const GameSnapshot&, const EditorSnapshot&)
+        -> std::expected<RenderResult, ErrorMessage> override {
         return RenderResult{};
     }
 
@@ -39,8 +43,7 @@ class RendererSelectionTestRenderer final : public IRenderer {
     bool m_IsAttached = false;
 };
 
-RendererFactory::AutoRegistrar<RendererSelectionTestRenderer> RegRendererSelectionTestRenderer{
-    "RendererSelectionTest"};
+RendererFactory::AutoRegistrar<RendererSelectionTestRenderer> RegRendererSelectionTestRenderer{"RendererSelectionTest"};
 
 TEST(RendererSelection, CachesSuccessfulSelectionAndPreservesCurrentRendererOnFailure) {
     CloseRenderers();

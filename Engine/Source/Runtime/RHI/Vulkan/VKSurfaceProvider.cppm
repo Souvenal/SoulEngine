@@ -6,10 +6,11 @@ module;
 export module Vulkan:SurfaceProvider;
 
 import magic_enum;
-export import WindowSystem;
+import WindowSystem;
 import RHI;
 import vulkan;
 import std;
+import Core;
 
 namespace SoulEngine {
 
@@ -45,13 +46,13 @@ class GlfwVulkanSurfaceProvider final : public IVulkanSurfaceProvider {
 
     [[nodiscard]] auto GetRequiredInstanceExtensions() const
         -> std::expected<std::vector<const char*>, ErrorMessage> override {
-        uint32_t    Count      = 0;
+        uint32_t     Count      = 0;
         const char** Extensions = glfwGetRequiredInstanceExtensions(&Count);
         if (!Extensions) {
             const char* Desc = nullptr;
             glfwGetError(&Desc);
             return std::unexpected(ErrorMessage(Format("glfwGetRequiredInstanceExtensions failed: {}",
-                                                        Desc ? Desc : "GLFW not initialized or no Vulkan support")));
+                                                       Desc ? Desc : "GLFW not initialized or no Vulkan support")));
         }
         return std::vector<const char*>(Extensions, Extensions + Count);
     }
@@ -64,8 +65,8 @@ class GlfwVulkanSurfaceProvider final : public IVulkanSurfaceProvider {
             const char* Desc = nullptr;
             glfwGetError(&Desc);
             return std::unexpected(ErrorMessage(Format("glfwCreateWindowSurface failed ({}): {}",
-                                                        vk::to_string(static_cast<vk::Result>(Result)),
-                                                        Desc ? Desc : "unknown error")));
+                                                       vk::to_string(static_cast<vk::Result>(Result)),
+                                                       Desc ? Desc : "unknown error")));
         }
         return vk::raii::SurfaceKHR(Instance, RawSurface);
     }
@@ -92,7 +93,7 @@ class GlfwVulkanSurfaceProvider final : public IVulkanSurfaceProvider {
         return std::unexpected(ErrorMessage("Window system type is unknown"));
     default:
         return std::unexpected(ErrorMessage(Format("Vulkan backend does not support window system type '{}' yet",
-                                                    magic_enum::enum_name(WindowSys->GetType()))));
+                                                   magic_enum::enum_name(WindowSys->GetType()))));
     }
 }
 

@@ -25,9 +25,8 @@ public struct BoundingSphere {
 };
 
 /// @brief OOP facade over the per-pass geometry record table.
-/// Fully encapsulates the GeometryRecord ABI: callers pull decoded vertex
-/// data or bounding spheres by record index and never see raw GPU addresses.
-/// Replaces the former free-function vertex-pulling helpers.
+/// Fully encapsulates the GeometryRecord ABI: callers pull decoded vertex data or bounding spheres by record
+/// index and never see raw GPU addresses. Replaces the former free-function vertex-pulling helpers.
 public struct GeometryRecordTable {
     private StructuredBuffer<GeometryRecord> records;
 

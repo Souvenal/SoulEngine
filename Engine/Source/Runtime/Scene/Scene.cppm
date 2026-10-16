@@ -1,13 +1,16 @@
 module;
 
+// Clang 22 named-modules bug: concepts are shadowed through the std re-export chain (import Core/RHI);
+// textual include restores them.
+#include <concepts>
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
 export module Scene;
 
 import std;
-export import Material;
-export import RHI;
+import Core;
+import RHI;
 export import :Camera;
 export import :Mesh;
 export import :Light;
@@ -16,11 +19,11 @@ import TaskGraph;
 export namespace SoulEngine {
 
 struct GameSnapshot {
-    std::vector<CameraViewRecord>  Views     = {};
-    std::vector<InstanceRecord>    Instances = {};
-    std::vector<LightRecord>       Lights    = {};
-    RHIRefArray<RHISampledTexture> Textures  = {};
-    float                          Time      = 0.0f;
+    std::vector<CameraViewRecord>   Views     = {};
+    std::vector<InstanceRecord>     Instances = {};
+    std::vector<LightRecord>        Lights    = {};
+    std::vector<RHIRef<RHITexture>> Textures  = {};
+    float                           Time      = 0.0f;
 };
 
 struct ComponentWarning {
@@ -34,20 +37,19 @@ struct SceneLoadReport {
 
 /// @brief World state container read by renderers each frame.
 ///
-/// Holds the camera and (future) mesh, material, light, and transform
-/// collections.
+/// Holds the camera and (future) mesh, material, light, and transform collections.
 class Scene {
   private:
-    std::chrono::steady_clock::time_point      m_StartTime = std::chrono::steady_clock::now();
-    // TODO(SoulEngine): Hide EnTT behind a Scene implementation boundary. This should remove
-    // both the downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and
-    // the inline lifetime definitions kept below for the current MSVC/Xmake module workaround.
-    entt::registry                             m_Registry  = {};
-    SystemScheduler                            m_SystemScheduler;
-    Path                                       m_AssetRoot         = {};
-    entt::entity                               m_RootEntity        = entt::null;
-    std::vector<String>                        m_TexturePaths      = {};
-    float                                      m_Time              = 0.0f;
+    std::chrono::steady_clock::time_point m_StartTime = std::chrono::steady_clock::now();
+    // TODO(SoulEngine): Hide EnTT behind a Scene implementation boundary. This should remove both the
+    // downstream <entt/entt.hpp> includes required by Scene lifetime instantiation and the inline lifetime
+    // definitions kept below for the current MSVC/Xmake module workaround.
+    entt::registry                        m_Registry  = {};
+    SystemScheduler                       m_SystemScheduler;
+    Path                                  m_AssetRoot    = {};
+    entt::entity                          m_RootEntity   = entt::null;
+    std::vector<String>                   m_TexturePaths = {};
+    float                                 m_Time         = 0.0f;
 
     [[nodiscard]] auto ResolveAssetPath(StringView AssetPath) const -> String {
         const Path Asset{String(AssetPath)};
@@ -88,19 +90,18 @@ class Scene {
         m_RootEntity = m_Registry.create();
         m_Registry.emplace<TransformComponent>(m_RootEntity);
         m_Registry.ctx().emplace<entt::dispatcher>();
-        const auto Setup = m_SystemScheduler.Register<TransformSystem>("TransformSystem")
-                               .and_then([&]() -> std::expected<void, ErrorMessage> {
-                                   return m_SystemScheduler.Register<MeshSystem>("MeshSystem");
-                               })
-                               .and_then([&]() -> std::expected<void, ErrorMessage> {
-                                   return m_SystemScheduler.Register<LightSystem>("LightSystem");
-                               })
-                               .and_then([&]() -> std::expected<void, ErrorMessage> {
-                                   return m_SystemScheduler.Register<CameraSystem>("CameraSystem");
-                               })
-                               .and_then([&]() -> std::expected<void, ErrorMessage> {
-                                   return m_SystemScheduler.CompileDependency();
-                               });
+        const auto Setup =
+            m_SystemScheduler.Register<TransformSystem>("TransformSystem")
+                .and_then([&]() -> std::expected<void, ErrorMessage> {
+                    return m_SystemScheduler.Register<MeshSystem>("MeshSystem");
+                })
+                .and_then([&]() -> std::expected<void, ErrorMessage> {
+                    return m_SystemScheduler.Register<LightSystem>("LightSystem");
+                })
+                .and_then([&]() -> std::expected<void, ErrorMessage> {
+                    return m_SystemScheduler.Register<CameraSystem>("CameraSystem");
+                })
+                .and_then([&]() -> std::expected<void, ErrorMessage> { return m_SystemScheduler.CompileDependency(); });
         if (!Setup)
             LogError("Scene system setup failed:\n{}", Setup.error().ToString());
         m_SystemScheduler.SetupObservers();
@@ -201,7 +202,7 @@ class Scene {
             .Views     = CameraSys->get().CollectViews(),
             .Instances = CollectSnapshotInstances(),
             .Lights    = LightSys->get().CollectLights(),
-            .Textures  = MeshSys->get().GetTextureArray(),
+            .Textures  = MeshSys->get().GetTextures(),
             .Time      = m_Time,
         };
     }

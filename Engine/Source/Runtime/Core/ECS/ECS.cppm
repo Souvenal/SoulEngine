@@ -32,20 +32,20 @@ class ISystem {
 
     /// @brief Set up observers for component changes.
     ///
-    /// Called when the system is initialized or when it needs to start observing.
-    /// Override this to connect entt::observers to specific component types.
+    /// Called when the system is initialized or when it needs to start observing. Override this to connect
+    /// entt::observers to specific component types.
     virtual auto SetupObservers() -> void {}
 
     /// @brief Tear down observers.
     ///
-    /// Called when the system is being destroyed or needs to stop observing.
-    /// Override this to disconnect entt::observers.
+    /// Called when the system is being destroyed or needs to stop observing. Override this to disconnect
+    /// entt::observers.
     virtual auto TeardownObservers() -> void {}
 
     /// @brief Clear observer state without disconnecting.
     ///
-    /// Called to reset observer state, typically after processing observed changes.
-    /// Override this to clear observer state owned by the registry.
+    /// Called to reset observer state, typically after processing observed changes. Override this to clear
+    /// observer state owned by the registry.
     virtual auto ClearObservers() -> void {}
 
   protected:
@@ -56,12 +56,10 @@ class ISystem {
 ///
 /// The scheduler is bound to the registry owned by its scene.
 ///
-/// Every system is registered under a unique name and declares its execution
-/// dependencies with Before/After name lists. CompileDependency() resolves
-/// the declared dependency DAG into a deterministic execution order.
-/// Registration and CompileDependency() are only allowed during the
-/// initialization phase; OnUpdate() requires a successful CompileDependency()
-/// first.
+/// Every system is registered under a unique name and declares its execution dependencies with Before/After
+/// name lists. CompileDependency() resolves the declared dependency DAG into a deterministic execution order.
+/// Registration and CompileDependency() are only allowed during the initialization phase; OnUpdate() requires
+/// a successful CompileDependency() first.
 class SystemScheduler {
   public:
     explicit SystemScheduler(entt::registry& Registry) : m_Registry(Registry) {}
@@ -82,8 +80,9 @@ class SystemScheduler {
     ///         name is taken, or T is already registered.
     template <typename T, typename... Args>
         requires std::derived_from<T, ISystem>
-    [[nodiscard]] auto Register(String Name, std::vector<String> Before = {}, std::vector<String> After = {},
-                                Args&&... Arguments) -> std::expected<void, ErrorMessage> {
+    [[nodiscard]] auto
+    Register(String Name, std::vector<String> Before = {}, std::vector<String> After = {}, Args&&... Arguments)
+        -> std::expected<void, ErrorMessage> {
         if (m_Compiled)
             return std::unexpected(ErrorMessage("System registration is only allowed before CompileDependency()"));
 
@@ -109,9 +108,8 @@ class SystemScheduler {
     /// @brief Resolve the declared Before/After dependencies into a
     ///        deterministic execution order.
     ///
-    /// "A before B" and "B after A" both become the edge A -> B. Kahn's
-    /// algorithm breaks ties by registration order, so identical
-    /// registrations always produce identical execution orders.
+    /// "A before B" and "B after A" both become the edge A -> B. Kahn's algorithm breaks ties by registration
+    /// order, so identical registrations always produce identical execution orders.
     /// @return Success, or an error listing every unknown dependency
     ///         reference, or describing one concrete dependency cycle.
     [[nodiscard]] auto CompileDependency() -> std::expected<void, ErrorMessage> {
@@ -120,8 +118,8 @@ class SystemScheduler {
 
         const auto Count = static_cast<Uint32>(m_Entries.size());
 
-        // Build and deduplicate edges, collecting every dangling reference
-        // before failing so one run reports all of them.
+        // Build and deduplicate edges, collecting every dangling reference before failing so one run reports
+        // all of them.
         std::flat_set<std::pair<Uint32, Uint32>> Edges;
         String                                   Dangling;
         for (Uint32 I = 0; I < Count; ++I) {
@@ -151,8 +149,7 @@ class SystemScheduler {
             ++Indegree[To];
         }
 
-        // The min-heap on registration index keeps the order deterministic
-        // across platforms and runs.
+        // The min-heap on registration index keeps the order deterministic across platforms and runs.
         std::priority_queue<Uint32, std::vector<Uint32>, std::greater<Uint32>> Ready;
         for (Uint32 I = 0; I < Count; ++I)
             if (Indegree[I] == 0)
@@ -170,9 +167,8 @@ class SystemScheduler {
         }
 
         if (Order.size() != Count) {
-            // Every still-blocked node has at least one blocked predecessor,
-            // so walking backwards from any of them must revisit a node; that
-            // segment is one concrete cycle.
+            // Every still-blocked node has at least one blocked predecessor, so walking backwards from any of
+            // them must revisit a node; that segment is one concrete cycle.
             const auto DescribeCycle = [&]() -> String {
                 Uint32 Start = 0;
                 while (Indegree[Start] == 0)
@@ -232,9 +228,8 @@ class SystemScheduler {
 
     /// @brief Remove a registered system by its concrete type.
     ///
-    /// Allowed after CompileDependency(): the entry becomes a tombstone so
-    /// registration indices stay stable, and the system is erased from the
-    /// compiled execution order.
+    /// Allowed after CompileDependency(): the entry becomes a tombstone so registration indices stay stable,
+    /// and the system is erased from the compiled execution order.
     /// @tparam T System implementation derived from ISystem.
     /// @return true if T was registered and removed.
     template <typename T>
@@ -269,8 +264,7 @@ class SystemScheduler {
 
     /// @brief Set up observers for every registered system.
     ///
-    /// Observer wiring has no declared ordering semantics; systems are
-    /// visited in registration order.
+    /// Observer wiring has no declared ordering semantics; systems are visited in registration order.
     auto SetupObservers() -> void {
         for (auto& Entry : m_Entries)
             if (Entry.System)
@@ -295,18 +289,18 @@ class SystemScheduler {
     /// @brief One registered system. Removed systems leave a tombstone
     ///        (null System) so entry indices remain stable.
     struct SystemEntry {
-        String              Name    = {};
-        UPtr<ISystem>       System  = nullptr;
-        std::vector<String> Before  = {};
-        std::vector<String> After   = {};
+        String              Name   = {};
+        UPtr<ISystem>       System = nullptr;
+        std::vector<String> Before = {};
+        std::vector<String> After  = {};
     };
 
-    entt::registry&                       m_Registry;
-    std::vector<SystemEntry>              m_Entries     = {}; // registration order
-    std::flat_map<entt::id_type, Uint32>  m_TypeToIndex = {};
-    std::flat_map<String, Uint32>         m_NameToIndex = {};
-    std::vector<ISystem*>                 m_Order       = {}; // compiled execution order (non-owning)
-    bool                                  m_Compiled    = false;
+    entt::registry&                      m_Registry;
+    std::vector<SystemEntry>             m_Entries     = {}; // registration order
+    std::flat_map<entt::id_type, Uint32> m_TypeToIndex = {};
+    std::flat_map<String, Uint32>        m_NameToIndex = {};
+    std::vector<ISystem*>                m_Order       = {}; // compiled execution order (non-owning)
+    bool                                 m_Compiled    = false;
 };
 
 /// @brief Name component for entities.
@@ -335,8 +329,8 @@ struct ParentComponent {
 
 /// @brief Children component for entity hierarchy.
 ///
-/// Stores a list of child entities. This is optional; not all entities with
-/// children need this component if they don't need to iterate children.
+/// Stores a list of child entities. This is optional; not all entities with children need this component if
+/// they don't need to iterate children.
 struct ChildrenComponent {
     std::vector<entt::entity> Children = {};
 };

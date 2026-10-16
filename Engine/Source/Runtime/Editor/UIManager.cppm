@@ -13,7 +13,7 @@ export namespace SoulEngine {
 /// @brief UI 注册项
 struct UIEntry {
     std::function<void()> Callback;
-    bool Show;
+    bool                  Show;
 };
 
 /// @brief UI 管理器（单例）

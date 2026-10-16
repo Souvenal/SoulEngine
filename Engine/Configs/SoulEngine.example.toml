@@ -14,7 +14,7 @@ ConsoleLevel = "Info"
 FileLevel    = "Debug"
 
 [Application]
-Name = "Test"
+Name = "Sponza"
 
 [Shader]
 # Emit SPIR-V debug info (OpLine/OpString) for RenderDoc support.
@@ -30,12 +30,29 @@ Validation = true
 # When omitted, the Vulkan backend currently defaults to true.
 DebugUtils = true
 
-# Per-frame dynamic constant arena capacity in bytes.
-# Logical ConstantBuffer resources reserve aligned slots in this arena.
-# When omitted the backend defaults to 4096 bytes.
-ConstantArenaBufferSize = 4096
+# Total transient uniform belt capacity in bytes.
+# Logical ConstantBuffer resources reserve aligned ranges in this ring;
+# the belt grows on demand and never shrinks.
+# When omitted the backend defaults to 64 KiB.
+UniformBeltSize = 65536
 
-# Per-frame transient shader-storage arena capacity in bytes.
-# This stores geometry, material, light, and indirect-command data.
+# Total transient shader-storage belt capacity in bytes.
+# This stores geometry, material, light, and indirect-command data;
+# the belt grows on demand and never shrinks.
 # When omitted, the Vulkan backend defaults to 64 MiB.
-TransientShaderStorageBufferSize = 67108864
+ShaderStorageBeltSize = 67108864
+
+# Initial acceleration-structure build scratch ring capacity in bytes.
+# BLAS batches and TLAS builds carve scratch ranges out of this ring;
+# it grows on demand and never shrinks.
+# When omitted, the Vulkan backend defaults to 4 MiB.
+ASScratchRingSize = 4194304
+
+# Initial TLAS instance ring capacity in bytes.
+# One AccelerationStructureInstanceKHR is 64 bytes; the ring grows on demand.
+# When omitted, the Vulkan backend defaults to 64 KiB.
+ASInstanceRingSize = 65536
+
+# Bindless descriptor array size cap.
+# When omitted, the Vulkan backend defaults to 4096.
+MaxTextures = 4096

@@ -5,7 +5,7 @@ module;
 module Scene:YamlIO;
 
 import Scene;
-import Resource;
+import Core;
 
 namespace SoulEngine {
 
@@ -34,7 +34,8 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Sce
     for (const auto& [ComponentName, ComponentNodePtr] : Node.Items()) {
         const auto& ComponentNode = *ComponentNodePtr;
         if (!ComponentNode.IsMap()) {
-            AppendComponentWarning(Report, ComponentNode.Location(), "component data must be a mapping; component was omitted");
+            AppendComponentWarning(
+                Report, ComponentNode.Location(), "component data must be a mapping; component was omitted");
             continue;
         }
 
@@ -51,7 +52,7 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Sce
         bool Valid = true;
         for (const auto& [FieldName, FieldValuePtr] : ComponentNode.Items()) {
             const auto& FieldValue = *FieldValuePtr;
-            const auto Field = Type.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
+            const auto  Field      = Type.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
             if (!Field) {
                 AppendComponentWarning(Report, FieldValue.Location(), "unknown component field");
                 Valid = false;
@@ -73,8 +74,7 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Sce
     }
 }
 
-[[nodiscard]] auto
-LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, SceneLoadReport& Report)
+[[nodiscard]] auto LoadEntity(Scene& Scene, const YamlNode& Node, entt::entity Parent, SceneLoadReport& Report)
     -> std::expected<void, ErrorMessage> {
     if (!Node.IsMap())
         return MakeStructuralError(Node, "entity must be a mapping");

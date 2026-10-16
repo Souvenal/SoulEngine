@@ -6,81 +6,98 @@ export module Renderer:RasterPasses.DeferredLightingPass;
 
 import Core;
 import RHI;
+import RenderGraph;
 
-export import std;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
 
-struct DeferredLightingPassInput {
-    RHIRef<RHIRenderTarget>                  SceneColor = nullptr;
-    RHIRef<RHIRenderTarget>                  Albedo = nullptr;
-    RHIRef<RHIRenderTarget>                  Normal = nullptr;
-    RHIRef<RHIRenderTarget>                  MaterialId = nullptr;
-    RHIRef<RHIRenderTarget>                  EntityId = nullptr;
-    RHIRef<RHIRenderTarget>                  Depth = nullptr;
-    RHIRef<RHISampler>                       LinearSampler = nullptr;
-    RHIRef<RHISampler>                       AnisotropicSampler = nullptr;
-    RHIRefArray<RHISampledTexture>           Textures = {};
-    RHIRef<RHITransientConstantBuffer>       FrameBuffer = nullptr;
-    RHIRef<RHITransientConstantBuffer>       ViewBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> MaterialBuffer = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> LightBuffer = nullptr;
-};
-
+/// @brief Deferred lighting over the GBuffer.
+///
+/// The class IS the graph's TPass. SceneColor is a plain color write; SelectionOutline may overblend it (load
+/// RMW) and the explicit BlitToSwapchainPass presents it.
 class DeferredLightingPass final : public IRHIGraphicsPass {
   public:
-    explicit DeferredLightingPass(RHIRef<RHIGraphicsPipeline> Pipeline)
-        : IRHIGraphicsPass("DeferredLightingPass", std::move(Pipeline)) {}
-
-    auto SetInput(DeferredLightingPassInput Input) -> void {
-        m_Input = std::move(Input);
+    static constexpr StringView Name = "DeferredLightingPass";
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
     }
+
+    /// Static pipeline descriptor for PipelineRegistry::Register<DeferredLightingPass>().
+    [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "DeferredLighting.slang";
+        return GraphicsPipelineRequest{
+            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
+        };
+    }
+
+    struct Parameter {
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> SceneColor;
+        RGTextureView<RHITextureUsage::Sampled, RHIAccess::Read>       Albedo;
+        RGTextureView<RHITextureUsage::Sampled, RHIAccess::Read>       Normal;
+        RGTextureView<RHITextureUsage::Sampled, RHIAccess::Read>       MaterialId;
+        RGTextureView<RHITextureUsage::Sampled, RHIAccess::Read>       EntityId;
+        RGTextureView<RHITextureUsage::Sampled, RHIAccess::Read>       Depth;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         MaterialBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        FrameBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        ViewBuffer;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         LightBuffer;
+        RHIRef<RHISampler>                                             LinearSampler      = nullptr;
+        RHIRef<RHISampler>                                             AnisotropicSampler = nullptr;
+    };
+
+    DeferredLightingPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
         m_Attachments = {};
-        auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet() || !Input.SceneColor || !Input.Albedo || !Input.Normal || !Input.MaterialId ||
-            !Input.EntityId || !Input.Depth || !Input.Textures ||
-            !Input.FrameBuffer || !Input.ViewBuffer || !Input.MaterialBuffer || !Input.LightBuffer)
+        if (!m_Parameter->SceneColor.Resolved || !m_Parameter->Albedo.Resolved || !m_Parameter->Normal.Resolved ||
+            !m_Parameter->MaterialId.Resolved || !m_Parameter->EntityId.Resolved || !m_Parameter->Depth.Resolved ||
+            !m_Parameter->FrameBuffer.Resolved || !m_Parameter->ViewBuffer.Resolved ||
+            !m_Parameter->MaterialBuffer.Resolved || !m_Parameter->LightBuffer.Resolved)
             return std::unexpected(ErrorMessage("Deferred lighting pass resources are not ready"));
 
         m_Attachments = RHIGraphicsAttachments{
-            .ColorAttachments = {
-                {.TextureRef = Input.SceneColor,
-                 .ClearValue = std::array<Float32, 4>{0.025f, 0.035f, 0.055f, 1.0f}},
-            },
+            .ColorAttachments =
+                {
+                    {.View       = m_Parameter->SceneColor.ResolvedView(),
+                     .ClearValue = std::array<Float32, 4>{0.025f, 0.035f, 0.055f, 1.0f}},
+                },
         };
         SetViewport(0.0f,
                     0.0f,
-                    static_cast<Float32>(Input.SceneColor->GetWidth()),
-                    static_cast<Float32>(Input.SceneColor->GetHeight()));
-        SetScissorRect(0, 0, Input.SceneColor->GetWidth(), Input.SceneColor->GetHeight());
+                    static_cast<Float32>(m_Parameter->SceneColor.Resolved->GetWidth()),
+                    static_cast<Float32>(m_Parameter->SceneColor.Resolved->GetHeight()));
+        SetScissorRect(
+            0, 0, m_Parameter->SceneColor.Resolved->GetWidth(), m_Parameter->SceneColor.Resolved->GetHeight());
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_gbuffer.albedo", std::move(Input.Albedo), true},
-                RHIShaderBindingRequest{"g_gbuffer.normal", std::move(Input.Normal), true},
-                RHIShaderBindingRequest{"g_gbuffer.materialId", std::move(Input.MaterialId), true},
-                RHIShaderBindingRequest{"g_gbuffer.entityId", std::move(Input.EntityId), true},
-                RHIShaderBindingRequest{"g_gbuffer.depth", std::move(Input.Depth), true},
-            }); !R)
-            return std::unexpected(R.error());
-        if (auto R = BindBindlessResource(std::move(Input.Textures)); !R)
+                RHIShaderBindingRequest{"g_gbuffer.albedo", m_Parameter->Albedo.ResolvedView()},
+                RHIShaderBindingRequest{"g_gbuffer.normal", m_Parameter->Normal.ResolvedView()},
+                RHIShaderBindingRequest{"g_gbuffer.materialId", m_Parameter->MaterialId.ResolvedView()},
+                RHIShaderBindingRequest{"g_gbuffer.entityId", m_Parameter->EntityId.ResolvedView()},
+                RHIShaderBindingRequest{"g_gbuffer.depth", m_Parameter->Depth.ResolvedView()},
+            });
+            !R)
             return std::unexpected(R.error());
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_deferred.frame", std::move(Input.FrameBuffer), true},
-                RHIShaderBindingRequest{"g_deferred.view", std::move(Input.ViewBuffer), true},
-                RHIShaderBindingRequest{"g_deferred.materials", std::move(Input.MaterialBuffer), true},
-                RHIShaderBindingRequest{"g_deferred.lights", std::move(Input.LightBuffer), true},
-            }); !R)
+                RHIShaderBindingRequest{"g_deferred.frame", m_Parameter->FrameBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_deferred.view", m_Parameter->ViewBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_deferred.materials", m_Parameter->MaterialBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_deferred.lights", m_Parameter->LightBuffer.ResolvedView()},
+            });
+            !R)
             return std::unexpected(R.error());
         Draw();
         return {};
     }
 
   private:
-    DeferredLightingPassInput m_Input = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine

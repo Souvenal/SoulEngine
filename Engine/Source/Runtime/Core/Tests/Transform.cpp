@@ -24,10 +24,9 @@ TEST(TransformTest, BuildsLocalMatrixFromTranslationRotationAndScale) {
 }
 
 TEST(TransformTest, AppliesRotationInParentSpaceXYZOrder) {
-    // GetLocalMatrix composes Rx * Ry * Rz (row-vector convention), so a 90°
-    // pitch followed by a 90° yaw about fixed parent-space axes points the
-    // -Z forward vector straight down (positive X rotation moves -Z toward -Y)
-    // regardless of yaw. The old Rz * Ry * Rx order would give (1, 0, 0).
+    // GetLocalMatrix composes Rx * Ry * Rz (row-vector convention), so a 90° pitch followed by a 90° yaw
+    // about fixed parent-space axes points the -Z forward vector straight down (positive X rotation moves -Z
+    // toward -Y) regardless of yaw. The old Rz * Ry * Rx order would give (1, 0, 0).
     const TransformComponent Transform{
         .Rotation = hlslpp::float3(90.0f, 90.0f, 0.0f),
     };
@@ -40,8 +39,8 @@ TEST(TransformTest, AppliesRotationInParentSpaceXYZOrder) {
 }
 
 TEST(TransformSystemTest, UpdatesDirtyTransformSubtrees) {
-    entt::registry  Registry;
-    const auto      HiddenRoot = Registry.create();
+    entt::registry Registry;
+    const auto     HiddenRoot = Registry.create();
     Registry.emplace<TransformComponent>(HiddenRoot);
 
     TransformSystem System{Registry};
@@ -57,12 +56,10 @@ TEST(TransformSystemTest, UpdatesDirtyTransformSubtrees) {
     EXPECT_EQ(Registry.get<ParentComponent>(Parent).Depth, 1u);
     EXPECT_EQ(Registry.get<ParentComponent>(Child).Depth, 2u);
 
-    Registry.patch<TransformComponent>(Child, [](auto& Transform) -> void {
-        Transform.Translation = hlslpp::float3(0.0f, 3.0f, 0.0f);
-    });
-    Registry.patch<TransformComponent>(Parent, [](auto& Transform) -> void {
-        Transform.Translation = hlslpp::float3(2.0f, 0.0f, 0.0f);
-    });
+    Registry.patch<TransformComponent>(
+        Child, [](auto& Transform) -> void { Transform.Translation = hlslpp::float3(0.0f, 3.0f, 0.0f); });
+    Registry.patch<TransformComponent>(
+        Parent, [](auto& Transform) -> void { Transform.Translation = hlslpp::float3(2.0f, 0.0f, 0.0f); });
 
     System.OnUpdate(0.0f);
 
@@ -71,9 +68,8 @@ TEST(TransformSystemTest, UpdatesDirtyTransformSubtrees) {
     EXPECT_FLOAT_EQ(static_cast<float>(InitialChild.WorldTransform[3].y), 3.0f);
     System.ClearObservers();
 
-    Registry.patch<TransformComponent>(Parent, [](auto& Transform) -> void {
-        Transform.Translation = hlslpp::float3(5.0f, 0.0f, 0.0f);
-    });
+    Registry.patch<TransformComponent>(
+        Parent, [](auto& Transform) -> void { Transform.Translation = hlslpp::float3(5.0f, 0.0f, 0.0f); });
     System.OnUpdate(0.0f);
 
     const auto& UpdatedChild = Registry.get<TransformComponent>(Child);

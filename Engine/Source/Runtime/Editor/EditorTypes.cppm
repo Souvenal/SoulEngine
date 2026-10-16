@@ -7,6 +7,7 @@ export module EditorTypes;
 import std;
 import RHI;
 import Scene;
+import Core;
 
 export namespace SoulEngine {
 
@@ -15,17 +16,18 @@ struct PixelCoordinate {
     Uint32 Y = 0;
 };
 
-/// @brief Immutable render data and resources for one editor camera view.
+/// @brief Immutable render data for one editor camera view (no RHI
+/// render targets — the view's targets, including the selection mask, are renderer-created pooled graph
+/// transients).
 struct EditorViewRecord {
-    CameraViewRecord        Camera        = {};
-    RHIRef<RHIRenderTarget> SelectionMask = nullptr;
+    CameraViewRecord Camera = {};
 
-    /// @brief Return the width of the editor-camera scene-color target.
+    /// @brief Return the width of the editor-camera viewport.
     [[nodiscard]] auto GetWidth() const -> Uint32 {
         return Camera.GetWidth();
     }
 
-    /// @brief Return the height of the editor-camera scene-color target.
+    /// @brief Return the height of the editor-camera viewport.
     [[nodiscard]] auto GetHeight() const -> Uint32 {
         return Camera.GetHeight();
     }
@@ -37,11 +39,11 @@ struct EditorViewRecord {
 };
 
 struct EditorSnapshot {
-    std::vector<EditorViewRecord> Views = {};
-    std::optional<entt::entity>         SelectedEntity = std::nullopt;
-    PixelCoordinate                     HoverPixel = {};
-    bool                                IsHovering = false;
-    RHIRef<RHIReadbackBuffer>           ReadbackTarget = nullptr;
+    std::vector<EditorViewRecord> Views          = {};
+    std::optional<entt::entity>   SelectedEntity = std::nullopt;
+    PixelCoordinate               HoverPixel     = {};
+    bool                          IsHovering     = false;
+    RHIRef<RHIReadback>           ReadbackTarget = nullptr;
 };
 
 } // namespace SoulEngine

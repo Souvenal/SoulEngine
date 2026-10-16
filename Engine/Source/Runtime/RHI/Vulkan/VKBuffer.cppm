@@ -2,9 +2,13 @@ module;
 
 #include <vk_mem_alloc.h>
 
+// magic_enum::enum_flags_test is not exported by the v0.9.8 module.
+#include <magic_enum/magic_enum_flags.hpp>
+
 export module Vulkan:Buffer;
 
 import Core;
+import TaskGraph;
 import vulkan;
 import RHI;
 import std;
@@ -14,944 +18,604 @@ import :Types;
 import :Context;
 import :Debug;
 import :Semaphore;
+import :RingBuffer;
+import :Staging;
 
 namespace SoulEngine {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanHostBuffer — mappable staging buffer
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// Internal mappable buffer for staging uploads.
-/// Created via static Create(). Move-only.
-class VulkanHostBuffer : public RHIObject {
+/// @brief Transient uniform-buffer lane: a typed facade over VulkanRingBuffer.
+///
+/// Serves per-frame uniform data that must stay distinct between individual draws. Allocation is bump-fast
+/// and grow-only (same contract as the staging ring); slices bind through dynamic descriptors with the ring
+/// range's absolute offset. The belt bumps a generation counter at every frame-begin Tick and slices carry
+/// their creation generation: a cross-frame upload — a transient ref retained past its creation frame, a
+/// contract violation the frame-task ordinals cannot see because the misused upload's task ordinal still
+/// matches the current frame — is detected and dropped instead of corrupting a recycled or in-flight range.
+/// RHI-thread confined.
+class VulkanUniformBelt {
   public:
-    explicit VulkanHostBuffer(String Name) : RHIObject(std::move(Name)) {}
+    VulkanUniformBelt()                                                = default;
+    VulkanUniformBelt(const VulkanUniformBelt&)                        = delete;
+    auto operator=(const VulkanUniformBelt&) -> VulkanUniformBelt&     = delete;
+    VulkanUniformBelt(VulkanUniformBelt&&) noexcept                    = default;
+    auto operator=(VulkanUniformBelt&&) noexcept -> VulkanUniformBelt& = default;
 
-    [[nodiscard]] static auto
-    Create(const VulkanResourceContext& Context, StringView Name, Uint64 Size, vk::BufferUsageFlags Usage)
-        -> std::expected<VulkanHostBuffer, ErrorMessage> {
-        VulkanHostBuffer Buf{String(Name)};
-        Buf.m_Allocator = Context.GetAllocator();
-        Buf.m_Size      = Size;
-
-        vk::BufferCreateInfo BufCI{
-            .size        = Size,
-            .usage       = Usage,
-            .sharingMode = vk::SharingMode::eExclusive,
-        };
-
-        VmaAllocationCreateInfo AllocInfo{
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO,
-        };
-
-        if (vmaCreateBuffer(Context.GetAllocator(),
-                            reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
-                            &AllocInfo,
-                            reinterpret_cast<VkBuffer*>(&Buf.m_Buffer),
-                            &Buf.m_Allocation,
-                            nullptr) != VK_SUCCESS) {
-            return std::unexpected(ErrorMessage("Failed to create VulkanHostBuffer via VMA"));
-        }
-
-        if (static_cast<bool>(Usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) &&
-            VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress) {
-            const auto AddressInfo = vk::BufferDeviceAddressInfo{.buffer = Buf.m_Buffer};
-            Buf.m_DeviceAddress    = Context.GetDevice().getBufferAddress(AddressInfo);
-        }
-
-        Context.GetDebugUtils().SetObjectName(Buf.m_Buffer, Buf.GetName());
-        return Buf;
+    /// @brief Create the belt with its ring, aligned to minUniformBufferOffsetAlignment.
+    /// @param Context   resource context providing the VMA allocator, debug utils, and the device timeline.
+    /// @param Name      debug name applied to every ring instance (duplicates are legal).
+    /// @param Capacity  total ring capacity in bytes (the RHI.Vulkan.UniformBeltSize CVar); the ring
+    ///                  grows on demand, so this is a starting budget, not a hard limit.
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, StringView Name, Uint64 Capacity)
+        -> std::expected<VulkanUniformBelt, ErrorMessage> {
+        const auto Alignment = std::max(
+            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minUniformBufferOffsetAlignment),
+            VulkanRingBuffer::kMinAlignment);
+        auto Ring =
+            VulkanRingBuffer::Create(Context, Name, vk::BufferUsageFlagBits::eUniformBuffer, Capacity, Alignment);
+        if (!Ring)
+            return std::unexpected(Ring.error().Append("VulkanUniformBelt: ring creation failed"));
+        VulkanUniformBelt Belt;
+        Belt.m_Ring = std::move(*Ring);
+        return Belt;
     }
 
-    ~VulkanHostBuffer() {
-        Destroy();
+    /// @brief Bump-allocate a range for the current frame, checked against maxUniformBufferRange.
+    ///
+    /// The offset must fit the Uint32 dynamic-offset range; with any sane belt capacity this is structurally
+    /// guaranteed, so the check is a cheap invariant guard.
+    [[nodiscard]] auto Allocate(Uint64 Size) -> std::expected<RingAllocation, ErrorMessage> {
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("VulkanUniformBelt::Allocate: size must be greater than zero"));
+        const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxUniformBufferRange);
+        if (Size > MaxRange)
+            return std::unexpected(ErrorMessage(
+                Format("VulkanUniformBelt allocation exceeds maxUniformBufferRange ({} bytes > {})", Size, MaxRange)));
+        auto Alloc = m_Ring.Allocate(Size);
+        if (!Alloc)
+            return std::unexpected(Alloc.error().Append("VulkanUniformBelt::Allocate: ring allocation failed"));
+        if (Alloc->Offset > std::numeric_limits<Uint32>::max())
+            return std::unexpected(ErrorMessage("VulkanUniformBelt allocation offset exceeds dynamic offset range"));
+        return *Alloc;
     }
 
-    VulkanHostBuffer(VulkanHostBuffer&& Other) noexcept
-        : RHIObject(std::move(Other)),
-          m_Allocator(Other.m_Allocator),
-          m_Buffer(Other.m_Buffer),
-          m_Allocation(Other.m_Allocation),
-          m_DeviceAddress(Other.m_DeviceAddress),
-          m_Size(Other.m_Size) {
-        Other.m_Buffer        = nullptr;
-        Other.m_Allocation    = nullptr;
-        Other.m_DeviceAddress = 0;
-        Other.m_Size          = 0;
+    /// @brief Frame-begin relay: bump the generation (invalidating earlier slices), then retire the
+    /// markers the device timeline has passed and seal the previous frame's pending allocations.
+    auto Tick(Uint64 FrameBeginTimelineValue) -> void {
+        ++m_Generation;
+        m_Ring.Tick(FrameBeginTimelineValue);
     }
 
-    auto operator=(VulkanHostBuffer&& Other) noexcept -> VulkanHostBuffer& {
-        if (this != &Other) {
-            RHIObject::operator=(std::move(Other));
-            std::swap(m_Allocator, Other.m_Allocator);
-            std::swap(m_Buffer, Other.m_Buffer);
-            std::swap(m_Allocation, Other.m_Allocation);
-            std::swap(m_DeviceAddress, Other.m_DeviceAddress);
-            std::swap(m_Size, Other.m_Size);
-        }
-        return *this;
+    /// @brief Current frame generation; slices stamp it at creation, uploads compare against it.
+    [[nodiscard]] auto GetGeneration() const -> Uint32 {
+        return m_Generation;
     }
 
-    VulkanHostBuffer(const VulkanHostBuffer&) = delete;
-    auto operator=(const VulkanHostBuffer&)   = delete;
+  private:
+    VulkanRingBuffer m_Ring       = {}; ///< backing ring
+    Uint32           m_Generation = 0;  ///< frame generation; a bump invalidates earlier slices
+};
 
-    [[nodiscard]] auto Get() const -> vk::Buffer {
-        return m_Buffer;
-    }
-    [[nodiscard]] auto GetSize() const -> Uint64 {
-        return m_Size;
-    }
-    [[nodiscard]] auto GetDeviceAddress() const -> vk::DeviceAddress {
-        return m_DeviceAddress;
+/// @brief Transient shader-storage lane: a typed facade over VulkanRingBuffer.
+///
+/// Serves per-frame storage/indirect data rebuilt during command execution. Same ring, growth,
+/// dynamic-binding, and generation-guard contract as the uniform belt; instances additionally carry the
+/// indirect-buffer usage bit for draw-indirect slices. RHI-thread confined.
+class VulkanShaderStorageBelt {
+  public:
+    VulkanShaderStorageBelt()                                                      = default;
+    VulkanShaderStorageBelt(const VulkanShaderStorageBelt&)                        = delete;
+    auto operator=(const VulkanShaderStorageBelt&) -> VulkanShaderStorageBelt&     = delete;
+    VulkanShaderStorageBelt(VulkanShaderStorageBelt&&) noexcept                    = default;
+    auto operator=(VulkanShaderStorageBelt&&) noexcept -> VulkanShaderStorageBelt& = default;
+
+    /// @brief Create the belt with its ring, aligned to minStorageBufferOffsetAlignment.
+    /// @param Context   resource context providing the VMA allocator, debug utils, and the device timeline.
+    /// @param Name      debug name applied to every ring instance (duplicates are legal).
+    /// @param Capacity  total ring capacity in bytes (the RHI.Vulkan.ShaderStorageBeltSize CVar); the ring
+    ///                  grows on demand, so this is a starting budget, not a hard limit.
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context, StringView Name, Uint64 Capacity)
+        -> std::expected<VulkanShaderStorageBelt, ErrorMessage> {
+        const auto Alignment = std::max(
+            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minStorageBufferOffsetAlignment),
+            VulkanRingBuffer::kMinAlignment);
+        auto Ring =
+            VulkanRingBuffer::Create(Context,
+                                     Name,
+                                     vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer,
+                                     Capacity,
+                                     Alignment);
+        if (!Ring)
+            return std::unexpected(Ring.error().Append("VulkanShaderStorageBelt: ring creation failed"));
+        VulkanShaderStorageBelt Belt;
+        Belt.m_Ring = std::move(*Ring);
+        return Belt;
     }
 
-    /// Upload host data to the buffer at Offset.
-    /// One-shot: map -> memcpy -> unmap.
-    [[nodiscard]] auto Upload(const void* Data, Uint64 Size, Uint64 Offset = 0) -> std::expected<void, ErrorMessage> {
-        if (Offset + Size > m_Size)
+    /// @brief Bump-allocate a range for the current frame, checked against maxStorageBufferRange.
+    ///
+    /// The offset must fit the Uint32 dynamic-offset range; with any sane belt capacity this is structurally
+    /// guaranteed, so the check is a cheap invariant guard.
+    [[nodiscard]] auto Allocate(Uint64 Size) -> std::expected<RingAllocation, ErrorMessage> {
+        if (Size == 0)
+            return std::unexpected(ErrorMessage("VulkanShaderStorageBelt::Allocate: size must be greater than zero"));
+        const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxStorageBufferRange);
+        if (Size > MaxRange)
             return std::unexpected(ErrorMessage(Format(
-                "VulkanHostBuffer upload exceeds size (offset {} + size {} > capacity {})", Offset, Size, m_Size)));
-        if (Size == 0) {
-            LogWarning("Uploading 0 bytes to a host buffer.");
+                "VulkanShaderStorageBelt allocation exceeds maxStorageBufferRange ({} bytes > {})", Size, MaxRange)));
+        auto Alloc = m_Ring.Allocate(Size);
+        if (!Alloc)
+            return std::unexpected(Alloc.error().Append("VulkanShaderStorageBelt::Allocate: ring allocation failed"));
+        if (Alloc->Offset > std::numeric_limits<Uint32>::max())
+            return std::unexpected(
+                ErrorMessage("VulkanShaderStorageBelt allocation offset exceeds dynamic offset range"));
+        return *Alloc;
+    }
+
+    /// @brief Frame-begin relay: bump the generation (invalidating earlier slices), then retire the
+    /// markers the device timeline has passed and seal the previous frame's pending allocations.
+    auto Tick(Uint64 FrameBeginTimelineValue) -> void {
+        ++m_Generation;
+        m_Ring.Tick(FrameBeginTimelineValue);
+    }
+
+    /// @brief Current frame generation; slices stamp it at creation, uploads compare against it.
+    [[nodiscard]] auto GetGeneration() const -> Uint32 {
+        return m_Generation;
+    }
+
+  private:
+    VulkanRingBuffer m_Ring       = {}; ///< backing ring
+    Uint32           m_Generation = 0;  ///< frame generation; a bump invalidates earlier slices
+};
+
+/// Pure RHIBufferUsage → vk::BufferUsageFlags mapping: no implicit bits.
+[[nodiscard]] inline auto ToVkBufferUsage(RHIBufferUsage Usage) -> vk::BufferUsageFlags {
+    auto Out = vk::BufferUsageFlags{};
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex))
+        Out |= vk::BufferUsageFlagBits::eVertexBuffer;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index))
+        Out |= vk::BufferUsageFlagBits::eIndexBuffer;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Constant))
+        Out |= vk::BufferUsageFlagBits::eUniformBuffer;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Storage))
+        Out |= vk::BufferUsageFlagBits::eStorageBuffer;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Indirect))
+        Out |= vk::BufferUsageFlagBits::eIndirectBuffer;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::TransferSrc))
+        Out |= vk::BufferUsageFlagBits::eTransferSrc;
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::TransferDst))
+        Out |= vk::BufferUsageFlagBits::eTransferDst;
+    // Geometry inputs feed acceleration-structure builds (old vertex/index classes did this unconditionally
+    // when ray tracing is available).
+    if ((magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
+         magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index)) &&
+        VulkanCapability::Get().IsRayTracingAvailable())
+        Out |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+    return Out;
+}
+
+/// @brief Persistent-flavor state: the buffer owns its VMA allocation.
+///
+/// GpuOnly and CpuToGpu share this exact member shape — they differ only in values (baked device address or
+/// zero) and behavior (upload path), never in layout.
+struct PersistentBufferProp {
+    VmaAllocator                 Allocator     = nullptr; ///< allocator that produced Allocation
+    VulkanDeferredDeletionQueue* DeferredQueue = nullptr; ///< borrowed destruction queue, owned by the resource context
+    vk::Buffer                   Buffer        = nullptr; ///< native handle
+    VmaAllocation                Allocation    = nullptr; ///< owned VMA allocation
+    vk::DeviceAddress            DeviceAddress = 0;       ///< baked device address (GpuOnly; 0 for CpuToGpu)
+};
+
+/// @brief Transient-flavor state: a borrowed belt-ring slice.
+///
+/// Owns nothing — the backing buffer belongs to the belt, which retires the range after the GPU passes it;
+/// destruction is a no-op for this flavor. Belt instances are persistently mapped and contractually
+/// host-coherent: callers write the range directly, no flush is needed.
+struct TransientBufferProp {
+    RingAllocation Allocation         = {}; ///< backing belt range (handle, mapped base, offset)
+    /// @brief Belt generation stamped at slice creation.
+    ///
+    /// A cross-frame upload targets a range the belt may already have recycled or handed to a new frame, so
+    /// the upload task compares generations and rejects mismatches.
+    Uint32         CreationGeneration = 0;
+};
+
+/// @brief Unified backend buffer: one identity, two lifetime flavors as variant state.
+///
+/// Persistent flavors (GpuOnly / CpuToGpu, split by Desc.MemoryUsage) own their allocation in
+/// PersistentBufferProp; the transient belt-slice flavor borrows its range in TransientBufferProp. The
+/// variant makes mixed-flavor state unrepresentable; GetProp<T>() is the only access path to flavor state.
+/// The host-visible readback ring below is a separate class.
+class VulkanBuffer final : public RHIBuffer {
+  public:
+    VulkanBuffer(const VulkanBuffer&)                    = delete;
+    auto operator=(const VulkanBuffer&) -> VulkanBuffer& = delete;
+    VulkanBuffer(VulkanBuffer&&)                         = delete;
+    auto operator=(VulkanBuffer&&) -> VulkanBuffer&      = delete;
+
+    /// @brief Persistent-flavor construction: pure assignment, cannot fail.
+    ///
+    /// All fallible work (VMA allocation, device-address bake, debug naming) lives in
+    /// VulkanBufferManager::CreatePersistentBuffer; this constructor only adopts the finished Prop. Public
+    /// for the manager's make_unique; m_Prop never mutates after construction.
+    VulkanBuffer(String Name, const RHIBufferDesc& Desc, PersistentBufferProp Prop)
+        : RHIBuffer(std::move(Name), Desc.SizeBytes, Desc.Usage, Desc.MemoryUsage, Desc.Lifetime) {
+        m_Prop = std::move(Prop);
+    }
+
+    /// @brief Transient-flavor construction: pure assignment, cannot fail.
+    ///
+    /// Constructed by the manager's frame task after the belt resolves this frame's range. The Prop caches
+    /// the whole RingAllocation — buffer handle, mapped base, and offset — so a mid-frame ring growth (two
+    /// live instances) cannot make the range ambiguous; the descriptor range is exactly the allocation's size
+    /// — a wider range would expose neighboring slices to validation.
+    VulkanBuffer(String Name, const RHIBufferDesc& Desc, TransientBufferProp Prop)
+        : RHIBuffer(std::move(Name), Desc.SizeBytes, Desc.Usage, Desc.MemoryUsage, Desc.Lifetime) {
+        m_Prop = std::move(Prop);
+    }
+
+    /// @brief Destruction rides the backend deferred deletion queue.
+    ///
+    /// A virtual timeline event keeps the handles valid until the next real submission completes (the last
+    /// GPU use cannot be later than the destruction frame's own submission).
+    ~VulkanBuffer() override {
+        if (const auto* Prop = GetProp<PersistentBufferProp>(); Prop && Prop->Allocation)
+            Prop->DeferredQueue->Enqueue(Prop->Buffer, Prop->Allocation);
+    }
+
+    /// @brief Flavor-state access: the requested Prop, or nullptr when the buffer is the other
+    /// flavor. The only access path to flavor state.
+    template <typename T>
+    [[nodiscard]] auto GetProp() const -> const T* {
+        return std::get_if<T>(&m_Prop);
+    }
+
+    /// @brief Native handle — the backing belt instance buffer for transient slices.
+    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
+        if (const auto* Prop = GetProp<TransientBufferProp>())
+            return Prop->Allocation.Buffer;
+        return std::get<PersistentBufferProp>(m_Prop).Buffer;
+    }
+    [[nodiscard]] auto GetDeviceAddress() const noexcept -> Uint64 override {
+        if (const auto* Prop = GetProp<PersistentBufferProp>())
+            return static_cast<Uint64>(Prop->DeviceAddress);
+        return 0;
+    }
+
+  private:
+    std::variant<PersistentBufferProp, TransientBufferProp> m_Prop = {}; ///< lifetime-flavor state
+};
+
+/// @brief The single home of buffer concerns.
+///
+/// Desc validation and creation dispatch (persistent / transient belt slice), uploads, and the transient
+/// belts. GpuOnly upload bytes stage through the device-owned staging belt. The render device owns one
+/// instance and forwards; belts are RHI-thread confined (touched by frame tasks and Execute only).
+class VulkanBufferManager final {
+  public:
+    VulkanBufferManager()                                              = default;
+    VulkanBufferManager(const VulkanBufferManager&)                    = delete;
+    auto operator=(const VulkanBufferManager&) -> VulkanBufferManager& = delete;
+    VulkanBufferManager(VulkanBufferManager&&)                         = default;
+    auto operator=(VulkanBufferManager&&) -> VulkanBufferManager&      = default;
+
+    /// @brief Create the manager with its transient belts.
+    /// @param Context                  resource context providing the VMA allocator, device, and debug utils.
+    /// @param UniformBeltCapacity      total uniform belt ring capacity, in bytes.
+    /// @param StorageBeltCapacity      total shader-storage belt ring capacity, in bytes.
+    /// @param Staging                  device-owned staging belt, borrowed for GpuOnly upload staging.
+    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
+                                     Uint64                       UniformBeltCapacity,
+                                     Uint64                       StorageBeltCapacity,
+                                     VulkanStagingBelt& Staging) -> std::expected<VulkanBufferManager, ErrorMessage> {
+        VulkanBufferManager Manager;
+        Manager.m_Context = &Context;
+        auto Uniform      = VulkanUniformBelt::Create(Context, "Internal/Buffer/UniformBelt", UniformBeltCapacity);
+        if (!Uniform)
+            return std::unexpected(Uniform.error().Append("VulkanBufferManager: uniform belt creation failed"));
+        Manager.m_UniformBelt = std::move(*Uniform);
+        auto Storage =
+            VulkanShaderStorageBelt::Create(Context, "Internal/Buffer/ShaderStorageBelt", StorageBeltCapacity);
+        if (!Storage)
+            return std::unexpected(Storage.error().Append("VulkanBufferManager: shader storage belt creation failed"));
+        Manager.m_StorageBelt = std::move(*Storage);
+        Manager.m_Staging     = &Staging;
+        return Manager;
+    }
+
+    /// @brief Release the VMA-backed belts while the allocator is still alive.
+    ///
+    /// Device shutdown ordering requires this to run before the allocator is destroyed.
+    auto Shutdown() -> void {
+        m_StorageBelt = {};
+        m_UniformBelt = {};
+        m_Staging     = nullptr;
+        m_Context     = nullptr;
+    }
+
+    /// @brief Single creation entry: validate the Desc, then dispatch on Lifetime × MemoryUsage.
+    ///
+    /// The Desc contract is validated here at the top (backend-local: each backend decides its own
+    /// tolerance). Persistent flavors allocate synchronously on the calling thread (VMA locks internally,
+    /// vkCreateBuffer is device-level) and go Ready at return; transient slices materialize on the RHI
+    /// thread's frame task.
+    /// @param Name  logical RHI name; becomes the debug-utils object name.
+    /// @param Desc  buffer description; Lifetime × MemoryUsage selects the flavor.
+    [[nodiscard]] auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> {
+        if (auto Valid = ValidateDesc(Desc); !Valid)
+            return std::unexpected(Valid.error());
+        if (Desc.Lifetime == RHILifetime::Transient)
+            return CreateTransientBuffer(Name, Desc);
+        return CreatePersistentBuffer(Name, Desc);
+    }
+
+    /// @brief Upload a full buffer: snapshot the bytes, then hand a frame-affined task to the RHI thread.
+    ///
+    /// The task (drained at the matching RHI frame, before Execute) writes host-visible buffers directly and
+    /// stages GpuOnly uploads for the frame-start batch; Execute records the whole batch at frame start.
+    /// Frame affinity makes the batch atomic per producer frame: all of frame N's uploads land together.
+    /// @param Buffer  destination buffer ref.
+    /// @param Data    full-buffer byte snapshot; its size must equal the buffer size.
+    [[nodiscard]] auto Upload(RHIRef<RHIBuffer> Buffer, std::span<const std::byte> Data)
+        -> std::expected<void, ErrorMessage> {
+        if (Data.empty())
+            return std::unexpected(ErrorMessage("UploadBuffer: data is empty"));
+        // Fail-fast validation when the payload already exists (persistent buffers are Ready at creation).
+        // Transient slices materialize on the RHI thread, so their validation is deferred to the upload task
+        // — the frame task queue is FIFO, so the creation task of a same-frame create+upload pair always runs
+        // first.
+        if (const auto* Payload = Buffer.TryGet()) {
+            if (Data.size_bytes() != Payload->GetSize())
+                return std::unexpected(ErrorMessage(Format("UploadBuffer: data size {} does not match buffer size {}",
+                                                           Data.size_bytes(),
+                                                           Payload->GetSize())));
+        }
+
+        auto EnqueueResult = TaskGraph::Get().EnqueueFrameTask(
+            ThreadQueue::RHI,
+            [this, Buffer = std::move(Buffer), Snapshot = std::vector<std::byte>{Data.begin(), Data.end()}]() mutable {
+                auto* TaskPayload = Buffer.TryGet();
+                if (!TaskPayload) {
+                    LogWarning("UploadBuffer: buffer ref is not Ready when the upload task ran");
+                    return;
+                }
+                if (Snapshot.size() != TaskPayload->GetSize()) {
+                    LogWarning("UploadBuffer: data size {} does not match buffer size {}",
+                               Snapshot.size(),
+                               TaskPayload->GetSize());
+                    return;
+                }
+                auto& VulkanBuf = static_cast<VulkanBuffer&>(*TaskPayload);
+                if (VulkanBuf.GetLifetime() == RHILifetime::Transient) {
+                    UploadTransientBuffer(VulkanBuf, Snapshot);
+                    return;
+                }
+                UploadPersistentBuffer(VulkanBuf, Snapshot);
+            });
+        if (!EnqueueResult)
+            return std::unexpected(EnqueueResult.error().Append("UploadBuffer: frame task enqueue failed"));
+        return {};
+    }
+
+    /// @brief Tick-chain relay: forward the frame-begin timeline value to the transient belts.
+    ///
+    /// Each belt bumps its generation (invalidating earlier slices), retires the ring markers the device
+    /// timeline has passed — destroying superseded instances whose stamp has passed — and seals the previous
+    /// frame's pending allocations against the frame-begin value.
+    /// @param FrameBeginTimelineValue  host-reserved frame-begin value, issued by the device Tick.
+    auto Tick(Uint64 FrameBeginTimelineValue) -> void {
+        m_UniformBelt.Tick(FrameBeginTimelineValue);
+        m_StorageBelt.Tick(FrameBeginTimelineValue);
+    }
+
+  private:
+    /// @brief Transient-slice upload: write the belt range in place through its persistent mapping.
+    ///
+    /// The generation guard rejects cross-frame uploads: a transient ref retained past its creation frame (a
+    /// contract violation the frame-task ordinals cannot see) would otherwise corrupt a recycled or in-flight
+    /// range. Belts are contractually coherent, so no flush is needed.
+    /// @param Buffer  transient-flavor payload, dispatched by Upload's frame task.
+    /// @param Data    full-buffer byte snapshot; size already validated against the buffer size.
+    auto UploadTransientBuffer(VulkanBuffer& Buffer, std::span<const std::byte> Data) -> void {
+        const auto* Prop = Buffer.GetProp<TransientBufferProp>();
+        if (!Prop) {
+            LogWarning("UploadBuffer: buffer '{}' has no transient state", Buffer.GetName());
+            return;
+        }
+        const bool   IsUniform  = magic_enum::enum_flags_test(Buffer.GetUsage(), RHIBufferUsage::Constant);
+        const Uint32 Generation = IsUniform ? m_UniformBelt.GetGeneration() : m_StorageBelt.GetGeneration();
+        if (Prop->CreationGeneration != Generation) {
+            LogWarning("UploadBuffer: transient buffer '{}' belongs to a previous belt generation — "
+                       "the upload is dropped",
+                       Buffer.GetName());
+            return;
+        }
+        std::memcpy(Prop->Allocation.MappedData, Data.data(), Data.size());
+    }
+
+    /// @brief Persistent upload: CpuToGpu copies straight into the allocation; GpuOnly stages through
+    /// the ring.
+    ///
+    /// RHI thread only, reached through Upload's frame-affined task; the caller owns the WAR contract against
+    /// in-flight GPU reads (CpuToGpu is a low-frequency-write flavor — per-frame data belongs in the belts).
+    /// VMA handles the flush for non-coherent memory. GpuOnly uploads stage for the frame-start batch, which
+    /// records the copy; the next frame-begin Tick seals the retirement marker.
+    /// @param Buffer  persistent-flavor payload, dispatched by Upload's frame task.
+    /// @param Data    full-buffer byte snapshot; size already validated against the buffer size.
+    auto UploadPersistentBuffer(VulkanBuffer& Buffer, std::span<const std::byte> Data) -> void {
+        const auto* Prop = Buffer.GetProp<PersistentBufferProp>();
+        if (!Prop) {
+            LogWarning("UploadBuffer: buffer '{}' has no persistent state", Buffer.GetName());
+            return;
+        }
+        // Host-visible flavor: memory copies stay on the RHI thread; no staging, no frame-start batch entry.
+        if (Buffer.GetMemoryUsage() == RHIMemoryUsage::CpuToGpu) {
+            if (vmaCopyMemoryToAllocation(Prop->Allocator, Data.data(), Prop->Allocation, 0, Data.size()) != VK_SUCCESS)
+                LogWarning("UploadBuffer: host write failed for '{}'", Buffer.GetName());
+            return;
+        }
+        m_Staging->EnqueueBufferUpload(Buffer.GetName(), Buffer.GetVkBuffer(), Buffer.GetUsage(), Data);
+    }
+
+    /// @brief The Desc contract, validated once at the CreateBuffer entry.
+    ///
+    /// Backend-local on purpose: tolerance is a backend decision.
+    /// @param Desc  buffer description to validate.
+    [[nodiscard]] static auto ValidateDesc(const RHIBufferDesc& Desc) -> std::expected<void, ErrorMessage> {
+        if (Desc.SizeBytes == 0)
+            return std::unexpected(ErrorMessage("RHIBufferDesc: size is zero"));
+        if (Desc.Usage == RHIBufferUsage::Unknown)
+            return std::unexpected(ErrorMessage("RHIBufferDesc: usage is Unknown — a Desc is explicit"));
+        if (Desc.Lifetime == RHILifetime::Unknown)
+            return std::unexpected(ErrorMessage("RHIBufferDesc: lifetime is Unknown — a Desc is explicit"));
+        if (Desc.Lifetime == RHILifetime::Transient) {
+            // Transient slices live in the host-coherent belts — CpuToGpu is the only honest memory domain.
+            // Pinning it keeps the axis explicit: no Unknown loophole, no silent GpuOnly lie.
+            if (Desc.MemoryUsage != RHIMemoryUsage::CpuToGpu)
+                return std::unexpected(
+                    ErrorMessage("RHIBufferDesc: transient buffers are belt slices — memory usage must be CpuToGpu"));
+            // Only two belt lanes exist today: uniform (Constant) and shader storage (Storage). Indirect is
+            // an orthogonal usage the storage ring already carries, not a lane of its own. "Not uniform" must
+            // never silently mean "storage" — a usage with neither lane bit has no belt and is rejected.
+            constexpr auto kLaneUsages = RHIBufferUsage::Constant | RHIBufferUsage::Storage;
+            if (!magic_enum::enum_flags_test_any(Desc.Usage, kLaneUsages))
+                return std::unexpected(
+                    ErrorMessage("RHIBufferDesc: transient buffers currently allow only the Constant (uniform belt) or "
+                                 "Storage (shader-storage belt) usage bits"));
             return {};
         }
-
-        if (auto Result = vmaCopyMemoryToAllocation(
-                m_Allocator, Data, m_Allocation, static_cast<VkDeviceSize>(Offset), static_cast<VkDeviceSize>(Size));
-            Result != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("vmaCopyMemoryToAllocation failed in VulkanHostBuffer::Upload"));
+        if (Desc.MemoryUsage == RHIMemoryUsage::Unknown)
+            return std::unexpected(ErrorMessage("RHIBufferDesc: memory usage is Unknown — a Desc is explicit"));
         return {};
     }
 
-  private:
-    auto Destroy() -> void {
-        if (m_Allocation) {
-            vmaDestroyBuffer(m_Allocator, static_cast<VkBuffer>(m_Buffer), m_Allocation);
-        }
-    }
+    /// @brief Persistent flavor dispatch: synchronous allocation, published Ready at return.
+    ///
+    /// Thread-safe because VMA locks internally and vkCreateBuffer is device-level. The ref goes Ready at
+    /// creation so callers can bake the device address immediately; bytes are uploaded separately through
+    /// RHIRenderDevice::UploadBuffer.
+    /// @param Name  logical RHI name; becomes the debug-utils object name.
+    /// @param Desc  buffer description (GpuOnly or CpuToGpu placement).
+    [[nodiscard]] auto CreatePersistentBuffer(StringView Name, const RHIBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> {
+        PersistentBufferProp Prop{.Allocator     = m_Context->GetAllocator(),
+                                  .DeferredQueue = &m_Context->GetDeferredDeletionQueue()};
 
-    VmaAllocator      m_Allocator     = nullptr;
-    vk::Buffer        m_Buffer        = nullptr;
-    VmaAllocation     m_Allocation    = nullptr;
-    vk::DeviceAddress m_DeviceAddress = 0;
-    Uint64            m_Size          = 0;
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanDeviceBuffer — device-local buffer
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// Internal device-local buffer for GPU-only access.
-/// Move-only. Data transferred via CopyFrom with a VulkanHostBuffer staging source.
-class VulkanDeviceBuffer : public RHIObject {
-  public:
-    explicit VulkanDeviceBuffer(String Name) : RHIObject(std::move(Name)) {}
-
-    [[nodiscard]] static auto
-    Create(const VulkanResourceContext& Context, StringView Name, Uint64 Size, vk::BufferUsageFlags Usage)
-        -> std::expected<VulkanDeviceBuffer, ErrorMessage> {
-        VulkanDeviceBuffer Buf{String(Name)};
-        Buf.m_Allocator = Context.GetAllocator();
-        const std::array QueueFamilies{Context.GetGraphicsFamily(), Context.GetTransferFamily()};
-        const std::span  SharingFamilies = Context.GetGraphicsFamily() != Context.GetTransferFamily()
-                                               ? std::span<const Uint32>{QueueFamilies}
-                                               : std::span<const Uint32>{};
-        Buf.m_Size                       = Size;
-
-        const bool bBufferDeviceAddress =
-            VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress;
-        if (bBufferDeviceAddress)
-            Usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
-
-        vk::BufferCreateInfo BufCI{
-            .size        = Size,
-            .usage       = Usage,
-            .sharingMode = SharingFamilies.size() > 1 ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
-            .queueFamilyIndexCount = static_cast<Uint32>(SharingFamilies.size()),
-            .pQueueFamilyIndices   = SharingFamilies.data(),
-        };
-
-        VmaAllocationCreateInfo AllocInfo{
-            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-        };
-
-        if (vmaCreateBuffer(Context.GetAllocator(),
-                            reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
-                            &AllocInfo,
-                            reinterpret_cast<VkBuffer*>(&Buf.m_Buffer),
-                            &Buf.m_Allocation,
-                            nullptr) != VK_SUCCESS) {
-            return std::unexpected(ErrorMessage("Failed to create VulkanDeviceBuffer via VMA"));
+        // GpuOnly derives transfer-dst (upload is a transfer by definition) and device address (BDA costs
+        // nothing at creation) from placement.
+        vk::BufferUsageFlags VkUsage = ToVkBufferUsage(Desc.Usage);
+        const bool           bDeviceAddress =
+            Desc.MemoryUsage == RHIMemoryUsage::GpuOnly &&
+            static_cast<bool>(
+                VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress);
+        if (Desc.MemoryUsage == RHIMemoryUsage::GpuOnly) {
+            VkUsage |= vk::BufferUsageFlagBits::eTransferDst;
+            if (bDeviceAddress)
+                VkUsage |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
         }
 
-        if (bBufferDeviceAddress) {
-            const auto AddressInfo = vk::BufferDeviceAddressInfo{.buffer = Buf.m_Buffer};
-            Buf.m_DeviceAddress    = Context.GetDevice().getBufferAddress(AddressInfo);
-        }
-
-        Context.GetDebugUtils().SetObjectName(Buf.m_Buffer, Buf.GetName());
-        return Buf;
-    }
-
-    ~VulkanDeviceBuffer() {
-        Destroy();
-    }
-
-    VulkanDeviceBuffer(VulkanDeviceBuffer&& Other) noexcept
-        : RHIObject(std::move(Other)),
-          m_Allocator(Other.m_Allocator),
-          m_Buffer(Other.m_Buffer),
-          m_Allocation(Other.m_Allocation),
-          m_DeviceAddress(Other.m_DeviceAddress),
-          m_Size(Other.m_Size) {
-        Other.m_Buffer        = nullptr;
-        Other.m_Allocation    = nullptr;
-        Other.m_DeviceAddress = 0;
-        Other.m_Size          = 0;
-    }
-
-    auto operator=(VulkanDeviceBuffer&& Other) noexcept -> VulkanDeviceBuffer& {
-        if (this != &Other) {
-            RHIObject::operator=(std::move(Other));
-            std::swap(m_Allocator, Other.m_Allocator);
-            std::swap(m_Buffer, Other.m_Buffer);
-            std::swap(m_Allocation, Other.m_Allocation);
-            std::swap(m_DeviceAddress, Other.m_DeviceAddress);
-            std::swap(m_Size, Other.m_Size);
-        }
-        return *this;
-    }
-
-    VulkanDeviceBuffer(const VulkanDeviceBuffer&) = delete;
-    auto operator=(const VulkanDeviceBuffer&)     = delete;
-
-    [[nodiscard]] auto Get() const -> vk::Buffer {
-        return m_Buffer;
-    }
-    [[nodiscard]] auto GetSize() const -> Uint64 {
-        return m_Size;
-    }
-    [[nodiscard]] auto GetDeviceAddress() const -> vk::DeviceAddress {
-        return m_DeviceAddress;
-    }
-
-    /// Copy full contents from a VulkanHostBuffer staging source via VulkanImmediateContext.
-    /// Copies min(SrcSize, this->Size) bytes and returns the transfer completion token.
-    [[nodiscard]] auto
-    CopyFrom(VulkanHostBuffer& Src, VulkanImmediateContext& Ctx, VulkanImmediateContext::CompletionDesc Completion)
-        -> std::expected<void, ErrorMessage> {
-        const Uint64 CopySize = std::min(Src.GetSize(), m_Size);
-        if (auto R = Ctx.Submit(
-                VulkanImmediateQueue::Transfer,
-                vk::PipelineStageFlagBits2::eTransfer,
-                [&](const vk::raii::CommandBuffer& CmdBuf) {
-                    vk::BufferCopy Region{.srcOffset = 0, .dstOffset = 0, .size = CopySize};
-                    CmdBuf.copyBuffer(Src.Get(), m_Buffer, {Region});
-                },
-                std::move(Completion));
-            !R) {
-            return std::unexpected(R.error().Append("VulkanDeviceBuffer::CopyFrom failed"));
-        }
-        return {};
-    }
-
-  private:
-    auto Destroy() -> void {
-        if (m_Allocation)
-            vmaDestroyBuffer(m_Allocator, static_cast<VkBuffer>(m_Buffer), m_Allocation);
-    }
-
-    VmaAllocator      m_Allocator     = nullptr;
-    vk::Buffer        m_Buffer        = nullptr;
-    VmaAllocation     m_Allocation    = nullptr;
-    vk::DeviceAddress m_DeviceAddress = 0;
-    Uint64            m_Size          = 0;
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanVertexBuffer — typed vertex buffer
-// ═════════════════════════════════════════════════════════════════════════════
-
-class VulkanVertexBuffer final : public RHIVertexBuffer {
-  public:
-    VulkanVertexBuffer(String Name, SPtr<VulkanDeviceBuffer> Buf, const RHIVertexBufferDesc& Desc)
-        : RHIVertexBuffer(std::move(Name), Desc), m_Buffer(std::move(Buf)) {
-        m_DescriptorInfo = vk::DescriptorBufferInfo{
-            .buffer = GetVkBuffer(),
-            .offset = 0,
-            .range  = m_Buffer->GetSize(),
-        };
-    }
-
-    ~VulkanVertexBuffer() override = default;
-
-    /// Static factory: creates staging buffer, uploads data, copies to
-    /// device-local buffer via VulkanImmediateContext, and defers staging destruction
-    /// to VulkanTransferCompletionQueue.
-    [[nodiscard]] static auto Create(const VulkanResourceContext&         Context,
-                                     StringView                           Name,
-                                     const RHIVertexBufferDesc&           Desc,
-                                     VulkanImmediateContext::CompletionFn OnReady)
-        -> std::expected<UPtr<VulkanVertexBuffer>, ErrorMessage> {
-        if (Desc.Data.empty())
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: data is empty"));
-        if (Desc.VertexCount == 0)
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: vertex count is zero"));
-        if (Desc.VertexCount > std::numeric_limits<Uint32>::max())
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: vertex count exceeds Vulkan draw limit"));
-        if (Desc.Stride == 0)
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: vertex stride is zero"));
-        if (Desc.VertexCount > std::numeric_limits<Uint64>::max() / Desc.Stride)
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: source data size overflows Uint64"));
-
-        const Uint64 Size = Desc.VertexCount * Desc.Stride;
-        if (Desc.Data.size_bytes() != Size)
-            return std::unexpected(ErrorMessage("VulkanVertexBuffer::Create: data size does not match vertex layout"));
-
-        auto StagingRes =
-            VulkanHostBuffer::Create(Context, Format("{}#Staging", Name), Size, vk::BufferUsageFlagBits::eTransferSrc);
-        if (!StagingRes)
-            return std::unexpected(StagingRes.error().Append("VulkanVertexBuffer::Create: staging creation failed"));
-        auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
-        if (auto R = Staging->Upload(Desc.Data.data(), Desc.Data.size_bytes()); !R)
-            return std::unexpected(R.error().Append("VulkanVertexBuffer::Create: staging upload failed"));
-
-        auto Usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
-                     vk::BufferUsageFlagBits::eTransferDst;
-        if (VulkanCapability::Get().IsRayTracingAvailable())
-            Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
-        auto DevRes = VulkanDeviceBuffer::Create(Context, Format("{}#Device", Name), Size, Usage);
-        if (!DevRes)
-            return std::unexpected(DevRes.error().Append("VulkanVertexBuffer::Create: device buffer creation failed"));
-        auto Buffer     = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
-        auto Completion = VulkanImmediateContext::CompletionDesc{
-            .ConsumerQueue = VulkanImmediateQueue::Graphics,
-            .OnComplete =
-                [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
-                    if (OnReady)
-                        OnReady();
-                },
-        };
-        if (auto R = Buffer->CopyFrom(*Staging, Context.GetImmediateContext(), std::move(Completion)); !R)
-            return std::unexpected(R.error().Append("VulkanVertexBuffer::Create: staging copy failed"));
-
-        return std::make_unique<VulkanVertexBuffer>(String(Name), std::move(Buffer), Desc);
-    }
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer->Get();
-    }
-    /// Build a storage-buffer descriptor write for this vertex buffer.
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             bool              /*IsReadOnly*/) const
-        -> vk::WriteDescriptorSet {
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eStorageBuffer,
-            .pBufferInfo     = &m_DescriptorInfo,
-        };
-    }
-    [[nodiscard]] auto GetDeviceAddress() const noexcept -> Uint64 override {
-        return static_cast<Uint64>(m_Buffer->GetDeviceAddress());
-    }
-    VulkanVertexBuffer(const VulkanVertexBuffer&)                    = delete;
-    auto operator=(const VulkanVertexBuffer&) -> VulkanVertexBuffer& = delete;
-    VulkanVertexBuffer(VulkanVertexBuffer&&)                         = delete;
-    auto operator=(VulkanVertexBuffer&&) -> VulkanVertexBuffer&      = delete;
-
-  private:
-    SPtr<VulkanDeviceBuffer>       m_Buffer        = nullptr;
-    vk::DescriptorBufferInfo         m_DescriptorInfo = {};
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanIndexBuffer — typed index buffer
-// ═════════════════════════════════════════════════════════════════════════════
-
-class VulkanIndexBuffer final : public RHIIndexBuffer {
-  public:
-    VulkanIndexBuffer(String Name, SPtr<VulkanDeviceBuffer> Buf, const RHIIndexBufferDesc& Desc)
-        : RHIIndexBuffer(std::move(Name), Desc), m_Buffer(std::move(Buf)) {
-        m_DescriptorInfo = vk::DescriptorBufferInfo{
-            .buffer = GetVkBuffer(),
-            .offset = 0,
-            .range  = m_Buffer->GetSize(),
-        };
-    }
-
-    ~VulkanIndexBuffer() override = default;
-
-    /// Static factory: same pattern as VulkanVertexBuffer::Create.
-    /// Index type is hardcoded to uint32 (eUint32).  uint16 is not supported.
-    [[nodiscard]] static auto Create(const VulkanResourceContext&         Context,
-                                     StringView                           Name,
-                                     const RHIIndexBufferDesc&            Desc,
-                                     VulkanImmediateContext::CompletionFn OnReady)
-        -> std::expected<UPtr<VulkanIndexBuffer>, ErrorMessage> {
-        if (Desc.Data.empty())
-            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: data is empty"));
-        if (Desc.IndexCount == 0)
-            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: index count is zero"));
-        if (Desc.IndexCount > std::numeric_limits<Uint32>::max())
-            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: index count exceeds Vulkan draw limit"));
-
-        const Uint64 Size = Desc.IndexCount * 4ULL;
-        if (Desc.Data.size_bytes() != Size)
-            return std::unexpected(ErrorMessage("VulkanIndexBuffer::Create: data size does not match index count"));
-
-        auto StagingRes =
-            VulkanHostBuffer::Create(Context, Format("{}#Staging", Name), Size, vk::BufferUsageFlagBits::eTransferSrc);
-        if (!StagingRes)
-            return std::unexpected(StagingRes.error().Append("VulkanIndexBuffer::Create: staging creation failed"));
-        auto Staging = std::make_shared<VulkanHostBuffer>(std::move(*StagingRes));
-        if (auto R = Staging->Upload(Desc.Data.data(), Desc.Data.size_bytes()); !R)
-            return std::unexpected(R.error().Append("VulkanIndexBuffer::Create: staging upload failed"));
-
-        auto Usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
-                     vk::BufferUsageFlagBits::eTransferDst;
-        if (VulkanCapability::Get().IsRayTracingAvailable())
-            Usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
-        auto DevRes = VulkanDeviceBuffer::Create(Context, Format("{}#Device", Name), Size, Usage);
-        if (!DevRes)
-            return std::unexpected(DevRes.error().Append("VulkanIndexBuffer::Create: device buffer creation failed"));
-        auto Buffer     = std::make_shared<VulkanDeviceBuffer>(std::move(*DevRes));
-        auto Completion = VulkanImmediateContext::CompletionDesc{
-            .ConsumerQueue = VulkanImmediateQueue::Graphics,
-            .OnComplete =
-                [Staging, Buffer, OnReady = std::move(OnReady)]() mutable {
-                    if (OnReady)
-                        OnReady();
-                },
-        };
-        if (auto R = Buffer->CopyFrom(*Staging, Context.GetImmediateContext(), std::move(Completion)); !R)
-            return std::unexpected(R.error().Append("VulkanIndexBuffer::Create: staging copy failed"));
-
-        return std::make_unique<VulkanIndexBuffer>(String(Name), std::move(Buffer), Desc);
-    }
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer->Get();
-    }
-    /// Build a storage-buffer descriptor write for this index buffer.
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             bool              /*IsReadOnly*/) const
-        -> vk::WriteDescriptorSet {
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eStorageBuffer,
-            .pBufferInfo     = &m_DescriptorInfo,
-        };
-    }
-    [[nodiscard]] auto GetDeviceAddress() const noexcept -> Uint64 override {
-        return static_cast<Uint64>(m_Buffer->GetDeviceAddress());
-    }
-    VulkanIndexBuffer(const VulkanIndexBuffer&)                    = delete;
-    auto operator=(const VulkanIndexBuffer&) -> VulkanIndexBuffer& = delete;
-    VulkanIndexBuffer(VulkanIndexBuffer&&)                         = delete;
-    auto operator=(VulkanIndexBuffer&&) -> VulkanIndexBuffer&      = delete;
-
-  private:
-    SPtr<VulkanDeviceBuffer>       m_Buffer        = nullptr;
-    vk::DescriptorBufferInfo         m_DescriptorInfo = {};
-};
-
-/// Shared per-frame uniform-buffer arena for values that must remain distinct
-/// between individual draw commands.
-class VulkanTransientUniformArena final {
-  public:
-    VulkanTransientUniformArena() = default;
-
-    explicit VulkanTransientUniformArena(VulkanHostBuffer&& Buffer, Uint64 FrameCapacity, Uint32 FramesInFlight)
-        : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_FramesInFlight(FramesInFlight) {}
-
-    [[nodiscard]] static auto
-    Create(StringView Name, Uint64 CapacityPerFrame, const VulkanResourceContext& Context, Uint32 FramesInFlight)
-        -> std::expected<VulkanTransientUniformArena, ErrorMessage> {
-        if (CapacityPerFrame == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientUniformArena::Create: capacity must be greater than zero"));
-        if (FramesInFlight == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientUniformArena::Create: frames-in-flight must be greater than zero"));
-        const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxUniformBufferRange);
-        if (CapacityPerFrame > MaxRange)
-            return std::unexpected(ErrorMessage(
-                Format("VulkanTransientUniformArena::Create: capacity exceeds maxUniformBufferRange ({} bytes > {})",
-                       CapacityPerFrame,
-                       MaxRange)));
-        const auto Alignment =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minUniformBufferOffsetAlignment);
-        if (Alignment == 0 || CapacityPerFrame % Alignment != 0)
-            return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientUniformArena::Create: capacity must be aligned to minUniformBufferOffsetAlignment "
-                "({} bytes, alignment {})",
-                CapacityPerFrame,
-                Alignment)));
-        const Uint64 PaddedFrameCount = static_cast<Uint64>(FramesInFlight) + 1;
-        if (CapacityPerFrame > std::numeric_limits<Uint64>::max() / PaddedFrameCount)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformArena::Create: padded buffer size overflow"));
-
-        // Keep one extra frame-capacity as trailing padding. The padding is
-        // outside the frame regions used for uploads, so it does not change
-        // rendering results. It is intentional memory waste that avoids the
-        // per-frame descriptor-set complexity of dynamic binding updates and
-        // prevents validation errors for a fixed range plus absolute offsets.
-        // See: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/2846
-        auto Buffer = VulkanHostBuffer::Create(
-            Context, String(Name), CapacityPerFrame * PaddedFrameCount, vk::BufferUsageFlagBits::eUniformBuffer);
-        if (!Buffer)
-            return std::unexpected(
-                Buffer.error().Append("VulkanTransientUniformArena::Create: VulkanHostBuffer creation failed"));
-        return VulkanTransientUniformArena(std::move(*Buffer), CapacityPerFrame, FramesInFlight);
-    }
-
-    VulkanTransientUniformArena(const VulkanTransientUniformArena&)                        = delete;
-    auto operator=(const VulkanTransientUniformArena&) -> VulkanTransientUniformArena&     = delete;
-    VulkanTransientUniformArena(VulkanTransientUniformArena&&) noexcept                    = default;
-    auto operator=(VulkanTransientUniformArena&&) noexcept -> VulkanTransientUniformArena& = default;
-
-    [[nodiscard]] auto Reset(Uint32 FrameIndex) -> std::expected<void, ErrorMessage> {
-        if (FrameIndex >= m_FramesInFlight)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientUniformArena::Reset: frame index is out of range"));
-        m_FrameIndex = FrameIndex;
-        m_Used       = 0;
-        return {};
-    }
-
-    [[nodiscard]] auto Upload(std::span<const std::byte> Data) -> std::expected<Uint32, ErrorMessage> {
-        const auto Size = static_cast<Uint64>(Data.size());
-        if (Size == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientUniformArena::Upload: data must not be empty"));
-
-        const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxUniformBufferRange);
-        if (Size > MaxRange) {
-            return std::unexpected(ErrorMessage(
-                Format("VulkanTransientUniformArena allocation exceeds maxUniformBufferRange ({} bytes > {})",
-                       Size,
-                       MaxRange)));
-        }
-
-        const auto Alignment =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minUniformBufferOffsetAlignment);
-        auto RelativeOffset = AlignUp(m_Used, Alignment);
-        if (!RelativeOffset)
-            return std::unexpected(
-                RelativeOffset.error().Append("VulkanTransientUniformArena::Upload: offset alignment failed"));
-        if (*RelativeOffset > m_FrameCapacity || Size > m_FrameCapacity - *RelativeOffset)
-            return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientUniformArena allocation exceeds frame capacity (offset {} + size {} > capacity {})",
-                *RelativeOffset,
-                Size,
-                m_FrameCapacity)));
-        const auto FrameBase = static_cast<Uint64>(m_FrameIndex) * m_FrameCapacity;
-        if (FrameBase > std::numeric_limits<Uint64>::max() - *RelativeOffset)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformArena allocation offset overflow"));
-        const auto Offset = FrameBase + *RelativeOffset;
-        if (Offset > std::numeric_limits<Uint64>::max() - Size)
-            return std::unexpected(ErrorMessage("VulkanTransientUniformArena allocation size overflow"));
-        if (Offset > std::numeric_limits<Uint32>::max())
-            return std::unexpected(ErrorMessage("VulkanTransientUniformArena offset exceeds dynamic offset range"));
-
-        if (auto R = m_Buffer.Upload(Data.data(), Size, static_cast<Uint32>(Offset)); !R)
-            return std::unexpected(R.error().Append("VulkanTransientUniformArena::Upload failed"));
-        m_Used = *RelativeOffset + Size;
-        return static_cast<Uint32>(Offset);
-    }
-
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer.Get();
-    }
-
-    [[nodiscard]] auto GetFrameCapacity() const -> Uint64 {
-        return m_FrameCapacity;
-    }
-
-  private:
-    [[nodiscard]] static auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
-        if (Alignment == 0)
-            return Value;
-        if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1))
-            return std::unexpected(ErrorMessage("VulkanTransientUniformArena alignment overflow"));
-        return ((Value + Alignment - 1) / Alignment) * Alignment;
-    }
-
-    VulkanHostBuffer    m_Buffer        = VulkanHostBuffer{String{}};
-    Uint64              m_FrameCapacity = 0;
-    Uint32              m_FramesInFlight = 0;
-    Uint32              m_FrameIndex     = 0;
-    Uint64              m_Used           = 0;
-};
-
-/// Shared per-frame storage-buffer arena for shader data rebuilt during command execution.
-class VulkanTransientShaderStorageArena final {
-  public:
-    VulkanTransientShaderStorageArena() = default;
-
-    explicit VulkanTransientShaderStorageArena(VulkanHostBuffer&& Buffer, Uint64 FrameCapacity, Uint32 FramesInFlight)
-        : m_Buffer(std::move(Buffer)), m_FrameCapacity(FrameCapacity), m_FramesInFlight(FramesInFlight) {}
-
-    [[nodiscard]] static auto
-    Create(StringView Name, Uint64 CapacityPerFrame, const VulkanResourceContext& Context, Uint32 FramesInFlight)
-        -> std::expected<VulkanTransientShaderStorageArena, ErrorMessage> {
-        if (CapacityPerFrame == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientShaderStorageArena::Create: capacity must be greater than zero"));
-        if (FramesInFlight == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientShaderStorageArena::Create: frames-in-flight must be greater than zero"));
-        const auto MaxRange =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxStorageBufferRange);
-        if (CapacityPerFrame > MaxRange)
-            return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientShaderStorageArena::Create: capacity exceeds maxStorageBufferRange ({} bytes > {})",
-                CapacityPerFrame,
-                MaxRange)));
-        const auto Alignment =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minStorageBufferOffsetAlignment);
-        if (Alignment == 0 || CapacityPerFrame % Alignment != 0)
-            return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientShaderStorageArena::Create: capacity must be aligned to "
-                "minStorageBufferOffsetAlignment ({} bytes, alignment {})",
-                CapacityPerFrame,
-                Alignment)));
-        const Uint64 PaddedFrameCount = static_cast<Uint64>(FramesInFlight) + 1;
-        if (CapacityPerFrame > std::numeric_limits<Uint64>::max() / PaddedFrameCount)
-            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena::Create: padded buffer size overflow"));
-
-        // Keep one extra frame-capacity as trailing padding. The padding is
-        // outside the frame regions used for uploads, so it does not change
-        // rendering results. It is intentional memory waste that avoids the
-        // per-frame descriptor-set complexity of dynamic binding updates and
-        // prevents validation errors for a fixed range plus absolute offsets.
-        // See: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/2846
-        auto Buffer = VulkanHostBuffer::Create(Context,
-                                               String(Name),
-                                               CapacityPerFrame * PaddedFrameCount,
-                                               vk::BufferUsageFlagBits::eStorageBuffer |
-                                                   vk::BufferUsageFlagBits::eIndirectBuffer);
-        if (!Buffer) {
-            return std::unexpected(
-                Buffer.error().Append("VulkanTransientShaderStorageArena::Create: VulkanHostBuffer creation failed"));
-        }
-        return VulkanTransientShaderStorageArena(std::move(*Buffer), CapacityPerFrame, FramesInFlight);
-    }
-
-    VulkanTransientShaderStorageArena(const VulkanTransientShaderStorageArena&)                        = delete;
-    auto operator=(const VulkanTransientShaderStorageArena&) -> VulkanTransientShaderStorageArena&     = delete;
-    VulkanTransientShaderStorageArena(VulkanTransientShaderStorageArena&&) noexcept                    = default;
-    auto operator=(VulkanTransientShaderStorageArena&&) noexcept -> VulkanTransientShaderStorageArena& = default;
-
-    [[nodiscard]] auto Reset(Uint32 FrameIndex) -> std::expected<void, ErrorMessage> {
-        if (FrameIndex >= m_FramesInFlight) {
-            return std::unexpected(
-                ErrorMessage("VulkanTransientShaderStorageArena::Reset: frame index is out of range"));
-        }
-        m_FrameIndex = FrameIndex;
-        m_Used       = 0;
-        return {};
-    }
-
-    [[nodiscard]] auto Upload(std::span<const std::byte> Data) -> std::expected<Uint32, ErrorMessage> {
-        const auto Size = static_cast<Uint64>(Data.size());
-        if (Size == 0)
-            return std::unexpected(
-                ErrorMessage("VulkanTransientShaderStorageArena::Upload: data must not be empty"));
-
-        const auto MaxRange = static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.maxStorageBufferRange);
-        if (Size > MaxRange) {
-            return std::unexpected(ErrorMessage(
-                Format("VulkanTransientShaderStorageArena allocation exceeds maxStorageBufferRange ({} bytes > {})",
-                       Size,
-                       MaxRange)));
-        }
-
-        const auto Alignment =
-            static_cast<Uint64>(VulkanCapability::Get().GetProperties().limits.minStorageBufferOffsetAlignment);
-        auto RelativeOffset = AlignUp(m_Used, Alignment);
-        if (!RelativeOffset) {
-            return std::unexpected(
-                RelativeOffset.error().Append("VulkanTransientShaderStorageArena::Upload: offset alignment failed"));
-        }
-        if (*RelativeOffset > m_FrameCapacity || Size > m_FrameCapacity - *RelativeOffset)
-            return std::unexpected(ErrorMessage(Format(
-                "VulkanTransientShaderStorageArena allocation exceeds frame capacity (offset {} + size {} > capacity {})",
-                *RelativeOffset,
-                Size,
-                m_FrameCapacity)));
-        const auto FrameBase = static_cast<Uint64>(m_FrameIndex) * m_FrameCapacity;
-        if (FrameBase > std::numeric_limits<Uint64>::max() - *RelativeOffset)
-            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena allocation offset overflow"));
-        const auto Offset = FrameBase + *RelativeOffset;
-        if (Offset > std::numeric_limits<Uint64>::max() - Size)
-            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena allocation size overflow"));
-        if (Offset > std::numeric_limits<Uint32>::max())
-            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena offset exceeds dynamic offset range"));
-
-        if (auto R = m_Buffer.Upload(Data.data(), Size, static_cast<Uint32>(Offset)); !R)
-            return std::unexpected(R.error().Append("VulkanTransientShaderStorageArena::Upload failed"));
-        m_Used = *RelativeOffset + Size;
-        return static_cast<Uint32>(Offset);
-    }
-
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer.Get();
-    }
-
-    [[nodiscard]] auto GetFrameCapacity() const -> Uint64 {
-        return m_FrameCapacity;
-    }
-
-  private:
-    [[nodiscard]] static auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
-        if (Alignment == 0)
-            return Value;
-        if (Value > std::numeric_limits<Uint64>::max() - (Alignment - 1)) {
-            return std::unexpected(ErrorMessage("VulkanTransientShaderStorageArena alignment overflow"));
-        }
-        return ((Value + Alignment - 1) / Alignment) * Alignment;
-    }
-
-    VulkanHostBuffer    m_Buffer        = VulkanHostBuffer{String{}};
-    Uint64              m_FrameCapacity = 0;
-    Uint32              m_FramesInFlight = 0;
-    Uint32              m_FrameIndex     = 0;
-    Uint64              m_Used           = 0;
-};
-
-class VulkanTransientConstantBuffer final : public RHITransientConstantBuffer {
-  public:
-    VulkanTransientConstantBuffer(String Name, Uint64 Size, Uint32 Offset, const VulkanTransientUniformArena& Arena)
-        : RHITransientConstantBuffer(std::move(Name), Size),
-          m_Offset(Offset),
-          m_Arena(&Arena),
-          m_DescriptorInfo{.buffer = Arena.GetVkBuffer(), .offset = 0, .range = Arena.GetFrameCapacity()} {}
-
-    [[nodiscard]] auto GetOffset() const noexcept -> Uint32 {
-        return m_Offset;
-    }
-
-    /// The arena buffer is the descriptor target; the per-frame slice offset is
-    /// supplied as a dynamic offset at descriptor-set bind time.
-    [[nodiscard]] auto GetArenaBuffer() const -> vk::Buffer {
-        return m_Arena->GetVkBuffer();
-    }
-
-    /// Build a dynamic uniform-buffer descriptor write for the arena slice.
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             bool              /*IsReadOnly*/) const
-        -> vk::WriteDescriptorSet {
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eUniformBufferDynamic,
-            .pBufferInfo     = &m_DescriptorInfo,
-        };
-    }
-
-    [[nodiscard]] auto GetArenaFrameCapacity() const -> Uint64 {
-        return m_Arena->GetFrameCapacity();
-    }
-
-  private:
-    Uint32                             m_Offset = 0;
-    const VulkanTransientUniformArena* m_Arena = nullptr;
-    vk::DescriptorBufferInfo            m_DescriptorInfo = {};
-};
-
-class VulkanTransientShaderStorageBuffer final : public RHITransientShaderStorageBuffer {
-  public:
-    VulkanTransientShaderStorageBuffer(String                             Name,
-                                       Uint64                             Size,
-                                       RHITransientBufferUsage            Usage,
-                                       Uint32                             Offset,
-                                       const VulkanTransientShaderStorageArena& Arena)
-        : RHITransientShaderStorageBuffer(std::move(Name), Size, Usage),
-          m_Offset(Offset),
-          m_Arena(&Arena),
-          m_DescriptorInfo{.buffer = Arena.GetVkBuffer(), .offset = 0, .range = Arena.GetFrameCapacity()} {}
-
-    [[nodiscard]] auto GetOffset() const noexcept -> Uint32 {
-        return m_Offset;
-    }
-
-    /// The arena buffer is the descriptor target; the per-frame slice offset is
-    /// supplied as a dynamic offset at descriptor-set bind time.
-    [[nodiscard]] auto GetArenaBuffer() const -> vk::Buffer {
-        return m_Arena->GetVkBuffer();
-    }
-
-    /// Build a dynamic storage-buffer descriptor write for the arena slice.
-    [[nodiscard]] auto GetWriteDescriptorSet(vk::DescriptorSet Set,
-                                             Uint32            BindingIndex,
-                                             bool              /*IsReadOnly*/) const
-        -> vk::WriteDescriptorSet {
-        return vk::WriteDescriptorSet{
-            .dstSet          = Set,
-            .dstBinding      = BindingIndex,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType  = vk::DescriptorType::eStorageBufferDynamic,
-            .pBufferInfo     = &m_DescriptorInfo,
-        };
-    }
-
-    [[nodiscard]] auto GetArenaFrameCapacity() const -> Uint64 {
-        return m_Arena->GetFrameCapacity();
-    }
-
-  private:
-    Uint32                                   m_Offset = 0;
-    const VulkanTransientShaderStorageArena* m_Arena  = nullptr;
-    vk::DescriptorBufferInfo                 m_DescriptorInfo = {};
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// VulkanReadbackBuffer — persistent host-visible GPU-to-CPU ring
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// Persistent mapped ring buffer written by GPU transfer/compute work and
-/// polled from the CPU. See RHIReadbackBuffer for the race protocol. The
-/// completed-value query borrows the resource-context graphics timeline;
-/// TryRead() is only valid while the resource context is alive.
-class VulkanReadbackBuffer final : public RHIReadbackBuffer {
-  public:
-    VulkanReadbackBuffer(String                      Name,
-                         const RHIReadbackBufferDesc& Desc,
-                         VulkanTimelineSemaphore&     CompletedTimeline,
-                         Uint32                       RingSize)
-        : RHIReadbackBuffer(std::move(Name), Desc),
-          m_CompletedTimeline(&CompletedTimeline),
-          m_RingSize(RingSize),
-          m_WriteValues(RingSize) {
-        for (auto& Value : m_WriteValues)
-            Value.store(0, std::memory_order_relaxed);
-    }
-
-    ~VulkanReadbackBuffer() override {
-        if (m_Allocation)
-            vmaDestroyBuffer(m_Allocator, static_cast<VkBuffer>(m_Buffer), m_Allocation);
-    }
-    VulkanReadbackBuffer(const VulkanReadbackBuffer&)                    = delete;
-    auto operator=(const VulkanReadbackBuffer&) -> VulkanReadbackBuffer& = delete;
-    VulkanReadbackBuffer(VulkanReadbackBuffer&&)                         = delete;
-    auto operator=(VulkanReadbackBuffer&&) -> VulkanReadbackBuffer&      = delete;
-
-    [[nodiscard]] static auto Create(const VulkanResourceContext& Context,
-                                     StringView                   Name,
-                                     const RHIReadbackBufferDesc& Desc,
-                                     Uint32                       RingSize)
-        -> std::expected<UPtr<VulkanReadbackBuffer>, ErrorMessage> {
-        if (Desc.Size == 0 || RingSize == 0)
-            return std::unexpected(ErrorMessage("VulkanReadbackBuffer::Create: size and ring size must be non-zero"));
-
-        auto Result = std::make_unique<VulkanReadbackBuffer>(String(Name), Desc, Context.GetTimeline(), RingSize);
-        Result->m_Allocator = Context.GetAllocator();
-
-        const Uint64 Size = static_cast<Uint64>(Desc.Size) * RingSize;
-        vk::BufferCreateInfo BufCI{
-            .size        = Size,
-            // eStorageBuffer keeps the buffer usable as a compute-dispatch
-            // write target when the compute pipeline lands.
-            .usage       = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+        // GpuOnly uploads are recorded on the transfer lane while consumers run on graphics; cross-family
+        // ownership rides an explicit queue-family transfer, so every buffer is created exclusive. TODO: emit
+        // the transfer->graphics ownership transfer barriers.
+        const vk::BufferCreateInfo BufCI{
+            .size        = Desc.SizeBytes,
+            .usage       = VkUsage,
             .sharingMode = vk::SharingMode::eExclusive,
         };
 
-        VmaAllocationCreateInfo AllocInfo{
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO,
-        };
+        // NOTE: VMA memory types are `AUTO`. To understand what `AUTO` means here, think about some concepts,
+        //       like host/device visible and host/device memory.
+        //
+        //       Classic discrete graphics cards have no ReBAR, which means device memory is invisible to
+        //       host, thus `host visible` == `host memory`. On the other hand, cards that have ReBAR own
+        //       device memory that are visible to host.
+        //
+        //       GPU (or shader program) can access both device memory and host memory. The later one is much
+        //       slower because it needs to went through PCIE. So:
+        //       - For `GpuOnly` buffers, they prefer device memory, but host memory can do the work as well.
+        //       - For `CpuToGpu` buffers, we need host visiblity. VMA `AUTO` does the work
+        //         here: If device memory is visble to host, then it chooses device memory. If it isn't, we
+        //         have to use host memory. (Why not use `PREFER_HOST`? Because we don't want host memory when
+        //         device memory is visible to host)
+        //
+        //       We declare we need host visibilty by adding `HOST_ACCESS_xxx` bit in flags.
+        const VmaAllocationCreateInfo AllocInfo =
+            Desc.MemoryUsage == RHIMemoryUsage::GpuOnly
+                ? VmaAllocationCreateInfo{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE}
+                : VmaAllocationCreateInfo{.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                                          .usage = VMA_MEMORY_USAGE_AUTO};
 
-        VmaAllocationInfo AllocationInfo{};
-        if (vmaCreateBuffer(Context.GetAllocator(),
-                            reinterpret_cast<VkBufferCreateInfo*>(&BufCI),
-                            &AllocInfo,
-                            reinterpret_cast<VkBuffer*>(&Result->m_Buffer),
-                            &Result->m_Allocation,
-                            &AllocationInfo) != VK_SUCCESS)
-            return std::unexpected(ErrorMessage("VulkanReadbackBuffer::Create: VMA buffer creation failed"));
-        if (!AllocationInfo.pMappedData) {
-            vmaDestroyBuffer(Context.GetAllocator(),
-                             static_cast<VkBuffer>(Result->m_Buffer),
-                             Result->m_Allocation);
-            Result->m_Buffer     = nullptr;
-            Result->m_Allocation = nullptr;
-            return std::unexpected(ErrorMessage("VulkanReadbackBuffer::Create: allocation is not mapped"));
+        const auto Created = vmaCreateBuffer(m_Context->GetAllocator(),
+                                             reinterpret_cast<const VkBufferCreateInfo*>(&BufCI),
+                                             &AllocInfo,
+                                             reinterpret_cast<VkBuffer*>(&Prop.Buffer),
+                                             &Prop.Allocation,
+                                             nullptr);
+        if (Created != VK_SUCCESS)
+            return std::unexpected(
+                ErrorMessage("VulkanBufferManager::CreatePersistentBuffer: buffer creation failed via VMA"));
+
+        if (bDeviceAddress) {
+            const auto AddressInfo = vk::BufferDeviceAddressInfo{.buffer = Prop.Buffer};
+            Prop.DeviceAddress     = m_Context->GetDevice().getBufferAddress(AddressInfo);
         }
-        Result->m_Mapped = static_cast<std::byte*>(AllocationInfo.pMappedData);
 
-        VkMemoryPropertyFlags MemoryProps = 0;
-        vmaGetAllocationMemoryProperties(Context.GetAllocator(), Result->m_Allocation, &MemoryProps);
-        Result->m_Coherent = (MemoryProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+        m_Context->GetDebugUtils().SetObjectName(Prop.Buffer, Name);
 
-        Context.GetDebugUtils().SetObjectName(Result->m_Buffer, Result->GetName());
-        return Result;
+        auto Resource = RHIRef<RHIBuffer>::Create();
+        if (auto Publish = Resource.Publish(std::make_unique<VulkanBuffer>(String(Name), Desc, std::move(Prop)),
+                                            RHIRefState::Ready);
+            !Publish)
+            return std::unexpected(Publish.error());
+        return Resource;
     }
 
-    [[nodiscard]] auto GetVkBuffer() const -> vk::Buffer {
-        return m_Buffer;
-    }
-    [[nodiscard]] auto AllocateWriteOffset() -> Uint64 {
-        Uint32 OldestSlot  = 0;
-        Uint64 OldestValue = m_WriteValues[0].load(std::memory_order_acquire);
-        for (Uint32 Slot = 1; Slot < m_RingSize; ++Slot) {
-            const Uint64 Value = m_WriteValues[Slot].load(std::memory_order_acquire);
-            if (Value < OldestValue) {
-                OldestSlot  = Slot;
-                OldestValue = Value;
-            }
+    /// @brief Transient slice dispatch: the frame task resolves the belt slice.
+    ///
+    /// Pure allocation — bytes flow through Upload. No host-write barrier exists: belts are contractually
+    /// coherent and host writes are implicitly visible to later submissions.
+    /// @param Name  logical RHI name.
+    /// @param Desc  buffer description, already validated at the CreateBuffer entry; this branch owns only
+    ///              belt orchestration.
+    [[nodiscard]] auto CreateTransientBuffer(StringView Name, const RHIBufferDesc& Desc)
+        -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> {
+        auto Resource = RHIRef<RHIBuffer>::Create();
+
+        auto EnqueueResult =
+            TaskGraph::Get().EnqueueFrameTask(ThreadQueue::RHI, [this, Resource, Name = String(Name), Desc] mutable {
+                const bool IsUniform = magic_enum::enum_flags_test(Desc.Usage, RHIBufferUsage::Constant);
+                auto       Alloc =
+                    IsUniform ? m_UniformBelt.Allocate(Desc.SizeBytes) : m_StorageBelt.Allocate(Desc.SizeBytes);
+                if (!Alloc) {
+                    auto Error = Alloc.error().Append("Transient buffer belt resolution failed");
+                    LogError("{}", Error.ToString());
+                    Resource.MarkFailed(std::move(Error));
+                    return;
+                }
+                const Uint32 Generation = IsUniform ? m_UniformBelt.GetGeneration() : m_StorageBelt.GetGeneration();
+                // Desc was validated and pinned (CpuToGpu, Transient) at the CreateBuffer entry — forward it
+                // as-is.
+                auto         Payload    = std::make_unique<VulkanBuffer>(
+                    std::move(Name), Desc, TransientBufferProp{.Allocation = *Alloc, .CreationGeneration = Generation});
+                if (auto Publish = Resource.Publish(std::move(Payload), RHIRefState::Ready); !Publish) {
+                    auto Error = Publish.error().Append("Transient buffer publication failed");
+                    LogError("{}", Error.ToString());
+                    Resource.MarkFailed(std::move(Error));
+                    return;
+                }
+            });
+        if (!EnqueueResult) {
+            Resource.MarkFailed(EnqueueResult.error());
+            return std::unexpected(EnqueueResult.error());
         }
-        m_WriteValues[OldestSlot].store(m_CompletedTimeline->IncreaseHostValue(), std::memory_order_release);
-        return GetSlotOffset(OldestSlot);
-    }
-    [[nodiscard]] auto GetSlotOffset(Uint32 Slot) const -> Uint64 {
-        return static_cast<Uint64>(Slot) * GetSize();
+        return Resource;
     }
 
-  protected:
-    [[nodiscard]] auto TryReadBytes(std::span<std::byte> Out) const -> bool override {
-        const auto Completed = m_CompletedTimeline->GetDeviceValue();
-
-        Uint64 BestValue = 0;
-        Uint32 BestSlot  = std::numeric_limits<Uint32>::max();
-        for (Uint32 Slot = 0; Slot < m_RingSize; ++Slot) {
-            const Uint64 Value = m_WriteValues[Slot].load(std::memory_order_acquire);
-            if (Value != 0 && Value <= Completed && Value > BestValue) {
-                BestValue = Value;
-                BestSlot  = Slot;
-            }
-        }
-        if (BestSlot == std::numeric_limits<Uint32>::max())
-            return false;
-
-        const Uint64 Offset = GetSlotOffset(BestSlot);
-        if (!m_Coherent)
-            vmaInvalidateAllocation(m_Allocator, m_Allocation, Offset, Out.size());
-        std::memcpy(Out.data(), m_Mapped + Offset, Out.size());
-        return true;
-    }
-
-  private:
-    VmaAllocator             m_Allocator         = nullptr;
-    vk::Buffer               m_Buffer            = nullptr;
-    VmaAllocation            m_Allocation        = nullptr;
-    std::byte*               m_Mapped            = nullptr;
-    VulkanTimelineSemaphore* m_CompletedTimeline = nullptr; // borrowed; device outlives this buffer
-    Uint32                   m_RingSize          = 0;
-    std::vector<std::atomic<Uint64>> m_WriteValues = {};
-    bool                     m_Coherent          = false;
-    static constexpr Uint64  kReservedWriteValue = std::numeric_limits<Uint64>::max();
+    const VulkanResourceContext* m_Context     = nullptr; ///< borrowed resource context
+    VulkanUniformBelt            m_UniformBelt = {};      ///< per-frame uniform lane
+    VulkanShaderStorageBelt      m_StorageBelt = {};      ///< per-frame shader-storage lane
+    VulkanStagingBelt*           m_Staging     = nullptr; ///< borrowed; owned by the render device
 };
 
 } // namespace SoulEngine

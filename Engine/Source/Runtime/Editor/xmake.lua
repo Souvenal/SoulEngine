@@ -6,7 +6,7 @@ target("EditorTypes")
 target("Editor")
     set_kind("moduleonly")
 
-    add_deps("Application", "Core", "EditorTypes", "Renderer", "RHI", "Resource", "Scene", "TaskGraph", "WindowSystem")
+    add_deps("Application", "Core", "EditorTypes", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem")
     add_packages("magic_enum", {public = true})
     add_packages("entt", {public = true})
     add_packages("hlslpp", {public = true})

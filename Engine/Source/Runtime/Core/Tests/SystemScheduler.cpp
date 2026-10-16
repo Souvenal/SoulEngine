@@ -66,8 +66,8 @@ TEST(SystemSchedulerTest, BeforeConstraintIsRespected) {
 
 TEST(SystemSchedulerTest, AfterConstraintIsSymmetricToBefore) {
     SchedulerFixture F;
-    ASSERT_TRUE(F.Scheduler.Register<RecordingSystem<0>>("TransformSystem", {}, {"EditorCameraSystem"}, F.Log)
-                    .has_value());
+    ASSERT_TRUE(
+        F.Scheduler.Register<RecordingSystem<0>>("TransformSystem", {}, {"EditorCameraSystem"}, F.Log).has_value());
     ASSERT_TRUE(F.Scheduler.Register<RecordingSystem<1>>("EditorCameraSystem", {}, {}, F.Log).has_value());
     ASSERT_TRUE(F.Scheduler.CompileDependency().has_value());
 
@@ -154,7 +154,7 @@ TEST(SystemSchedulerTest, GetReturnsOptionalBorrowedReference) {
     EXPECT_EQ(F.Log, (std::vector<int>{0}));
 
     const SystemScheduler& ConstScheduler = F.Scheduler;
-    const auto             ConstSystem     = ConstScheduler.Get<RecordingSystem<0>>();
+    const auto             ConstSystem    = ConstScheduler.Get<RecordingSystem<0>>();
     static_assert(std::same_as<std::remove_cvref_t<decltype(ConstSystem)>,
                                std::optional<std::reference_wrapper<const RecordingSystem<0>>>>);
     ASSERT_TRUE(ConstSystem.has_value());

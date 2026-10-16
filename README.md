@@ -1,5 +1,7 @@
 # SoulEngine
 
+[![CI](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml)
+
 SoulEngine is a personal lightweight game engine built from scratch with modern C++23 and xmake. It is first and foremost a **learning project** — a vehicle for studying low-level GPU APIs, hardware architecture, advanced rendering algorithms, and large-scale software engineering.
 
 The project structure is inspired by Unreal Engine's modular design (see the `Engine/` directory), but where UE uses a directory convention (`Public/` vs `Private/`) to indicate module visibility, SoulEngine leverages **C++ modules** as a first-class language mechanism to enforce the same boundary natively.
@@ -44,24 +46,22 @@ Each runtime module has its own `xmake.lua` for module-specific build configurat
 
 - xmake (latest)
 - A C++23 modules-capable compiler
-  - **Windows:** Microsoft Visual C++ (MSVC) from Visual Studio. This is the only currently supported Windows toolchain.
+  - **Windows:** LLVM Clang is **required** — MSVC currently cannot compile the project (see [Known Issues](#known-issues)). The root `xmake.lua` already pins the `clang` toolchain, so a plain `xmake f` picks it up automatically.
   - **macOS/Linux:** Clang is the configured toolchain.
-- **Vulkan SDK** — Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home). Before building or running, source the environment setup script:
+- **Vulkan SDK** — needed at **runtime**, not at build time. The build resolves Vulkan headers through the `vulkan-headers` xmake package, and the engine discovers the Vulkan loader dynamically at runtime via volk, so CI builds the project with no Vulkan SDK installed. Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home), and before running, source the environment setup script:
 
   ```bash
   source /path/to/VulkanSDK/x.x.x.x/setup-env.sh
   ```
 
-  It is recommended to add this to your shell profile (e.g. `~/.zshrc` or `~/.bash_profile`) so `VULKAN_SDK` is always set:
+  It is recommended to add this to your shell profile (e.g. `~/.zshrc` or `~/.bash_profile`):
 
   ```bash
   # Vulkan SDK
   source /path/to/VulkanSDK/x.x.x.x/setup-env.sh
   ```
 
-  The `VULKAN_SDK` environment variable is how xmake locates the Vulkan headers and libraries. Without it, the build system will not find the Vulkan dependency.
-
-  In addition, `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so that Vulkan SDK shared libraries can be resolved at runtime. Skipping this step will result in missing dylib errors when launching the executable.
+  `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so the Vulkan loader and driver (see [`docs/platform/macOS.md`](docs/platform/macOS.md) for the driver choice) resolve at runtime. Skipping this step results in missing dylib errors when launching the executable.
 
 ### Git Hooks
 
@@ -74,12 +74,16 @@ uv run pre-commit install
 ### Build & Run
 
 ```bash
+xmake repo -u      # sync package repositories (required once after cloning,
+                   # and again whenever .xmake/ is deleted — the project's
+                   # souvenal-repo clone lives under .xmake/ and xmake does
+                   # not re-clone it automatically in private network mode)
 xmake f -m release # configure
 xmake              # build
 xmake run          # run SoulEngine
 ```
 
-See [`Docs/platform/`](Docs/platform/) for platform-specific setup notes (e.g. macOS Vulkan driver configuration).
+See [`docs/platform/`](docs/platform/) for platform-specific setup notes (e.g. macOS Vulkan driver configuration).
 
 ## Motivation
 
@@ -99,11 +103,16 @@ Early, exploratory, single-developer. Nothing is stable. Everything is subject t
 
 ## Known Issues
 
-### Windows Toolchain: MSVC Required
+### Windows Toolchain: Clang Required (MSVC Currently Broken)
 
-Windows builds are currently supported and tested with **MSVC** only; the root `xmake.lua` selects it automatically.
+Windows builds must use **LLVM Clang**. The root `xmake.lua` hardcodes `set_toolchains("clang")`, so the default configure already uses it — do not switch the Windows toolchain back to MSVC.
 
-Do not override the Windows toolchain to LLVM Clang or `clang-cl`. The primary blocker is that the tested LLVM Clang **22.1.7** still triggers a compiler internal error while compiling SoulEngine's C++23 modules, even after the earlier Windows module/STL issues are addressed. The Clang path has also shown standard-library module integration failures (including missing concepts/type traits) and third-party Windows resource-compiler failures. Re-enable it only after the internal compiler error is fixed upstream or otherwise resolved, then validate the isolated `test_std/` project and a clean full-engine build.
+The blocker is MSVC compiler bugs with C++23 modules, not project code:
+
+- **MSVC 14.51 (VS 2026)** fails with a fatal **C1116** IFC-merge error: when a translation unit imports several modules whose global module fragments pull in `<thread>`/`<stop_token>` internal reference records (Tracy's headers inside the `Vulkan:Profiling` partition), MSVC mis-merges the module interface files.
+- **MSVC 14.44 / 14.38** fail even earlier, while compiling the `Core` module, so they are not a fallback path.
+
+Revisit MSVC only after those compiler bugs are fixed upstream (e.g. a Visual Studio update that resolves the C1116 IFC merge), then validate a clean full-engine build before changing the toolchain pin.
 
 ## License
 

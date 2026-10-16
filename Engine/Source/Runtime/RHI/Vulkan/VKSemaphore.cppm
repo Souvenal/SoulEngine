@@ -11,13 +11,11 @@ import std;
 
 namespace SoulEngine {
 
-// ═════════════════════════════════════════════════════════════════════════════
 // VulkanTimelineSemaphore
-// ═════════════════════════════════════════════════════════════════════════════
 
-/// Thin wrapper around a single per-device VkSemaphore of type
-/// VK_SEMAPHORE_TYPE_TIMELINE. Owns the monotonic CPU signal counter and
-/// provides blocking CPU waits / non-blocking completion queries.
+/// @brief Thin wrapper around a single per-device VkSemaphore of type VK_SEMAPHORE_TYPE_TIMELINE.
+///
+/// Owns the monotonic CPU signal counter and provides blocking CPU waits / non-blocking completion queries.
 class VulkanTimelineSemaphore {
   public:
     VulkanTimelineSemaphore() = default;
@@ -39,9 +37,7 @@ class VulkanTimelineSemaphore {
     VulkanTimelineSemaphore(const VulkanTimelineSemaphore&)                    = delete;
     auto operator=(const VulkanTimelineSemaphore&) -> VulkanTimelineSemaphore& = delete;
 
-    [[nodiscard]] static auto Create(vk::raii::Device& Device,
-                                     VulkanDebugUtils* DebugUtils,
-                                     StringView         Name)
+    [[nodiscard]] static auto Create(vk::raii::Device& Device, VulkanDebugUtils* DebugUtils, StringView Name)
         -> std::expected<VulkanTimelineSemaphore, ErrorMessage> {
         VulkanTimelineSemaphore Result;
         Result.m_Device = &Device;
@@ -61,15 +57,14 @@ class VulkanTimelineSemaphore {
         return Result;
     }
 
-    /// Advances the host-side monotonic counter and returns the new value.
-    /// The device-side semaphore reaches this value only after a submission
-    /// explicitly signals it.
+    /// @brief Advance the host-side monotonic counter and return the new value.
+    ///
+    /// The device-side semaphore reaches this value only after a submission explicitly signals it.
     [[nodiscard]] auto IncreaseHostValue() noexcept -> Uint64 {
         return ++m_HostValue;
     }
 
-    /// Returns the device-side semaphore counter value (non-blocking).
-    /// Calls vkGetSemaphoreCounterValue.
+    /// Returns the device-side semaphore counter value (non-blocking). Calls vkGetSemaphoreCounterValue.
     [[nodiscard]] auto GetDeviceValue() -> Uint64 {
         auto Res = m_Semaphore.getCounterValue();
         if (Res.result != vk::Result::eSuccess) {
@@ -79,7 +74,8 @@ class VulkanTimelineSemaphore {
         return Res.value;
     }
 
-    /// Blocks CPU until semaphore reaches at least `Value`.
+    /// @brief Block the CPU until the semaphore reaches at least `Value`.
+    ///
     /// Calls vkWaitSemaphores with the given timeout (default: infinite).
     auto Wait(Uint64 Value, Uint64 TimeoutNs = std::numeric_limits<Uint64>::max()) -> void {
         vk::Semaphore         Sem = *m_Semaphore;
@@ -93,8 +89,7 @@ class VulkanTimelineSemaphore {
         }
     }
 
-    /// Returns a SemaphoreSubmitInfo for the next timeline value.
-    /// Calls IncreaseHostValue internally.
+    /// Returns a SemaphoreSubmitInfo for the next timeline value. Calls IncreaseHostValue internally.
     [[nodiscard]] auto GetSignalSubmitInfo(vk::PipelineStageFlagBits2 Stage = vk::PipelineStageFlagBits2::eNone)
         -> vk::SemaphoreSubmitInfo {
         return vk::SemaphoreSubmitInfo{

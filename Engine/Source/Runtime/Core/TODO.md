@@ -1,20 +1,9 @@
 # TODO
 
-## Keep toml++ private when its C++ module package is available in Xmake
+## Migrate toml++ to its C++ module package when available in Xmake
 
-`Core:Config` does not expose any toml++ type in its exported API.  It currently
-uses `#include <toml++/toml.h>` in `Config/Config.cppm`'s global module fragment,
-however.  In the current Xmake + clang-cl configuration, Clang's P1689 dependency
-scanner (`clang-scan-deps`) runs for that source in consuming-target contexts, so the
-scanner must also receive toml++'s header search path.  MSVC builds have not required
-this workaround; it is a Clang dependency-scan limitation, not a public API requirement.
+`Core:CVar` does not expose any toml++ type in its exported API.  It currently uses `#include <toml++/toml.h>` in `CVar/CVar.cppm`'s global module fragment.
 
-For now, `Core/xmake.lua` marks `toml++` and its `TOML_COMPILER_HAS_EXCEPTIONS=0`
-configuration as `public` solely to propagate the matching scan/compile environment.
-They are not semantic or public C++ API dependencies of `Core:Config`.
+Historically, `Core/xmake.lua` marked `toml++` and its `TOML_COMPILER_HAS_EXCEPTIONS=0` configuration as `public` because Clang's P1689 dependency scanner (`clang-scan-deps`) compiled the then-Config.cppm in consuming-target contexts and needed the header search path.  Verified 2026-09-22: this workaround is no longer required — toml++ and the define are private and the full build is green.  If consumer-target module scans ever error on `toml++/toml.h` again, re-add both as `public` first.
 
-When the Xmake toml++ package provides and wires up toml++'s C++20 module
-interface (`import tomlplusplus;`), migrate `Config.cppm` from the textual
-include to that named-module import.  Then reconfigure the package as a module
-build dependency without exporting a header-search-path workaround, and verify
-with a clean release build.
+When the Xmake toml++ package provides and wires up toml++'s C++20 module interface (`import tomlplusplus;`), migrate `CVar.cppm` from the textual include to that named-module import and verify with a clean release build.

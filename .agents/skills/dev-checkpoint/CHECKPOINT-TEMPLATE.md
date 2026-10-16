@@ -1,15 +1,9 @@
 # <Task Title>
 
-Status: Planning | Implementing | UserReview | Completed
-Last updated: YYYY-MM-DD
-Iteration: 1
+Status: Planning | Implementing | UserReview | Completed Last updated: YYYY-MM-DD Iteration: 1
 
 <!--
-Keep Goal, Involved Modules, and Design Points current.
-Staging contains only unresolved work for the active iteration. Before removing
-a resolved staging item, merge its lasting impact into the relevant stable
-sections below.
--->
+Keep Goal, Involved Modules, and Design Points current. Staging contains only unresolved work for the active iteration. Before removing a resolved staging item, merge its lasting impact into the relevant stable sections below. -->
 
 ## Goal
 

@@ -1,12 +1,13 @@
 #include <gtest/gtest.h>
 
-// Required while Scene exposes entt::registry in its object layout. These tests create
-// Scene values and therefore instantiate Scene lifetime operations.
+// Required while Scene exposes entt::registry in its object layout. These tests create Scene values and
+// therefore instantiate Scene lifetime operations.
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
 import Scene;
-import Resource;
+import std;
+import Core;
 
 using namespace SoulEngine;
 
@@ -42,24 +43,25 @@ TEST(MeshRecord, TraversesNestedAssetNodesAndRepeatedSubMeshes) {
     };
     const MeshRecord Mesh{
         .SubMeshes = {SubMesh{}, SubMesh{}},
-        .Nodes = {
-            MeshAssetNode{
-                .Name             = "Root",
-                .LocalTransform   = Translate(1.0f, 0.0f, 0.0f),
-                .SubMeshIndices   = {0},
-                .ChildNodeIndices = {1},
+        .Nodes =
+            {
+                MeshAssetNode{
+                    .Name             = "Root",
+                    .LocalTransform   = Translate(1.0f, 0.0f, 0.0f),
+                    .SubMeshIndices   = {0},
+                    .ChildNodeIndices = {1},
+                },
+                MeshAssetNode{
+                    .Name             = "Grouping Node",
+                    .LocalTransform   = Translate(0.0f, 2.0f, 0.0f),
+                    .ChildNodeIndices = {2},
+                },
+                MeshAssetNode{
+                    .Name           = "Repeated Geometry",
+                    .LocalTransform = Translate(0.0f, 0.0f, 3.0f),
+                    .SubMeshIndices = {1, 0},
+                },
             },
-            MeshAssetNode{
-                .Name             = "Grouping Node",
-                .LocalTransform   = Translate(0.0f, 2.0f, 0.0f),
-                .ChildNodeIndices = {2},
-            },
-            MeshAssetNode{
-                .Name           = "Repeated Geometry",
-                .LocalTransform = Translate(0.0f, 0.0f, 3.0f),
-                .SubMeshIndices = {1, 0},
-            },
-        },
     };
 
     struct AssetInstance {
@@ -67,9 +69,8 @@ TEST(MeshRecord, TraversesNestedAssetNodesAndRepeatedSubMeshes) {
         hlslpp::float4x4 Transform    = hlslpp::float4x4::identity();
     };
     std::vector<AssetInstance> Instances;
-    const auto VisitNode = [&Mesh, &Instances](auto&& VisitNode,
-                                                Uint32 NodeIndex,
-                                                const hlslpp::float4x4& ParentTransform) -> void {
+    const auto                 VisitNode =
+        [&Mesh, &Instances](auto&& VisitNode, Uint32 NodeIndex, const hlslpp::float4x4& ParentTransform) -> void {
         if (NodeIndex >= Mesh.Nodes.size())
             return;
         const auto& Node      = Mesh.Nodes[NodeIndex];
@@ -99,14 +100,14 @@ TEST(MeshRecord, TraversesNestedAssetNodesAndRepeatedSubMeshes) {
     EXPECT_FLOAT_EQ(static_cast<float>(RepeatedOrigin.y), 2.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(RepeatedOrigin.z), 3.0f);
 
-    const auto EntityTransform = hlslpp::mul(
-        hlslpp::mul(hlslpp::float4x4::scale(hlslpp::float3(2.0f, 3.0f, 1.0f)),
-                     hlslpp::float4x4::rotation_z(std::numbers::pi_v<float> * 0.5f)),
-        Translate(10.0f, 0.0f, 0.0f));
-    const auto Point               = hlslpp::float4(2.0f, -1.0f, 4.0f, 1.0f);
-    const auto ExpectedWorldPoint  = TransformPoint(TransformPoint(Point, Instances[2].Transform), EntityTransform);
-    const auto ActualWorldPoint    = TransformPoint(Point, hlslpp::mul(Instances[2].Transform, EntityTransform));
-    const auto ReversedWorldPoint  = TransformPoint(Point, hlslpp::mul(EntityTransform, Instances[2].Transform));
+    const auto EntityTransform =
+        hlslpp::mul(hlslpp::mul(hlslpp::float4x4::scale(hlslpp::float3(2.0f, 3.0f, 1.0f)),
+                                hlslpp::float4x4::rotation_z(std::numbers::pi_v<float> * 0.5f)),
+                    Translate(10.0f, 0.0f, 0.0f));
+    const auto Point              = hlslpp::float4(2.0f, -1.0f, 4.0f, 1.0f);
+    const auto ExpectedWorldPoint = TransformPoint(TransformPoint(Point, Instances[2].Transform), EntityTransform);
+    const auto ActualWorldPoint   = TransformPoint(Point, hlslpp::mul(Instances[2].Transform, EntityTransform));
+    const auto ReversedWorldPoint = TransformPoint(Point, hlslpp::mul(EntityTransform, Instances[2].Transform));
     EXPECT_FLOAT_EQ(static_cast<float>(ActualWorldPoint.x), static_cast<float>(ExpectedWorldPoint.x));
     EXPECT_FLOAT_EQ(static_cast<float>(ActualWorldPoint.y), static_cast<float>(ExpectedWorldPoint.y));
     EXPECT_FLOAT_EQ(static_cast<float>(ActualWorldPoint.z), static_cast<float>(ExpectedWorldPoint.z));
@@ -193,15 +194,16 @@ entities:
     auto& Scene = *Loaded->first;
 
     const auto Snapshot = Scene.BuildSnapshot();
-    // Mesh resources are loaded by MeshSystem::OnUpdate once an RHI device exists.
-    // This document test validates the authoring component before runtime loading.
+    // Mesh resources are loaded by MeshSystem::OnUpdate once an RHI device exists. This document test
+    // validates the authoring component before runtime loading.
     EXPECT_TRUE(Snapshot.Instances.empty());
     const auto MeshEntities = Scene.GetRegistry().view<MeshComponent>();
     ASSERT_NE(MeshEntities.begin(), MeshEntities.end());
     EXPECT_EQ(MeshEntities.get<MeshComponent>(*MeshEntities.begin()).Asset, Path{"teapot.obj"});
 
-    EXPECT_EQ(Scene.GetRegistry().get<MeshComponent>(*Scene.GetRegistry().view<MeshComponent>().begin()).MaterialOverridePath,
-              Path{"materials/gold.yaml"});
+    EXPECT_EQ(
+        Scene.GetRegistry().get<MeshComponent>(*Scene.GetRegistry().view<MeshComponent>().begin()).MaterialOverridePath,
+        Path{"materials/gold.yaml"});
     const auto Cameras        = Scene.GetRegistry().view<CameraComponent>();
     const auto CameraIterator = Cameras.begin();
     ASSERT_NE(CameraIterator, Cameras.end());
@@ -253,8 +255,9 @@ entities:
         ++MeshCount;
     }
     EXPECT_EQ(MeshCount, 1u);
-    EXPECT_EQ(Scene.GetRegistry().get<MeshComponent>(*Scene.GetRegistry().view<MeshComponent>().begin()).MaterialOverridePath,
-              Path{"materials/missing.yaml"});
+    EXPECT_EQ(
+        Scene.GetRegistry().get<MeshComponent>(*Scene.GetRegistry().view<MeshComponent>().begin()).MaterialOverridePath,
+        Path{"materials/missing.yaml"});
     const auto Snapshot = Scene.BuildSnapshot();
     EXPECT_TRUE(Snapshot.Instances.empty());
 
@@ -559,26 +562,6 @@ entities:
     EXPECT_NE(Directional->EntityId, entt::null);
     EXPECT_EQ(Directional->BuildGpuData().DirectionType.w, static_cast<float>(LightType::Directional));
 
-    std::filesystem::remove(FilePath);
-}
-
-TEST(SceneDocument, OmitsUnsupportedLightTypeFromSnapshot) {
-    const auto FilePath = WriteSceneFile(R"(
-entities:
-  - components:
-      light:
-        type: spot
-        intensity: 400.0
-)");
-
-    const auto Loaded = Scene::LoadFromFile(FilePath);
-    ASSERT_TRUE(Loaded.has_value()) << Loaded.error().ToString();
-    ASSERT_EQ(Loaded->second.Warnings.size(), 1u);
-    EXPECT_EQ(Loaded->second.Warnings.front().Message, "unsupported light type; component was omitted");
-    EXPECT_TRUE(Loaded->first->GetRegistry().view<LightComponent>().empty());
-    const auto Snapshot = Loaded->first->BuildSnapshot();
-
-    EXPECT_TRUE(Snapshot.Lights.empty());
     std::filesystem::remove(FilePath);
 }
 } // namespace

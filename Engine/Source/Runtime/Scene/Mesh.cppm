@@ -10,31 +10,86 @@ module;
 export module Scene:Mesh;
 
 import std;
-export import Core;
-export import Material;
-export import RHI;
-export import Resource;
+import Core;
+import Material;
+import RHI;
 
 export namespace SoulEngine {
 
 /// @brief GPU-ready geometry record for one imported submesh.
 ///
-/// The record owns imported CPU metadata and ref-backed GPU buffers. MeshSystem
-/// owns the record through the scene-local mesh resource cache.
+/// The record owns imported CPU metadata and ref-backed GPU buffers. MeshSystem owns the record through the
+/// scene-local mesh resource cache.
 ///
-/// Tangents are stored as xyz plus a fixed-handedness w component. Bitangents
-/// are intentionally not imported or stored; consumers derive them from the
-/// normal and tangent with cross(normal, tangent).
+/// GPU residency is lazy: the loader fills CPU data only. The renderer-owned `GeometryUploader` creates
+/// buffers on first use and sets `BufferUploadRequested` — buffer creation is a synchronous pure allocation
+/// on the calling thread (Ready at return, device address bakable), the bytes go to UploadBuffer as a
+/// frame-affined task whose copies land in the frame-start upload batch of the same frame, and the CPU
+/// streams are released. The ray-tracing path additionally queues a static BLAS descriptor once the buffers
+/// are Ready and sets `BlasRequested`; the BLAS joins a frame's pending-build batch (carried by RenderResult,
+/// built at frame start after the upload batch). Both flags mean "the request has been issued", never
+/// "completed" — actual usability is the corresponding RHIRef reaching Ready, queried via `IsReadyOnGpu`. A
+/// record may enter an RT frame with a not-yet-built BLAS, safe because the frame-start AS phase runs the
+/// build before every pass.
+///
+/// Mutation rule: `GeometryUploader` is the sole writer of GPU state (buffers, BLAS, flags). The record
+/// itself carries only const queries (`IsUploadRequested` / `IsReadyOnGpu` / `BuildGpuData`); upload is never
+/// a member operation. Treat the record as read-only outside `GeometryUploader`.
+///
+/// Tangents are stored as xyz plus a fixed-handedness w component. Bitangents are intentionally not imported
+/// or stored; consumers derive them from the normal and tangent with cross(normal, tangent).
 struct GeometryRecord {
-    String Name     = {};
-    // TODO: Delete this after refractoring RayTracingRenderer
-    String CacheKey = {};
+    String Name = {};
 
-    RHIRef<RHIVertexBuffer> PositionBuffer = nullptr;
-    RHIRef<RHIVertexBuffer> NormalBuffer   = nullptr;
-    RHIRef<RHIVertexBuffer> TangentBuffer  = nullptr;
-    RHIRef<RHIVertexBuffer> TexCoordBuffer = nullptr;
-    RHIRef<RHIIndexBuffer>  IndexBuffer    = nullptr;
+    RHIRef<RHIBuffer>                           PositionBuffer = nullptr;
+    RHIRef<RHIBuffer>                           NormalBuffer   = nullptr;
+    RHIRef<RHIBuffer>                           TangentBuffer  = nullptr;
+    RHIRef<RHIBuffer>                           TexCoordBuffer = nullptr;
+    RHIRef<RHIBuffer>                           IndexBuffer    = nullptr;
+    /// @brief Geometry metadata for the mesh's vertex and index streams.
+    ///
+    /// Geometry metadata is mesh data, not buffer data: filled by GeometryUploader from the CPU streams,
+    /// consumed by the BLAS desc and the indirect-command derivation. IndexCount already lives below with the
+    /// CPU streams.
+    Uint64                                      VertexCount    = 0;
+    Uint32                                      PositionStride = 0;
+    /// @brief Geometry-owned static BLAS; created and built on demand by the RT path.
+    ///
+    /// Built exactly once and never updated.
+    RHIRef<RHIBottomLevelAccelerationStructure> Blas           = nullptr;
+
+    /// @brief Set by GeometryUploader once buffer creation has been queued to the RHI thread.
+    bool BufferUploadRequested = false;
+    /// @brief Set by GeometryUploader once BLAS creation has been queued; the
+    /// same step enters the BLAS into the pending build batch.
+    bool BlasRequested         = false;
+
+    /// @brief Whether the upload request has been issued: buffers always; with
+    /// NeedBLAS, the BLAS allocation request as well. "Requested", not "completed" — see IsReadyOnGpu for
+    /// actual usability.
+    [[nodiscard]] auto IsUploadRequested(bool NeedBLAS) const -> bool {
+        return BufferUploadRequested && (!NeedBLAS || BlasRequested);
+    }
+
+    /// @brief Whether the requested resources are usable on the GPU: every
+    /// required buffer ref Ready (= allocated, device address bakable; the bytes land in the carrying frame's
+    /// frame-start upload batch); with NeedBLAS, the BLAS allocation ref Ready as well. Absent tangent or
+    /// texcoord streams do not block readiness. Does NOT track the deferred BLAS build (storage materializes
+    /// at the frame-start AS phase).
+    [[nodiscard]] auto IsReadyOnGpu(bool NeedBLAS) const -> bool {
+        if (!BufferUploadRequested)
+            return false;
+        const auto IsReady = [](const auto& Ref) { return Ref.TryGet() != nullptr; };
+        if (!IsReady(PositionBuffer) || !IsReady(NormalBuffer) || !IsReady(IndexBuffer))
+            return false;
+        if (HasTangents && !IsReady(TangentBuffer))
+            return false;
+        if (HasUV0 && !IsReady(TexCoordBuffer))
+            return false;
+        if (NeedBLAS && (!BlasRequested || !IsReady(Blas)))
+            return false;
+        return true;
+    }
 
     /// @brief Shader ABI for the raster geometry address table.
     struct alignas(16) GpuData {
@@ -70,6 +125,8 @@ struct GeometryRecord {
     bool                    HasTangents         = false;
     hlslpp::interop::float4 LocalBoundingSphere = hlslpp::interop::float4{hlslpp::float4{0.0f, 0.0f, 0.0f, 0.0f}};
 
+    // CPU streams, released by GeometryUploader once the buffer stage succeeds (the byte snapshots move into
+    // the buffer payloads).
     std::vector<hlslpp::interop::float3> Positions;
     std::vector<hlslpp::interop::float3> Normals;
     std::vector<hlslpp::interop::float4> Tangents;
@@ -88,10 +145,10 @@ struct SubMesh {
 
 /// @brief One static node in an imported mesh asset hierarchy.
 struct MeshAssetNode {
-    String                       Name            = {};
-    hlslpp::float4x4             LocalTransform  = hlslpp::float4x4::identity();
-    std::vector<Uint32>          SubMeshIndices  = {};
-    std::vector<Uint32>          ChildNodeIndices = {};
+    String              Name             = {};
+    hlslpp::float4x4    LocalTransform   = hlslpp::float4x4::identity();
+    std::vector<Uint32> SubMeshIndices   = {};
+    std::vector<Uint32> ChildNodeIndices = {};
 };
 
 /// @brief Cached imported mesh asset.
@@ -152,9 +209,9 @@ struct GeometryLoader {
         }
 
         const bool HasUV0      = AiMesh->mTextureCoords[0] != nullptr;
-        // aiProcess_CalcTangentSpace is requested by MeshLoader below. With
-        // generated normals and UV0, the imported tangent is the authoritative
-        // tangent input; Bitangent is intentionally derived by consumers.
+        // aiProcess_CalcTangentSpace is requested by MeshLoader below. With generated normals and UV0, the
+        // imported tangent is the authoritative tangent input; Bitangent is intentionally derived by
+        // consumers.
         const bool HasTangents = HasUV0;
 
         std::vector<hlslpp::interop::float3> Positions;
@@ -223,76 +280,8 @@ struct GeometryLoader {
             return hlslpp::interop::float4{hlslpp::float4{Center.x, Center.y, Center.z, std::sqrt(RadiusSquared)}};
         };
 
-        auto&      Device = RHIRenderDevice::Get();
-        const auto Key    = Format("{}#{}", MeshPath, MeshIndex);
-
-        // Vertex attributes share the same RHI creation pattern; keep the
-        // attribute-specific data layout at each call site while centralizing
-        // resource naming and failure logging.
-        const auto CreateVertexBuffer = [&Device,
-                                         &Key](StringView                 AttributeName,
-                                               std::span<const std::byte> Data,
-                                               Uint64                     VertexCount,
-                                               Uint32 Stride) -> std::expected<RHIRef<RHIVertexBuffer>, ErrorMessage> {
-            auto Result = Device.CreateVertexBuffer(Format("{}/{}", Key, AttributeName),
-                                                    {
-                                                        .Data        = Data,
-                                                        .VertexCount = VertexCount,
-                                                        .Stride      = Stride,
-                                                    });
-            if (!Result) {
-                LogError("GeometryLoader: {} buffer creation failed: {}", AttributeName, Result.error().ToString());
-                return std::unexpected(Result.error());
-            }
-            return std::move(*Result);
-        };
-
-        const auto CreateIndexBuffer =
-            [&Device, &Key](std::span<const std::byte> Data,
-                            Uint64 IndexCount) -> std::expected<RHIRef<RHIIndexBuffer>, ErrorMessage> {
-            auto Result = Device.CreateIndexBuffer(Format("{}/Index", Key),
-                                                   {
-                                                       .Data       = Data,
-                                                       .IndexCount = IndexCount,
-                                                   });
-            if (!Result) {
-                LogError("GeometryLoader: index buffer creation failed: {}", Result.error().ToString());
-                return std::unexpected(Result.error());
-            }
-            return std::move(*Result);
-        };
-
-        auto PositionBuffer =
-            CreateVertexBuffer("Position", std::as_bytes(std::span{Positions}), Positions.size(), sizeof(Positions[0]));
-        if (!PositionBuffer)
-            return nullptr;
-
-        auto NormalBuffer =
-            CreateVertexBuffer("Normal", std::as_bytes(std::span{Normals}), Normals.size(), sizeof(Normals[0]));
-        if (!NormalBuffer)
-            return nullptr;
-
-        RHIRef<RHIVertexBuffer> TangentBuffer = nullptr;
-        if (HasTangents && !Tangents.empty()) {
-            auto Result =
-                CreateVertexBuffer("Tangent", std::as_bytes(std::span{Tangents}), Tangents.size(), sizeof(Tangents[0]));
-            if (!Result)
-                return nullptr;
-            TangentBuffer = std::move(*Result);
-        }
-
-        RHIRef<RHIVertexBuffer> TexCoordBuffer = nullptr;
-        if (HasUV0 && !UVs.empty()) {
-            auto Result = CreateVertexBuffer("TexCoord", std::as_bytes(std::span{UVs}), UVs.size(), sizeof(UVs[0]));
-            if (!Result)
-                return nullptr;
-            TexCoordBuffer = std::move(*Result);
-        }
-
-        auto IndexBuffer = CreateIndexBuffer(std::as_bytes(std::span{Indices}), Indices.size());
-        if (!IndexBuffer)
-            return nullptr;
-
+        // lazy upload: the loader fills CPU data only. RHI buffer creation is deferred to the renderer-owned
+        // GeometryUploader, which runs on the renderer thread on first use.
         LogDebug("GeometryLoader: \"{}[{}]\" successfully loaded, with {} positions, {} normals, {} tangents, {} uv "
                  "coordinates, {} indices",
                  MeshPath,
@@ -305,12 +294,6 @@ struct GeometryLoader {
 
         return std::make_shared<GeometryRecord>(GeometryRecord{
             .Name                = AiMesh->mName.C_Str(),
-            .CacheKey            = Key,
-            .PositionBuffer      = std::move(*PositionBuffer),
-            .NormalBuffer        = std::move(*NormalBuffer),
-            .TangentBuffer       = std::move(TangentBuffer),
-            .TexCoordBuffer      = std::move(TexCoordBuffer),
-            .IndexBuffer         = std::move(*IndexBuffer),
             .IndexCount          = static_cast<Uint32>(Indices.size()),
             .HasUV0              = HasUV0,
             .HasTangents         = HasTangents,
@@ -332,9 +315,8 @@ struct MeshLoader {
     auto operator()(const Path& MeshPath) -> result_type {
         const auto       MeshPathString = MeshPath.string();
         Assimp::Importer Importer;
-        // CalcTangentSpace generates the tangent from UV0 and the normals
-        // generated above. Bitangent is deliberately not retained; shaders
-        // reconstruct it from the normal and tangent when needed.
+        // CalcTangentSpace generates the tangent from UV0 and the normals generated above. Bitangent is
+        // deliberately not retained; shaders reconstruct it from the normal and tangent when needed.
         constexpr Uint32 Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace |
                                  aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
                                  aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes |
@@ -349,7 +331,7 @@ struct MeshLoader {
         Materials.reserve(Scene->mNumMaterials);
         for (Uint32 MaterialIndex = 0; MaterialIndex < Scene->mNumMaterials; ++MaterialIndex) {
             const auto* AiMaterial = Scene->mMaterials[MaterialIndex];
-            const auto ResourceId  = MakeMaterialCacheKey(MeshPath, MaterialIndex);
+            const auto  ResourceId = MakeMaterialCacheKey(MeshPath, MaterialIndex);
             auto [It, Loaded]      = m_MaterialAssimpCache.load(ResourceId, AiMaterial, MeshPath);
             if (!It->second) {
                 LogWarning("MeshLoader: material load failed '{}#{}'", MeshPathString, MaterialIndex);
@@ -369,7 +351,8 @@ struct MeshLoader {
             const auto KeyText       = Format("{}#{}", MeshPathString, MeshIndex);
             const auto ResourceId    = entt::hashed_string{KeyText.data(), KeyText.size()};
             const auto MaterialIndex = Scene->mMeshes[MeshIndex]->mMaterialIndex;
-            const auto Material      = MaterialIndex < Result->Materials.size() ? Result->Materials[MaterialIndex] : MaterialHandle{};
+            const auto Material =
+                MaterialIndex < Result->Materials.size() ? Result->Materials[MaterialIndex] : MaterialHandle{};
             auto [It, Loaded] = m_GeometryCache.load(ResourceId, MeshPathString, MeshIndex, Scene->mMeshes[MeshIndex]);
             if (!It->second) {
                 LogWarning("MeshLoader: geometry load failed '{}[{}]'", MeshPathString, MeshIndex);
@@ -383,8 +366,8 @@ struct MeshLoader {
         }
 
         const auto ConvertTransform = [](const aiMatrix4x4& Transform) -> hlslpp::float4x4 {
-            // Assimp transforms column vectors, while SoulEngine uses row vectors.
-            // Copying Assimp's columns into hlsl++ rows preserves the transform.
+            // Assimp transforms column vectors, while SoulEngine uses row vectors. Copying Assimp's columns
+            // into hlsl++ rows preserves the transform.
             auto ResultTransform = hlslpp::float4x4::identity();
             ResultTransform[0]   = hlslpp::float4(Transform.a1, Transform.b1, Transform.c1, Transform.d1);
             ResultTransform[1]   = hlslpp::float4(Transform.a2, Transform.b2, Transform.c2, Transform.d2);
@@ -392,8 +375,8 @@ struct MeshLoader {
             ResultTransform[3]   = hlslpp::float4(Transform.a4, Transform.b4, Transform.c4, Transform.d4);
             return ResultTransform;
         };
-        const auto ImportNode = [&Result, &MeshPathString, &ConvertTransform](auto&& ImportNode,
-                                                                                 const aiNode* AiNode) -> bool {
+        const auto ImportNode = [&Result, &MeshPathString, &ConvertTransform](auto&&        ImportNode,
+                                                                              const aiNode* AiNode) -> bool {
             if (!AiNode || (AiNode->mNumMeshes != 0 && !AiNode->mMeshes) ||
                 (AiNode->mNumChildren != 0 && !AiNode->mChildren)) {
                 LogWarning("MeshLoader: invalid node in '{}'", MeshPathString);
@@ -431,8 +414,8 @@ struct MeshLoader {
             if (NodeIndex >= Result->Nodes.size())
                 return;
 
-            const auto& Node       = Result->Nodes[NodeIndex];
-            const auto  Indent     = String(Depth * 2, ' ');
+            const auto& Node        = Result->Nodes[NodeIndex];
+            const auto  Indent      = String(Depth * 2, ' ');
             const auto& Translation = Node.LocalTransform[3];
             LogDebug("MeshLoader: {}node '{}' local translation ({:.3f}, {:.3f}, {:.3f})",
                      Indent,
@@ -472,19 +455,17 @@ class MeshSystem : public ISystem {
     }
 
     auto OnUpdate(Float32) -> void override {
-        m_TextureArray.BeginAppend();
         const auto AppendMaterialTextures = [this](const MaterialHandle& Material) -> void {
             if (!Material)
                 return;
             for (const auto& TextureSlot : Material->Textures) {
-                // Do not require a Ready payload here: mesh-load frames queue
-                // texture creation on the RHI thread, so refs are still
-                // RhiCommitting/GpuPending and must be appended regardless.
-                if (!TextureSlot.Texture ||
-                    TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
+                // Texture creation is synchronous and publishes Ready at return, so the guard below only
+                // filters empty refs; texel bytes land via UploadTexture's frame-start batch by submission
+                // order.
+                if (!TextureSlot.Texture || TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
                     continue;
-                if (auto R = m_TextureArray.Append(TextureSlot.Texture->Texture); !R)
-                    LogWarning("MeshSystem: failed to append texture from material: {}", R.error().ToString());
+                if (std::ranges::find(m_Textures, TextureSlot.Texture->Texture) == m_Textures.end())
+                    m_Textures.push_back(TextureSlot.Texture->Texture);
             }
         };
         const auto AppendMeshTextures = [&AppendMaterialTextures](const MeshRecord& Mesh) -> void {
@@ -525,7 +506,6 @@ class MeshSystem : public ISystem {
             }
             AppendMaterialTextures(Mesh.MaterialOverride);
         }
-        m_TextureArray.EndAppend();
     }
 
     [[nodiscard]] auto CollectInstances() const -> std::vector<InstanceRecord> {
@@ -536,9 +516,9 @@ class MeshSystem : public ISystem {
             if (Mesh.Asset.empty() || !Mesh.Mesh)
                 continue;
             const auto& Transform = MeshView.get<TransformComponent>(Entity);
-            const auto VisitNode = [&Mesh, Entity, &Result](auto&& VisitNode,
-                                                              Uint32 NodeIndex,
-                                                              const hlslpp::float4x4& ParentWorldTransform) -> void {
+            const auto  VisitNode = [&Mesh, Entity, &Result](auto&&                  VisitNode,
+                                                             Uint32                  NodeIndex,
+                                                             const hlslpp::float4x4& ParentWorldTransform) -> void {
                 if (NodeIndex >= Mesh.Mesh->Nodes.size())
                     return;
 
@@ -588,24 +568,24 @@ class MeshSystem : public ISystem {
         return Result;
     }
 
-    [[nodiscard]] auto GetTextureArray() const -> const RHIRefArray<RHISampledTexture>& {
-        return m_TextureArray;
+    [[nodiscard]] auto GetTextures() const -> const std::vector<RHIRef<RHITexture>>& {
+        return m_Textures;
     }
 
   private:
-    RHIRefArray<RHISampledTexture> m_TextureArray;
-    Path                           m_AssetRoot         = {};
-    MeshCache                      m_MeshCache;
-    MaterialYamlCache              m_MaterialYamlCache;
+    std::vector<RHIRef<RHITexture>> m_Textures  = {};
+    Path                            m_AssetRoot = {};
+    MeshCache                       m_MeshCache;
+    MaterialYamlCache               m_MaterialYamlCache;
 };
 
 } // namespace SoulEngine
 
 namespace SoulEngine {
 
-// Note: this namespace must stay named. In a named module, clang 23 silently
-// drops the dynamic initializer of an unreferenced anonymous-namespace variable,
-// which would skip this entt meta registration at program startup.
+// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
+// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
+// startup.
 namespace MetaRegistration {
 
 using namespace entt::literals;

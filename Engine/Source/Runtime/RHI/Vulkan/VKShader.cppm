@@ -1,12 +1,11 @@
-/// Vulkan shader reflection helpers and shader-module management.
+/// @brief Vulkan shader reflection helpers and shader-module management.
 ///
-/// Converts RHI shader resource and vertex-input types to their Vulkan
-/// equivalents, and provides CreateShaderStages for turning a
-/// RHIGraphicsPipelineDesc into live VkShaderModule + PipelineShaderStageCreateInfo
-/// arrays.
+/// Converts RHI shader resource and vertex-input types to their Vulkan equivalents, and provides
+/// CreateShaderStages for turning a RHIGraphicsPipelineDesc into live VkShaderModule +
+/// PipelineShaderStageCreateInfo arrays.
 ///
-/// Internal to the Vulkan RHI backend; imported by VKPipeline and (in future)
-/// by compute/ray-tracing pipeline creation.
+/// Internal to the Vulkan RHI backend; imported by VKPipeline and (in future) by compute/ray-tracing pipeline
+/// creation.
 
 module;
 
@@ -23,30 +22,7 @@ import :Debug;
 
 namespace SoulEngine {
 
-// ═════════════════════════════════════════════════════════════════════════════
 // Resource-type conversion
-// ═════════════════════════════════════════════════════════════════════════════
-
-[[nodiscard]] auto ToVkDescriptorType(ShaderResourceType ResourceType)
-    -> std::expected<vk::DescriptorType, ErrorMessage> {
-    switch (ResourceType) {
-    case ShaderResourceType::Unknown:
-        return std::unexpected(ErrorMessage("Cannot lower Unknown shader resource type to Vulkan descriptor type"));
-    case ShaderResourceType::ConstantBuffer:
-        return vk::DescriptorType::eUniformBuffer;
-    case ShaderResourceType::StorageBuffer:
-        return vk::DescriptorType::eStorageBuffer;
-    case ShaderResourceType::SampledTexture:
-        return vk::DescriptorType::eSampledImage;
-    case ShaderResourceType::StorageTexture:
-        return vk::DescriptorType::eStorageImage;
-    case ShaderResourceType::Sampler:
-        return vk::DescriptorType::eSampler;
-    case ShaderResourceType::AccelerationStructure:
-        return vk::DescriptorType::eAccelerationStructureKHR;
-    }
-    return std::unexpected(ErrorMessage("Unsupported shader resource type in Vulkan lowering"));
-}
 
 [[nodiscard]] auto ToVkVertexFormat(const ShaderValueType& ValueType) -> std::expected<vk::Format, ErrorMessage> {
     if (ValueType.RowCount != 1) {
@@ -101,11 +77,10 @@ namespace SoulEngine {
         break;
     }
 
-    return std::unexpected(
-        ErrorMessage(Format("Unsupported reflected vertex input type: scalar={}, rows={}, cols={}",
-                                  magic_enum::enum_name(ValueType.ScalarType),
-                                  ValueType.RowCount,
-                                  ValueType.ColumnCount)));
+    return std::unexpected(ErrorMessage(Format("Unsupported reflected vertex input type: scalar={}, rows={}, cols={}",
+                                               magic_enum::enum_name(ValueType.ScalarType),
+                                               ValueType.RowCount,
+                                               ValueType.ColumnCount)));
 }
 
 [[nodiscard]] auto ToVkVertexFormat(RHIFormat Fmt) -> std::expected<vk::Format, ErrorMessage> {
@@ -127,8 +102,7 @@ namespace SoulEngine {
 }
 
 [[nodiscard]] auto FindReflectedVertexInputByLocation(const std::vector<ShaderVertexInputAttribute>& VertexInputs,
-                                                      Uint32                                           Location)
-    -> const ShaderVertexInputAttribute* {
+                                                      Uint32 Location) -> const ShaderVertexInputAttribute* {
     for (const auto& Attr : VertexInputs) {
         if (Attr.Location && *Attr.Location == Location)
             return &Attr;
@@ -137,29 +111,25 @@ namespace SoulEngine {
 }
 
 [[nodiscard]] auto ValidateVertexInputLayout(const RHIGraphicsPipelineDesc& Desc) -> std::expected<void, ErrorMessage> {
-    const auto& ExplicitLayout = Desc.VertexInputLayout;
+    const auto&                                ExplicitLayout   = Desc.VertexInputLayout;
     std::array<bool, kMaxVertexBufferBindings> DeclaredBindings = {};
     for (const auto& Binding : ExplicitLayout.Bindings) {
         if (Binding.Binding >= kMaxVertexBufferBindings) {
-            return std::unexpected(
-                ErrorMessage(Format("Vertex input binding {} exceeds supported binding count {}", Binding.Binding,
-                                          kMaxVertexBufferBindings)));
+            return std::unexpected(ErrorMessage(Format("Vertex input binding {} exceeds supported binding count {}",
+                                                       Binding.Binding,
+                                                       kMaxVertexBufferBindings)));
         }
         if (Binding.Stride == 0)
-            return std::unexpected(
-                ErrorMessage(Format("Vertex input binding {} has zero stride", Binding.Binding)));
+            return std::unexpected(ErrorMessage(Format("Vertex input binding {} has zero stride", Binding.Binding)));
         if (DeclaredBindings[Binding.Binding])
-            return std::unexpected(
-                ErrorMessage(Format("Vertex input binding {} is duplicated", Binding.Binding)));
+            return std::unexpected(ErrorMessage(Format("Vertex input binding {} is duplicated", Binding.Binding)));
         DeclaredBindings[Binding.Binding] = true;
     }
 
     for (const auto& Attr : ExplicitLayout.Attributes) {
         if (Attr.Binding >= kMaxVertexBufferBindings || !DeclaredBindings[Attr.Binding]) {
-            return std::unexpected(
-                ErrorMessage(Format("Vertex input attribute location {} references undeclared binding {}",
-                                          Attr.Location,
-                                          Attr.Binding)));
+            return std::unexpected(ErrorMessage(Format(
+                "Vertex input attribute location {} references undeclared binding {}", Attr.Location, Attr.Binding)));
         }
     }
 
@@ -183,15 +153,15 @@ namespace SoulEngine {
             continue;
         }
 
-        auto It = std::find_if(ExplicitLayout.Attributes.begin(),
-                               ExplicitLayout.Attributes.end(),
-                               [&](const RHIVertexInputAttributeDesc& DescAttr) -> bool {
-                                   return DescAttr.Location == *Attr.Location;
-                               });
+        auto It = std::find_if(
+            ExplicitLayout.Attributes.begin(),
+            ExplicitLayout.Attributes.end(),
+            [&](const RHIVertexInputAttributeDesc& DescAttr) -> bool { return DescAttr.Location == *Attr.Location; });
         if (It == ExplicitLayout.Attributes.end()) {
-            LogWarning("Vertex shader '{}' expects input at location {}, but explicit vertex layout does not provide it",
-                       Desc.Program.VertexEntryPointName,
-                       *Attr.Location);
+            LogWarning(
+                "Vertex shader '{}' expects input at location {}, but explicit vertex layout does not provide it",
+                Desc.Program.VertexEntryPointName,
+                *Attr.Location);
             continue;
         }
 
@@ -228,47 +198,41 @@ namespace SoulEngine {
 }
 
 //
-// ──────────────────────────────────────────────────────────────────────────
 // Shader-module management
-// ──────────────────────────────────────────────────────────────────────────
 
-/// Collects shader modules, stage-create-infos, and vertex input state
-/// for graphics pipeline creation.
+/// @brief Collects shader modules, stage-create-infos, and vertex input state for graphics pipeline
+/// creation.
 ///
-/// Owns VkShaderModule lifetimes; all modules are destroyed when this
-/// object is destroyed.
+/// Owns VkShaderModule lifetimes; all modules are destroyed when this object is destroyed.
 class VulkanGraphicsShaderStates {
   public:
     std::vector<vk::PipelineShaderStageCreateInfo> StageInfos = {};
 
-    /// Create shader modules, stage infos, and vertex input state from a
-    /// graphics pipeline descriptor.
-    [[nodiscard]] static auto Create(const vk::raii::Device& Device,
-                                     VulkanDebugUtils&       DebugUtils,
-                                     const RHIGraphicsPipelineDesc& Desc)
+    /// Create shader modules, stage infos, and vertex input state from a graphics pipeline descriptor.
+    [[nodiscard]] static auto
+    Create(const vk::raii::Device& Device, VulkanDebugUtils& DebugUtils, const RHIGraphicsPipelineDesc& Desc)
         -> std::expected<VulkanGraphicsShaderStates, ErrorMessage> {
         VulkanGraphicsShaderStates Result;
 
         if (Desc.Program.Code.empty())
             return std::unexpected(ErrorMessage("Graphics shader program has no SPIR-V code"));
 
-        const auto& CodeVec = Desc.Program.Code;
+        const auto&                CodeVec = Desc.Program.Code;
         vk::ShaderModuleCreateInfo ModuleCI{
             .codeSize = CodeVec.size() * sizeof(Uint32),
             .pCode    = CodeVec.data(),
         };
         auto [Res, Module] = Device.createShaderModule(ModuleCI);
         if (Res != vk::Result::eSuccess) {
-            return std::unexpected(ErrorMessage(Format(
-                "Failed to create shader module for graphics program '{} + {}': {}",
-                Desc.Program.VertexEntryPointName,
-                Desc.Program.FragmentEntryPointName,
-                vk::to_string(Res))));
+            return std::unexpected(
+                ErrorMessage(Format("Failed to create shader module for graphics program '{} + {}': {}",
+                                    Desc.Program.VertexEntryPointName,
+                                    Desc.Program.FragmentEntryPointName,
+                                    vk::to_string(Res))));
         }
 
-        DebugUtils.SetObjectName(
-            *Module,
-            Format("Internal/ShaderModule/Graphics/{}", Desc.Program.VertexEntryPointName));
+        DebugUtils.SetObjectName(*Module,
+                                 Format("Internal/ShaderModule/Graphics/{}", Desc.Program.VertexEntryPointName));
         Result.m_Modules.push_back(std::move(Module));
         Result.StageInfos.push_back(vk::PipelineShaderStageCreateInfo{
             .stage  = vk::ShaderStageFlagBits::eVertex,
@@ -281,9 +245,9 @@ class VulkanGraphicsShaderStates {
             .pName  = Desc.Program.FragmentEntryPointName.c_str(),
         });
 
-        // ── Vertex input state ──────────────────────────────────────────────────
-        // The explicit CPU vertex-buffer layout is authoritative. Shader
-        // reflection is used only to warn about location/format mismatches.
+        // Vertex input state
+        // The explicit CPU vertex-buffer layout is authoritative. Shader reflection is used only to warn
+        // about location/format mismatches.
         if (auto R = ValidateVertexInputLayout(Desc); !R)
             return std::unexpected(R.error());
         if (!Desc.VertexInputLayout.Attributes.empty()) {
@@ -292,8 +256,8 @@ class VulkanGraphicsShaderStates {
             for (const auto& Attr : Desc.VertexInputLayout.Attributes) {
                 auto VkFormat = ToVkVertexFormat(Attr.Format);
                 if (!VkFormat)
-                    return std::unexpected(VkFormat.error().Append(Format(
-                        "Failed to lower explicit vertex input layout location {}", Attr.Location)));
+                    return std::unexpected(VkFormat.error().Append(
+                        Format("Failed to lower explicit vertex input layout location {}", Attr.Location)));
 
                 Result.m_VertexAttributes.push_back(vk::VertexInputAttributeDescription{
                     .location = Attr.Location,
@@ -319,8 +283,8 @@ class VulkanGraphicsShaderStates {
     /// @brief Build a vertex-input-state create-info whose pointers are valid
     /// for the lifetime of this VulkanGraphicsShaderStates object.
     ///
-    /// Delay the construction of CI rather than contructing in` Create`,
-    /// Because anything in `Create` is a temp value, leading to hanging pointers.
+    /// Delay the construction of CI rather than contructing in` Create`, Because anything in `Create` is a
+    /// temp value, leading to hanging pointers.
     [[nodiscard]] auto GetPipelineVertexInputStateCI() const -> vk::PipelineVertexInputStateCreateInfo {
         if (m_VertexAttributes.empty())
             return {};
@@ -333,9 +297,9 @@ class VulkanGraphicsShaderStates {
     }
 
   private:
-    std::vector<vk::raii::ShaderModule>              m_Modules           = {};
-    std::vector<vk::VertexInputBindingDescription>   m_VertexBindings    = {};
-    std::vector<vk::VertexInputAttributeDescription> m_VertexAttributes  = {};
+    std::vector<vk::raii::ShaderModule>              m_Modules          = {};
+    std::vector<vk::VertexInputBindingDescription>   m_VertexBindings   = {};
+    std::vector<vk::VertexInputAttributeDescription> m_VertexAttributes = {};
 };
 
 } // namespace SoulEngine

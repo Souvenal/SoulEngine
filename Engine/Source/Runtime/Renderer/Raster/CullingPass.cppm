@@ -6,72 +6,85 @@ export module Renderer:RasterPasses.CullingPass;
 
 import Core;
 import RHI;
+import RenderGraph;
 import Scene;
 
-export import std;
+import std;
+import ShaderCompiler;
 
 export namespace SoulEngine {
 
-struct CullingPassInput {
-    RHIRef<RHITransientShaderStorageBuffer> SceneInstanceBuffer  = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> SceneIndirectBuffer  = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> GeometryBuffer       = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> ViewInstanceBuffer   = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> ViewIndirectBuffer   = nullptr;
-    RHIRef<RHITransientShaderStorageBuffer> ViewCounterBuffer    = nullptr;
-    Uint32                                  InstanceCount        = 0;
-    Uint32                                  CommandCount         = 0;
-};
-
 struct CullingPushConstants {
     Uint32 InstanceCount = 0;
-    Uint32 CommandCount = 0;
+    Uint32 CommandCount  = 0;
 };
 
 /// @brief Per-view culling pass (placeholder: copies instances one-to-one).
 ///
-/// Future: frustum-culls instances into ViewInstanceBuffer via atomic append
-/// and regenerates ViewIndirectBuffer grouped by geometryID on the GPU.
+/// Future: frustum-culls instances into ViewInstanceBuffer via atomic append and regenerates
+/// ViewIndirectBuffer grouped by geometryID on the GPU.
 class CullingPass final : public IRHIComputePass {
   public:
-    explicit CullingPass(RHIRef<RHIComputePipeline> Pipeline)
-        : IRHIComputePass("CullingPass", std::move(Pipeline)) {}
-
-    auto SetInput(CullingPassInput Input) -> void {
-        m_Input = std::move(Input);
+    static constexpr StringView Name = "CullingPass";
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
     }
+
+    /// Static pipeline descriptor for PipelineRegistry::Register<CullingPass>().
+    [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "CullingCompute.slang";
+        return ComputePipelineRequest{
+            .ComputeEntry = {.SourcePath = ShaderPath, .EntryPoint = "cullMain"},
+        };
+    }
+
+    struct Parameter {
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> ViewInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> ViewIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Write> ViewCounter;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  SceneInstances;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  SceneIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>  GeometryTable;
+        Uint32                                                  InstanceCount = 0; ///< CPU passthrough: dispatch size.
+        Uint32                                                  CommandCount  = 0;
+    };
+
+    CullingPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
 
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
-        auto Input = std::move(m_Input);
 
-        if (!GetShaderBindingSet() || !Input.SceneInstanceBuffer || !Input.SceneIndirectBuffer ||
-            !Input.GeometryBuffer || !Input.ViewInstanceBuffer || !Input.ViewIndirectBuffer ||
-            !Input.ViewCounterBuffer || Input.InstanceCount == 0)
+        if (!m_Parameter->SceneInstances.Resolved || !m_Parameter->SceneIndirect.Resolved ||
+            !m_Parameter->GeometryTable.Resolved || !m_Parameter->ViewInstances.Resolved ||
+            !m_Parameter->ViewIndirect.Resolved || !m_Parameter->ViewCounter.Resolved ||
+            m_Parameter->InstanceCount == 0)
             return std::unexpected(ErrorMessage("Culling pass resources are not ready"));
 
         if (auto R = BindResources(std::array{
-                RHIShaderBindingRequest{"g_cullPass.sceneInstances", std::move(Input.SceneInstanceBuffer), true},
-                RHIShaderBindingRequest{"g_cullPass.sceneIndirectCommands", std::move(Input.SceneIndirectBuffer), true},
-                RHIShaderBindingRequest{"g_cullPass.geometryTable.records", std::move(Input.GeometryBuffer), true},
-                RHIShaderBindingRequest{"g_cullPass.viewInstances", std::move(Input.ViewInstanceBuffer), false},
-                RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", std::move(Input.ViewIndirectBuffer), false},
-                RHIShaderBindingRequest{"g_cullPass.viewCounter", std::move(Input.ViewCounterBuffer), false},
-            }); !R)
+                RHIShaderBindingRequest{"g_cullPass.sceneInstances", m_Parameter->SceneInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.sceneIndirectCommands", m_Parameter->SceneIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.geometryTable.records", m_Parameter->GeometryTable.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.viewInstances", m_Parameter->ViewInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.viewIndirectCommands", m_Parameter->ViewIndirect.ResolvedView()},
+                RHIShaderBindingRequest{"g_cullPass.viewCounter", m_Parameter->ViewCounter.ResolvedView()},
+            });
+            !R)
             return std::unexpected(R.error());
 
-        if (auto R = PushConstants(0, CullingPushConstants{
-                .InstanceCount = Input.InstanceCount,
-                .CommandCount = Input.CommandCount,
-            }); !R)
+        if (auto R = PushConstants(0,
+                                   CullingPushConstants{
+                                       .InstanceCount = m_Parameter->InstanceCount,
+                                       .CommandCount  = m_Parameter->CommandCount,
+                                   });
+            !R)
             return std::unexpected(R.error());
 
-        Dispatch((std::max(Input.InstanceCount, Input.CommandCount) + 63) / 64);
+        Dispatch((std::max(m_Parameter->InstanceCount, m_Parameter->CommandCount) + 63) / 64);
         return {};
     }
 
   private:
-    CullingPassInput m_Input = {};
+    UPtr<Parameter> m_Parameter;
 };
 
 } // namespace SoulEngine
