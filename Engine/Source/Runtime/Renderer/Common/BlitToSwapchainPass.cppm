@@ -2,9 +2,7 @@ module;
 
 export module Renderer:Common.BlitToSwapchainPass;
 
-// clang-format off
-import RenderGraph:Types;
-// clang-format on
+import RenderGraph;
 import Core;
 import RHI;
 
