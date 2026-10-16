@@ -6,12 +6,5 @@ This section is distinct from [`docs/adr/`](../adr/), which is reserved for code
 
 ## Documents
 
-<<<<<<< HEAD
 - [Main-Only Branch Model](branch-model.md) — feature branches, direct pull requests to `main`, merge-queue validation, and squash integration
-=======
-- [Branch Model and Merge Discipline](branch-model.md) — the `dev/xxx` → `dev/feature` → `main` flow, squash integration, and linear rebase promotion
-<<<<<<< HEAD
->>>>>>> 2ce06b7 (docs: clarify promotion branch safety (#43))
-=======
 - [Agent Development Workflow](agent-workflow.md) — issue-first scope, isolated worktrees, review handoff, approval gates, and cleanup for agent-initiated changes
->>>>>>> afe3783 (docs: establish issue-first agent workflow (#50))
