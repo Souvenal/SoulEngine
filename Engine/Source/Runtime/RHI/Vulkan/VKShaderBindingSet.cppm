@@ -332,7 +332,9 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         return *m_PipelineLayout;
     }
 
-    /// Resolves the current resource combination for every set through the device-wide descriptor cache.
+    /// @brief The current resource combination resolved for every set through the device-wide descriptor
+    /// cache.
+    ///
     /// Cache hits also refresh the entry LRU.
     struct PipelineBindingState {
         std::vector<vk::DescriptorSet> DescriptorSets = {};
@@ -391,10 +393,11 @@ class VulkanShaderBindingSet final : public RHIShaderBindingSet {
         : RHIShaderBindingSet(std::move(Name), Desc), m_Descriptors(Descriptors) {}
 
   protected:
-    /// Updates the current set snapshot for the pass being recorded. RHI validation has already resolved and
-    /// updated every slot in this set. Execute() calls Pass::Record() immediately before constructing its
-    /// command visitor, so replacing this snapshot is intentional: CaptureBindingState() observes the
-    /// bindings of the current pass and refreshes their cache LRU entries.
+    /// @brief Update the current set snapshot for the pass being recorded.
+    ///
+    /// RHI validation has already resolved and updated every slot in this set. Execute() calls Pass::Record()
+    /// immediately before constructing its command visitor, so replacing this snapshot is intentional:
+    /// CaptureBindingState() observes the bindings of the current pass and refreshes their cache LRU entries.
     [[nodiscard]] auto OnResourcesBound(Uint32 SetIndex) -> std::expected<void, ErrorMessage> override {
         // we update descriptor set key, so that `CaptureBindingState()` later fetches the corresponding
         // descriptor set from the manager

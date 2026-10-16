@@ -15,23 +15,29 @@ import :Profiling;
 
 namespace SoulEngine {
 
-/// One frame-start buffer upload batch entry: the ring slice carries the already-copied bytes; the native
-/// destination handle and post-barrier access mask are snapshotted from the payload at EnqueueBufferUpload
-/// time — a persistent buffer's handle is immutable — so batch recording never has to resolve the payload
-/// again. No destination ref is kept: if the producer's last ref dies before the copy is submitted, native
-/// destruction rides the backend deferred deletion queue (a virtual timeline event), which keeps the handle
-/// valid until the submission completes; the slice's ring range retires via the ring's timeline markers.
+/// @brief One frame-start buffer upload batch entry.
+///
+/// The ring slice carries the already-copied bytes; the native destination handle and post-barrier access
+/// mask are snapshotted from the payload at EnqueueBufferUpload time — a persistent buffer's handle is
+/// immutable — so batch recording never has to resolve the payload again. No destination ref is kept: if the
+/// producer's last ref dies before the copy is submitted, native destruction rides the backend deferred
+/// deletion queue (a virtual timeline event), which keeps the handle valid until the submission completes;
+/// the slice's ring range retires via the ring's timeline markers.
 struct VulkanPendingBufferUpload {
     RingAllocation   Staging     = {};      ///< ring slice holding the copied bytes
     vk::Buffer       DstBuffer   = nullptr; ///< native destination handle, snapshotted at enqueue time
-    /// Accesses performed after the batch's visibility barrier (UE FRHITransitionInfo's AccessAfter / D3D12
-    /// StateAfter vocabulary): the dstAccessMask half, computed at enqueue time from the usage union.
+    /// @brief Accesses performed after the batch's visibility barrier.
+    ///
+    /// UE FRHITransitionInfo's AccessAfter / D3D12 StateAfter vocabulary: the dstAccessMask half, computed at
+    /// enqueue time from the usage union.
     vk::AccessFlags2 AccessAfter = {};
 };
 
-/// One frame-start texture upload batch entry: same ring-slice transport and no-retention contract as the
-/// buffer lane (the backend deferred deletion queue covers VMA images too). The copy target is always mip 0
-/// of a color image: UploadTexture performs full-pixel mip-0 uploads only.
+/// @brief One frame-start texture upload batch entry.
+///
+/// Same ring-slice transport and no-retention contract as the buffer lane (the backend deferred deletion
+/// queue covers VMA images too). The copy target is always mip 0 of a color image: UploadTexture performs
+/// full-pixel mip-0 uploads only.
 struct VulkanPendingImageUpload {
     RingAllocation Staging  = {};      ///< ring slice holding the copied texel bytes
     vk::Image      DstImage = nullptr; ///< native destination handle, snapshotted at enqueue time
@@ -155,8 +161,9 @@ class VulkanStagingBelt {
     }
 
   private:
-    /// Buffer lane of the frame-start batch: one copy per entry, then the aggregated visibility barrier. A
-    /// no-op when the lane is empty.
+    /// @brief Buffer lane of the frame-start batch.
+    ///
+    /// One copy per entry, then the aggregated visibility barrier. A no-op when the lane is empty.
     auto RecordBufferLane(vk::raii::CommandBuffer& CmdBuffer) -> void {
         if (m_PendingBufferUploads.empty())
             return;
@@ -187,9 +194,11 @@ class VulkanStagingBelt {
         m_PendingBufferUploads.clear();
     }
 
-    /// Image lane of the frame-start batch: one buffer→image copy per entry, wrapped in image-tracker
-    /// transitions. The post-copy state is ShaderReadOnly — the same end state the old immediate-path upload
-    /// produced; later prologue transitions take it from there. A no-op when the lane is empty.
+    /// @brief Image lane of the frame-start batch.
+    ///
+    /// One buffer→image copy per entry, wrapped in image-tracker transitions. The post-copy state is
+    /// ShaderReadOnly — the same end state the old immediate-path upload produced; later prologue transitions
+    /// take it from there. A no-op when the lane is empty.
     auto RecordImageLane(vk::raii::CommandBuffer& CmdBuffer) -> void {
         if (m_PendingImageUploads.empty())
             return;

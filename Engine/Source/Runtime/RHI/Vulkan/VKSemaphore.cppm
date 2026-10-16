@@ -13,8 +13,9 @@ namespace SoulEngine {
 
 // VulkanTimelineSemaphore
 
-/// Thin wrapper around a single per-device VkSemaphore of type VK_SEMAPHORE_TYPE_TIMELINE. Owns the monotonic
-/// CPU signal counter and provides blocking CPU waits / non-blocking completion queries.
+/// @brief Thin wrapper around a single per-device VkSemaphore of type VK_SEMAPHORE_TYPE_TIMELINE.
+///
+/// Owns the monotonic CPU signal counter and provides blocking CPU waits / non-blocking completion queries.
 class VulkanTimelineSemaphore {
   public:
     VulkanTimelineSemaphore() = default;
@@ -56,8 +57,9 @@ class VulkanTimelineSemaphore {
         return Result;
     }
 
-    /// Advances the host-side monotonic counter and returns the new value. The device-side semaphore reaches
-    /// this value only after a submission explicitly signals it.
+    /// @brief Advance the host-side monotonic counter and return the new value.
+    ///
+    /// The device-side semaphore reaches this value only after a submission explicitly signals it.
     [[nodiscard]] auto IncreaseHostValue() noexcept -> Uint64 {
         return ++m_HostValue;
     }
@@ -72,8 +74,9 @@ class VulkanTimelineSemaphore {
         return Res.value;
     }
 
-    /// Blocks CPU until semaphore reaches at least `Value`. Calls vkWaitSemaphores with the given timeout
-    /// (default: infinite).
+    /// @brief Block the CPU until the semaphore reaches at least `Value`.
+    ///
+    /// Calls vkWaitSemaphores with the given timeout (default: infinite).
     auto Wait(Uint64 Value, Uint64 TimeoutNs = std::numeric_limits<Uint64>::max()) -> void {
         vk::Semaphore         Sem = *m_Semaphore;
         vk::SemaphoreWaitInfo WaitInfo{

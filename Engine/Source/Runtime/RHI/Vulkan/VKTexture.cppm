@@ -20,22 +20,27 @@ import :Staging;
 
 namespace SoulEngine {
 
-/// Unified backend texture: one identity covering the old sampled texture and render target. Usage bits come
-/// from the creation Desc union. Owns VkImage + whole-chain VkImageView + per-mip VkImageViews + the VMA
-/// allocation lifecycle directly (no intermediate device-texture wrapper). Creation is synchronous and
-/// byte-free (same contract as persistent buffers); texel data flows separately through UploadTexture, staged
-/// into the staging belt's frame-start image lane (→ TransferDst → ShaderReadOnly through the image tracker)
-/// — this class performs no upload.
+/// @brief Unified backend texture: one identity covering the old sampled texture and render target.
+///
+/// Usage bits come from the creation Desc union. Owns VkImage + whole-chain VkImageView + per-mip
+/// VkImageViews + the VMA allocation lifecycle directly (no intermediate device-texture wrapper). Creation is
+/// synchronous and byte-free (same contract as persistent buffers); texel data flows separately through
+/// UploadTexture, staged into the staging belt's frame-start image lane (→ TransferDst → ShaderReadOnly
+/// through the image tracker) — this class performs no upload.
 class VulkanTexture final : public RHITexture {
   public:
-    /// Direct construction is public for make_unique; prefer Create(). Create owns validation and fills the
-    /// native handles; the constructor only forwards the identity to the RHI base.
+    /// @brief Forward the identity to the RHI base; prefer Create().
+    ///
+    /// Direct construction is public for make_unique. Create owns validation and fills the native handles;
+    /// the constructor only forwards the identity to the RHI base.
     VulkanTexture(String Name, const RHITextureDesc& Desc) : RHITexture(std::move(Name), Desc) {}
 
-    /// Destruction runs on the RHI thread (deferred-deletion drain), the same thread that records with the
-    /// tracker — safe to Forget here. GPU retirement rides the backend deferred deletion queue (the same
-    /// virtual timeline event VMA buffers use): the frame-start upload batch's image lane snapshots raw image
-    /// handles without retaining the texture, so final destruction must wait for the GPU.
+    /// @brief Destruction runs on the RHI thread (deferred-deletion drain).
+    ///
+    /// The same thread that records with the tracker — safe to Forget here. GPU retirement rides the
+    /// backend deferred deletion queue (the same virtual timeline event VMA buffers use): the frame-start
+    /// upload batch's image lane snapshots raw image handles without retaining the texture, so final
+    /// destruction must wait for the GPU.
     ~VulkanTexture() override {
         if (m_ImageTracker && m_Image)
             m_ImageTracker->Forget(m_Image);

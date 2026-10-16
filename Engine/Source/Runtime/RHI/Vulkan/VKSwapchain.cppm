@@ -102,8 +102,9 @@ class VulkanSwapchain {
   public:
     VulkanSwapchain() = default;
 
-    /// Create a fully initialized VulkanSwapchain. Stores a non-owning reference to Vulkan objects owned by
-    /// VulkanResourceContext.
+    /// @brief Create a fully initialized VulkanSwapchain.
+    ///
+    /// Stores a non-owning reference to Vulkan objects owned by VulkanResourceContext.
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context)
         -> std::expected<VulkanSwapchain, ErrorMessage> {
         VulkanSwapchain Result;
@@ -333,8 +334,9 @@ class VulkanSwapchain {
         return (m_CurrentIndex < m_ImageViews.size()) ? *m_ImageViews[m_CurrentIndex] : vk::ImageView{};
     }
 
-    /// Returns the render-complete semaphore for the currently acquired swapchain image. Used by
-    /// VulkanRenderDevice::EndFrame to build the semaphore-submit info for queue submit.
+    /// @brief The render-complete semaphore for the currently acquired swapchain image.
+    ///
+    /// Used by VulkanRenderDevice::EndFrame to build the semaphore-submit info for queue submit.
     [[nodiscard]] auto GetCurrentRenderCompleteSemaphore() const -> vk::Semaphore {
         return *m_RenderComplete[m_CurrentIndex];
     }
