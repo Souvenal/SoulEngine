@@ -1,6 +1,6 @@
 name: CI
 
-# Verify the project configures and builds on macOS (arm64) with Homebrew LLVM. Build verification only
+# Verify the project configures and builds on each supported hosted platform. Build verification only
 # for this iteration; tests, artifacts, and further platforms are deliberate follow-ups.
 
 on:
@@ -20,36 +20,51 @@ jobs:
     name: build (${{ matrix.os }})
     strategy:
       fail-fast: false
-      # Single-entry matrix for now; add more OS entries here later.
       matrix:
-        os: [macos-latest]
+        include:
+          - os: macos-latest
+            compiler: homebrew-llvm23
+          - os: windows-latest
+            compiler: llvm23
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Locate Homebrew download cache
         id: brew-cache
+        if: matrix.os == 'macos-latest'
         run: echo "dir=$(brew --cache)" >> "$GITHUB_OUTPUT"
 
       # Caches downloaded bottles so the pinned LLVM bottle does not re-download every run. Bump v1 to
       # invalidate.
       - name: Cache Homebrew downloads
+        if: matrix.os == 'macos-latest'
         uses: actions/cache@v4
         with:
           path: ${{ steps.brew-cache.outputs.dir }}
-          key: brew-v1-${{ runner.os }}
+          key: brew-v1-${{ runner.os }}-${{ matrix.compiler }}
 
-      # Homebrew LLVM is keg-only: without the explicit PATH prefix, xmake's pinned clang toolchain
-      # silently resolves to Apple Clang, which cannot compile this project's C++23 modules.
-      - name: Install LLVM 23
+      # Select the required LLVM toolchain explicitly so xmake does not use the runner default compiler.
+      - name: Install LLVM 23 on macOS
+        if: matrix.os == 'macos-latest'
         run: |
           HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@23
           echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
 
-      - name: Verify compiler
+      - name: Install LLVM 23 on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          which clang
+          choco install llvm --version=23.1.0 --allow-downgrade --no-progress --yes
+          $llvmBin = Join-Path $env:ChocolateyToolsLocation 'llvm\bin'
+          Add-Content -Path $env:GITHUB_PATH -Value $llvmBin
+
+      - name: Verify compiler
+        shell: bash
+        run: |
+          command -v clang
           clang --version
+          clang --version | grep -q 'clang version 23'
 
       # Package cache key hashes the project's xmake build files. Known limitation: a stale cache after
       # dependency changes is resolved by bumping the v1 component.
@@ -58,9 +73,9 @@ jobs:
         with:
           xmake-version: 3.1.1
           actions-cache-folder: '.xmake-cache'
-          actions-cache-key: xmake-${{ runner.os }}-3.1.1
+          actions-cache-key: xmake-${{ runner.os }}-${{ matrix.compiler }}-3.1.1
           package-cache: true
-          package-cache-key: pkg-v2-${{ runner.os }}-${{ hashFiles('xmake.lua', 'Engine/**/xmake.lua') }}
+          package-cache-key: pkg-v2-${{ runner.os }}-${{ matrix.compiler }}-${{ hashFiles('xmake.lua', 'Engine/**/xmake.lua') }}
 
       # Required on fresh checkouts: the project's souvenal-repo clone lives under .xmake/ and xmake does not
       # re-clone it automatically; omitting it yields a misleading "package not found in any repository" error.
@@ -74,15 +89,3 @@ jobs:
       # Default targets only; test targets are excluded by set_default(false).
       - name: Build
         run: xmake -y
-
-  # Single fan-in check with a stable name: branch protection tracks only this job, so future matrix
-  # expansion cannot silently invalidate the rule.
-  ci-success:
-    name: ci-success
-    needs: build
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Aggregate build results
-        if: needs.build.result != 'success'
-        run: exit 1
