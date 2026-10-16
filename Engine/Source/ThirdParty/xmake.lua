@@ -2,7 +2,9 @@
 -- See https://xmake.io/api/description/global-interfaces.html#add-requireconfs
 -- add_requireconfs("*", {configs = {shared = true}})
 
-add_repositories("souvenal-repo git@github.com:Souvenal/xmake-repo.git")
+-- HTTPS rather than SSH: the repo is public, so HTTPS works with zero credentials both locally and on
+-- CI runners (which have no SSH keys).
+add_repositories("souvenal-repo https://github.com/Souvenal/xmake-repo.git")
 
 local vulkan_header_configs = {
     modules = true,
@@ -64,6 +66,13 @@ add_requires("slang[embed_stdlib_source=false] vulkan-sdk-1.4.350.0")
 -- cl-based RC dependency scan on Windows. The use_ccache config is provided
 -- by souvenal-repo's assimp recipe.
 add_requires("assimp", {configs = {use_ccache = false}})
+
+-- Force zlib onto a source build wherever it appears as a transitive dependency (assimp, minizip).
+-- Resolved as a system package, zlib comes from the Xcode SDK and assimp's FindZLIB injects the SDK's
+-- usr/include as a plain -I, which puts C headers ahead of libc++'s and breaks the build under Homebrew
+-- clang ("<cmath> tried including <math.h> ..."). The pattern must cover every parent path, otherwise the
+-- mixed system/source resolutions of the same package race each other during dependency unification.
+add_requireconfs("**.zlib", {override = true, system = false})
 
 -- system = false is required because add_tests() creates a test wrapper
 -- that resolves packages through its own independent path, which does

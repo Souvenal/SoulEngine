@@ -1,5 +1,7 @@
 # SoulEngine
 
+[![CI](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Souvenal/SoulEngine/actions/workflows/ci.yml)
+
 SoulEngine is a personal lightweight game engine built from scratch with modern C++23 and xmake. It is first and foremost a **learning project** — a vehicle for studying low-level GPU APIs, hardware architecture, advanced rendering algorithms, and large-scale software engineering.
 
 The project structure is inspired by Unreal Engine's modular design (see the `Engine/` directory), but where UE uses a directory convention (`Public/` vs `Private/`) to indicate module visibility, SoulEngine leverages **C++ modules** as a first-class language mechanism to enforce the same boundary natively.
@@ -46,22 +48,20 @@ Each runtime module has its own `xmake.lua` for module-specific build configurat
 - A C++23 modules-capable compiler
   - **Windows:** LLVM Clang is **required** — MSVC currently cannot compile the project (see [Known Issues](#known-issues)). The root `xmake.lua` already pins the `clang` toolchain, so a plain `xmake f` picks it up automatically.
   - **macOS/Linux:** Clang is the configured toolchain.
-- **Vulkan SDK** — Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home). Before building or running, source the environment setup script:
+- **Vulkan SDK** — needed at **runtime**, not at build time. The build resolves Vulkan headers through the `vulkan-headers` xmake package, and the engine discovers the Vulkan loader dynamically at runtime via volk, so CI builds the project with no Vulkan SDK installed. Download and install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home), and before running, source the environment setup script:
 
   ```bash
   source /path/to/VulkanSDK/x.x.x.x/setup-env.sh
   ```
 
-  It is recommended to add this to your shell profile (e.g. `~/.zshrc` or `~/.bash_profile`) so `VULKAN_SDK` is always set:
+  It is recommended to add this to your shell profile (e.g. `~/.zshrc` or `~/.bash_profile`):
 
   ```bash
   # Vulkan SDK
   source /path/to/VulkanSDK/x.x.x.x/setup-env.sh
   ```
 
-  The `VULKAN_SDK` environment variable is how xmake locates the Vulkan headers and libraries. Without it, the build system will not find the Vulkan dependency.
-
-  In addition, `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so that Vulkan SDK shared libraries can be resolved at runtime. Skipping this step will result in missing dylib errors when launching the executable.
+  `setup-env.sh` configures the dynamic linker library path (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux) so the Vulkan loader and driver (see [`docs/platform/macOS.md`](docs/platform/macOS.md) for the driver choice) resolve at runtime. Skipping this step results in missing dylib errors when launching the executable.
 
 ### Git Hooks
 

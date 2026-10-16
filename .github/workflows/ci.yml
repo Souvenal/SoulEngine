@@ -1,0 +1,86 @@
+name: CI
+
+# Verify the project configures and builds on macOS (arm64) with Homebrew LLVM. Build verification only
+# for this iteration; tests, artifacts, and further platforms are deliberate follow-ups.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, dev/feature]
+  workflow_dispatch:
+
+# A new push to a PR (or to main) cancels the still-running run of the previous HEAD.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      # Single-entry matrix for now; add more OS entries here later.
+      matrix:
+        os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate Homebrew download cache
+        id: brew-cache
+        run: echo "dir=$(brew --cache)" >> "$GITHUB_OUTPUT"
+
+      # Caches downloaded bottles so the pinned LLVM bottle does not re-download every run. Bump v1 to
+      # invalidate.
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.brew-cache.outputs.dir }}
+          key: brew-v1-${{ runner.os }}
+
+      # Homebrew LLVM is keg-only: without the explicit PATH prefix, xmake's pinned clang toolchain
+      # silently resolves to Apple Clang, which cannot compile this project's C++23 modules.
+      - name: Install LLVM 23
+        run: |
+          brew install llvm@23
+          echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify compiler
+        run: |
+          which clang
+          clang --version
+
+      # Package cache key hashes the project's xmake build files. Known limitation: a stale cache after
+      # dependency changes is resolved by bumping the v1 component.
+      - name: Set up xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+          package-cache: true
+          package-cache-key: pkg-v1-${{ runner.os }}-${{ hashFiles('**/xmake.lua') }}
+
+      # Required on fresh checkouts: the project's souvenal-repo clone lives under .xmake/ and xmake does not
+      # re-clone it automatically; omitting it yields a misleading "package not found in any repository" error.
+      - name: Sync package repositories
+        run: xmake repo -u
+
+      # -y: xmake asks before installing required packages, which hangs a non-interactive runner.
+      - name: Configure
+        run: xmake f -y -m release
+
+      # Default targets only; test targets are excluded by set_default(false).
+      - name: Build
+        run: xmake -y
+
+  # Single fan-in check with a stable name: branch protection tracks only this job, so future matrix
+  # expansion cannot silently invalidate the rule.
+  ci-success:
+    name: ci-success
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate build results
+        if: needs.build.result != 'success'
+        run: exit 1
