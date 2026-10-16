@@ -55,8 +55,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          choco install llvm --version=23.1.0 --allow-downgrade --no-progress --yes
-          $llvmBin = Join-Path $env:ChocolateyToolsLocation 'llvm\bin'
+          winget install --id LLVM.LLVM --version 23.1.0 --exact --accept-source-agreements --accept-package-agreements --silent
+          $llvmBin = Join-Path ${env:ProgramFiles} 'LLVM\bin'
           Add-Content -Path $env:GITHUB_PATH -Value $llvmBin
 
       - name: Verify compiler
