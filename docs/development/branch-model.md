@@ -19,11 +19,12 @@ The two integration edges use different merge strategies, and the asymmetry is d
 
 After the promotion PR lands, synchronize the shared integration branch with the new `main` tip:
 
-1. Check the remote state and confirm that `origin/dev/feature` has no unexpected commits from another contributor.
+1. Fetch `origin/dev/feature`, record its tip, and compare it with the expected shared-branch state. If it contains unexpected commits from another contributor, stop and coordinate before rebasing.
 2. Rebase `dev/feature` onto the new `main` tip locally.
-3. Update the shared branch with **`git push --force-with-lease origin dev/feature`**. The lease protects unexpected remote work from being overwritten; do not use an unconditional force push.
-4. Wait for required CI after the branch update and confirm that the promoted commit remains verified.
+3. Immediately before updating the shared branch, fetch `origin/dev/feature` again and confirm that its tip is still the one checked in step 1. If it changed, stop rather than overwrite the new remote work.
+4. Update the shared branch with **`git push --force-with-lease origin dev/feature`**. The lease protects unexpected remote work from being overwritten; do not use an unconditional force push.
+5. Wait for required CI after the branch update and confirm that the promoted commit remains verified.
 
-**Update with rebase** makes an out-of-date promotion PR current before merging. **Rebase and merge** is the final merge action that promotes `dev/feature` to `main`. The two operations are separate and may both be required for an out-of-date PR.
+**Update with rebase** makes an out-of-date promotion PR current before merging. **Rebase and merge** is the final merge action that promotes `dev/feature` to `main`; both operations may be required for an out-of-date PR.
 
 This workflow keeps the permanent branches on one linear history: squash disposable work into `dev/feature`, then rebase-promote `dev/feature` to `main` and resynchronize it after promotion.
