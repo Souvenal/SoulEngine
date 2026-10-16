@@ -669,8 +669,7 @@ class RenderGraphBuilder {
 
         // Step 6: bind the surviving pipeline passes' Ready pipelines, then move every survivor into the
         // frame list in final order, each paired with its prologue — the dst-only state requirements its
-        // declared accesses map to. Present is an explicit BlitToSwapchainPass (NeverPrune), so no pass needs
-        // any frame-output marking here.
+        // declared accesses map to.
         RenderPassList Result{};
         auto&          Registry = PipelineRegistry::Get();
         for (const auto I : Order) {

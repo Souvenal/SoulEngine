@@ -6,6 +6,7 @@ target("Renderer")
     add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph")
 
     add_files("*.cppm")
+    add_files("Common/*.cppm")
     add_files("Editor/*.cppm")
     add_files("Raster/*.cppm")
     add_files("RayTracing/*.cppm")
