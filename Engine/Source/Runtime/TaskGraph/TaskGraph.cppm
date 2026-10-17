@@ -15,10 +15,10 @@ struct FrameTask {
     std::function<void()> Task       = {};
 
     /// @brief Orders the min-heap by frame first, then preserves FIFO within a frame.
-    [[nodiscard]] friend auto operator>(const FrameTask& Left, const FrameTask& Right) noexcept -> bool {
-        if (Left.FrameIndex != Right.FrameIndex)
-            return Left.FrameIndex > Right.FrameIndex;
-        return Left.Sequence > Right.Sequence;
+    [[nodiscard]] auto operator>(const FrameTask& Other) const noexcept -> bool {
+        if (FrameIndex != Other.FrameIndex)
+            return FrameIndex > Other.FrameIndex;
+        return Sequence > Other.Sequence;
     }
 };
 

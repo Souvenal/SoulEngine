@@ -5,8 +5,8 @@ target("TaskGraph")
 
     add_deps("Core")
     add_packages("magic_enum", "tracy", {public = true})
-    add_files("TaskGraph.cppm", {public = true})
-    add_files("TaskGraph.cpp")
+    add_files("*.cppm", {public = true})
+    add_files("*.cpp")
 
 test_module("TaskGraph", {
     deps = {"TaskGraph"}
