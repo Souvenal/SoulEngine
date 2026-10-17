@@ -8,10 +8,10 @@ import std;
 import Core;
 import magic_enum;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Task that may execute only when its published frame is current.
-struct FrameTask {
+export struct FrameTask {
     Uint64                FrameIndex = 0;
     Uint64                Sequence   = 0;
     std::function<void()> Task       = {};
@@ -25,14 +25,13 @@ struct FrameTask {
 };
 
 /// @brief Thread queue target for task dispatch.
-enum class ThreadQueue {
+export enum class ThreadQueue {
     Game = 0,
     Render,
     RHI,
 };
 
-/// @brief Thread-safe pair of unbound and frame-affined task queues.
-struct TaskQueue {
+export struct TaskQueue {
     std::mutex                        Mutex;
     std::queue<std::function<void()>> Tasks;
     std::deque<FrameTask>             FrameTasks;
@@ -43,40 +42,17 @@ struct TaskQueue {
 ///
 /// 3 queues keyed by ThreadQueue. Each internal queue contains unbound tasks and frame-affined tasks. Drain
 /// methods release the queue mutex before invoking user callbacks.
-class TaskGraph final : public Singleton<TaskGraph> {
+export class TaskGraph final : public Singleton<TaskGraph> {
     friend class Singleton<TaskGraph>;
 
   public:
     /// @brief Start background worker threads.
     /// @param WorkerCount Number of background worker threads to spawn.
-    auto Init(std::size_t WorkerCount) -> void {
-        std::scoped_lock LifecycleLock(m_LifecycleMutex);
-        if (m_Running.exchange(true, std::memory_order_acq_rel)) {
-            LogWarning("TaskGraph initialization ignored; the process-global instance is already running");
-            return;
-        }
-
-        m_Workers.reserve(WorkerCount);
-        for (std::size_t WorkerIndex = 0; WorkerIndex < WorkerCount; ++WorkerIndex)
-            m_Workers.emplace_back([this, WorkerIndex](std::stop_token Stop) { WorkerLoop(WorkerIndex, Stop); });
-
-        LogInfo("Background worker threads spawned ({})", WorkerCount);
-    }
+    auto Init(std::size_t WorkerCount) -> void;
 
     /// @brief Push an unbound task onto the target thread's queue.
     /// Thread-safe. May be called from any thread.
-    [[nodiscard]] auto EnqueueTask(ThreadQueue Q, std::function<void()> Task) -> std::expected<void, ErrorMessage> {
-        if (!m_Running.load(std::memory_order_acquire))
-            return std::unexpected(ErrorMessage("TaskGraph is not running"));
-
-        auto&            Queue = m_Queues[std::to_underlying(Q)];
-        std::scoped_lock Lock(Queue.Mutex);
-        if (!m_Running.load(std::memory_order_relaxed))
-            return std::unexpected(ErrorMessage("TaskGraph is not running"));
-
-        Queue.Tasks.push(std::move(Task));
-        return {};
-    }
+    [[nodiscard]] auto EnqueueTask(ThreadQueue Q, std::function<void()> Task) -> std::expected<void, ErrorMessage>;
 
     /// @brief Push a task bound to the submitting thread's current frame.
     ///
@@ -84,191 +60,38 @@ class TaskGraph final : public Singleton<TaskGraph> {
     /// another's TLS values; because each loop advances once per pipeline frame, the ordinal captured by the
     /// producer matches the ordinal consumed by the target thread when it catches up. Background workers must
     /// use the explicit-frame overload below.
-    [[nodiscard]] auto EnqueueFrameTask(ThreadQueue Q, std::function<void()> Task)
-        -> std::expected<void, ErrorMessage> {
-        const auto FrameIndex = GetThreadFrameIndex();
-        if (FrameIndex == 0)
-            return std::unexpected(ErrorMessage("No frame is active on the submitting thread"));
-        return EnqueueFrameTask(Q, FrameIndex, std::move(Task));
-    }
+    [[nodiscard]] auto EnqueueFrameTask(ThreadQueue Q, std::function<void()> Task) -> std::expected<void, ErrorMessage>;
 
     /// @brief Push a frame task with an explicitly supplied frame ordinal.
     /// Thread-safe. Intended for background workers and exceptional handoff paths.
     [[nodiscard]] auto EnqueueFrameTask(ThreadQueue Q, Uint64 FrameIndex, std::function<void()> Task)
-        -> std::expected<void, ErrorMessage> {
-        if (!m_Running.load(std::memory_order_acquire))
-            return std::unexpected(ErrorMessage("TaskGraph is not running"));
-
-        auto&            Queue = m_Queues[std::to_underlying(Q)];
-        std::scoped_lock Lock(Queue.Mutex);
-        if (!m_Running.load(std::memory_order_relaxed))
-            return std::unexpected(ErrorMessage("TaskGraph is not running"));
-
-        // Sequence is assigned while holding the queue mutex, so concurrent producers receive a unique FIFO
-        // order for tasks targeting the same frame.
-        Queue.FrameTasks.push_back(FrameTask{
-            .FrameIndex = FrameIndex,
-            .Sequence   = Queue.NextFrameTaskSequence++,
-            .Task       = std::move(Task),
-        });
-        std::push_heap(Queue.FrameTasks.begin(), Queue.FrameTasks.end(), std::greater<FrameTask>{});
-        return {};
-    }
+        -> std::expected<void, ErrorMessage>;
 
     /// @brief Advance this thread's frame ordinal and return the new value.
     ///
     /// The three engine loops intentionally own independent TLS counters. This is an ordinal local to the
     /// loop, not a shared global frame ID.
-    auto IncreaseThreadFrameIndex() -> void {
-        ++ThreadFrameIndex;
-    }
+    auto IncreaseThreadFrameIndex() -> void;
 
     /// @brief Read this thread's current frame ordinal.
-    [[nodiscard]] auto GetThreadFrameIndex() const -> Uint64 {
-        return ThreadFrameIndex;
-    }
+    [[nodiscard]] auto GetThreadFrameIndex() const -> Uint64;
 
     /// @brief Push a task onto the background worker queue.
     /// Thread-safe. May be called from any thread.
-    [[nodiscard]] auto EnqueueBackground(std::function<void()> Task) -> std::expected<void, ErrorMessage> {
-        if (!m_Running.load(std::memory_order_acquire))
-            return std::unexpected(ErrorMessage("TaskGraph is not running"));
-
-        {
-            std::scoped_lock Lock(m_BackgroundMutex);
-            if (!m_Running.load(std::memory_order_relaxed))
-                return std::unexpected(ErrorMessage("TaskGraph is not running"));
-            m_BackgroundTasks.push_back(std::move(Task));
-        }
-        m_BackgroundCv.notify_one();
-        return {};
-    }
+    [[nodiscard]] auto EnqueueBackground(std::function<void()> Task) -> std::expected<void, ErrorMessage>;
 
     /// @brief Execute all unbound tasks currently pending on a thread queue.
-    auto DrainTasks(ThreadQueue Q) -> void {
-        while (true) {
-            std::queue<std::function<void()>> PendingTasks;
-            {
-                auto&            Queue = m_Queues[std::to_underlying(Q)];
-                std::scoped_lock Lock(Queue.Mutex);
-                PendingTasks.swap(Queue.Tasks);
-            }
-
-            if (PendingTasks.empty())
-                return;
-
-            while (!PendingTasks.empty()) {
-                auto Task = std::move(PendingTasks.front());
-                PendingTasks.pop();
-                Task();
-            }
-        }
-    }
+    auto DrainTasks(ThreadQueue Q) -> void;
 
     /// @brief Execute frame tasks matching this thread's current frame ordinal.
-    auto DrainFrameTasks(ThreadQueue Q) -> void {
-        // The consumer uses its own TLS ordinal. It is intentionally independent from the producer's ordinal
-        // captured by EnqueueFrameTask.
-        const auto FrameIndex = GetThreadFrameIndex();
-        while (true) {
-            std::deque<FrameTask> PendingTasks;
-            {
-                auto&            Queue = m_Queues[std::to_underlying(Q)];
-                std::scoped_lock Lock(Queue.Mutex);
+    auto DrainFrameTasks(ThreadQueue Q) -> void;
 
-                // FrameTasks is a min-heap. Only the heap front can be eligible: older tasks are stale, the
-                // current frame is executable, and a larger frame must remain queued until the consumer
-                // catches up.
-                while (!Queue.FrameTasks.empty()) {
-                    if (Queue.FrameTasks.front().FrameIndex > FrameIndex)
-                        break;
-
-                    // pop_heap moves the smallest (FrameIndex, Sequence) entry to the back, where it can be
-                    // moved out without copying its task.
-                    std::pop_heap(Queue.FrameTasks.begin(), Queue.FrameTasks.end(), std::greater<FrameTask>{});
-                    auto Task = std::move(Queue.FrameTasks.back());
-                    Queue.FrameTasks.pop_back();
-
-                    // A producer may have fallen behind the consumer. Such work missed its frame and is
-                    // discarded rather than executed late.
-                    if (Task.FrameIndex == FrameIndex)
-                        PendingTasks.push_back(std::move(Task));
-                }
-            }
-
-            if (PendingTasks.empty())
-                return;
-
-            // Never invoke user callbacks while holding Queue.Mutex. A task may enqueue more work, and newly
-            // enqueued current-frame tasks are picked up by the next iteration of this drain.
-            for (auto& Task : PendingTasks)
-                Task.Task();
-        }
-    }
-
-    auto Shutdown() -> void {
-        std::scoped_lock LifecycleLock(m_LifecycleMutex);
-        if (!m_Running.exchange(false, std::memory_order_acq_rel))
-            return;
-
-        for (auto& Worker : m_Workers) {
-            if (Worker.joinable())
-                Worker.request_stop();
-        }
-
-        m_BackgroundCv.notify_all();
-
-        for (auto& Worker : m_Workers) {
-            if (Worker.joinable())
-                Worker.join();
-        }
-        m_Workers.clear();
-
-        {
-            std::scoped_lock Lock(m_BackgroundMutex);
-            m_BackgroundTasks.clear();
-        }
-
-        for (auto& Queue : m_Queues) {
-            std::scoped_lock Lock(Queue.Mutex);
-            Queue.Tasks = {};
-            Queue.FrameTasks.clear();
-            Queue.NextFrameTaskSequence = 0;
-        }
-    }
+    auto Shutdown() -> void;
 
   private:
     TaskGraph() = default;
-
-    ~TaskGraph() {
-        Shutdown();
-    }
-
-    auto WorkerLoop(std::size_t WorkerIndex, std::stop_token Stop) -> void {
-        // SetThreadName copies the string, so a formatted local is fine here; pointer identity only matters
-        // for names embedded in events
-        const String ThreadName = Format("WorkerThread{}", WorkerIndex);
-        tracy::SetThreadName(ThreadName.c_str());
-        SetLogThreadRole(LogThreadRole::Worker);
-        while (!Stop.stop_requested()) {
-            std::function<void()> Task;
-            {
-                std::unique_lock Lock(m_BackgroundMutex);
-                m_BackgroundCv.wait(Lock, [&] {
-                    return Stop.stop_requested() || !m_Running.load(std::memory_order_relaxed) ||
-                           !m_BackgroundTasks.empty();
-                });
-
-                if (Stop.stop_requested() || !m_Running.load(std::memory_order_relaxed))
-                    break;
-
-                Task = std::move(m_BackgroundTasks.front());
-                m_BackgroundTasks.pop_front();
-            }
-
-            Task();
-        }
-    }
+    ~TaskGraph();
+    auto WorkerLoop(std::size_t WorkerIndex, std::stop_token Stop) -> void;
 
     std::array<TaskQueue, magic_enum::enum_count<ThreadQueue>()> m_Queues = {};
 
