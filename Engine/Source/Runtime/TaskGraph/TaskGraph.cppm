@@ -1,7 +1,5 @@
 module;
 
-#include <tracy/Tracy.hpp>
-
 export module TaskGraph;
 
 import std;
@@ -11,7 +9,7 @@ import magic_enum;
 namespace SoulEngine {
 
 /// @brief Task that may execute only when its published frame is current.
-export struct FrameTask {
+struct FrameTask {
     Uint64                FrameIndex = 0;
     Uint64                Sequence   = 0;
     std::function<void()> Task       = {};
@@ -31,7 +29,8 @@ export enum class ThreadQueue {
     RHI,
 };
 
-export struct TaskQueue {
+/// @brief Thread-safe pair of unbound and frame-affined task queues.
+struct TaskQueue {
     std::mutex                        Mutex;
     std::queue<std::function<void()>> Tasks;
     std::deque<FrameTask>             FrameTasks;
