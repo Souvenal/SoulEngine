@@ -51,11 +51,11 @@ Code form and readability only, not behavior.
 
 - `bool` data members use an `Is` prefix (e.g. `m_IsCoherent`); `bool` fields of aggregate structs follow the same convention.
 
-- **DRY (Don't Repeat Yourself) — one definition per function.** A function's signature must be written exactly once, at its definition site. Function declarations (a signature without a definition) are forbidden unless necessary:
-  - Do not split a member function into an in-class declaration plus an out-of-class definition (`ReturnType Class::Method(...) { ... }`). Define member functions inline in the class body so the signature appears once.
-  - Do not use separate forward declarations for functions across translation units.
+- **DRY (Don't Repeat Yourself) — define each function once and avoid redundant declarations.** A function has one definition. Keep its declaration at the definition site unless a language boundary requires a separate declaration:
+  - For ordinary non-template module members moved out of an interface to reduce importer recompilation, declare the member in the interface and define it once in the attached implementation unit. This is the sole exception to the one-signature rule.
+  - Do not add separate forward declarations across unrelated translation units.
   - Within a single translation unit, forward declarations are allowed only when necessary for mutually recursive free functions; require a comment explaining the recursion and mark with `ALLOW-FWD-RECURSION`. Prefer defining functions at first use.
-  - For public APIs intended for reuse across translation units, use module interface units; the exported definition is the single declaration.
+  - For public APIs intended for reuse across translation units, use module interface units; export the declaration in the interface and define it there or in its attached implementation unit.
 
 - Module partition naming: allow exactly one colon separator in the form `A:B`. To express logical nesting beyond one level, use a single dot inside the partition name, for example `A:B.C`. Treat the dot as part of the partition identifier and ensure build tools map `A:B.C` to a single module partition name.
 
@@ -83,7 +83,7 @@ Code form and readability only, not behavior.
 | `-fno-rtti` (no `typeid`/`dynamic_cast`) | All code | Compiler flag |
 | No raw `new`/`delete` | All code | Review |
 | Trailing return types | Functions (not ctor/dtor) | Review |
-| DRY — no separate declarations; in-class member definitions | All functions | Review |
+| DRY — one definition; module interface split is the sole declaration exception | All functions | Review |
 | `m_` prefix on non-static data members | `class` types only | Review |
 | Aggregate init (`{ .Field = ... }`) | Structs | Review |
 | Declaration-site defaults | All data members | Review |
