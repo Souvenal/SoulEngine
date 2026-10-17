@@ -1,0 +1,6 @@
+[0m[38;2;0;255;0;1m[  0%]:[0m [38;2;255;0;255;1m<TaskGraph>[0m [0mgenerating.module.deps Engine/Source/Runtime/TaskGraph/TaskGraph.cppm[0m
+[0m[38;2;0;255;0;1m[ 80%]:[0m [38;2;255;0;255;1m<TaskGraph>[0m [0mcompiling.module.bmi.debug TaskGraph[0m[0m
+[0m[38;2;0;255;0;1m[ 82%]:[0m [38;2;255;0;255;1m<TaskGraph>[0m compiling.debug Engine/Source/Runtime/TaskGraph/TaskGraph.cppm[0m[0m
+[0m[38;2;0;255;0;1m[ 84%]:[0m [38;2;255;0;255;1m<TestsForTaskGraph_TaskGraph>[0m compiling.debug Engine/Source/Runtime/TaskGraph/Tests/TaskGraph.cpp[0m
+[0m[38;2;0;255;0;1m[ 90%]:[0m [38;2;255;0;255;1m<TestsForTaskGraph_TaskGraph>[0m [38;2;255;0;255;1mlinking.debug TestsForTaskGraph_TaskGraph[0m
+[0m[38;2;0;255;0;1m[100%]:[0m [38;2;0;255;0;1mbuild ok, spent 2.049s[0m
