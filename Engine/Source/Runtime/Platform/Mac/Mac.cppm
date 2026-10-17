@@ -4,8 +4,6 @@ export module Platform:Mac;
 
 namespace Platform {
 
-export auto InstallCrashHandler() -> void {
-    // No-op on macOS. Crash dump capture (Breakpad/crashpad-style) TBD.
-}
+export auto InstallCrashHandler() -> void;
 
 } // namespace Platform
