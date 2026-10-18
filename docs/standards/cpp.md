@@ -65,6 +65,16 @@ Code form and readability only, not behavior.
 
 - Every `enum class` must have its first enumerator as `Unknown = 0` (or the equivalent default sentinel). Rationale: zero-initialisation is the default in C++; an explicit `Unknown` sentinel makes it impossible to accidentally treat a default-constructed value as a valid state. Non-negative sentinel names (e.g. `None`) are acceptable when the enum represents a bitmask and zero means "nothing set".
 
+## C++ Modules
+
+- Ordinary non-template module members may be declared in a module interface and defined once in an attached implementation unit. This is the supported interface/implementation split for reducing importer recompilation.
+- A module interface partition uses `export module M:Part;`. Re-export it from the primary interface only when downstream modules need its API.
+- An implementation partition uses a distinct name such as `module M:Part.impl;`. Do not define `M:Part` in both an interface unit and an implementation unit.
+- Implementation partitions are private to the named module. They are added to the same build target but are not imported or re-exported by the primary interface. An implementation partition imports an interface partition itself only when it needs that partition’s declarations.
+- Shared cross-backend APIs are declared and exported once in the primary module interface. Backend implementation partitions provide the one corresponding definition for the active platform.
+- Use ordinary `namespace SoulEngine` blocks and explicit per-declaration `export`; `export namespace` is prohibited.
+- In xmake targets that contain module implementation units, use `set_kind("static")` with `set_policy("build.c++.modules", true)`. Register interface `.cppm` files with `{public = true}` and implementation `.cpp` files as ordinary target sources.
+
 ## Profiling (Tracy)
 
 - Tracy identifies instrumented strings by pointer address, not content (see the Tracy manual, "Unique pointers"): identical string literals are not guaranteed to pool to a single address, and a mismatched pointer silently splits frame sources. Never pass a fresh string literal to a Tracy macro at more than one place.
