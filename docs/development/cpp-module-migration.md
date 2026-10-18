@@ -30,11 +30,11 @@ auto TaskGraph::Init() -> void {
 } // namespace SoulEngine
 ```
 
-Use an interface partition only when the partition has a real independent interface boundary. An interface partition is declared with `export module M:Part;` and is re-exported by the primary interface only when downstream modules need that partition API.
+Use an interface partition only when the partition has a real independent interface boundary. An interface partition is declared with `export module M:Part;` and is re-exported by the primary interface only when downstream modules need that partition API. A primary or aggregate interface such as `Util.cppm` may serve as a facade that only re-exports feature interfaces.
 
-Use an implementation partition for platform-specific or otherwise private implementation code. Give it a distinct partition name such as `module M:Part.impl;`. Do not declare the same partition name in both an interface unit and an implementation unit.
+Use an implementation partition for platform-specific or otherwise private implementation code. Give it a distinct partition name such as `module M:Part.impl;`. The `.impl` name is mandatory for a feature implementation partition: an interface partition and its implementation partition must never declare the same partition name.
 
-An implementation partition is not imported or re-exported by the primary interface. Add its source file to the same xmake target. If the implementation partition needs declarations from an interface partition, it imports that partition itself with `import :Part;`.
+An implementation partition is not imported or re-exported by the primary interface. Add its source file to the same xmake target. If the implementation partition needs declarations from an interface partition, it imports that partition itself with `import :Part;`. A primary implementation unit may instead use `module M;` for declarations from `export module M;`; do not use that form for feature partitions.
 
 ## Keep The Public Boundary Singular
 
@@ -58,7 +58,7 @@ target("Platform")
     add_files("Mac/**.cpp")
 ```
 
-Mark `.cppm` interface sources as public module sources. Add `.cpp` implementation units as ordinary target sources. Do not use `moduleonly` for a target that contains implementation units.
+Mark `.cppm` interface sources as public module sources. Add `.cpp` implementation units as ordinary target sources. Glob patterns are valid for both source classes. Module declarations determine interface versus implementation roles; filenames do not. Do not use `moduleonly` for a target that contains implementation units.
 
 ## Validate The Migration
 
@@ -86,9 +86,11 @@ A target configured as `moduleonly` cannot represent a module implementation uni
 
 - Identify ordinary non-template implementations that can leave the interface unit.
 - Keep public declarations and complete public documentation in the interface unit.
-- Use one primary module implementation unit or distinct `.impl` partitions for private implementations.
+- Use a feature `.cppm`/`.cpp` pair by default for ordinary runtime logic; use interface-only units for pure types, templates, concepts, and compile-time code.
+- Use one primary implementation unit only for ordinary definitions declared by the primary module interface; use distinct `.impl` partitions for feature implementations.
 - Keep every platform-independent public API declaration in the primary module interface.
 - Use ordinary `namespace SoulEngine` blocks and explicit per-declaration `export`.
 - Register interface `.cppm` files as public and implementation `.cpp` files as ordinary sources.
 - Clean generated module artifacts after changing unit shape or partition names.
 - Run focused, downstream, and full builds and record the exact results.
+- Check that exported declarations are limited to the public API. Distinguish `exported` from `reachable`: private member types may remain reachable without becoming importer-visible names, so do not add PImpl solely to hide them.
