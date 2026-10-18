@@ -5,12 +5,12 @@ module;
 #include <wchar.h>
 #include <signal.h>
 
-export module Platform:Windows;
+module Platform:Windows.impl;
 
 import std;
 import Core;
 
-namespace Platform {
+namespace SoulEngine {
 
 // Dump directory — captured during InstallCrashHandler (normal context).
 wchar_t g_DumpDir[MAX_PATH + 1] = {};
@@ -82,7 +82,7 @@ auto AbortHandler(int /*Signal*/) -> void {
     _exit(3);
 }
 
-export auto InstallCrashHandler() -> void {
+auto InstallCrashHandler() -> void {
     auto BinDir = SoulEngine::EnginePaths::Get().BinariesDirPath();
     wcscpy_s(g_DumpDir, BinDir.wstring().c_str());
 
@@ -94,4 +94,4 @@ export auto InstallCrashHandler() -> void {
     signal(SIGABRT, &AbortHandler);
 }
 
-} // namespace Platform
+} // namespace SoulEngine
