@@ -61,7 +61,7 @@ For code work and review, use [`CODING_STANDARDS.md`](CODING_STANDARDS.md), the 
 
 ## Code Editing Rules
 
-- **Comment Preservation:** NEVER delete/modify user-written comments (especially `// Note:`) unless asked. Preserve ALL existing comments verbatim.
+- **Comment Preservation:** NEVER delete/modify user-written comments (especially `// Note:`) unless asked. Preserve ALL existing comments verbatim. Exception: a change that falsifies a comment's premise owns updating it — see docs/standards/comments.md.
 
 ## Build System Notes
 

@@ -24,13 +24,10 @@ import EditorTypes;
 
 namespace SoulEngine {
 
-// Boot-time CVars owned by the launch sequence. Log levels live here rather than in Core:Logging because
-// Core:CVar imports Core:Logging — registering them there would create a module-partition cycle. CVar
-// registrations deliberately use module linkage (plain non-exported declarations), never an anonymous
-// namespace: internal-linkage variables referenced from exported inline code are copied into importing TUs
-// and their initializers run twice (duplicate registration).
-CVar<String> CVarLogConsoleLevel{"Log.ConsoleLevel", "Info", "Minimum level for console log output"};
-CVar<String> CVarLogFileLevel{"Log.FileLevel", "Debug", "Minimum level for file log output"};
+// Boot-time CVars owned by the launch sequence. CVar registrations deliberately use module linkage (plain
+// non-exported declarations), never an anonymous namespace: internal-linkage variables referenced from
+// exported inline code are copied into importing TUs and their initializers run twice (duplicate
+// registration).
 CVar<String> CVarApplicationName{"Application.Name", "Test", "Application opened at startup"};
 CVar<String> CVarRenderRHI{"Render.RHI", "Vulkan", "RHI backend created at startup"};
 
@@ -115,7 +112,7 @@ class EngineLoop {
             return std::unexpected(LoadResult.error().Append("Failed to load config file"));
 
         // Apply log-level configuration from the [Log] section.
-        LogManager::Get().SetSinkLevels(CVarLogFileLevel.Get(), CVarLogConsoleLevel.Get());
+        LogManager::Get().SetSinkLevels();
 
         // LogInfo intentionally deferred to here: LogManager::Init() is called above and must run first so
         // the spdlog logger is ready. Any log calls before that point silently produce no output (Log()

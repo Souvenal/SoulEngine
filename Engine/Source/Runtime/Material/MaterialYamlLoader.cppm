@@ -11,9 +11,6 @@ import :Texture;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:CVar's linkage note.
-
 [[nodiscard]] auto IsRelativeAssetPath(StringView Value) -> bool {
     const Path Asset{String(Value)};
     if (Value.empty() || Asset.is_absolute() || Asset == Path{"."} || Asset.lexically_normal() != Asset)

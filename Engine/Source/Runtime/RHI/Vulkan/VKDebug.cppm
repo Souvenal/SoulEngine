@@ -14,7 +14,6 @@ import :Capability;
 
 namespace SoulEngine {
 
-// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
 CVar<bool> CVarRhiVulkanDebugUtils{"RHI.Vulkan.DebugUtils", true, "Enable VK_EXT_debug_utils and the debug messenger"};
 
 } // namespace SoulEngine

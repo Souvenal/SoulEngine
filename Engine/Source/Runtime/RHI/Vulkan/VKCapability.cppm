@@ -6,7 +6,6 @@ import std;
 
 namespace SoulEngine {
 
-// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
 CVar<bool> CVarRhiVulkanValidation{"RHI.Vulkan.Validation", true, "Enable VK_LAYER_KHRONOS_validation"};
 
 // Instance and device capability requests

@@ -11,9 +11,6 @@ import ShaderCompiler;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:CVar's linkage note.
-
 struct SelectionOutlinePushConstants {
     Float32 ViewportWidth;
     Float32 ViewportHeight;

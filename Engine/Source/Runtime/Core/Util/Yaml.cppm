@@ -18,7 +18,7 @@ import std;
 namespace SoulEngine {
 
 // Module linkage, not an anonymous namespace: this class is named by the exported inline YamlDocument::Create
-// below, and TU-local entities cannot be named from exported code — see Core:CVar's linkage note.
+// below, and TU-local entities cannot be named from exported code.
 class YamlParser {
   public:
     [[nodiscard]] static auto Create(std::span<const unsigned char> Source) -> std::expected<YamlParser, ErrorMessage> {
@@ -225,37 +225,19 @@ export class YamlNode {
     }
 
   public:
-    [[nodiscard]] auto IsNull() const -> bool {
-        if (!IsScalar())
-            return false;
-        const auto Value = Scalar();
-        return Value.empty() || Value == "~" || Value == "null" || Value == "Null" || Value == "NULL";
-    }
+    [[nodiscard]] auto IsNull() const -> bool;
 
-    [[nodiscard]] auto IsScalar() const -> bool {
-        return std::holds_alternative<String>(m_Value);
-    }
+    [[nodiscard]] auto IsScalar() const -> bool;
 
-    [[nodiscard]] auto IsSequence() const -> bool {
-        return std::holds_alternative<Sequence>(m_Value);
-    }
+    [[nodiscard]] auto IsSequence() const -> bool;
 
-    [[nodiscard]] auto IsMap() const -> bool {
-        return std::holds_alternative<Mapping>(m_Value);
-    }
+    [[nodiscard]] auto IsMap() const -> bool;
 
-    [[nodiscard]] auto Scalar() const -> String {
-        const auto* Value = std::get_if<String>(&m_Value);
-        if (!Value)
-            return {};
-        return *Value;
-    }
+    [[nodiscard]] auto Scalar() const -> String;
 
     /// @brief 1-based source location of this node within the originating document,
     /// formatted as "line L, column C" for diagnostics.
-    [[nodiscard]] auto Location() const -> String {
-        return Format("line {}, column {}", m_Line, m_Column);
-    }
+    [[nodiscard]] auto Location() const -> String;
 
     /// @brief Decode the node as T. Scalar types require a scalar node; hlslpp vector
     /// types require a sequence of exactly that many numbers. Returns nullopt on mismatch.
@@ -306,61 +288,23 @@ export class YamlNode {
         }
     }
 
-    [[nodiscard]] auto Size() const -> std::size_t {
-        if (const auto* SequenceValue = std::get_if<Sequence>(&m_Value))
-            return SequenceValue->size();
-        if (const auto* MappingValue = std::get_if<Mapping>(&m_Value))
-            return MappingValue->size();
-        return 0;
-    }
+    [[nodiscard]] auto Size() const -> std::size_t;
 
-    [[nodiscard]] auto size() const -> std::size_t {
-        return Size();
-    }
+    [[nodiscard]] auto size() const -> std::size_t;
 
     /// @brief Look up a mapping entry by key. Returns nullopt for non-mappings and missing keys.
-    [[nodiscard]] auto operator[](StringView Key) const -> std::optional<std::reference_wrapper<const YamlNode>> {
-        if (!IsMap())
-            return std::nullopt;
-
-        for (const auto& [EntryKey, EntryValue] : std::get<Mapping>(m_Value)) {
-            if (EntryKey == Key)
-                return std::optional<std::reference_wrapper<const YamlNode>>{*EntryValue};
-        }
-        return std::nullopt;
-    }
+    [[nodiscard]] auto operator[](StringView Key) const -> std::optional<std::reference_wrapper<const YamlNode>>;
 
     /// @brief Child nodes of a mapping (values only) or sequence, in document order.
-    [[nodiscard]] auto Values() const -> std::vector<std::reference_wrapper<const YamlNode>> {
-        std::vector<std::reference_wrapper<const YamlNode>> Result = {};
-        if (const auto* MappingValue = std::get_if<Mapping>(&m_Value)) {
-            Result.reserve(MappingValue->size());
-            for (const auto& [Key, Value] : *MappingValue)
-                Result.emplace_back(*Value);
-            return Result;
-        }
-        if (const auto* SequenceValue = std::get_if<Sequence>(&m_Value)) {
-            Result.reserve(SequenceValue->size());
-            for (const auto& Value : *SequenceValue)
-                Result.emplace_back(*Value);
-        }
-        return Result;
-    }
+    [[nodiscard]] auto Values() const -> std::vector<std::reference_wrapper<const YamlNode>>;
 
     /// @brief Key/value pairs of a mapping in document order; empty for non-mappings.
-    [[nodiscard]] auto Items() const -> const Mapping& {
-        const auto* MappingValue = std::get_if<Mapping>(&m_Value);
-        if (!MappingValue) {
-            static const Mapping EmptyMapping = {};
-            return EmptyMapping;
-        }
-        return *MappingValue;
-    }
+    [[nodiscard]] auto Items() const -> const Mapping&;
 
   private:
-    explicit YamlNode(String Value) : m_Value(std::move(Value)) {}
-    explicit YamlNode(Mapping Value) : m_Value(std::move(Value)) {}
-    explicit YamlNode(Sequence Value) : m_Value(std::move(Value)) {}
+    explicit YamlNode(String Value);
+    explicit YamlNode(Mapping Value);
+    explicit YamlNode(Sequence Value);
 
     Uint32                                  m_Line   = 0;
     Uint32                                  m_Column = 0;
@@ -407,16 +351,9 @@ export class YamlDocument {
 
     YamlDocument(YamlDocument&& Other) noexcept : m_Root(std::exchange(Other.m_Root, {})) {}
 
-    auto operator=(YamlDocument&& Other) noexcept -> YamlDocument& {
-        if (this == &Other)
-            return *this;
-        std::swap(m_Root, Other.m_Root);
-        return *this;
-    }
+    auto operator=(YamlDocument&& Other) noexcept -> YamlDocument&;
 
-    [[nodiscard]] auto Root() const -> const YamlNode& {
-        return *m_Root;
-    }
+    [[nodiscard]] auto Root() const -> const YamlNode&;
 
   private:
     UPtr<YamlNode> m_Root = {};
@@ -426,59 +363,8 @@ export class YamlDocument {
 ///
 /// The YAML side is untyped; the target type comes from the field's registered meta type. Fails when the node
 /// does not decode as that type or the meta assignment fails.
-export [[nodiscard]] inline auto AssignYamlValue(const entt::meta_data& Field,
-                                                 entt::meta_any&        Component,
-                                                 const YamlNode&        Value) -> std::expected<void, ErrorMessage> {
-    const auto Type = Field.type().info().hash();
-    if (Type == entt::type_hash<float>::value()) {
-        const auto ConvertedValue = Value.As<float>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar number"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign numeric value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_hash<bool>::value()) {
-        const auto ConvertedValue = Value.As<bool>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar boolean"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign boolean value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_hash<String>::value()) {
-        const auto ConvertedValue = Value.As<String>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar string"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign string value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_hash<hlslpp::float3>::value()) {
-        const auto ConvertedValue = Value.As<hlslpp::float3>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a sequence of exactly three numbers"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign float3 value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_hash<Path>::value()) {
-        const auto ConvertedValue = Value.As<String>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar string"));
-        if (!Field.set(Component, Path{ConvertedValue.value()}))
-            return std::unexpected(ErrorMessage("could not assign path value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_hash<hlslpp::float4>::value()) {
-        const auto ConvertedValue = Value.As<hlslpp::float4>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a sequence of exactly four numbers"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign float4 value through metadata"));
-        return {};
-    }
-    return std::unexpected(ErrorMessage("uses an unsupported persisted field type"));
-}
+export [[nodiscard]] auto AssignYamlValue(const entt::meta_data& Field,
+                                          entt::meta_any&        Component,
+                                          const YamlNode&        Value) -> std::expected<void, ErrorMessage>;
 
 } // namespace SoulEngine

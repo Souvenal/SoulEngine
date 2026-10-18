@@ -1,8 +1,9 @@
-export module Core:Paths;
+export module Core:Util.Paths;
 
-export import :Util;
+import :Util.Types;
+import :Util.Singleton;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Well-known engine directory paths.
 ///
@@ -13,7 +14,7 @@ export namespace SoulEngine {
 ///     EnginePaths::Get().Init(EngineDir);   // once, at startup
 ///     const Path& Shaders = EnginePaths::Get().EngineShadersDirPath();
 /// ~~~
-class EnginePaths final : public Singleton<EnginePaths> {
+export class EnginePaths final : public Singleton<EnginePaths> {
     friend class Singleton<EnginePaths>;
     EnginePaths() = default;
 
@@ -24,45 +25,26 @@ class EnginePaths final : public Singleton<EnginePaths> {
     ///          ApplicationsRoot).  No I/O.
     /// @param EngineDirPath Absolute path to the engine root (the
     ///        directory containing Configs/, Shaders/, Logs/, etc.).
-    auto Init(const Path& EngineDirPath) -> void {
-        m_EngineDirPath           = EngineDirPath;
-        m_EngineShadersDirPath    = EngineDirPath / "Shaders";
-        m_LogsDirPath             = EngineDirPath / "Logs";
-        m_ConfigsDirPath          = EngineDirPath / "Configs";
-        m_BinariesDirPath         = EngineDirPath / "Binaries";
-        m_ApplicationsRootDirPath = EngineDirPath.parent_path() / "Applications";
-    }
+    auto Init(const Path& EngineDirPath) -> void;
 
     /// @brief Access the engine root directory.
-    [[nodiscard]] auto EngineDirPath() const -> const Path& {
-        return m_EngineDirPath;
-    }
+    [[nodiscard]] auto EngineDirPath() const -> const Path&;
 
     /// @brief Path to Engine/Shaders/.
-    [[nodiscard]] auto EngineShadersDirPath() const -> const Path& {
-        return m_EngineShadersDirPath;
-    }
+    [[nodiscard]] auto EngineShadersDirPath() const -> const Path&;
 
     /// @brief Path to Engine/Logs/.
-    [[nodiscard]] auto LogsDirPath() const -> const Path& {
-        return m_LogsDirPath;
-    }
+    [[nodiscard]] auto LogsDirPath() const -> const Path&;
 
     /// @brief Path to Engine/Configs/.
-    [[nodiscard]] auto ConfigsDirPath() const -> const Path& {
-        return m_ConfigsDirPath;
-    }
+    [[nodiscard]] auto ConfigsDirPath() const -> const Path&;
 
     /// @brief Path to Engine/Binaries/.
-    [[nodiscard]] auto BinariesDirPath() const -> const Path& {
-        return m_BinariesDirPath;
-    }
+    [[nodiscard]] auto BinariesDirPath() const -> const Path&;
 
     /// @brief Path to the Applications root directory.
     /// @details Computed as EngineDirPath().parent_path() / "Applications".
-    [[nodiscard]] auto ApplicationsRootDirPath() const -> const Path& {
-        return m_ApplicationsRootDirPath;
-    }
+    [[nodiscard]] auto ApplicationsRootDirPath() const -> const Path&;
 
   private:
     Path m_EngineDirPath;           ///< Engine root, set by Init().
