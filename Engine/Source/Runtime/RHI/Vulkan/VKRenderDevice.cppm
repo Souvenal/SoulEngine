@@ -46,7 +46,6 @@ import WindowSystem;
 
 namespace SoulEngine {
 
-// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
 CVar<Int32> CVarRenderFramesInFlight{"Render.FramesInFlight", 2, "Number of frames in flight"};
 CVar<Int32> CVarRhiVulkanUniformBeltSize{"RHI.Vulkan.UniformBeltSize",
                                          64 * 1024,

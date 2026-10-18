@@ -24,8 +24,9 @@ import EditorTypes;
 
 namespace SoulEngine {
 
-// Boot-time CVars owned by the launch sequence. Log levels live here rather than in Core:Logging because
-// Core:CVar imports Core:Logging — registering them there would create a module-partition cycle. CVar
+// Boot-time CVars owned by the launch sequence. Log levels live here rather than in Core:Util.Logging
+// because Core:Util.CVar imports Core:Util.Logging — registering them there would create a
+// module-partition cycle. CVar
 // registrations deliberately use module linkage (plain non-exported declarations), never an anonymous
 // namespace: internal-linkage variables referenced from exported inline code are copied into importing TUs
 // and their initializers run twice (duplicate registration).

@@ -15,9 +15,6 @@ import std;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:CVar's linkage note.
-
 constexpr Int32 DefaultWindowWidth  = 1280;
 constexpr Int32 DefaultWindowHeight = 720;
 
@@ -90,7 +87,6 @@ auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
     }
 }
 
-// Module linkage, not an anonymous namespace — see Core:CVar's linkage note.
 CVar<Int32> CVarWindowResolutionX{"Window.ResolutionX", DefaultWindowWidth, "Window width in logical pixels"};
 CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", DefaultWindowHeight, "Window height in logical pixels"};
 

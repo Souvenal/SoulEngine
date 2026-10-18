@@ -12,7 +12,7 @@ export module Core:Util.Error;
 import std;
 import :Util.Types;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Structured error chain holding messages from innermost cause to
 ///        outermost context, each with its construction-site source location.
@@ -32,25 +32,20 @@ export namespace SoulEngine {
 ///     [at Engine/Source/Runtime/Renderer/Renderer.cpp:87]
 ///       Caused by: Slang error
 ///       [at Engine/Source/Runtime/ShaderCompiler/Compiler.cpp:42]
-class ErrorMessage {
+export class ErrorMessage {
   public:
     /// @brief Construct the innermost (leaf) error.
     /// No default constructor — an error must have content.
     /// @param InError  Error message string.
     /// @param Loc      Source location (auto-captured at call site).
-    explicit ErrorMessage(String InError, std::source_location Loc = std::source_location::current())
-        : m_Entries{{std::move(InError), Loc}} {}
+    explicit ErrorMessage(String InError, std::source_location Loc = std::source_location::current());
 
     /// @brief Append a layer of context and return a new ErrorMessage.
     /// Works on const lvalue references (e.g. `R.error().Append(...)`).
     /// @param InError  Context message string.
     /// @param Loc      Source location (auto-captured at call site).
     [[nodiscard]] auto Append(String InError, std::source_location Loc = std::source_location::current()) const
-        -> ErrorMessage {
-        ErrorMessage Result = *this;
-        Result.m_Entries.push_back({std::move(InError), Loc});
-        return Result;
-    }
+        -> ErrorMessage;
 
     /// @brief Render the chain: outermost first, progressive "Caused by:"
     ///        indentation, each layer's source location on a following line
@@ -63,20 +58,7 @@ class ErrorMessage {
     ///     [at Engine/Source/Runtime/Renderer/Renderer.cpp:87]
     ///       Caused by: Slang compile failed
     ///       [at Engine/Source/Runtime/ShaderCompiler/Compiler.cpp:42]
-    [[nodiscard]] auto ToString() const -> String {
-        String      Out;
-        std::size_t Depth = 0;
-        for (auto It = m_Entries.rbegin(); It != m_Entries.rend(); ++It, ++Depth) {
-            if (Depth > 0)
-                Out += '\n';
-            Out += Format("{:{}}", "", Depth * 2);
-            if (Depth > 0)
-                Out += "Caused by: ";
-            Out += It->Message;
-            Out += Format("\n{:{}}[at {}:{}]", "", Depth * 2, It->Location.file_name(), It->Location.line());
-        }
-        return Out;
-    }
+    [[nodiscard]] auto ToString() const -> String;
 
   private:
     struct Entry {

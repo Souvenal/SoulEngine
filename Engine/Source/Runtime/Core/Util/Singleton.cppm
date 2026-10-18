@@ -1,6 +1,6 @@
 export module Core:Util.Singleton;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 /// @brief Meyer's singleton base class.
 ///
 /// Derive your singleton class publicly from `Singleton<Derived>`:
@@ -32,7 +32,7 @@ export namespace SoulEngine {
 ///
 /// The instance is destroyed in reverse order of construction during static deinitialisation. Avoid accessing
 /// one singleton from the destructor of another singleton that may have already been destroyed.
-template <typename T>
+export template <typename T>
 class Singleton {
   public:
     Singleton(const Singleton&)            = delete;

@@ -15,9 +15,6 @@ import :Texture;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:CVar's linkage note.
-
 [[nodiscard]] auto
 ReadColor3(const aiMaterial& Source, const char* Key, Uint32 Type, Uint32 Index, hlslpp::float3 Fallback)
     -> hlslpp::float3 {

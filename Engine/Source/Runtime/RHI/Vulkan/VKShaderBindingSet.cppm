@@ -19,9 +19,6 @@ import Core;
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:CVar's linkage note.
-
 CVar<Int32> CVarRhiVulkanMaxTextures{"RHI.Vulkan.MaxTextures", 4096, "Bindless descriptor array size cap"};
 
 [[nodiscard]] auto ToVkShaderStageFlags(ShaderStage Stages) -> vk::ShaderStageFlags {

@@ -53,9 +53,6 @@ struct VulkanShaderBindingTableLayout {
 
 namespace SoulEngine {
 
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:CVar's linkage note.
-
 [[nodiscard]] auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
     if (Alignment == 0)
         return std::unexpected(ErrorMessage("SBT alignment must be non-zero"));
