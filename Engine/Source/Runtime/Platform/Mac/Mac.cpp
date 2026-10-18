@@ -1,9 +1,9 @@
-module Platform:Mac;
+module Platform:Mac.impl;
 
-namespace Platform {
+namespace SoulEngine {
 
 auto InstallCrashHandler() -> void {
     // No-op on macOS. Crash dump capture (Breakpad/crashpad-style) TBD.
 }
 
-} // namespace Platform
+} // namespace SoulEngine
