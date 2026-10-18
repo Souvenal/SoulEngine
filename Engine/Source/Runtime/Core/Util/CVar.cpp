@@ -5,6 +5,7 @@ module;
 module Core:Util.CVar.impl;
 
 import :Util.CVar;
+import :Util.Logging;
 
 namespace SoulEngine {
 
@@ -46,9 +47,23 @@ auto CVarManager::ApplyTable(const toml::table& Table, const String& Prefix) -> 
     }
 }
 
+/// @brief Apply a TOML leaf when the name is registered under type T.
+/// @return true when registered under T (value applied, or a
+///         type-mismatch warning emitted); false when not.
+template <CVarValue T>
+auto ApplyAs(CVarManager& Manager, const String& Name, const toml::node& Node) -> bool {
+    if (!Manager.Find<T>(Name))
+        return false;
+    if (auto Converted = ConvertTomlNode<T>(Node))
+        Manager.SetByName<T>(Name, *Converted);
+    else
+        LogWarning("Config key '{}' value does not match CVar type {}; value ignored", Name, CVarTypeName<T>());
+    return true;
+}
+
 auto CVarManager::ApplyValue(const String& Name, const toml::node& Node) -> void {
-    if (ApplyAs<bool>(Name, Node) || ApplyAs<Int32>(Name, Node) || ApplyAs<Float32>(Name, Node) ||
-        ApplyAs<String>(Name, Node))
+    if (ApplyAs<bool>(*this, Name, Node) || ApplyAs<Int32>(*this, Name, Node) || ApplyAs<Float32>(*this, Name, Node) ||
+        ApplyAs<String>(*this, Name, Node))
         return;
     LogWarning("Config key '{}' has no matching registered CVar; value ignored", Name);
 }

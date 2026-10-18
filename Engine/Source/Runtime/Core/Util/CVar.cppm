@@ -7,7 +7,6 @@ export module Core:Util.CVar;
 import :Util.Types;
 import :Util.Error;
 import :Util.Singleton;
-import :Util.Logging;
 import std;
 
 /// @file
@@ -247,22 +246,6 @@ export class CVarManager final : public Singleton<CVarManager> {
     auto ApplyTable(const toml::table& Table, const String& Prefix) -> void;
 
     auto ApplyValue(const String& Name, const toml::node& Node) -> void;
-
-    /// @brief Apply a TOML leaf when the name is registered under type T.
-    /// @return true when registered under T (value applied, or a
-    ///         type-mismatch warning emitted); false when not.
-    template <CVarValue T>
-    auto ApplyAs(const String& Name, const toml::node& Node) -> bool {
-        auto&      Registry = Entries<T>();
-        const auto It       = Registry.find(Name);
-        if (It == Registry.end())
-            return false;
-        if (auto Converted = ConvertTomlNode<T>(Node))
-            StoreEntry(It->second, *Converted);
-        else
-            LogWarning("Config key '{}' value does not match CVar type {}; value ignored", Name, CVarTypeName<T>());
-        return true;
-    }
 
     std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>> m_Registries;
     std::shared_mutex   m_StringMutex; ///< Guards String entry values; arithmetic values are atomic.

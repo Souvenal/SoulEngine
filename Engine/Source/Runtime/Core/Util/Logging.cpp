@@ -9,11 +9,18 @@ module;
 module Core:Util.Logging.impl;
 
 import :Util.Logging;
+import :Util.CVar;
 import magic_enum;
 
 namespace SoulEngine {
 
 thread_local LogThreadRole CurrentLogThreadRole = LogThreadRole::Main;
+
+// The log-level CVars live in this implementation unit: they configure LogManager and are read by
+// SetSinkLevels(), so they need no visibility outside it. Registration self-runs at static init; this TU also
+// defines LogManager, so the object file is always linked and the registrations cannot be dropped.
+CVar<String> CVarLogConsoleLevel{"Log.ConsoleLevel", "Info", "Minimum level for console log output"};
+CVar<String> CVarLogFileLevel{"Log.FileLevel", "Debug", "Minimum level for file log output"};
 
 auto SetLogThreadRole(LogThreadRole Role) -> void {
     CurrentLogThreadRole = Role;
@@ -150,11 +157,9 @@ auto LogManager::Log(LogLevel Level, StringView Message) -> void {
     }
 }
 
-auto LogManager::SetSinkLevels(const std::optional<String>& FileLevel, const std::optional<String>& ConsoleLevel)
-    -> void {
-    ApplySinkLevel(m_Logger.get(), m_EditorSink, FileLevel ? StringView{*FileLevel} : StringView{}, LogLevel::Debug);
-    ApplySinkLevel(
-        m_Logger.get(), m_ConsoleSink, ConsoleLevel ? StringView{*ConsoleLevel} : StringView{}, LogLevel::Info);
+auto LogManager::SetSinkLevels() -> void {
+    ApplySinkLevel(m_Logger.get(), m_EditorSink, CVarLogFileLevel.Get(), LogLevel::Debug);
+    ApplySinkLevel(m_Logger.get(), m_ConsoleSink, CVarLogConsoleLevel.Get(), LogLevel::Info);
 }
 
 auto LogManager::LogToFile(LogLevel Level, StringView Filename, StringView Message) -> void {

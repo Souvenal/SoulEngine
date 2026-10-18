@@ -68,13 +68,10 @@ export class LogManager final : public Singleton<LogManager> {
 
     auto Log(LogLevel Level, StringView Message) -> void;
 
-    /// @brief Set minimum log level per sink type from config-level names.
-    /// @param FileLevel    String name for file sink ("Debug"|"Info"|"Warning"|"Error",
-    ///                     nullopt → Debug).
-    /// @param ConsoleLevel String name for console sink (nullopt → Info).
+    /// @brief Set minimum log level per sink type from the Log.FileLevel and Log.ConsoleLevel CVars.
     /// @note The logger-level is kept at `trace` so that each sink's
     ///       individual level is the sole gate.
-    auto SetSinkLevels(const std::optional<String>& FileLevel, const std::optional<String>& ConsoleLevel) -> void;
+    auto SetSinkLevels() -> void;
 
     auto LogToFile(LogLevel Level, StringView Filename, StringView Message) -> void;
 };
