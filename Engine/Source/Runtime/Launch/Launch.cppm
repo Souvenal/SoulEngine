@@ -121,7 +121,7 @@ class EngineLoop {
         // the spdlog logger is ready. Any log calls before that point silently produce no output (Log()
         // returns early when the logger is null).
         LogInfo("Soul Engine PreInitializing... ({} args)", CmdLineArgs.size());
-        Platform::InstallCrashHandler();
+        InstallCrashHandler();
         return {};
     }
 
