@@ -66,16 +66,7 @@ class VulkanStagingBelt {
     ///                         timeline; the pointer is retained (borrowed) for batch self-annotation.
     /// @param InitialCapacity  initial ring capacity in bytes (the RHI.Vulkan.StagingRingBufferSize CVar).
     [[nodiscard]] static auto Create(const VulkanResourceContext& Context, Uint64 InitialCapacity)
-        -> std::expected<VulkanStagingBelt, ErrorMessage> {
-        auto Ring = VulkanRingBuffer::Create(
-            Context, "Internal/Buffer/StagingRing", vk::BufferUsageFlagBits::eTransferSrc, InitialCapacity);
-        if (!Ring)
-            return std::unexpected(Ring.error().Append("VulkanStagingBelt: staging ring creation failed"));
-        VulkanStagingBelt Belt;
-        Belt.m_Context = &Context;
-        Belt.m_Ring    = std::move(*Ring);
-        return Belt;
-    }
+        -> std::expected<VulkanStagingBelt, ErrorMessage>;
 
     /// @brief Upload frame-task path for GpuOnly payloads: bump-allocate a ring slice, host-copy
     /// the bytes, and queue the batch entry.
@@ -87,15 +78,9 @@ class VulkanStagingBelt {
     /// @param Name       destination buffer name, for logging.
     /// @param DstBuffer  native destination handle, snapshotted from the payload.
     /// @param Usage      destination usage union, drives the batch's visibility barrier mask.
-    /// @param Data       full-buffer byte snapshot to stage.
     auto
     EnqueueBufferUpload(StringView Name, vk::Buffer DstBuffer, RHIBufferUsage Usage, std::span<const std::byte> Data)
-        -> void {
-        // The batch cannot know the first consumer's direction, so Access is pinned to Read: the upload
-        // contract is that uploaded bytes are read first. A write-first consumer's WAW hazard rides the pass
-        // prologue, not this barrier.
-        EnqueueBufferUpload(Name, DstBuffer, ToVkBufferAccess(Usage, RHIAccess::Read), Data);
-    }
+        -> void;
 
     /// @brief Explicit-access entry: the same staging path with the post-barrier access mask
     /// supplied directly, for destinations outside the RHIBufferUsage vocabulary (e.g. a shader binding table
@@ -107,16 +92,7 @@ class VulkanStagingBelt {
     auto EnqueueBufferUpload(StringView                 Name,
                              vk::Buffer                 DstBuffer,
                              vk::AccessFlags2           AccessAfter,
-                             std::span<const std::byte> Data) -> void {
-        auto Alloc = m_Ring.Allocate(Data.size_bytes());
-        if (!Alloc) {
-            LogWarning("UploadBuffer: staging ring allocation failed for '{}': {}", Name, Alloc.error().ToString());
-            return;
-        }
-        std::memcpy(Alloc->MappedData, Data.data(), Data.size_bytes());
-        m_PendingBufferUploads.push_back(
-            VulkanPendingBufferUpload{.Staging = *Alloc, .DstBuffer = DstBuffer, .AccessAfter = AccessAfter});
-    }
+                             std::span<const std::byte> Data) -> void;
 
     /// @brief UploadTexture frame-task path: bump-allocate a ring slice, host-copy the texel bytes,
     /// and queue the image batch entry. RecordUploadBatch wraps one vkCmdCopyBufferToImage per entry in
@@ -131,16 +107,7 @@ class VulkanStagingBelt {
     /// @param Height    destination mip-0 height.
     /// @param Data      full mip-0 texel snapshot to stage.
     auto EnqueueImageUpload(
-        StringView Name, vk::Image DstImage, Uint32 Width, Uint32 Height, std::span<const std::byte> Data) -> void {
-        auto Alloc = m_Ring.Allocate(Data.size_bytes());
-        if (!Alloc) {
-            LogWarning("UploadTexture: staging ring allocation failed for '{}': {}", Name, Alloc.error().ToString());
-            return;
-        }
-        std::memcpy(Alloc->MappedData, Data.data(), Data.size_bytes());
-        m_PendingImageUploads.push_back(
-            VulkanPendingImageUpload{.Staging = *Alloc, .DstImage = DstImage, .Width = Width, .Height = Height});
-    }
+        StringView Name, vk::Image DstImage, Uint32 Width, Uint32 Height, std::span<const std::byte> Data) -> void;
 
     /// @brief Frame-start upload batch, two lanes. Buffers: record one vkCmdCopyBuffer2 per entry
     /// (slices are already filled by the upload frame tasks), then a single aggregated transfer-write →
@@ -153,102 +120,26 @@ class VulkanStagingBelt {
     /// ranges retire via the ring's timeline markers; destinations need no retention — their native
     /// destruction rides the backend deferred deletion queue.
     /// @param CmdBuffer  the upload batch's dedicated secondary command buffer.
-    auto RecordUploadBatch(vk::raii::CommandBuffer& CmdBuffer) -> void {
-        if (m_PendingBufferUploads.empty() && m_PendingImageUploads.empty())
-            return;
-        RecordBufferLane(CmdBuffer);
-        RecordImageLane(CmdBuffer);
-    }
+    auto RecordUploadBatch(vk::raii::CommandBuffer& CmdBuffer) -> void;
 
   private:
     /// @brief Buffer lane of the frame-start batch.
     ///
     /// One copy per entry, then the aggregated visibility barrier. A no-op when the lane is empty.
-    auto RecordBufferLane(vk::raii::CommandBuffer& CmdBuffer) -> void {
-        if (m_PendingBufferUploads.empty())
-            return;
-        const LabelScope BatchLabel{*m_Context, CmdBuffer, "BufferUploadBatch"};
-        vk::AccessFlags2 AccessAfter = {};
-        for (const auto& Entry : m_PendingBufferUploads) {
-            const vk::BufferCopy2 Region{.srcOffset = Entry.Staging.Offset, .dstOffset = 0, .size = Entry.Staging.Size};
-            const vk::CopyBufferInfo2 CopyInfo{
-                .srcBuffer   = Entry.Staging.Buffer,
-                .dstBuffer   = Entry.DstBuffer,
-                .regionCount = 1,
-                .pRegions    = &Region,
-            };
-            CmdBuffer.copyBuffer2(CopyInfo);
-            AccessAfter |= Entry.AccessAfter;
-        }
-        if (AccessAfter) {
-            // TODO: derive dstStageMask from the destination usage union instead of the blanket eAllCommands.
-            const vk::MemoryBarrier2 Barrier{
-                .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-                .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-                .dstAccessMask = AccessAfter,
-            };
-            const vk::DependencyInfo Dependency{.memoryBarrierCount = 1, .pMemoryBarriers = &Barrier};
-            CmdBuffer.pipelineBarrier2(Dependency);
-        }
-        m_PendingBufferUploads.clear();
-    }
+    auto RecordBufferLane(vk::raii::CommandBuffer& CmdBuffer) -> void;
 
     /// @brief Image lane of the frame-start batch.
     ///
     /// One buffer→image copy per entry, wrapped in image-tracker transitions. The post-copy state is
     /// ShaderReadOnly — the same end state the old immediate-path upload produced; later prologue transitions
     /// take it from there. A no-op when the lane is empty.
-    auto RecordImageLane(vk::raii::CommandBuffer& CmdBuffer) -> void {
-        if (m_PendingImageUploads.empty())
-            return;
-        const LabelScope                BatchLabel{*m_Context, CmdBuffer, "TextureUploadBatch"};
-        const vk::ImageSubresourceRange Mip0Range{.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                                  .baseMipLevel   = 0,
-                                                  .levelCount     = 1,
-                                                  .baseArrayLayer = 0,
-                                                  .layerCount     = 1};
-        for (const auto& Entry : m_PendingImageUploads) {
-            m_Context->GetImageTracker().Transition(CmdBuffer,
-                                                    Entry.DstImage,
-                                                    Mip0Range,
-                                                    VulkanImageState{
-                                                        .stage   = vk::PipelineStageFlagBits2::eTransfer,
-                                                        .access  = vk::AccessFlagBits2::eTransferWrite,
-                                                        .layout  = vk::ImageLayout::eTransferDstOptimal,
-                                                        .isWrite = true,
-                                                    });
-            const vk::BufferImageCopy Region{
-                .bufferOffset      = Entry.Staging.Offset,
-                .bufferRowLength   = 0,
-                .bufferImageHeight = 0,
-                .imageSubresource  = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                      .mipLevel       = 0,
-                                      .baseArrayLayer = 0,
-                                      .layerCount     = 1},
-                .imageOffset       = {0, 0, 0},
-                .imageExtent       = {Entry.Width, Entry.Height, 1},
-            };
-            CmdBuffer.copyBufferToImage(
-                Entry.Staging.Buffer, Entry.DstImage, vk::ImageLayout::eTransferDstOptimal, {Region});
-            m_Context->GetImageTracker().Transition(CmdBuffer,
-                                                    Entry.DstImage,
-                                                    Mip0Range,
-                                                    VulkanImageState{
-                                                        .stage  = vk::PipelineStageFlagBits2::eNone,
-                                                        .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                                                    });
-        }
-        m_PendingImageUploads.clear();
-    }
+    auto RecordImageLane(vk::raii::CommandBuffer& CmdBuffer) -> void;
 
   public:
     /// @brief Frame-begin relay: retire ring markers the device timeline has passed, then seal the
     /// previous frame's pending uploads against the frame-begin timeline value.
     /// @param FrameBeginTimelineValue  host-reserved frame-begin value, issued by the device Tick.
-    auto Tick(Uint64 FrameBeginTimelineValue) -> void {
-        m_Ring.Tick(FrameBeginTimelineValue);
-    }
+    auto Tick(Uint64 FrameBeginTimelineValue) -> void;
 
   private:
     const VulkanResourceContext*           m_Context              = nullptr; ///< borrowed; outlives the belt

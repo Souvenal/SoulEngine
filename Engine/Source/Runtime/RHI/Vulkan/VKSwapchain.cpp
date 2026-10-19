@@ -1,0 +1,323 @@
+module;
+
+// Clang 22 named-modules bug: bare uint32_t is shadowed through the std re-export chain (import RHI); a
+// textual include restores it.
+#include <cstdint>
+
+module Vulkan:Swapchain.impl;
+
+import RHI;
+
+import vulkan;
+
+import :Swapchain;
+import :Debug;
+import :Context;
+import :SurfaceProvider;
+import Core;
+import WindowSystem;
+
+namespace SoulEngine {
+
+auto ResolveSurfaceFormat(std::span<const vk::SurfaceFormatKHR> Formats) -> vk::SurfaceFormatKHR {
+    for (auto& Fmt : Formats)
+        if (Fmt.format == vk::Format::eB8G8R8A8Unorm && Fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+            return Fmt;
+    return Formats[0];
+}
+
+auto ResolvePresentMode(std::span<const vk::PresentModeKHR> Modes) -> vk::PresentModeKHR {
+    // Vulkan present modes:
+    //
+    // eImmediate — frames are pushed to the display immediately; will tear.
+    //
+    // eFifo — swapchain is a queue. Display pops from the front at
+    //                 vblank; application pushes to the back.  Blocks when full.
+    //                 Equivalent to classic vsync.  Always available.
+    //
+    // eFifoRelaxed — like eFifo, but if the app was late and the queue is
+    //                 empty at vblank, the image is transferred immediately upon
+    //                 arrival instead of waiting for the next vblank.  May tear.
+    //
+    // eMailbox — like eFifo, but when the queue is full, new frames replace
+    //                 the oldest queued frame instead of blocking.  Tear-free
+    //                 while letting the app render as fast as possible ("triple
+    //                 buffering").
+    //
+    // Prefer mailbox for low-latency tear-free presentation; fall back to fifo.
+    for (auto& Mode : Modes)
+        if (Mode == vk::PresentModeKHR::eMailbox)
+            return Mode;
+    return vk::PresentModeKHR::eFifo;
+}
+
+auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps) -> vk::Extent2D {
+    // currentExtent is the window size in pixels, clamped to surface limits. When it equals UINT32_MAX the
+    // surface doesn't dictate a size (e.g. some compositors) — we must query the framebuffer dimensions.
+    //
+    // GLFW has two coordinate systems:
+    //
+    //   glfwGetWindowSize()      → screen coordinates (e.g. 1280×720)
+    //   glfwGetFramebufferSize() → physical pixels  (e.g. 2560×1440 on Retina)
+    //
+    // On high-DPI displays, screen coordinates and physical pixels differ because each screen point maps to
+    // multiple pixels (e.g. 2× on Retina).
+    //
+    // Vulkan works in pixels. So we use the framebuffer pixel size.
+    if (Caps.currentExtent.width != std::numeric_limits<Uint32>::max())
+        return Caps.currentExtent;
+
+    const auto Extent = Provider.GetFramebufferExtent();
+
+    return vk::Extent2D{
+        .width = std::clamp(static_cast<uint32_t>(Extent.Width), Caps.minImageExtent.width, Caps.maxImageExtent.width),
+        .height =
+            std::clamp(static_cast<uint32_t>(Extent.Height), Caps.minImageExtent.height, Caps.maxImageExtent.height),
+    };
+}
+
+auto ResolveSwapImageCount(const vk::SurfaceCapabilitiesKHR& Caps) -> uint32_t {
+    // Request at least one more than the surface minimum so the driver doesn't have to stall internally while
+    // we acquire the next image.
+    //
+    // maxImageCount == 0 means the implementation has no upper bound.
+    uint32_t Count = std::max(Caps.minImageCount + 1, 3u);
+
+    if (Caps.maxImageCount > 0 && Count > Caps.maxImageCount)
+        Count = Caps.maxImageCount;
+
+    return Count;
+}
+
+auto VulkanSwapchain::Create(const VulkanResourceContext& Context) -> std::expected<VulkanSwapchain, ErrorMessage> {
+    VulkanSwapchain Result;
+    Result.m_Context      = &Context;
+    Result.m_Device       = &Context.GetDevice();
+    Result.m_PhysDevice   = &Context.GetPhysicalDevice();
+    Result.m_Surface      = &Context.GetSurface();
+    Result.m_DebugUtils   = &Context.GetDebugUtils();
+    Result.m_ImageTracker = &Context.GetImageTracker();
+    // Query surface capabilities
+
+    auto CapsResult = Result.m_PhysDevice->getSurfaceCapabilitiesKHR(*Result.m_Surface);
+    if (CapsResult.result != vk::Result::eSuccess)
+        return std::unexpected(ErrorMessage("Failed to query surface capabilities"));
+
+    auto FormatsResult = Result.m_PhysDevice->getSurfaceFormatsKHR(*Result.m_Surface);
+    if (FormatsResult.result != vk::Result::eSuccess)
+        return std::unexpected(ErrorMessage("Failed to query surface formats"));
+
+    auto PresentResult = Result.m_PhysDevice->getSurfacePresentModesKHR(*Result.m_Surface);
+    if (PresentResult.result != vk::Result::eSuccess)
+        return std::unexpected(ErrorMessage("Failed to query surface present modes"));
+
+    auto& Caps         = CapsResult.value;
+    auto& Formats      = FormatsResult.value;
+    auto& PresentModes = PresentResult.value;
+    // Choose surface format and present mode
+
+    vk::SurfaceFormatKHR ChosenFormat = ResolveSurfaceFormat(Formats);
+    Result.m_Format                   = ChosenFormat;
+    vk::PresentModeKHR PresentMode    = ResolvePresentMode(PresentModes);
+    LogInfo("Swapchain PresentMode: {}", vk::to_string(PresentMode));
+    // Resolve extent
+
+    Result.m_Extent = ResolveExtent(Context.GetSurfaceProvider(), Caps);
+    // Resolve image count
+
+    uint32_t ImageCount = ResolveSwapImageCount(Caps);
+
+    LogInfo("Surface format: {}, color space: {}, present mode: {}, extent: {}x{}, image count: {}",
+            vk::to_string(ChosenFormat.format),
+            vk::to_string(ChosenFormat.colorSpace),
+            vk::to_string(PresentMode),
+            Result.m_Extent.width,
+            Result.m_Extent.height,
+            ImageCount);
+
+    const auto RequiredUsage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eColorAttachment;
+    if ((Caps.supportedUsageFlags & RequiredUsage) != RequiredUsage)
+        return std::unexpected(
+            ErrorMessage("VulkanSwapchain does not support transfer-destination and color-attachment presentation"));
+    // Create swapchain
+
+    vk::SwapchainCreateInfoKHR SwapchainCI{
+        .surface          = *Result.m_Surface,
+        .minImageCount    = ImageCount,
+        .imageFormat      = ChosenFormat.format,
+        .imageColorSpace  = ChosenFormat.colorSpace,
+        .imageExtent      = Result.m_Extent,
+        // specifies the number of layers each image consists of, always 1 unless developing for stereoscopic
+        // 3D applications.
+        .imageArrayLayers = 1,
+        // The engine renders to its own color RT and blits that output to swapchain; render passes must not
+        // use swapchain images directly. Presentation overlays are the exception: they load the blitted image
+        // and render UI directly before presentation.
+        .imageUsage       = RequiredUsage,
+        // eExclusive means that an image is owned by one queue family at a time, and ownership must be
+        // explicitly transferred before using the image in another queue family.
+        //
+        // eConcurrent means that images can be used across multiple queue families, without explicit
+        // ownership transfers.
+        //
+        // Concurrent is a complex topic, we'll extend to it in the future.
+        .imageSharingMode = vk::SharingMode::eExclusive,
+        // we can do a 90-degree clockwise rotation or horizontal flip, or keep it as-is.
+        .preTransform     = Caps.currentTransform,
+        // Specifies if the alpha channel should be used for blending with other windows almost always eOpaque
+        // for games.
+        .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        .presentMode      = PresentMode,
+        // When clipped is true, it means we don't care about the pixels that are obscured (e.g. by another
+        // window or off-screen) and the implementation can optimize for that. Unless we want to read back the
+        // pixels, we can enable it for better performance.
+        .clipped          = vk::True,
+        // for swapchain recreation; set to the current swapchain handle when recreating recreation is a
+        // future topic, so we set it to nullptr for now
+        .oldSwapchain     = nullptr,
+    };
+
+    auto [Res, SC] = Result.m_Device->createSwapchainKHR(SwapchainCI);
+    if (Res != vk::Result::eSuccess)
+        return std::unexpected(ErrorMessage(Format("Failed to create swapchain: {}", vk::to_string(Res))));
+    Result.m_Swapchain = std::move(SC);
+    Context.GetDebugUtils().SetObjectName(*Result.m_Swapchain, "Internal/Swapchain");
+    // Retrieve swapchain images
+
+    auto ImagesResult = Result.m_Swapchain.getImages();
+    if (ImagesResult.result != vk::Result::eSuccess)
+        return std::unexpected(
+            ErrorMessage(Format("Failed to retrieve swapchain images: {}", vk::to_string(ImagesResult.result))));
+    Result.m_Images = std::move(ImagesResult.value);
+    for (Uint32 Index = 0; Index < Result.m_Images.size(); ++Index) {
+        Context.GetDebugUtils().SetObjectName(Result.m_Images[Index], Format("Internal/Image/Swapchain{}", Index));
+        Result.m_ImageTracker->Seed(Result.m_Images[Index],
+                                    1,
+                                    SwapchainCI.imageArrayLayers,
+                                    VulkanImageState{
+                                        // The first time a swapchain image is used in a frame, is when the
+                                        // scene color blits to the swapchain. So we declare swapchain images
+                                        // as in tranfer stage.
+                                        .stage = vk::PipelineStageFlagBits2::eTransfer,
+                                    });
+    }
+
+    Result.m_ImageViews.reserve(Result.m_Images.size());
+    for (const auto Image : Result.m_Images) {
+        vk::ImageViewCreateInfo ImageViewCI{
+            .image    = Image,
+            .viewType = vk::ImageViewType::e2D,
+            .format   = Result.m_Format.format,
+            .subresourceRange =
+                {
+                    .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                    .baseMipLevel   = 0,
+                    .levelCount     = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount     = 1,
+                },
+        };
+        auto ViewResult = Result.m_Device->createImageView(ImageViewCI);
+        if (ViewResult.result != vk::Result::eSuccess)
+            return std::unexpected(
+                ErrorMessage(Format("Failed to create swapchain image view: {}", vk::to_string(ViewResult.result))));
+        Context.GetDebugUtils().SetObjectName(*ViewResult.value,
+                                              Format("Internal/ImageView/Swapchain{}", Result.m_ImageViews.size()));
+        Result.m_ImageViews.emplace_back(std::move(ViewResult.value));
+    }
+
+    // Create render-complete binary semaphores (one per swapchain image)
+    Result.m_RenderComplete.reserve(Result.m_Images.size());
+    for (std::size_t i = 0; i < Result.m_Images.size(); ++i) {
+        auto SemRes = Result.m_Device->createSemaphore({});
+        if (SemRes.result != vk::Result::eSuccess)
+            return std::unexpected(ErrorMessage("Failed to create render-complete semaphore"));
+        Context.GetDebugUtils().SetObjectName(*SemRes.value,
+                                              Format("Internal/Semaphore/RenderComplete/Swapchain{}", i));
+        Result.m_RenderComplete.emplace_back(std::move(SemRes.value));
+    }
+
+    LogInfo("VulkanSwapchain created: {}x{}, format={}, images={}",
+            Result.m_Extent.width,
+            Result.m_Extent.height,
+            vk::to_string(Result.m_Format.format),
+            static_cast<uint32_t>(Result.m_Images.size()));
+
+    return Result;
+}
+
+auto VulkanSwapchain::Cleanup() -> void {
+    m_ImageViews.clear();
+    m_Images.clear();
+    m_RenderComplete.clear();
+    m_Swapchain    = nullptr;
+    m_CurrentIndex = 0;
+}
+
+auto VulkanSwapchain::Recreate() -> std::expected<void, ErrorMessage> {
+    m_Device->waitIdle();
+    Cleanup();
+    auto NewSc = Create(*m_Context);
+    if (!NewSc)
+        return std::unexpected(NewSc.error());
+    *this = std::move(*NewSc);
+    return {};
+}
+
+auto VulkanSwapchain::AcquireNextImage(vk::Semaphore PresentCompleteSema) -> vk::Result {
+    // Note: the image index value is return immediatedly, but,
+    //       the `signal semaphore` event is gpu aync.
+    //       The guarantee is that once the image is used up for presentation,
+    //       the chosen semaphore will be signaled.
+    auto [Res, Index] = m_Swapchain.acquireNextImage(std::numeric_limits<Uint64>::max(), PresentCompleteSema, nullptr);
+
+    if (Res == vk::Result::eSuccess || Res == vk::Result::eSuboptimalKHR)
+        m_CurrentIndex = Index;
+
+    return Res;
+}
+
+auto VulkanSwapchain::Present(vk::raii::Queue& PresentQueue) -> vk::Result {
+    uint32_t           ImageIndex = GetCurrentIndex();
+    vk::SwapchainKHR   RawSC      = *m_Swapchain;
+    vk::Semaphore      RenderDone = *m_RenderComplete[ImageIndex];
+    vk::PresentInfoKHR PresentInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores    = &RenderDone,
+        .swapchainCount     = 1,
+        .pSwapchains        = &RawSC,
+        .pImageIndices      = &m_CurrentIndex,
+    };
+
+    return PresentQueue.presentKHR(PresentInfo);
+}
+
+auto VulkanSwapchain::GetExtent() const -> vk::Extent2D {
+    return m_Extent;
+}
+
+auto VulkanSwapchain::GetFormat() const -> vk::SurfaceFormatKHR {
+    return m_Format;
+}
+
+auto VulkanSwapchain::GetCurrentIndex() const -> uint32_t {
+    return m_CurrentIndex;
+}
+
+auto VulkanSwapchain::GetImageCount() const -> uint32_t {
+    return static_cast<uint32_t>(m_Images.size());
+}
+
+auto VulkanSwapchain::GetImage(uint32_t Index) const -> vk::Image {
+    return (Index < m_Images.size()) ? m_Images[Index] : vk::Image{};
+}
+
+auto VulkanSwapchain::GetCurrentImageView() const -> vk::ImageView {
+    return (m_CurrentIndex < m_ImageViews.size()) ? *m_ImageViews[m_CurrentIndex] : vk::ImageView{};
+}
+
+auto VulkanSwapchain::GetCurrentRenderCompleteSemaphore() const -> vk::Semaphore {
+    return *m_RenderComplete[m_CurrentIndex];
+}
+
+} // namespace SoulEngine
