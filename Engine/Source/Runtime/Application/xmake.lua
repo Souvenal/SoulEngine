@@ -1,7 +1,8 @@
 target("Application")
-    set_kind("moduleonly")
+    set_kind("static")
 
     add_deps("Core", "Scene")
 
-    add_files("Application.cppm")
-    add_files("Applications/*.cppm")
+    add_files("Application.cppm", {public = true})
+    add_files("Applications/*.cppm", {public = true})
+    add_files("Application.cpp")
