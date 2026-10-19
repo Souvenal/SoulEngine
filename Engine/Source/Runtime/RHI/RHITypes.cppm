@@ -10,10 +10,10 @@ import magic_enum;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// Common identity metadata for persistent RHI objects.
-class RHIObject {
+export class RHIObject {
   public:
     RHIObject(const RHIObject&)                    = delete;
     auto operator=(const RHIObject&) -> RHIObject& = delete;
@@ -39,13 +39,13 @@ class RHIObject {
     Uint64 m_Id   = 0;
 };
 
-enum class RHISamplerProfile : Uint8 {
+export enum class RHISamplerProfile : Uint8 {
     Unknown = 0,
     LinearRepeat,
     AnisotropicRepeat,
 };
 
-struct RHISamplerDesc {
+export struct RHISamplerDesc {
     RHISamplerProfile Profile = RHISamplerProfile::LinearRepeat;
 };
 
@@ -53,7 +53,7 @@ struct RHISamplerDesc {
 ///
 /// Backends own the native sampler handle. Higher-level owners keep RHIRef instances; command lists only
 /// observe them.
-class RHISampler : public RHIObject {
+export class RHISampler : public RHIObject {
   public:
     RHISampler(const RHISampler&)                    = delete;
     auto operator=(const RHISampler&) -> RHISampler& = delete;
@@ -73,7 +73,7 @@ class RHISampler : public RHIObject {
 };
 // Texture
 
-enum class RHIFormat : Uint8 {
+export enum class RHIFormat : Uint8 {
     Unknown             = 0,
     R8_UNORM            = 1,
     R8G8_UNORM          = 2,
@@ -90,37 +90,37 @@ enum class RHIFormat : Uint8 {
     D32_SFLOAT_S8_UINT  = 13,
 };
 
-struct RHIVertexInputAttributeDesc {
+export struct RHIVertexInputAttributeDesc {
     Uint32    Location = 0;
     Uint32    Binding  = 0;
     RHIFormat Format   = RHIFormat::Unknown;
     Uint32    Offset   = 0;
 };
 
-struct RHIVertexInputBindingDesc {
+export struct RHIVertexInputBindingDesc {
     Uint32 Binding = 0;
     Uint32 Stride  = 0;
 };
 
-inline constexpr Uint32 kMaxVertexBufferBindings = 4;
+export inline constexpr Uint32 kMaxVertexBufferBindings = 4;
 
-struct RHIVertexInputLayoutDesc {
+export struct RHIVertexInputLayoutDesc {
     std::vector<RHIVertexInputBindingDesc>   Bindings   = {};
     std::vector<RHIVertexInputAttributeDesc> Attributes = {};
 };
 
-enum class RHIPrimitiveTopology : Uint8 {
+export enum class RHIPrimitiveTopology : Uint8 {
     Unknown      = 0,
     TriangleList = 1,
 };
 
-struct RHIRasterizerState {
+export struct RHIRasterizerState {
     bool    FillMode  = true; // true = solid, false = wireframe
     bool    CullMode  = true; // true = back cull
     Float32 LineWidth = 1.0f;
 };
 
-enum class RHIBlendFactor : Uint8 {
+export enum class RHIBlendFactor : Uint8 {
     Zero             = 0,
     One              = 1,
     SrcColor         = 2,
@@ -133,7 +133,7 @@ enum class RHIBlendFactor : Uint8 {
     OneMinusDstAlpha = 9,
 };
 
-enum class RHIBlendOp : Uint8 {
+export enum class RHIBlendOp : Uint8 {
     Add             = 0,
     Subtract        = 1,
     ReverseSubtract = 2,
@@ -141,7 +141,7 @@ enum class RHIBlendOp : Uint8 {
     Max             = 4,
 };
 
-struct RHIBlendAttachment {
+export struct RHIBlendAttachment {
     bool           BlendEnable         = false;
     RHIBlendFactor SrcColorBlendFactor = RHIBlendFactor::One;
     RHIBlendFactor DstColorBlendFactor = RHIBlendFactor::Zero;
@@ -151,16 +151,16 @@ struct RHIBlendAttachment {
     RHIBlendOp     AlphaBlendOp        = RHIBlendOp::Add;
 };
 
-struct RHIBlendState {
+export struct RHIBlendState {
     RHIBlendAttachment Attachments[8] = {};
 };
 
-struct RHIDepthStencilState {
+export struct RHIDepthStencilState {
     bool DepthTestEnable  = true;
     bool DepthWriteEnable = true;
 };
 
-enum class RHITextureUsage : Uint32 {
+export enum class RHITextureUsage : Uint32 {
     None         = 0,
     RenderTarget = 1u << 0,
     DepthStencil = 1u << 1,
@@ -173,7 +173,7 @@ enum class RHITextureUsage : Uint32 {
 /// @brief Allocation-legality usage flags for a unified buffer.
 /// Mirrors VkBufferUsageFlagBits roles; the creation union must cover every future use.
 /// TransferSrc/TransferDst double as the RenderGraph view/sync declaration axis.
-enum class RHIBufferUsage : Uint32 {
+export enum class RHIBufferUsage : Uint32 {
     Unknown     = 0,
     Vertex      = 1u << 0,
     Index       = 1u << 1,
@@ -188,7 +188,7 @@ enum class RHIBufferUsage : Uint32 {
 };
 
 /// Resource lifetime axis
-enum class RHILifetime : Uint8 {
+export enum class RHILifetime : Uint8 {
     Unknown,
     /// Individually owned; outlives frames.
     Persistent,
@@ -197,7 +197,7 @@ enum class RHILifetime : Uint8 {
 };
 
 /// Memory placement of a buffer allocation. Placement decides the upload mechanism.
-enum class RHIMemoryUsage : Uint8 {
+export enum class RHIMemoryUsage : Uint8 {
     Unknown,
     /// Device-local transfer destination; upload rides a staging copy.
     GpuOnly,
@@ -205,7 +205,7 @@ enum class RHIMemoryUsage : Uint8 {
     CpuToGpu,
 };
 
-struct RHIBufferDesc {
+export struct RHIBufferDesc {
     Uint64         SizeBytes   = 0;
     RHIBufferUsage Usage       = RHIBufferUsage::Unknown;
     RHIMemoryUsage MemoryUsage = RHIMemoryUsage::Unknown;
@@ -218,7 +218,7 @@ struct RHIBufferDesc {
 /// is the RHIReadback consumer object below. Lifetime is stored on the identity and discriminates the
 /// backend's per-flavor state (persistent allocation vs transient belt slice), whose allocation strategy the
 /// backend concrete class owns.
-class RHIBuffer : public RHIObject {
+export class RHIBuffer : public RHIObject {
   public:
     RHIBuffer(const RHIBuffer&)                    = delete;
     auto operator=(const RHIBuffer&) -> RHIBuffer& = delete;
@@ -265,7 +265,7 @@ class RHIBuffer : public RHIObject {
 /// Flow: RHIRenderDevice::CreateReadback (synchronous, Ready at return) → a transfer-stage pass records
 /// ReadbackTexture each frame → the game thread polls TryRead(). At most one write per frame per readback.
 /// TryRead() is valid on the game thread while the device is alive.
-class RHIReadback : public RHIObject {
+export class RHIReadback : public RHIObject {
   public:
     RHIReadback(const RHIReadback&)                    = delete;
     auto operator=(const RHIReadback&) -> RHIReadback& = delete;
@@ -291,7 +291,7 @@ class RHIReadback : public RHIObject {
     Uint64 m_Size = 0;
 };
 
-struct RHITextureDesc {
+export struct RHITextureDesc {
     Uint32          Width       = 1;
     Uint32          Height      = 1;
     Uint32          MipLevels   = 1;
@@ -317,7 +317,7 @@ struct RHITextureDesc {
 /// @brief Unified texture identity covering both sampled and render-target roles.
 ///
 /// Color vs depth vs sampled is distinguished by GetFormat()/GetUsage(), never by type.
-class RHITexture : public RHIObject {
+export class RHITexture : public RHIObject {
   public:
     RHITexture(const RHITexture&)                    = delete;
     auto operator=(const RHITexture&) -> RHITexture& = delete;
@@ -373,7 +373,7 @@ class RHITexture : public RHIObject {
 ///
 /// BLAS triangle inputs. Geometry metadata (counts, stride) is mesh data, carried here by the caller —
 /// buffers are unified identities and do not know vertex semantics.
-struct RHIBottomLevelAccelerationStructureDesc {
+export struct RHIBottomLevelAccelerationStructureDesc {
     RHIRef<RHIBuffer> VertexBufferRef = nullptr;
     RHIRef<RHIBuffer> IndexBufferRef  = nullptr;
     Uint64            VertexCount     = 0;
@@ -382,7 +382,7 @@ struct RHIBottomLevelAccelerationStructureDesc {
 };
 
 /// GPU payload containing reusable object-space triangle geometry.
-class RHIBottomLevelAccelerationStructure : public RHIObject {
+export class RHIBottomLevelAccelerationStructure : public RHIObject {
   public:
     RHIBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructure&)                    = delete;
     auto operator=(const RHIBottomLevelAccelerationStructure&) -> RHIBottomLevelAccelerationStructure& = delete;
@@ -395,7 +395,7 @@ class RHIBottomLevelAccelerationStructure : public RHIObject {
 };
 
 /// One TLAS instance: a BLAS plus its world transform for this frame.
-struct RHITopLevelAccelerationStructureInstance {
+export struct RHITopLevelAccelerationStructureInstance {
     RHIRef<RHIBottomLevelAccelerationStructure> Blas      = nullptr;
     hlslpp::float4x4                            Transform = hlslpp::float4x4::identity();
 };
@@ -404,14 +404,14 @@ struct RHITopLevelAccelerationStructureInstance {
 ///
 /// Instances slot order is the canonical TLAS instance order: the device packs them 1:1, so Slang
 /// InstanceIndex() indexes the renderer's sorted instance table by the same slot.
-struct RHITopLevelAccelerationStructureDesc {
+export struct RHITopLevelAccelerationStructureDesc {
     std::vector<RHITopLevelAccelerationStructureInstance> Instances = {};
 };
 
 /// @brief Per-frame TLAS handle.
 ///
 /// Instances are packed and storage is materialized at creation; the device builds it at frame start.
-class RHITopLevelAccelerationStructure : public RHIObject {
+export class RHITopLevelAccelerationStructure : public RHIObject {
   public:
     RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructure&)                    = delete;
     auto operator=(const RHITopLevelAccelerationStructure&) -> RHITopLevelAccelerationStructure& = delete;
@@ -423,18 +423,18 @@ class RHITopLevelAccelerationStructure : public RHIObject {
     explicit RHITopLevelAccelerationStructure(String Name) : RHIObject(std::move(Name)) {}
 };
 
-inline constexpr Uint32 kRHIRemainingSubresources = std::numeric_limits<Uint32>::max();
-inline constexpr Uint64 kRHIWholeBuffer           = std::numeric_limits<Uint64>::max();
+export inline constexpr Uint32 kRHIRemainingSubresources = std::numeric_limits<Uint32>::max();
+export inline constexpr Uint64 kRHIWholeBuffer           = std::numeric_limits<Uint64>::max();
 
 /// @brief Read/Write direction of a view
-enum class RHIAccess : Uint8 {
+export enum class RHIAccess : Uint8 {
     None  = 0,
     Read  = 1 << 0,
     Write = 1 << 1,
 };
 
 /// @brief Mip-level window into a texture; defaults to the whole chain.
-struct RHISubresourceRange {
+export struct RHISubresourceRange {
     Uint32 BaseMipLevel  = 0;
     Uint32 MipLevelCount = kRHIRemainingSubresources;
 };
@@ -442,7 +442,7 @@ struct RHISubresourceRange {
 /// @brief Value-semantic texture view: identity, role, extent, direction.
 /// Plain data, not an RHIObject — lifetime comes from the embedded ref and the backend resolves/caches native
 /// views at record time. One view, one role: Usage is a single-role selector, never the creation union.
-struct RHITextureView {
+export struct RHITextureView {
     RHIRef<RHITexture>  Texture = nullptr;
     RHIAccess           Access  = RHIAccess::Read;
     RHITextureUsage     Usage   = RHITextureUsage::None;
@@ -450,7 +450,7 @@ struct RHITextureView {
 };
 
 /// @brief Buffer counterpart: (buffer, usage, offset, range, access).
-struct RHIBufferView {
+export struct RHIBufferView {
     RHIRef<RHIBuffer> Buffer = nullptr;
     RHIAccess         Access = RHIAccess::Read;
     RHIBufferUsage    Usage  = RHIBufferUsage::Unknown;
@@ -462,7 +462,7 @@ struct RHIBufferView {
 ///
 /// A sampler is a state object with no role, extent, or direction axis, so the view is a plain ref wrapper —
 /// it exists so bindings retain the payload like every other view kind.
-struct RHISamplerView {
+export struct RHISamplerView {
     RHIRef<RHISampler> Sampler = nullptr;
 };
 
@@ -470,27 +470,27 @@ struct RHISamplerView {
 ///
 /// An acceleration structure binds whole, so the view is a plain ref wrapper — it exists so bindings retain
 /// the payload like every other view kind.
-struct RHITlasView {
+export struct RHITlasView {
     RHIRef<RHITopLevelAccelerationStructure> Tlas = nullptr;
 };
 
-using RHIClearColorValue =
+export using RHIClearColorValue =
     std::variant<std::monostate, std::array<Float32, 4>, std::array<Int32, 4>, std::array<Uint32, 4>>;
 
-struct RHIClearDepthStencilValue {
+export struct RHIClearDepthStencilValue {
     Float32 Depth   = 1.0f;
     Uint32  Stencil = 0;
 };
 
 /// @brief One color attachment: the RenderTarget view plus its clear policy.
-struct RHIColorAttachmentDesc {
+export struct RHIColorAttachmentDesc {
     RHITextureView     View       = {}; ///< Range selects the rendered mip(s)
     RHIClearColorValue ClearValue = {};
     bool               Clear      = true;
 };
 
 /// @brief Depth/stencil counterpart of RHIColorAttachmentDesc.
-struct RHIDepthAttachmentDesc {
+export struct RHIDepthAttachmentDesc {
     RHITextureView            View       = {};
     RHIClearDepthStencilValue ClearValue = {};
     bool                      Clear      = true;
@@ -498,7 +498,7 @@ struct RHIDepthAttachmentDesc {
 
 /// @brief Fixed rendering attachments owned by one graphics pass — the pass
 /// execution context, traveling with IRHIPass rather than any RHICommand.
-struct RHIGraphicsAttachments {
+export struct RHIGraphicsAttachments {
     std::vector<RHIColorAttachmentDesc>   ColorAttachments = {};
     std::optional<RHIDepthAttachmentDesc> DepthAttachment  = std::nullopt;
 };
@@ -515,7 +515,7 @@ struct RHIGraphicsAttachments {
 ///
 /// The initial mapping table only ever produces coarse values (AllGraphics for shader accesses in graphics
 /// passes); precise stages (VertexShader vs FragmentShader) are reserved for future per-view stage hints.
-enum class RHISyncStage : Uint32 {
+export enum class RHISyncStage : Uint32 {
     None                  = 0,
     VertexShader          = 1 << 0,
     FragmentShader        = 1 << 1,
@@ -536,21 +536,21 @@ enum class RHISyncStage : Uint32 {
 /// it carries no src/dst pair; the backend's diff tracker decides whether a barrier materializes. The View
 /// travels by value: a pass declaring several views of one buffer merges them into one transition whose View
 /// accumulates the usage and access union.
-struct RHIBufferTransition {
+export struct RHIBufferTransition {
     RHIBufferView View  = {};
     RHISyncStage  Stage = RHISyncStage::None;
 };
 
 /// @brief Texture counterpart of RHIBufferTransition. The view's
 /// subresource range defaults to the whole chain; the backend tracker resolves per-subresource state from it.
-struct RHITextureTransition {
+export struct RHITextureTransition {
     RHITextureView View  = {};
     RHISyncStage   Stage = RHISyncStage::None;
 };
 
 /// @brief One pass's prologue: the complete set of state requirements its
 /// declared accesses map to, deduplicated per resource.
-struct RHIBarrierList {
+export struct RHIBarrierList {
     std::vector<RHIBufferTransition>  Buffers  = {};
     std::vector<RHITextureTransition> Textures = {};
 };

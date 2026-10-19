@@ -10,10 +10,10 @@ import :Ref;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Set viewport rectangle.
-struct RHISetViewportCmd {
+export struct RHISetViewportCmd {
     Float32 X        = 0.0f;
     Float32 Y        = 0.0f;
     Float32 Width    = 0.0f;
@@ -23,7 +23,7 @@ struct RHISetViewportCmd {
 };
 
 /// @brief Set scissor rectangle.
-struct RHISetScissorCmd {
+export struct RHISetScissorCmd {
     Int32  X      = 0;
     Int32  Y      = 0;
     Uint32 Width  = 0;
@@ -33,12 +33,12 @@ struct RHISetScissorCmd {
 /// @brief Draw non-indexed primitives. All geometry reaches shaders through
 /// vertex pulling (BDA) or indirect draws; there is no vertex-buffer binding path. The fullscreen-triangle
 /// users emit the default 3.
-struct RHIDrawCmd {
+export struct RHIDrawCmd {
     Uint32 VertexCount = 3;
 };
 
 /// @brief Draw non-indexed primitives from GPU-written indirect commands.
-struct RHIDrawIndirectCmd {
+export struct RHIDrawIndirectCmd {
     RHIRef<RHIBuffer> IndirectBuffer = nullptr;
     Uint64            Offset         = 0;
     Uint32            DrawCount      = 1;
@@ -46,14 +46,14 @@ struct RHIDrawIndirectCmd {
 };
 
 /// @brief Dispatch compute workgroups.
-struct RHIDispatchCmd {
+export struct RHIDispatchCmd {
     Uint32 GroupCountX = 1;
     Uint32 GroupCountY = 1;
     Uint32 GroupCountZ = 1;
 };
 
 /// @brief Dispatch hardware rays through the pipeline-owned shader binding table.
-struct RHITraceRaysCmd {
+export struct RHITraceRaysCmd {
     Uint32 Width  = 0;
     Uint32 Height = 0;
     Uint32 Depth  = 1;
@@ -61,7 +61,7 @@ struct RHITraceRaysCmd {
 
 /// @brief Read back a texel region from a render target into a readback. The backend picks an internal ring
 /// position and stamps it with the submission's timeline value.
-struct RHIReadbackTextureCmd {
+export struct RHIReadbackTextureCmd {
     RHIRef<RHITexture>  Source    = nullptr;
     Uint32              SrcX      = 0;
     Uint32              SrcY      = 0;
@@ -74,7 +74,7 @@ struct RHIReadbackTextureCmd {
 ///
 /// This is the only present path: the backend resolves the current swapchain image, which stays
 /// backend-private. Fixed nearest filtering.
-struct RHIBlitToSwapchainCmd {
+export struct RHIBlitToSwapchainCmd {
     RHIRef<RHITexture> Source    = nullptr;
     Uint32             DstX      = 0;
     Uint32             DstY      = 0;
@@ -83,20 +83,20 @@ struct RHIBlitToSwapchainCmd {
 };
 
 /// @brief All command types dispatched via std::visit.
-using RHICommand = std::variant<RHISetViewportCmd,
-                                RHISetScissorCmd,
-                                RHIDrawCmd,
-                                RHIDrawIndirectCmd,
-                                RHIDispatchCmd,
-                                RHITraceRaysCmd,
-                                RHIReadbackTextureCmd,
-                                RHIBlitToSwapchainCmd>;
+export using RHICommand = std::variant<RHISetViewportCmd,
+                                       RHISetScissorCmd,
+                                       RHIDrawCmd,
+                                       RHIDrawIndirectCmd,
+                                       RHIDispatchCmd,
+                                       RHITraceRaysCmd,
+                                       RHIReadbackTextureCmd,
+                                       RHIBlitToSwapchainCmd>;
 
 /// @brief One Dear ImGui overlay to record over the acquired presentation image.
 ///
 /// All pointers are non-owning. The producer's frame slot retains the snapshot, texture queue, and mutex
 /// until RHIRenderDevice::Execute() returns.
-struct RHIImGuiPresentationOverlayCmd {
+export struct RHIImGuiPresentationOverlayCmd {
     ImDrawDataSnapshot* Snapshot     = nullptr;
     ImTextureQueue*     TextureQueue = nullptr;
     std::mutex*         TextureMutex = nullptr;
