@@ -13,28 +13,11 @@ import magic_enum;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Resolve completed global bindless indices and enqueue missing textures for the next RHI frame.
-[[nodiscard]] auto ResolveBindlessTextureIndices(std::span<const RHIRef<RHITexture>> Textures)
-    -> std::expected<std::unordered_map<Uint64, Uint32>, ErrorMessage> {
-    auto&                           Device  = RHIRenderDevice::Get();
-    std::vector<RHIRef<RHITexture>> Missing = {};
-    for (const auto& Texture : Textures)
-        if (Texture && !Device.FindBindlessTextureIndex(Texture))
-            Missing.push_back(Texture);
-    if (!Missing.empty())
-        if (auto R = Device.RegisterBindlessTextures(Missing); !R)
-            return std::unexpected(R.error().Append("Bindless texture registration failed"));
-
-    std::unordered_map<Uint64, Uint32> Result = {};
-    Result.reserve(Textures.size());
-    for (const auto& Texture : Textures)
-        if (Texture)
-            if (const auto Index = Device.FindBindlessTextureIndex(Texture))
-                Result.emplace(Texture->GetId(), *Index);
-    return Result;
-}
+[[nodiscard]] export auto ResolveBindlessTextureIndices(std::span<const RHIRef<RHITexture>> Textures)
+    -> std::expected<std::unordered_map<Uint64, Uint32>, ErrorMessage>;
 
 /// @brief Shared frame constant-buffer ABI used by every renderer.
 struct alignas(16) RendererFrameConstants {
@@ -71,15 +54,7 @@ static_assert(offsetof(RendererViewConstants, CameraPosition) == 128);
 static_assert(offsetof(RendererViewConstants, ViewportSize) == 144);
 
 /// @brief Build the shared transient GPU light table from scene records.
-[[nodiscard]] auto BuildLightGpuData(std::span<const LightRecord> Lights) -> std::vector<LightRecord::GpuData> {
-    std::vector<LightRecord::GpuData> Result = {};
-    Result.reserve(std::max<std::size_t>(Lights.size(), 1));
-    for (const auto& Light : Lights)
-        Result.emplace_back(Light.BuildGpuData());
-    if (Result.empty())
-        Result.emplace_back();
-    return Result;
-}
+[[nodiscard]] export auto BuildLightGpuData(std::span<const LightRecord> Lights) -> std::vector<LightRecord::GpuData>;
 
 /// @brief Renderer-side authority for GeometryRecord GPU residency.
 ///
