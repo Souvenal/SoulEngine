@@ -15,7 +15,8 @@ target("VMA")
     add_files("Vulkan/VMA.cpp")
 
 target("RHIVulkan")
-    set_kind("moduleonly")
+    set_kind("static")
+    set_policy("build.c++.modules", true)
 
     -- Routes Tracy's Vulkan calls through a dispatcher-populated symbol table
     -- (see VKProfiling.cppm) instead of extern loader entry points, keeping
@@ -25,7 +26,10 @@ target("RHIVulkan")
     add_packages("volk", {public = true})
     add_packages("tracy", "vulkan-headers", "vulkan-memory-allocator", "glfw", "magic_enum", "imgui", "imgui-club", "hlslpp", {public = true})
     add_deps("RHI", "VMA", "WindowSystem", "TaskGraph")
-    add_files("Vulkan/*.cppm")
+    add_files("Vulkan/*.cppm", {public = true})   -- Vulkan primary module + partitions
+    -- VMA.cpp belongs solely to target VMA; compiling it here would duplicate VMA_IMPLEMENTATION.
+    -- The exclusion matches against the glob root ("Vulkan/"), so the pattern is the bare filename.
+    add_files("Vulkan/*.cpp|VMA.cpp")             -- module implementation units
 
 test_module("RHI", {
     additional_deps     = {"RHIVulkan", "ShaderCompiler", "WindowSystem"},

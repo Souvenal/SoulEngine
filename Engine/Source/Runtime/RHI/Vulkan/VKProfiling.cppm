@@ -31,15 +31,10 @@ import :Capability;
 import :Context;
 import :Debug;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// Collect pending Tracy GPU zone data into the given command buffer.
-auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer) -> void {
-    auto* Ctx = ResourceContext.GetTracyCtx();
-    if (!Ctx)
-        return;
-    Ctx->Collect(static_cast<VkCommandBuffer>(*CommandBuffer));
-}
+export auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer& CommandBuffer) -> void;
 
 /// @brief RAII command-buffer annotation: debug label and Tracy GPU zone for the same region.
 ///
@@ -59,26 +54,14 @@ auto CollectGpu(VulkanResourceContext& ResourceContext, vk::raii::CommandBuffer&
 ///       after an SDK update and drop this note once clean. A zone recorded
 ///       on the primary CB (same CB as the resets) was experimentally
 ///       confirmed to never trigger the report (2026-09-21).
-class LabelScope final {
+export class LabelScope final {
   public:
     LabelScope(const VulkanResourceContext& ResourceContext,
                vk::raii::CommandBuffer&     CommandBuffer,
                StringView                   Name,
-               std::source_location         SourceLocation = std::source_location::current())
-        : m_ResourceContext(ResourceContext),
-          m_CommandBuffer(CommandBuffer),
-          m_Zone(TracyCtx(ResourceContext),
-                 &GetZoneSourceLocation(Name, SourceLocation),
-                 static_cast<VkCommandBuffer>(*CommandBuffer),
-                 TracyCtx(ResourceContext) != nullptr && !Name.empty()) {
-        if (m_ResourceContext.GetDebugUtils().IsEnabled())
-            BeginLabel(CommandBuffer, Name);
-    }
+               std::source_location         SourceLocation = std::source_location::current());
 
-    ~LabelScope() {
-        if (m_ResourceContext.GetDebugUtils().IsEnabled())
-            m_CommandBuffer.endDebugUtilsLabelEXT();
-    }
+    ~LabelScope();
 
     LabelScope(const LabelScope&)            = delete;
     LabelScope& operator=(const LabelScope&) = delete;
@@ -86,46 +69,12 @@ class LabelScope final {
     LabelScope& operator=(LabelScope&&)      = delete;
 
   private:
-    [[nodiscard]] static auto TracyCtx(const VulkanResourceContext& ResourceContext) -> tracy::VkCtx* {
-        return ResourceContext.GetTracyCtx();
-    }
+    [[nodiscard]] static auto TracyCtx(const VulkanResourceContext& ResourceContext) -> tracy::VkCtx*;
 
-    static void BeginLabel(vk::raii::CommandBuffer& CommandBuffer, StringView Name) {
-        const String LabelName(Name);
-        CommandBuffer.beginDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
-            .pLabelName = LabelName.c_str(),
-        });
-    }
+    static void BeginLabel(vk::raii::CommandBuffer& CommandBuffer, StringView Name);
 
     static const tracy::SourceLocationData& GetZoneSourceLocation(StringView                  Name,
-                                                                  const std::source_location& SourceLocation) {
-        static const tracy::SourceLocationData Empty{"", "", "", 0, 0};
-        struct StringHash {
-            using is_transparent = void;
-            auto operator()(StringView Value) const -> Uint64 {
-                return std::hash<StringView>{}(Value);
-            }
-        };
-        struct StringEqual {
-            using is_transparent = void;
-            auto operator()(StringView Lhs, StringView Rhs) const -> bool {
-                return Lhs == Rhs;
-            }
-        };
-        static std::unordered_map<String, tracy::SourceLocationData, StringHash, StringEqual> ZoneSourceLocations;
-        if (Name.empty())
-            return Empty;
-        if (const auto It = ZoneSourceLocations.find(Name); It != ZoneSourceLocations.end())
-            return It->second;
-        auto [Iterator, Inserted] = ZoneSourceLocations.try_emplace(String{Name});
-        if (Inserted)
-            Iterator->second = tracy::SourceLocationData{Iterator->first.c_str(),
-                                                         SourceLocation.function_name(),
-                                                         SourceLocation.file_name(),
-                                                         SourceLocation.line(),
-                                                         0};
-        return Iterator->second;
-    }
+                                                                  const std::source_location& SourceLocation);
 
     const VulkanResourceContext& m_ResourceContext;
     vk::raii::CommandBuffer&     m_CommandBuffer;

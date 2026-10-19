@@ -20,88 +20,34 @@ class VulkanTimelineSemaphore {
   public:
     VulkanTimelineSemaphore() = default;
 
-    VulkanTimelineSemaphore(VulkanTimelineSemaphore&& Other) noexcept
-        : m_Device(std::exchange(Other.m_Device, nullptr)),
-          m_Semaphore(std::move(Other.m_Semaphore)),
-          m_HostValue(Other.m_HostValue.load()) {}
+    VulkanTimelineSemaphore(VulkanTimelineSemaphore&& Other) noexcept;
 
-    auto operator=(VulkanTimelineSemaphore&& Other) noexcept -> VulkanTimelineSemaphore& {
-        if (this != &Other) {
-            m_Device    = std::exchange(Other.m_Device, nullptr);
-            m_Semaphore = std::move(Other.m_Semaphore);
-            m_HostValue.store(Other.m_HostValue.load());
-        }
-        return *this;
-    }
+    auto operator=(VulkanTimelineSemaphore&& Other) noexcept -> VulkanTimelineSemaphore&;
 
     VulkanTimelineSemaphore(const VulkanTimelineSemaphore&)                    = delete;
     auto operator=(const VulkanTimelineSemaphore&) -> VulkanTimelineSemaphore& = delete;
 
     [[nodiscard]] static auto Create(vk::raii::Device& Device, VulkanDebugUtils* DebugUtils, StringView Name)
-        -> std::expected<VulkanTimelineSemaphore, ErrorMessage> {
-        VulkanTimelineSemaphore Result;
-        Result.m_Device = &Device;
-
-        if (!VulkanCapability::Get().GetFeatures<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
-            return std::unexpected(
-                ErrorMessage("VulkanTimelineSemaphore: timelineSemaphore feature not supported by device"));
-
-        vk::StructureChain<vk::SemaphoreCreateInfo, vk::SemaphoreTypeCreateInfo> Chain = {
-            {}, {.semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = 0}};
-        auto Res = Device.createSemaphore(Chain.get<vk::SemaphoreCreateInfo>());
-        if (Res.result != vk::Result::eSuccess)
-            return std::unexpected(ErrorMessage("Failed to create timeline semaphore"));
-        if (DebugUtils)
-            DebugUtils->SetObjectName(*Res.value, Name);
-        Result.m_Semaphore = std::move(Res.value);
-        return Result;
-    }
+        -> std::expected<VulkanTimelineSemaphore, ErrorMessage>;
 
     /// @brief Advance the host-side monotonic counter and return the new value.
     ///
     /// The device-side semaphore reaches this value only after a submission explicitly signals it.
-    [[nodiscard]] auto IncreaseHostValue() noexcept -> Uint64 {
-        return ++m_HostValue;
-    }
+    [[nodiscard]] auto IncreaseHostValue() noexcept -> Uint64;
 
     /// Returns the device-side semaphore counter value (non-blocking). Calls vkGetSemaphoreCounterValue.
-    [[nodiscard]] auto GetDeviceValue() -> Uint64 {
-        auto Res = m_Semaphore.getCounterValue();
-        if (Res.result != vk::Result::eSuccess) {
-            LogError("vkGetSemaphoreCounterValue failed: {}", vk::to_string(Res.result));
-            return 0;
-        }
-        return Res.value;
-    }
+    [[nodiscard]] auto GetDeviceValue() -> Uint64;
 
     /// @brief Block the CPU until the semaphore reaches at least `Value`.
     ///
     /// Calls vkWaitSemaphores with the given timeout (default: infinite).
-    auto Wait(Uint64 Value, Uint64 TimeoutNs = std::numeric_limits<Uint64>::max()) -> void {
-        vk::Semaphore         Sem = *m_Semaphore;
-        vk::SemaphoreWaitInfo WaitInfo{
-            .semaphoreCount = 1,
-            .pSemaphores    = &Sem,
-            .pValues        = &Value,
-        };
-        if (auto R = m_Device->waitSemaphores(WaitInfo, TimeoutNs); R != vk::Result::eSuccess) {
-            LogError("vkWaitSemaphores failed: {}", vk::to_string(R));
-        }
-    }
+    auto Wait(Uint64 Value, Uint64 TimeoutNs = std::numeric_limits<Uint64>::max()) -> void;
 
     /// Returns a SemaphoreSubmitInfo for the next timeline value. Calls IncreaseHostValue internally.
     [[nodiscard]] auto GetSignalSubmitInfo(vk::PipelineStageFlagBits2 Stage = vk::PipelineStageFlagBits2::eNone)
-        -> vk::SemaphoreSubmitInfo {
-        return vk::SemaphoreSubmitInfo{
-            .semaphore = *m_Semaphore,
-            .value     = IncreaseHostValue(),
-            .stageMask = Stage,
-        };
-    }
+        -> vk::SemaphoreSubmitInfo;
 
-    [[nodiscard]] auto Get() const noexcept -> vk::Semaphore {
-        return *m_Semaphore;
-    }
+    [[nodiscard]] auto Get() const noexcept -> vk::Semaphore;
 
   private:
     vk::raii::Device*   m_Device    = nullptr;
