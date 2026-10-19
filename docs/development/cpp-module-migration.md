@@ -46,11 +46,11 @@ Keep platform-only helpers, state, and third-party includes in the implementatio
 
 ## Configure xmake
 
-A target containing `.cpp` module implementation units must be a normal static target with module dependency scanning enabled:
+Keep module targets as `moduleonly` unless a verified build or link requirement needs an ordinary library target. Both module interfaces and implementation units require module dependency scanning:
 
 ```lua
 target("Platform")
-    set_kind("static")
+    set_kind("moduleonly")
     set_policy("build.c++.modules", true)
 
     add_deps("Core")
@@ -58,7 +58,7 @@ target("Platform")
     add_files("Mac/**.cpp")
 ```
 
-Mark `.cppm` interface sources as public module sources. Add `.cpp` implementation units as ordinary target sources. Glob patterns are valid for both source classes. Module declarations determine interface versus implementation roles; filenames do not. Do not use `moduleonly` for a target that contains implementation units.
+Mark `.cppm` interface sources as public module sources. Add `.cpp` implementation units as ordinary target sources. Glob patterns are valid for both source classes. Module declarations determine interface versus implementation roles; filenames do not. A `moduleonly` target can contain both interface and implementation units when the implementation is declared as a valid implementation unit or partition. Promote it to `static` only when a reproducible build or link requirement demonstrates the need.
 
 ## Validate The Migration
 
@@ -67,6 +67,7 @@ Run the focused target build first, then the affected downstream target, and fin
 ```text
 xmake repo -u
 xmake clean --all
+rm -rf build
 xmake -y Platform
 xmake -y TaskGraph
 xmake -y
@@ -80,7 +81,7 @@ A focused build must reach compilation and archiving without duplicate-module di
 
 `missing M:Part dependency for module M` means a downstream target cannot see an interface partition required by the primary module exported dependency graph. Check that the interface `.cppm` source is registered with `{public = true}`. Do not make an implementation partition public to solve this diagnostic.
 
-A target configured as `moduleonly` cannot represent a module implementation unit correctly. Convert it to a static target and enable `build.c++.modules` before investigating source-level diagnostics.
+A `moduleonly` target can build module implementation units, including implementation partitions, when the module declarations and source registration are correct. Do not change the target kind as the first response to a module diagnostic; inspect the implementation-unit form, imports, public interface registration, and a clean build first. Use `static` only when the reproduced issue is specifically resolved by ordinary archive or link behavior.
 
 An undefined symbol for a moved API at the final link usually means the interface declaration is non-inline while the definition in the implementation unit is still marked `inline` (an inline definition emits no external symbol) or is missing entirely. Never write `export` in an implementation unit either — `export declaration can only be used within a module interface`. Exportedness comes from the interface declaration alone; the implementation provides a plain non-inline definition.
 

@@ -77,7 +77,7 @@ Code form and readability only, not behavior.
 - Exporting a class does not export every declaration reachable through its definition. `exported` and `reachable` are separate properties in [module.interface] and [module.reach]. A private member may use a third-party type when importers do not need to name or instantiate that type; do not introduce PImpl solely to hide such members. Move ordinary function bodies and private helper definitions to the implementation partition instead.
 - Shared cross-backend APIs are declared and exported once in the primary module interface. Backend implementation partitions provide the one corresponding definition for the active platform.
 - Use ordinary `namespace SoulEngine` blocks and explicit per-declaration `export`; `export namespace` is prohibited.
-- In xmake targets that contain module implementation units, use `set_kind("static")` with `set_policy("build.c++.modules", true)`. Register interface `.cppm` files with `{public = true}` and implementation `.cpp` files as ordinary target sources. Glob patterns are allowed; module declarations, not matching filenames, establish the interface/implementation roles.
+- Keep C++ module targets as `set_kind("moduleonly")` with `set_policy("build.c++.modules", true)` by default. Register interface `.cppm` files with `{public = true}` and implementation `.cpp` files as ordinary target sources. Glob patterns are allowed; module declarations, not matching filenames, establish the interface/implementation roles. Promote a module target to `static` only when a reproducible build or link requirement demonstrates that ordinary archive behavior is needed; validate with a clean full build.
 
 ## Profiling (Tracy)
 

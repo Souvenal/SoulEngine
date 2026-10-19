@@ -2,11 +2,9 @@ module;
 
 #include <tracy/Tracy.hpp>
 
-module TaskGraph;
+module TaskGraph:Runtime.impl;
 
-import std;
-import Core;
-import magic_enum;
+import :Runtime;
 
 namespace SoulEngine {
 

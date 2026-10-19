@@ -1,5 +1,5 @@
 target("Platform")
-    set_kind("static")
+    set_kind("moduleonly")
 
     set_policy("build.c++.modules", true)
 

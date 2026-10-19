@@ -1,5 +1,5 @@
 target("Core")
-    set_kind("static")
+    set_kind("moduleonly")
     set_policy("build.c++.modules", true)
 
     -- magic_enum is public: Core's exported flag vocabulary (Util/Flags.cppm) names
