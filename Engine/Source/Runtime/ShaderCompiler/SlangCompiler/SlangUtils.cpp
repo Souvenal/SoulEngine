@@ -1,17 +1,17 @@
 /// @file   SlangCompiler/SlangUtils.cpp
 /// @brief  Slang compiler internal utility implementations.
 
-module Slang:Utils.impl;
+module;
 
 #include <slang.h>
+
+module Slang:Utils.impl;
 
 import :Utils;
 import Core;
 import std;
 
 namespace SoulEngine {
-
-CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug info (OpLine/OpString) for RenderDoc"};
 
 [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry> {
     std::vector<slang::CompilerOptionEntry> Options;
