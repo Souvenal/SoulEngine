@@ -57,7 +57,7 @@ Multi-context — root `GLOSSARY-MAP.md` indexes one `GLOSSARY.md` per module; A
 
 ## Coding Specs
 
-Coding standards live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md), which indexes the per-language specs in `docs/standards/`; they are consumed at review time by /code-review. One exception fires at implementation time: before writing or modifying ANY comment, read [`docs/standards/comments.md`](docs/standards/comments.md) — its mechanical rules are enforced by `Tools/check_comments.py`.
+For code work and review, use [`CODING_STANDARDS.md`](CODING_STANDARDS.md), the index to the per-language specs consumed by /code-review. Before writing or modifying any comment, read [`docs/standards/comments.md`](docs/standards/comments.md); its mechanical rules are enforced by `Tools/check_comments.py`.
 
 ## Code Editing Rules
 

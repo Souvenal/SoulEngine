@@ -4,7 +4,7 @@ name: soulengine-build description: Diagnose, fix, and document SoulEngine build
 
 # SoulEngine Build
 
-Use this skill for every project build failure and update it after a verified, reusable diagnosis. Use `coding-spec` as well whenever a repair changes project source or Xmake files.
+Use this skill for every project build failure and update it after a verified, reusable diagnosis. When a repair changes project source or Xmake files, follow the repository guidance in `AGENTS.md` and `CODING_STANDARDS.md`.
 
 ## Command output
 
