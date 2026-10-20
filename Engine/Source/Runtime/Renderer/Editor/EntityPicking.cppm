@@ -8,7 +8,7 @@ import Scene;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Copy-only transfer pass that reads back the GBuffer EntityId texel at the requested pixel into a
 /// readback.
@@ -17,7 +17,7 @@ export namespace SoulEngine {
 /// Ensure/Pending-prune participation), constructed with its Parameter. The readback is a passthrough field —
 /// a consumer object, not a graph resource; the graph sees only the source texture's TransferSrc read, which
 /// carries the ordering and layout transition. NeverPrune stands in for the graph-invisible ring write.
-class EntityPickingPass final : public IRHITransferPass {
+export class EntityPickingPass final : public IRHITransferPass {
   public:
     static constexpr StringView Name       = "EntityPickingPass";
     static constexpr bool       NeverPrune = true;

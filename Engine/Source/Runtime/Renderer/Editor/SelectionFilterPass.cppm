@@ -12,10 +12,10 @@ import Scene;
 import std;
 import ShaderCompiler;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Filters culling output instances by entity ID for editor selection.
-class SelectionFilterPass final : public IRHIComputePass {
+export class SelectionFilterPass final : public IRHIComputePass {
   public:
     static constexpr StringView Name = "SelectionFilterPass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

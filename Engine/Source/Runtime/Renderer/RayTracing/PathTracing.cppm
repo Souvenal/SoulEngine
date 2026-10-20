@@ -8,11 +8,11 @@ import std;
 import ShaderCompiler;
 import Shader;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Trace dimensions for one frame (CPU passthrough, declared as one
 /// aggregate field to stay within the Parameter arity cap).
-struct PathTracingExtent {
+export struct PathTracingExtent {
     Uint32 Width  = 0;
     Uint32 Height = 0;
 };
@@ -23,7 +23,7 @@ struct PathTracingExtent {
 /// The class IS the graph's TPass. Acceleration-structure builds no longer live in the graph: the device
 /// executes the pending BLAS batch and the TLAS rebuild (carried by RenderResult) at the start of the frame's
 /// execution, ahead of every pass. All table buffers are graph-created transients resolved at Compile.
-class PathTracingPass final : public IRHIRayTracingPass {
+export class PathTracingPass final : public IRHIRayTracingPass {
   public:
     static constexpr StringView Name = "PathTracingPass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

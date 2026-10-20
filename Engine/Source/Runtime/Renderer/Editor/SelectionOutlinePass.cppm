@@ -11,23 +11,19 @@ import ShaderCompiler;
 
 namespace SoulEngine {
 
-struct SelectionOutlinePushConstants {
+export struct SelectionOutlinePushConstants {
     Float32 ViewportWidth;
     Float32 ViewportHeight;
 };
 
 static_assert(sizeof(SelectionOutlinePushConstants) == 8);
 
-} // namespace SoulEngine
-
-export namespace SoulEngine {
-
 /// @brief Blends the outline color over the lit SceneColor through the
 /// selection mask.
 ///
 /// The class IS the graph's TPass. SceneColor is the only legal fused RMW — a loadOp=Load color attachment
 /// declared as Read|Write access on the view. Present is the explicit BlitToSwapchainPass downstream.
-class SelectionOutlinePass final : public IRHIGraphicsPass {
+export class SelectionOutlinePass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "SelectionOutlinePass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {
