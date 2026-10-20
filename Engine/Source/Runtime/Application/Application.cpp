@@ -1,7 +1,8 @@
 module;
 
-module Application;
+module Application:Implementation;
 
+import :Interface;
 import Core;
 import Scene;
 import std;
@@ -10,11 +11,7 @@ namespace SoulEngine {
 
 // Application::Create — static factory
 
-namespace {
-
 UPtr<Application> g_CurrentApplication = nullptr;
-
-} // namespace
 
 [[nodiscard]] auto Application::Create(StringView Name) -> std::expected<UPtr<Application>, ErrorMessage> {
     auto App = ApplicationFactory::Get().Create(Name);
