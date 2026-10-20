@@ -7,7 +7,7 @@ module;
 #include <entt/entt.hpp>
 #include <imgui_threaded_rendering.h>
 
-module Launch:Implementation.impl;
+module Launch:impl;
 
 import Launch;
 import Core;
