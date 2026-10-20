@@ -9,9 +9,9 @@ import RHI;
 import Scene;
 import Core;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
-struct PixelCoordinate {
+export struct PixelCoordinate {
     Uint32 X = 0;
     Uint32 Y = 0;
 };
@@ -19,7 +19,7 @@ struct PixelCoordinate {
 /// @brief Immutable render data for one editor camera view (no RHI
 /// render targets — the view's targets, including the selection mask, are renderer-created pooled graph
 /// transients).
-struct EditorViewRecord {
+export struct EditorViewRecord {
     CameraViewRecord Camera = {};
 
     /// @brief Return the width of the editor-camera viewport.
@@ -38,7 +38,7 @@ struct EditorViewRecord {
     }
 };
 
-struct EditorSnapshot {
+export struct EditorSnapshot {
     std::vector<EditorViewRecord> Views          = {};
     std::optional<entt::entity>   SelectedEntity = std::nullopt;
     PixelCoordinate               HoverPixel     = {};
