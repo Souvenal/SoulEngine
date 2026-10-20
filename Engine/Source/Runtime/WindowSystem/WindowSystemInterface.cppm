@@ -5,8 +5,12 @@ module;
 export module WindowSystem:Interface;
 
 import :Types;
+import Core;
 
-export namespace SoulEngine {
+namespace SoulEngine {
+
+CVar<Int32> CVarWindowResolutionX{"Window.ResolutionX", 1280, "Window width in logical pixels"};
+CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", 720, "Window height in logical pixels"};
 
 /// @brief Window-system (WIS) abstraction: window lifecycle, event polling,
 /// and per-frame input event publication.
@@ -17,7 +21,7 @@ export namespace SoulEngine {
 /// Implementations are concrete window backends (GLFW today; Cocoa, WinUI, etc. later). Backend adapters that
 /// need native objects and the ImGui GLFW backend dispatch on GetType() and static_cast to the concrete
 /// class.
-class IWindowSystem {
+export class IWindowSystem {
   public:
     IWindowSystem()          = default;
     virtual ~IWindowSystem() = default;

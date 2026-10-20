@@ -6,14 +6,14 @@ import magic_enum;
 import std;
 import Core;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Identifies the concrete window-system implementation behind
 /// IWindowSystem.
 ///
 /// RTTI is disabled engine-wide, so consumers dispatch on this tag before static_cast-ing an IWindowSystem
 /// reference to the concrete implementation.
-enum class WindowSystemType {
+export enum class WindowSystemType {
     Unknown = 0,
     Glfw,
 };
@@ -23,7 +23,7 @@ enum class WindowSystemType {
 /// Vulkan swapchains and render targets must use framebuffer pixels, not GLFW window coordinates. On
 /// HiDPI/Retina displays these can differ, for example a 1920x1080 window may have a larger framebuffer
 /// backing store.
-struct FramebufferExtent {
+export struct FramebufferExtent {
     int Width  = 0;
     int Height = 0;
 };
@@ -32,19 +32,19 @@ struct FramebufferExtent {
 ///
 /// Published synchronously from the framebuffer callback. The initial window extent is triggered by the
 /// consumer after it subscribes.
-struct FramebufferResizeEvent {
+export struct FramebufferResizeEvent {
     FramebufferExtent PreviousExtent = {};
     FramebufferExtent CurrentExtent  = {};
 };
 
 /// @brief Cursor position in window coordinates.
-struct CursorPosition {
+export struct CursorPosition {
     Float32 X = 0.0f;
     Float32 Y = 0.0f;
 };
 
 /// @brief Window cursor presentation and confinement mode.
-enum class CursorMode {
+export enum class CursorMode {
     Unknown = 0,
     Normal,
     Hidden,
@@ -53,7 +53,7 @@ enum class CursorMode {
 };
 
 /// @brief Per-frame state of a keyboard key or mouse button.
-enum class InputState {
+export enum class InputState {
     Unknown = 0,
     Up,
     Pressed,
@@ -62,7 +62,7 @@ enum class InputState {
 };
 
 /// @brief Keyboard keys exposed by the window input surface.
-enum class WindowKey {
+export enum class WindowKey {
     Unknown = 0,
     A,
     B,
@@ -132,7 +132,7 @@ enum class WindowKey {
 };
 
 /// @brief Mouse buttons exposed by the window input surface.
-enum class WindowMouseButton {
+export enum class WindowMouseButton {
     Unknown = 0,
     Left,
     Middle,
@@ -140,7 +140,7 @@ enum class WindowMouseButton {
 };
 
 /// @brief Per-frame keyboard input snapshot.
-struct KeyboardFrameEvent {
+export struct KeyboardFrameEvent {
     std::array<InputState, magic_enum::enum_count<WindowKey>()> States = {};
 
     /// @brief Return whether a key is currently pressed or held.
@@ -155,7 +155,7 @@ struct KeyboardFrameEvent {
 /// @brief Per-frame mouse input snapshot.
 ///
 /// Cursor movement and scroll values are accumulated between frame polls.
-struct MouseFrameEvent {
+export struct MouseFrameEvent {
     std::array<InputState, magic_enum::enum_count<WindowMouseButton>()> ButtonStates           = {};
     CursorPosition                                                      PreviousCursorPosition = {};
     CursorPosition                                                      CurrentCursorPosition  = {};
