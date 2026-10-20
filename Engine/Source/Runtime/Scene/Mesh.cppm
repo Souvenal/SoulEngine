@@ -14,7 +14,7 @@ import Core;
 import Material;
 import RHI;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief GPU-ready geometry record for one imported submesh.
 ///
@@ -38,7 +38,7 @@ export namespace SoulEngine {
 ///
 /// Tangents are stored as xyz plus a fixed-handedness w component. Bitangents are intentionally not imported
 /// or stored; consumers derive them from the normal and tangent with cross(normal, tangent).
-struct GeometryRecord {
+export struct GeometryRecord {
     String Name = {};
 
     RHIRef<RHIBuffer>                           PositionBuffer = nullptr;
@@ -134,17 +134,17 @@ struct GeometryRecord {
     std::vector<Uint32>                  Indices;
 };
 
-using GeometryHandle = entt::resource<GeometryRecord>;
+export using GeometryHandle = entt::resource<GeometryRecord>;
 
 /// @brief One imported submesh and its default material binding.
-struct SubMesh {
+export struct SubMesh {
     String         Name     = {};
     GeometryHandle Geometry = {};
     MaterialHandle Material = {};
 };
 
 /// @brief One static node in an imported mesh asset hierarchy.
-struct MeshAssetNode {
+export struct MeshAssetNode {
     String              Name             = {};
     hlslpp::float4x4    LocalTransform   = hlslpp::float4x4::identity();
     std::vector<Uint32> SubMeshIndices   = {};
@@ -152,17 +152,17 @@ struct MeshAssetNode {
 };
 
 /// @brief Cached imported mesh asset.
-struct MeshRecord {
+export struct MeshRecord {
     Path                        Asset     = {};
     std::vector<MaterialHandle> Materials = {};
     std::vector<SubMesh>        SubMeshes = {};
     std::vector<MeshAssetNode>  Nodes     = {};
 };
 
-using MeshHandle = entt::resource<MeshRecord>;
+export using MeshHandle = entt::resource<MeshRecord>;
 
 /// @brief Scene-authored mesh asset reference and runtime mesh handle.
-struct MeshComponent {
+export struct MeshComponent {
     Path           Asset                = {}; ///< YAML-normalized path relative to the Scene Assets directory.
     Path           MaterialOverridePath = {}; ///< YAML-normalized path relative to the Scene Assets directory.
     MaterialHandle MaterialOverride     = {};
@@ -170,7 +170,7 @@ struct MeshComponent {
 };
 
 /// @brief Immutable render-facing geometry/material instance.
-struct InstanceRecord {
+export struct InstanceRecord {
     Uint32           EntityId       = 0;
     GeometryHandle   Geometry       = {};
     MaterialHandle   Material       = {};
@@ -199,7 +199,7 @@ struct InstanceRecord {
     }
 };
 
-struct GeometryLoader {
+export struct GeometryLoader {
     using result_type = std::shared_ptr<GeometryRecord>;
 
     auto operator()(StringView MeshPath, Uint32 MeshIndex, const aiMesh* AiMesh) const -> result_type {
@@ -309,7 +309,7 @@ struct GeometryLoader {
 
 using GeometryCache = entt::resource_cache<GeometryRecord, GeometryLoader>;
 
-struct MeshLoader {
+export struct MeshLoader {
     using result_type = std::shared_ptr<MeshRecord>;
 
     auto operator()(const Path& MeshPath) -> result_type {
@@ -445,132 +445,22 @@ struct MeshLoader {
 using MeshCache = entt::resource_cache<MeshRecord, MeshLoader>;
 
 /// @brief System for loading mesh assets and collecting render records.
-class MeshSystem : public ISystem {
+export class MeshSystem : public ISystem {
   public:
     explicit MeshSystem(entt::registry& Registry) : ISystem(Registry) {}
     ~MeshSystem() override = default;
 
-    auto SetAssetRoot(Path AssetRoot) -> void {
-        m_AssetRoot = AssetRoot.lexically_normal();
-    }
+    auto SetAssetRoot(Path AssetRoot) -> void;
 
-    auto OnUpdate(Float32) -> void override {
-        const auto AppendMaterialTextures = [this](const MaterialHandle& Material) -> void {
-            if (!Material)
-                return;
-            for (const auto& TextureSlot : Material->Textures) {
-                // Texture creation is synchronous and publishes Ready at return, so the guard below only
-                // filters empty refs; texel bytes land via UploadTexture's frame-start batch by submission
-                // order.
-                if (!TextureSlot.Texture || TextureSlot.Texture->Texture.GetState() == RHIRefState::Unknown)
-                    continue;
-                if (std::ranges::find(m_Textures, TextureSlot.Texture->Texture) == m_Textures.end())
-                    m_Textures.push_back(TextureSlot.Texture->Texture);
-            }
-        };
-        const auto AppendMeshTextures = [&AppendMaterialTextures](const MeshRecord& Mesh) -> void {
-            for (const auto& SubMeshValue : Mesh.SubMeshes)
-                AppendMaterialTextures(SubMeshValue.Material);
-        };
+    auto OnUpdate(Float32) -> void override;
 
-        const auto MeshView = m_Registry.view<MeshComponent>();
-        for (const auto Entity : MeshView) {
-            auto& Mesh = MeshView.get<MeshComponent>(Entity);
-            if (Mesh.Asset.empty()) {
-                Mesh.Mesh = {};
-                continue;
-            }
-
-            const auto MeshPath = m_AssetRoot / Mesh.Asset;
-            if (!Mesh.Mesh || Mesh.Mesh->Asset != MeshPath) {
-                Mesh.Mesh                 = {};
-                const auto MeshPathString = MeshPath.string();
-                const auto ResourceId     = entt::hashed_string{MeshPathString.data(), MeshPathString.size()};
-                auto [It, Loaded]         = m_MeshCache.load(ResourceId, MeshPath);
-                if (It->second)
-                    Mesh.Mesh = It->second;
-                if (Loaded && Mesh.Mesh)
-                    AppendMeshTextures(*Mesh.Mesh);
-            }
-
-            Mesh.MaterialOverride = {};
-            if (!Mesh.MaterialOverridePath.empty()) {
-                const auto MaterialPath       = (m_AssetRoot / Mesh.MaterialOverridePath).lexically_normal();
-                const auto MaterialPathString = MaterialPath.string();
-                const auto MaterialId = entt::hashed_string{MaterialPathString.data(), MaterialPathString.size()};
-                auto [MaterialIt, MaterialLoaded] = m_MaterialYamlCache.load(MaterialId, MaterialPath, m_AssetRoot);
-                if (MaterialIt->second)
-                    Mesh.MaterialOverride = MaterialIt->second;
-                else
-                    LogWarning("MeshSystem: material override load failed '{}'", MaterialPathString);
-            }
-            AppendMaterialTextures(Mesh.MaterialOverride);
-        }
-    }
-
-    [[nodiscard]] auto CollectInstances() const -> std::vector<InstanceRecord> {
-        std::vector<InstanceRecord> Result;
-        const auto                  MeshView = m_Registry.view<MeshComponent, TransformComponent>();
-        for (const auto Entity : MeshView) {
-            const auto& Mesh = MeshView.get<MeshComponent>(Entity);
-            if (Mesh.Asset.empty() || !Mesh.Mesh)
-                continue;
-            const auto& Transform = MeshView.get<TransformComponent>(Entity);
-            const auto  VisitNode = [&Mesh, Entity, &Result](auto&&                  VisitNode,
-                                                             Uint32                  NodeIndex,
-                                                             const hlslpp::float4x4& ParentWorldTransform) -> void {
-                if (NodeIndex >= Mesh.Mesh->Nodes.size())
-                    return;
-
-                const auto& Node           = Mesh.Mesh->Nodes[NodeIndex];
-                const auto  WorldTransform = hlslpp::mul(Node.LocalTransform, ParentWorldTransform);
-                for (const Uint32 SubMeshIndex : Node.SubMeshIndices) {
-                    if (SubMeshIndex >= Mesh.Mesh->SubMeshes.size())
-                        continue;
-                    const auto& MeshSubMesh = Mesh.Mesh->SubMeshes[SubMeshIndex];
-                    if (!MeshSubMesh.Geometry)
-                        continue;
-                    Result.emplace_back(InstanceRecord{
-                        .EntityId       = entt::to_integral(Entity),
-                        .Geometry       = MeshSubMesh.Geometry,
-                        .Material       = Mesh.MaterialOverride ? Mesh.MaterialOverride : MeshSubMesh.Material,
-                        .WorldTransform = WorldTransform,
-                    });
-                }
-                for (const Uint32 ChildNodeIndex : Node.ChildNodeIndices)
-                    VisitNode(VisitNode, ChildNodeIndex, WorldTransform);
-            };
-            VisitNode(VisitNode, 0, Transform.WorldTransform);
-        }
-        return Result;
-    }
+    [[nodiscard]] auto CollectInstances() const -> std::vector<InstanceRecord>;
 
     /// @brief Collect live read-only material handles cached by this Scene.
     /// @return YAML material handles followed by cached mesh material handles.
-    [[nodiscard]] auto CollectMaterialRecords() const -> std::vector<ConstMaterialHandle> {
-        std::vector<ConstMaterialHandle> Result;
-        for (const auto& Entry : m_MaterialYamlCache) {
-            const auto& Material = Entry.second;
-            if (Material)
-                Result.emplace_back(Material);
-        }
+    [[nodiscard]] auto CollectMaterialRecords() const -> std::vector<ConstMaterialHandle>;
 
-        for (const auto& Entry : m_MeshCache) {
-            const auto& Mesh = Entry.second;
-            if (!Mesh)
-                continue;
-
-            for (const auto& Material : Mesh->Materials) {
-                if (Material)
-                    Result.emplace_back(Material);
-            }
-        }
-        return Result;
-    }
-
-    [[nodiscard]] auto GetTextures() const -> const std::vector<RHIRef<RHITexture>>& {
-        return m_Textures;
-    }
+    [[nodiscard]] auto GetTextures() const -> const std::vector<RHIRef<RHITexture>>&;
 
   private:
     std::vector<RHIRef<RHITexture>> m_Textures  = {};
