@@ -24,7 +24,7 @@ Multi-context — one `GLOSSARY.md` per module context, indexed by the root map:
     ├── Editor/GLOSSARY.md
     ├── Launch/GLOSSARY.md
     ├── RHI/GLOSSARY.md
-    ├── RHI/Vulkan/GLOSSARY.md
+    ├── RHIVulkan/GLOSSARY.md
     ├── Shader/GLOSSARY.md
     ├── ShaderCompiler/GLOSSARY.md
     ├── Material/GLOSSARY.md
