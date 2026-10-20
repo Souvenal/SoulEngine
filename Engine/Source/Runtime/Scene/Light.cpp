@@ -9,6 +9,23 @@ import :Light;
 
 namespace SoulEngine {
 
+using namespace entt::literals;
+
+struct LightComponentMetaRegistration {
+    LightComponentMetaRegistration() {
+        entt::meta_factory<LightComponent>{"light"_hs}
+            .data<&LightComponent::SetType, &LightComponent::GetType>("type"_hs)
+            .data<&LightComponent::ColorR>("color_r"_hs)
+            .data<&LightComponent::ColorG>("color_g"_hs)
+            .data<&LightComponent::ColorB>("color_b"_hs)
+            .data<&LightComponent::Intensity>("intensity"_hs)
+            .data<&LightComponent::RangeMeters>("range_meters"_hs)
+            .func<&EmplaceComponent<LightComponent>>("emplace"_hs);
+    }
+};
+
+LightComponentMetaRegistration g_LightComponentMetaRegistration = {};
+
 auto LightSystem::OnUpdate(Float32 DeltaTime) -> void {
     // LightSystem doesn't need per-frame updates currently
 }

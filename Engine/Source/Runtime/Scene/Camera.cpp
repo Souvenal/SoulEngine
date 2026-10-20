@@ -9,6 +9,21 @@ import :Camera;
 
 namespace SoulEngine {
 
+using namespace entt::literals;
+
+struct CameraComponentMetaRegistration {
+    CameraComponentMetaRegistration() {
+        entt::meta_factory<CameraComponent>{"camera"_hs}
+            .data<&CameraComponent::FOV>("fov_degrees"_hs)
+            .data<&CameraComponent::NearPlane>("near_plane"_hs)
+            .data<&CameraComponent::FarPlane>("far_plane"_hs)
+            .data<&CameraComponent::ExposureEV100>("exposure_ev100"_hs)
+            .func<&EmplaceComponent<CameraComponent>>("emplace"_hs);
+    }
+};
+
+CameraComponentMetaRegistration g_CameraComponentMetaRegistration = {};
+
 auto CameraSystem::OnUpdate(Float32 DeltaTime) -> void {
     m_Registry.ctx().get<entt::dispatcher>().update<CameraResizeEvent>();
 }

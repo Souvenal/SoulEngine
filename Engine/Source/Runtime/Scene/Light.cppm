@@ -99,31 +99,3 @@ export class LightSystem : public ISystem {
 };
 
 } // namespace SoulEngine
-
-namespace SoulEngine {
-
-// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
-// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
-// startup.
-namespace MetaRegistration {
-
-using namespace entt::literals;
-
-struct LightComponentMetaRegistration {
-    LightComponentMetaRegistration() {
-        entt::meta_factory<LightComponent>{"light"_hs}
-            .data<&LightComponent::SetType, &LightComponent::GetType>("type"_hs)
-            .data<&LightComponent::ColorR>("color_r"_hs)
-            .data<&LightComponent::ColorG>("color_g"_hs)
-            .data<&LightComponent::ColorB>("color_b"_hs)
-            .data<&LightComponent::Intensity>("intensity"_hs)
-            .data<&LightComponent::RangeMeters>("range_meters"_hs)
-            .func<&EmplaceComponent<LightComponent>>("emplace"_hs);
-    }
-};
-
-LightComponentMetaRegistration g_LightComponentMetaRegistration = {};
-
-} // namespace MetaRegistration
-
-} // namespace SoulEngine

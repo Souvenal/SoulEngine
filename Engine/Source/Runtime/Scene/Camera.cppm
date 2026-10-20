@@ -93,29 +93,3 @@ export class CameraSystem : public ISystem {
 };
 
 } // namespace SoulEngine
-
-namespace SoulEngine {
-
-// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
-// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
-// startup.
-namespace MetaRegistration {
-
-using namespace entt::literals;
-
-struct CameraComponentMetaRegistration {
-    CameraComponentMetaRegistration() {
-        entt::meta_factory<CameraComponent>{"camera"_hs}
-            .data<&CameraComponent::FOV>("fov_degrees"_hs)
-            .data<&CameraComponent::NearPlane>("near_plane"_hs)
-            .data<&CameraComponent::FarPlane>("far_plane"_hs)
-            .data<&CameraComponent::ExposureEV100>("exposure_ev100"_hs)
-            .func<&EmplaceComponent<CameraComponent>>("emplace"_hs);
-    }
-};
-
-CameraComponentMetaRegistration g_CameraComponentMetaRegistration = {};
-
-} // namespace MetaRegistration
-
-} // namespace SoulEngine
