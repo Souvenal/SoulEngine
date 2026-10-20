@@ -1,5 +1,5 @@
 target("ShaderCompiler")
-    set_kind("static")
+    set_kind("moduleonly")
     set_policy("build.c++.modules", true)
 
     -- c++ module bmi is needed by downstream target

@@ -1,4 +1,4 @@
-/// @file   SlangCompiler/SlangCompiler.cpp
+/// @file   SlangCompiler/SlangBackend.cpp
 /// @brief  Slang compiler backend implementation.
 
 module;
@@ -7,8 +7,9 @@ module;
 #include <slang.h>
 #include <slang-com-ptr.h>
 
-module Slang;
+module Slang:Backend.impl;
 
+import :Backend;
 import magic_enum;
 import :Types;
 import :Utils;
