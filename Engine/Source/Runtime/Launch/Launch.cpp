@@ -7,7 +7,7 @@ module;
 #include <entt/entt.hpp>
 #include <imgui_threaded_rendering.h>
 
-module Launch:Implementation;
+module Launch:Implementation.impl;
 
 import Launch;
 import Core;
@@ -25,10 +25,7 @@ import EditorTypes;
 
 namespace SoulEngine {
 
-// Boot-time CVars owned by the launch sequence. CVar registrations deliberately use module linkage (plain
-// non-exported declarations), never an anonymous namespace: internal-linkage variables referenced from
-// exported inline code are copied into importing TUs and their initializers run twice (duplicate
-// registration).
+// Boot-time Launch CVars register during module initialization and configure startup.
 CVar<String> CVarApplicationName{"Application.Name", "Test", "Application opened at startup"};
 CVar<String> CVarRenderRHI{"Render.RHI", "Vulkan", "RHI backend created at startup"};
 
