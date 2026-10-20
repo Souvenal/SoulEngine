@@ -14,17 +14,6 @@ import std;
 
 namespace SoulEngine {
 
-// Stage mapping
-// The prologue derives only the stage; the backend derives the native access mask and the image layout from
-// the view's (Usage, Access) at emission. The declared direction translates faithfully: a shader that
-// read-modify-writes (atomic append, counters) declares Read|Write on the view. Initial mapping is coarse:
-// shader accesses in graphics passes map to AllGraphics; Transfer/Compute/Indirect/Attachment kinds map
-// precisely. Refining precision is a table-data change, never a schema change.
-
-} // namespace SoulEngine
-
-namespace SoulEngine {
-
 /// @brief Map one pass's declared accesses into its prologue: the complete,
 /// per-resource-deduplicated set of dst-only state requirements.
 ///

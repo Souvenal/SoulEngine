@@ -15,10 +15,6 @@ using RGTexturePoolKey = std::tuple<Uint32, Uint32, Uint32, Uint32>;
 /// @brief Lift the bucket key from a texture descriptor.
 [[nodiscard]] auto RGTexturePoolKeyOf(const RHITextureDesc& Desc) -> RGTexturePoolKey;
 
-} // namespace SoulEngine
-
-namespace SoulEngine {
-
 /// @brief Idle frames after which a free pooled texture is evicted.
 export inline constexpr Uint32 kRGEvictIdleFrames = 10;
 

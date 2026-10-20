@@ -15,10 +15,10 @@ import std;
 import Shader;
 import magic_enum;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Runtime state of one registered pipeline key (facing the renderer / Compile).
-enum class RGPipelineState : Uint8 {
+export enum class RGPipelineState : Uint8 {
     Unknown = 0, ///< Not registered.
     Pending,     ///< Registered but not started, or async started and not yet Ready.
     Ready,
@@ -26,7 +26,7 @@ enum class RGPipelineState : Uint8 {
 };
 
 /// @brief Async graphics pipeline request descriptor (moved from Resource:Types).
-struct GraphicsPipelineRequest {
+export struct GraphicsPipelineRequest {
     ShaderEntry              VertEntry         = {};
     ShaderEntry              FragEntry         = {};
     RHIVertexInputLayoutDesc VertexInputLayout = {};
@@ -39,7 +39,7 @@ struct GraphicsPipelineRequest {
 };
 
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
-struct ComputePipelineRequest {
+export struct ComputePipelineRequest {
     ShaderEntry                            ComputeEntry            = {};
     /// @brief Specialization constant values fixed at pipeline creation.
     ///
@@ -50,16 +50,12 @@ struct ComputePipelineRequest {
 
 /// @brief Async ray-tracing pipeline request descriptor (moved from
 /// Resource:Types; the Resource pipeline workflow is retired).
-struct RayTracingPipelineRequest {
+export struct RayTracingPipelineRequest {
     ShaderEntry                                RayGeneration     = {};
     std::vector<ShaderEntry>                   MissEntries       = {};
     std::vector<RayTracingHitGroupCompileDesc> HitGroups         = {};
     Uint32                                     MaxRecursionDepth = 1;
 };
-
-} // namespace SoulEngine
-
-namespace SoulEngine {
 
 /// @brief Idempotence predicate for Register: same key + same descriptor is a no-op.
 ///
@@ -153,15 +149,11 @@ auto PublishPipelineOnRhiThread(RHIRef<PipelineT>           PipelineRef,
         PipelineRef.MarkFailed(Publish.error());
 }
 
-} // namespace SoulEngine
-
-export namespace SoulEngine {
-
 /// @brief Registry key for a typed pipeline pass: the entt type hash.
 ///
 /// The graph (type-erased after AddPass) and the renderer's typed Register<TPass> agree on the key without
 /// sharing a string convention.
-template <typename TPass>
+export template <typename TPass>
 [[nodiscard]] inline auto PipelineKeyOf() -> String {
     return Format("{}", entt::type_hash<TPass>::value());
 }
@@ -175,7 +167,7 @@ template <typename TPass>
 /// Threading: Register may run on the main thread (OnAttach, including the re-OnAttach path from a runtime
 /// SelectRenderer switch) and on the Render thread; EnsureRequestStarted / Get* run on the Render thread; the
 /// internal map is mutex-protected. Async completion writes RHIRefPayload atomics.
-class PipelineRegistry final : public Singleton<PipelineRegistry> {
+export class PipelineRegistry final : public Singleton<PipelineRegistry> {
     friend class Singleton<PipelineRegistry>;
 
     // Lifecycle (Launch calls these explicitly)

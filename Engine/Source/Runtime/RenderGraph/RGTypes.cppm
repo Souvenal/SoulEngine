@@ -7,16 +7,16 @@ import RHI;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
-inline constexpr Uint32 kRGInvalidIndex = 0xFFFFFFFF;
+export inline constexpr Uint32 kRGInvalidIndex = 0xFFFFFFFF;
 
 /// @brief RenderGraph texture identity: a passive index into the graph's resource table.
 ///
 /// Copying is cheap and the default value is invalid. The graph owns the resource through its table; the
 /// identity only indexes it. Lifetime flavor (transient belt, pooled target, readback import) lives on the
 /// resource entry, so identities of every flavor share this one shape.
-struct RGTexture {
+export struct RGTexture {
     Uint32 Index = kRGInvalidIndex;
 
     [[nodiscard]] auto IsValid() const noexcept -> bool {
@@ -28,7 +28,7 @@ struct RGTexture {
 /// @brief RenderGraph buffer identity: a passive index into the graph's resource table.
 ///
 /// Same contract as RGTexture; the two kinds mirror the RHI resource convergence.
-struct RGBuffer {
+export struct RGBuffer {
     Uint32 Index = kRGInvalidIndex;
 
     [[nodiscard]] auto IsValid() const noexcept -> bool {
@@ -41,7 +41,7 @@ struct RGBuffer {
 ///
 /// The graph's erased machinery manipulates views through this one non-template type. Pass Parameter fields
 /// use the RGTextureView template below; every specialization derives from this record.
-struct RGTextureViewData {
+export struct RGTextureViewData {
     RGTexture           Texture  = {};
     RHITextureUsage     Usage    = RHITextureUsage::None;
     RHISubresourceRange Range    = {};
@@ -62,7 +62,7 @@ struct RGTextureViewData {
 /// Target}`); assigning a whole record to a field is ill-formed, so the declared role cannot be reset. At
 /// Compile the graph fills `.Resolved` with the realized (or imported) resource; pass execution builds the
 /// ready RHI view from the declared usage, range, and access on demand via ResolvedView().
-template <RHITextureUsage U, RHIAccess A>
+export template <RHITextureUsage U, RHIAccess A>
 struct RGTextureView : RGTextureViewData {
     // Base members take no declaration-site defaults from here, so the declared role lands in the ctor body.
     RGTextureView() {
@@ -78,7 +78,7 @@ struct RGTextureView : RGTextureViewData {
 ///
 /// Same contract as RGTextureViewData. Pass Parameter fields use the RGBufferView template below; every
 /// specialization derives from this record.
-struct RGBufferViewData {
+export struct RGBufferViewData {
     RGBuffer          Buffer   = {};
     RHIBufferUsage    Usage    = RHIBufferUsage::Unknown;
     RHIAccess         Access   = {};
@@ -94,7 +94,7 @@ struct RGBufferViewData {
 /// site assigns the resource identity only.
 ///
 /// Same contract as RGTextureView.
-template <RHIBufferUsage U, RHIAccess A>
+export template <RHIBufferUsage U, RHIAccess A>
 struct RGBufferView : RGBufferViewData {
     // Base members take no declaration-site defaults from here, so the declared role lands in the ctor body.
     RGBufferView() {
@@ -112,7 +112,7 @@ struct RGBufferView : RGBufferViewData {
 /// behind the IRHIPass base. Accesses ride the two view pointer lists (one per resource kind); direction
 /// lives on each view's Access field, so consumers (ordering, pruning, usage check, prologue) walk exactly
 /// the lists they need.
-struct RGPassNode {
+export struct RGPassNode {
     String Name = {};
 
     // Pass-type static markers, read from TPass at AddPass.
@@ -148,7 +148,7 @@ struct RGPassNode {
 ///
 /// `Desc` and `OwnedInitialData` carry graph-created state that realize consumes at Compile; imported entries
 /// hold `Resolved` alone.
-struct RGBufferProp {
+export struct RGBufferProp {
     RHIBufferDesc          Desc             = {}; ///< creation desc; graph-created entries only
     /// @brief Graph-owned copy of CreateBuffer's InitialData.
     ///
@@ -162,7 +162,7 @@ struct RGBufferProp {
 ///
 /// `Desc` is the creation declaration a graph-created texture was registered with; the pool keys reuse and
 /// return on it verbatim. Imported entries hold `Resolved` alone.
-struct RGTextureProp {
+export struct RGTextureProp {
     RHITextureDesc     Desc     = {};
     /// @brief True once Compile acquired the texture from the pool.
     ///
@@ -177,7 +177,7 @@ struct RGTextureProp {
 /// Either imported (the caller owns the RHI object; the graph only reads the ref) or graph-created (realized
 /// lazily during Compile, only if a surviving pass touches it). Kind lives in `Prop`; the constructors are
 /// the only way in, so an entry is born complete.
-struct RGResourceEntry {
+export struct RGResourceEntry {
     // Imported entries hold the ref alone; the owner carries everything else.
     RGResourceEntry(String Name, RHIRef<RHITexture> Imported)
         : Name(std::move(Name)), IsImported(true), Prop(RGTextureProp{.Resolved = std::move(Imported)}) {}
