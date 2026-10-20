@@ -2,7 +2,7 @@ module;
 
 #include <imgui_threaded_rendering.h>
 
-export module Renderer:IRenderer;
+export module Renderer:Interface;
 
 import Core;
 import EditorTypes;
@@ -12,7 +12,7 @@ import TaskGraph;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Abstract base class for all renderers.
 ///
@@ -21,7 +21,7 @@ export namespace SoulEngine {
 ///
 /// Deriving from IRenderer lets you define different pipeline types (RasterRenderer, RayTracingRenderer,
 /// etc.) while sharing the per-frame execution loop and pass management.
-class IRenderer {
+export class IRenderer {
   public:
     IRenderer() = default;
 
@@ -49,6 +49,6 @@ class IRenderer {
 ///
 /// Each renderer implementation auto-registers from its own module partition, so adding a renderer does not
 /// require changes to application code.
-using RendererFactory = Factory<IRenderer>;
+export using RendererFactory = Factory<IRenderer>;
 
 } // namespace SoulEngine

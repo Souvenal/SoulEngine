@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:RasterPasses.DeferredLightingPass;
+export module Renderer:Raster.DeferredLightingPass;
 
 import Core;
 import RHI;
@@ -11,13 +11,13 @@ import RenderGraph;
 import std;
 import ShaderCompiler;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Deferred lighting over the GBuffer.
 ///
 /// The class IS the graph's TPass. SceneColor is a plain color write; SelectionOutline may overblend it (load
 /// RMW) and the explicit BlitToSwapchainPass presents it.
-class DeferredLightingPass final : public IRHIGraphicsPass {
+export class DeferredLightingPass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "DeferredLightingPass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:RasterPasses.CullingPass;
+export module Renderer:Raster.CullingPass;
 
 import Core;
 import RHI;
@@ -12,9 +12,9 @@ import Scene;
 import std;
 import ShaderCompiler;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
-struct CullingPushConstants {
+export struct CullingPushConstants {
     Uint32 InstanceCount = 0;
     Uint32 CommandCount  = 0;
 };
@@ -23,7 +23,7 @@ struct CullingPushConstants {
 ///
 /// Future: frustum-culls instances into ViewInstanceBuffer via atomic append and regenerates
 /// ViewIndirectBuffer grouped by geometryID on the GPU.
-class CullingPass final : public IRHIComputePass {
+export class CullingPass final : public IRHIComputePass {
   public:
     static constexpr StringView Name = "CullingPass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {
