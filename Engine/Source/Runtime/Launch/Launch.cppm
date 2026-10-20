@@ -19,7 +19,7 @@ import EditorTypes;
 namespace SoulEngine {
 
 /// @brief Per-frame slot state in the triple-buffered Game→Render→RHI pipeline.
-export enum class SlotState {
+enum class SlotState {
     Unknown = 0,
     Empty,
     GameReady,
@@ -27,7 +27,7 @@ export enum class SlotState {
 };
 
 /// @brief One element of the triple buffer.
-export struct FrameSlot {
+struct FrameSlot {
     std::mutex               Mutex;
     std::condition_variable  Cv;
     SlotState                State = SlotState::Empty;
@@ -44,17 +44,17 @@ export struct FrameSlot {
     bool                     RhiConsumedRenderPacket = true;
 };
 
-export constexpr Uint32 kSlotCount = 3;
+constexpr Uint32 kSlotCount = 3;
 
 // Tracy identifies instrumented strings by pointer address, not content (see Tracy manual, "Unique
 // pointers"): identical literals are not guaranteed to pool to one address, and a mismatched pointer silently
 // splits frame sources. Always pass these named constants instead of fresh literals.
-export inline constexpr const char* kGameThreadName   = "GameThread";
-export inline constexpr const char* kRenderThreadName = "RenderThread";
-export inline constexpr const char* kRHIThreadName    = "RHIThread";
-export inline constexpr const char* kGameFrameName    = "GameFrame";
-export inline constexpr const char* kRenderFrameName  = "RenderFrame";
-export inline constexpr const char* kRHIFrameName     = "RHIFrame";
+inline constexpr const char* kGameThreadName   = "GameThread";
+inline constexpr const char* kRenderThreadName = "RenderThread";
+inline constexpr const char* kRHIThreadName    = "RHIThread";
+inline constexpr const char* kGameFrameName    = "GameFrame";
+inline constexpr const char* kRenderFrameName  = "RenderFrame";
+inline constexpr const char* kRHIFrameName     = "RHIFrame";
 
 export class EngineLoop {
   public:
