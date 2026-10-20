@@ -730,7 +730,10 @@ TEST(RenderGraphPool, TickEvictsIdleEntries) {
         ASSERT_TRUE(List);
     }
     ASSERT_EQ(RenderGraph::Get().GetPool().GetFreeEntryCount(), 1u);
-    for (Uint32 I = 0; I < kRGEvictIdleFrames; ++I)
+    // kRGEvictIdleFrames is module-internal (RenderGraph:TexturePool is not re-exported); this mirror must
+    // match RGTexturePool.cppm.
+    constexpr Uint32 EvictIdleFrames = 10;
+    for (Uint32 I = 0; I < EvictIdleFrames; ++I)
         RenderGraph::Get().Tick();
     EXPECT_EQ(RenderGraph::Get().GetPool().GetFreeEntryCount(), 0u);
     // After eviction the same desc is a miss again.

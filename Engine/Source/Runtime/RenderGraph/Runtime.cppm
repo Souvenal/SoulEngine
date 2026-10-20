@@ -6,7 +6,7 @@ import Core;
 import :PipelineRegistry;
 import :TexturePool;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Module-level RenderGraph singleton.
 ///
@@ -15,35 +15,24 @@ export namespace SoulEngine {
 ///
 /// Lifecycle is owned by Launch: Init() before SelectRenderer, Tick() once per frame in RenderLoop before
 /// IRenderer::Render(), Shutdown() before RHIRenderDevice::Destroy().
-class RenderGraph final : public Singleton<RenderGraph> {
+export class RenderGraph final : public Singleton<RenderGraph> {
     friend class Singleton<RenderGraph>;
 
     // Lifecycle (Launch calls these explicitly)
   public:
     /// Clear and reset cross-frame state (idempotent; call before SelectRenderer).
-    auto Init() -> void {
-        PipelineRegistry::Get().Init();
-        m_Pool.Clear();
-        m_Pool.Activate();
-    }
+    auto Init() -> void;
 
     /// Per-frame pool maintenance (LRU eviction). Call in RenderLoop before IRenderer::Render().
-    auto Tick() -> void {
-        m_Pool.Tick();
-    }
+    auto Tick() -> void;
 
     /// @brief Release the pool and all cross-frame pipeline refs.
     ///
     /// Must run before RHIRenderDevice::Destroy() — payload destruction needs a live queue.
-    auto Shutdown() -> void {
-        m_Pool.Shutdown();
-        PipelineRegistry::Get().Clear();
-    }
+    auto Shutdown() -> void;
 
     /// @brief The transient texture pool builders acquire from.
-    [[nodiscard]] auto GetPool() -> RGTexturePool& {
-        return m_Pool;
-    }
+    [[nodiscard]] auto GetPool() -> RGTexturePool&;
 
   private:
     RenderGraph() = default;
