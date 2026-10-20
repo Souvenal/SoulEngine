@@ -1,7 +1,3 @@
-// Required while EngineLoop's ownership chain reaches Scene's exposed entt::registry. Constructing EngineLoop
-// can instantiate that lifetime chain in this translation unit.
-#include <entt/entt.hpp>
-
 import Core;
 import Launch;
 import std;

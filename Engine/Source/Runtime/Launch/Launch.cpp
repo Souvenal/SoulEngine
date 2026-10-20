@@ -25,11 +25,72 @@ import EditorTypes;
 
 namespace SoulEngine {
 
+enum class SlotState {
+    Unknown = 0,
+    Empty,
+    GameReady,
+    RenderReady,
+};
+
+struct FrameSlot {
+    std::mutex               Mutex;
+    std::condition_variable  Cv;
+    SlotState                State = SlotState::Empty;
+    GameSnapshot             GameData;
+    EditorSnapshot           EditorData;
+    SPtr<IRenderer>          Renderer = nullptr;
+    RenderResult             RenderPacket;
+    UPtr<ImDrawDataSnapshot> ImGuiSnapshot           = nullptr;
+    // Zero means this slot has not submitted GPU work yet, so its first RenderPacket does not need a timeline
+    // wait before replacement.
+    RHIFrameCompletion       Completion              = {};
+    // RHIThread flips this false only while it may still read RenderPacket. RenderThread must observe true
+    // before replacing that packet.
+    bool                     RhiConsumedRenderPacket = true;
+};
+
+constexpr Uint32 kSlotCount = 3;
+
+// Tracy identifies instrumented strings by pointer address, not content (see Tracy manual, "Unique
+// pointers"): identical literals are not guaranteed to pool to one address, and a mismatched pointer silently
+// splits frame sources. Always pass these named constants instead of fresh literals.
+inline constexpr const char* kGameThreadName   = "GameThread";
+inline constexpr const char* kRenderThreadName = "RenderThread";
+inline constexpr const char* kRHIThreadName    = "RHIThread";
+inline constexpr const char* kGameFrameName    = "GameFrame";
+inline constexpr const char* kRenderFrameName  = "RenderFrame";
+inline constexpr const char* kRHIFrameName     = "RHIFrame";
+
+struct EngineLoop::Impl {
+    [[nodiscard]] auto PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, ErrorMessage>;
+    [[nodiscard]] auto Init() -> std::expected<void, ErrorMessage>;
+    auto               Run() -> void;
+    auto               Shutdown() -> void;
+    auto               SignalFatalError() -> void;
+    auto               GameLoop() -> void;
+    auto               RenderLoop(std::stop_token Stop) -> void;
+    auto               RHILoop(std::stop_token Stop) -> void;
+
+    Editor                                m_Editor;
+    UPtr<IWindowSystem>                   m_WindowSystem;
+    std::chrono::steady_clock::time_point m_LastTickTime;
+
+    std::array<FrameSlot, kSlotCount> m_Slots           = {};
+    Uint32                            m_GameSlotIndex   = 0;
+    Uint32                            m_RenderSlotIndex = 0;
+    Uint32                            m_RHISlotIndex    = 0;
+
+    std::atomic<bool> m_FatalError = false;
+
+    std::jthread m_RenderThread;
+    std::jthread m_RHIThread;
+};
+
 // Boot-time Launch CVars register during module initialization and configure startup.
 CVar<String> CVarApplicationName{"Application.Name", "Test", "Application opened at startup"};
 CVar<String> CVarRenderRHI{"Render.RHI", "Vulkan", "RHI backend created at startup"};
 
-auto EngineLoop::PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, ErrorMessage> {
+auto EngineLoop::Impl::PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, ErrorMessage> {
     // Directory layout:
     //   Engine/
     //     Configs/
@@ -73,7 +134,7 @@ auto EngineLoop::PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, Er
     return {};
 }
 
-auto EngineLoop::Init() -> std::expected<void, ErrorMessage> {
+auto EngineLoop::Impl::Init() -> std::expected<void, ErrorMessage> {
     LogInfo("Soul Engine Initializing...");
 
     m_Editor.Initialize();
@@ -126,7 +187,7 @@ auto EngineLoop::Init() -> std::expected<void, ErrorMessage> {
     return {};
 }
 
-auto EngineLoop::Run() -> void {
+auto EngineLoop::Impl::Run() -> void {
     LogInfo("Starting engine run loop...");
 
     m_LastTickTime = std::chrono::steady_clock::now();
@@ -137,7 +198,7 @@ auto EngineLoop::Run() -> void {
     Shutdown();
 }
 
-auto EngineLoop::Shutdown() -> void {
+auto EngineLoop::Impl::Shutdown() -> void {
     LogInfo("Shutting down...");
 
     // Request stop BEFORE notifying CVs — otherwise threads wake, check stop_requested() == false, go
@@ -189,14 +250,14 @@ auto EngineLoop::Shutdown() -> void {
     m_Editor.Shutdown();
 }
 
-auto EngineLoop::SignalFatalError() -> void {
+auto EngineLoop::Impl::SignalFatalError() -> void {
     m_FatalError.store(true, std::memory_order_release);
     TaskGraph::Get().Shutdown();
     for (auto& Slot : m_Slots)
         Slot.Cv.notify_all();
 }
 
-auto EngineLoop::GameLoop() -> void {
+auto EngineLoop::Impl::GameLoop() -> void {
     tracy::SetThreadName(kGameThreadName);
     SetLogThreadRole(LogThreadRole::Game);
     while (!m_FatalError.load(std::memory_order_acquire)) {
@@ -264,7 +325,7 @@ auto EngineLoop::GameLoop() -> void {
     }
 }
 
-auto EngineLoop::RenderLoop(std::stop_token Stop) -> void {
+auto EngineLoop::Impl::RenderLoop(std::stop_token Stop) -> void {
     tracy::SetThreadName(kRenderThreadName);
     SetLogThreadRole(LogThreadRole::Render);
     while (!Stop.stop_requested()) {
@@ -352,7 +413,7 @@ auto EngineLoop::RenderLoop(std::stop_token Stop) -> void {
     }
 }
 
-auto EngineLoop::RHILoop(std::stop_token Stop) -> void {
+auto EngineLoop::Impl::RHILoop(std::stop_token Stop) -> void {
     tracy::SetThreadName(kRHIThreadName);
     SetLogThreadRole(LogThreadRole::RHI);
 
@@ -437,6 +498,26 @@ auto EngineLoop::RHILoop(std::stop_token Stop) -> void {
         LogError("RHI WaitIdle fatal error:\n{}", R.error().ToString());
         SignalFatalError();
     }
+}
+
+EngineLoop::EngineLoop() : m_Impl(std::make_unique<Impl>()) {}
+
+EngineLoop::~EngineLoop() = default;
+
+[[nodiscard]] auto EngineLoop::PreInit(std::span<char*> CmdLineArgs) -> std::expected<void, ErrorMessage> {
+    return m_Impl->PreInit(CmdLineArgs);
+}
+
+[[nodiscard]] auto EngineLoop::Init() -> std::expected<void, ErrorMessage> {
+    return m_Impl->Init();
+}
+
+auto EngineLoop::Run() -> void {
+    m_Impl->Run();
+}
+
+auto EngineLoop::Shutdown() -> void {
+    m_Impl->Shutdown();
 }
 
 } // namespace SoulEngine
