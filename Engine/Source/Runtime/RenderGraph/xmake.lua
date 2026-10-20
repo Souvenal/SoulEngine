@@ -1,5 +1,5 @@
 target("RenderGraph")
-    set_kind("static")
+    set_kind("moduleonly")
     set_policy("build.c++.modules", true)
 
     add_deps("Core", "RHI", "ShaderCompiler", "TaskGraph")

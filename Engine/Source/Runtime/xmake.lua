@@ -114,6 +114,7 @@ includes("Platform")
 includes("WindowSystem")
 includes("Shader")
 includes("RHI")
+includes("RHIVulkan")
 includes("ShaderCompiler")
 includes("Material")
 includes("Scene")
@@ -132,49 +133,6 @@ target("SoulEngine")
 
     add_deps("Core", "Launch")
     add_files("main.cpp")
-
-    -- RHIVulkan self-registers: the "Vulkan" backend registrar and the CVar globals are module-linkage
-    -- objects whose only effect is a dynamic initializer, and no symbol outside module Vulkan references
-    -- them. As a static archive the linker would drop every unreferenced member and the registrations
-    -- would never run, so the final binary anchors the module initializer __ZGIW6Vulkan (emitted by clang
-    -- for the Vulkan primary module interface): -u marks it undefined, which pulls Vulkan.cppm.o and
-    -- cascade-pulls the rest of the archive through real symbol references. Apple ld cannot use
-    -- -force_load here: it dedups libraries by path, and the -lRHIVulkan inherited from the dep chain
-    -- (Renderer -> RHIVulkan) is processed first with plain archive semantics, silently voiding a later
-    -- -force_load of the same file. The explicit dep also makes target:dep("RHIVulkan") resolve here.
-    add_deps("RHIVulkan")
-    on_config(function(target)
-        local vulkan = target:dep("RHIVulkan")
-        if not vulkan then
-            return
-        end
-        if target:is_plat("macosx") then
-            target:add("ldflags", "-Wl,-u,__ZGIW6Vulkan", {force = true})
-        elseif target:is_plat("windows") then
-            -- Driver style decides the flag form (same split as the gmock_main force-link in
-            -- test_module): link.exe / clang-cl take /WHOLEARCHIVE directly; the GNU-style clang++
-            -- driver needs -Wl, forwarding. MSVC link.exe applies /WHOLEARCHIVE even when the .lib is
-            -- also referenced normally, so no anchor symbol is needed there.
-            local archive    = vulkan:targetfile()
-            local gnu_driver = false
-            for _, toolchain_inst in pairs(target:toolchains()) do
-                local name = toolchain_inst:name()
-                if name == "clang" or name == "gcc" then
-                    gnu_driver = true
-                end
-            end
-            if gnu_driver then
-                target:add("ldflags", "-Wl,/WHOLEARCHIVE:" .. archive, {force = true})
-            else
-                target:add("ldflags", "/WHOLEARCHIVE:" .. archive, {force = true})
-            end
-        else
-            -- GNU ld processes an explicitly named archive independently of the -l mention, so
-            -- whole-archive by path works without an anchor symbol.
-            target:add("ldflags", "-Wl,--whole-archive," .. vulkan:targetfile() .. ",-Wl,--no-whole-archive",
-                       {force = true})
-        end
-    end)
 
     -- ShaderCompiler is a moduleonly target; its shared-library packages
     -- (slang) are not linked through an archive, so xmake does not

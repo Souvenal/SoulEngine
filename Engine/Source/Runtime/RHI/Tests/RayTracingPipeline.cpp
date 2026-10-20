@@ -6,7 +6,7 @@
 import RHI;
 import Shader;
 import ShaderCompiler;
-import Vulkan;
+import RHIVulkan;
 import WindowSystem;
 import std;
 import Core;
