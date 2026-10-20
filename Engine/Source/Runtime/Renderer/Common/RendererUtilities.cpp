@@ -1,5 +1,6 @@
-module Renderer:Common.Utilities;
+module Renderer:Common.Utilities.impl;
 
+import :Common.Utilities;
 import Core;
 import Material;
 import RHI;

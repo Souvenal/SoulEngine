@@ -1,5 +1,5 @@
 target("Renderer")
-    set_kind("static")
+    set_kind("moduleonly")
     set_policy("build.c++.modules", true)
 
     add_packages("magic_enum", {public = true})

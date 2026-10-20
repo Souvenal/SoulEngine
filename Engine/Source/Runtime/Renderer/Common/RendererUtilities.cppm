@@ -16,7 +16,7 @@ import std;
 namespace SoulEngine {
 
 /// @brief Resolve completed global bindless indices and enqueue missing textures for the next RHI frame.
-[[nodiscard]] export auto ResolveBindlessTextureIndices(std::span<const RHIRef<RHITexture>> Textures)
+export [[nodiscard]] auto ResolveBindlessTextureIndices(std::span<const RHIRef<RHITexture>> Textures)
     -> std::expected<std::unordered_map<Uint64, Uint32>, ErrorMessage>;
 
 /// @brief Shared frame constant-buffer ABI used by every renderer.
@@ -54,7 +54,7 @@ static_assert(offsetof(RendererViewConstants, CameraPosition) == 128);
 static_assert(offsetof(RendererViewConstants, ViewportSize) == 144);
 
 /// @brief Build the shared transient GPU light table from scene records.
-[[nodiscard]] export auto BuildLightGpuData(std::span<const LightRecord> Lights) -> std::vector<LightRecord::GpuData>;
+export [[nodiscard]] auto BuildLightGpuData(std::span<const LightRecord> Lights) -> std::vector<LightRecord::GpuData>;
 
 /// @brief Renderer-side authority for GeometryRecord GPU residency.
 ///
