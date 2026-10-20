@@ -1,0 +1,140 @@
+module;
+
+#include <entt/entt.hpp>
+
+module Material:YamlLoader.impl;
+
+import :YamlLoader;
+import :Types;
+import :Texture;
+import Core;
+import std;
+
+namespace SoulEngine {
+
+[[nodiscard]] auto IsRelativeAssetPath(StringView Value) -> bool {
+    const Path Asset{String(Value)};
+    if (Value.empty() || Asset.is_absolute() || Asset == Path{"."} || Asset.lexically_normal() != Asset)
+        return false;
+    for (const auto& Part : Asset) {
+        if (Part == "..")
+            return false;
+    }
+    return true;
+}
+
+auto MaterialYamlLoader::operator()(const Path& MaterialPath, const Path& AssetRoot) -> result_type {
+    auto Document = YamlDocument::Create(MaterialPath);
+    if (!Document) {
+        LogWarning("MaterialYamlLoader: {}", Document.error().ToString());
+        return nullptr;
+    }
+    const auto& Root     = Document->Root();
+    const auto  Material = Root["material"];
+    if (!Material || !Material->get().IsMap()) {
+        LogWarning("MaterialYamlLoader: '{}' has no material mapping", MaterialPath.string());
+        return nullptr;
+    }
+
+    MaterialYamlRecord Value    = {};
+    auto               Record   = entt::forward_as_meta(Value);
+    const auto         MetaType = entt::resolve<MaterialYamlRecord>();
+    for (const auto& [FieldName, FieldNodePtr] : Material->get().Items()) {
+        const auto& FieldNode = *FieldNodePtr;
+        const auto  Field     = MetaType.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
+        if (!Field) {
+            LogWarning("MaterialYamlLoader: unknown field '{}' at {} in '{}'",
+                       FieldName,
+                       FieldNode.Location(),
+                       MaterialPath.string());
+            return nullptr;
+        }
+        // Invalid values keep the record's declared default for that field.
+        if (auto Result = AssignYamlValue(Field, Record, FieldNode); !Result)
+            LogWarning("MaterialYamlLoader: field '{}' at {} in '{}': {}",
+                       FieldName,
+                       FieldNode.Location(),
+                       MaterialPath.string(),
+                       Result.error().ToString());
+    }
+
+    // Texture paths must stay relative to the Assets root before resolving.
+    const auto ResolveTexture = [&AssetRoot, &MaterialPath](String& Text) -> void {
+        if (Text.empty())
+            return;
+        if (!IsRelativeAssetPath(Text)) {
+            LogWarning(
+                "MaterialYamlLoader: texture '{}' must be relative to Assets in '{}'", Text, MaterialPath.string());
+            Text.clear();
+            return;
+        }
+        Text = (AssetRoot / Path(Text)).lexically_normal().string();
+    };
+    ResolveTexture(Value.BaseColorTexture);
+    ResolveTexture(Value.NormalTexture);
+    ResolveTexture(Value.MetallicRoughnessTexture);
+    ResolveTexture(Value.MetallicTexture);
+    ResolveTexture(Value.RoughnessTexture);
+    ResolveTexture(Value.OcclusionTexture);
+    ResolveTexture(Value.EmissiveTexture);
+
+    auto Result                       = std::make_shared<MaterialRecord>();
+    Result->Source                    = MaterialSource::Yaml;
+    Result->SourceAsset               = MaterialPath.lexically_normal();
+    Result->Name                      = Value.Name.empty() ? String{"<unnamed>"} : Value.Name;
+    Result->Ambient                   = Value.Ambient;
+    Result->Diffuse                   = Value.Diffuse;
+    Result->Specular                  = Value.Specular;
+    Result->Emissive                  = Value.Emissive;
+    Result->Transparent               = Value.Transparent;
+    Result->Reflective                = Value.Reflective;
+    Result->BaseColorFactor           = Value.BaseColorFactor;
+    Result->MetallicFactor            = Value.MetallicFactor;
+    Result->RoughnessFactor           = Value.RoughnessFactor;
+    Result->SheenColorFactor          = Value.SheenColorFactor;
+    Result->SheenRoughnessFactor      = Value.SheenRoughnessFactor;
+    Result->ClearcoatFactor           = Value.ClearcoatFactor;
+    Result->ClearcoatRoughnessFactor  = Value.ClearcoatRoughnessFactor;
+    Result->TransmissionFactor        = Value.TransmissionFactor;
+    Result->VolumeThicknessFactor     = Value.VolumeThicknessFactor;
+    Result->VolumeAttenuationDistance = Value.VolumeAttenuationDistance;
+    Result->VolumeAttenuationColor    = Value.VolumeAttenuationColor;
+    Result->Opacity                   = Value.Opacity;
+    Result->BumpScaling               = Value.BumpScaling;
+    Result->Shininess                 = Value.Shininess;
+    Result->ShininessStrength         = Value.ShininessStrength;
+    Result->RefractionIndex           = Value.RefractionIndex;
+    Result->Reflectivity              = Value.Reflectivity;
+    Result->EnableWireframe           = Value.EnableWireframe;
+    Result->TwoSided                  = Value.TwoSided;
+    Result->BlendFunction             = Value.BlendFunction;
+    Result->ShadingModel              = Value.ShadingModel;
+    Result->AlphaMode                 = Value.AlphaMode;
+    Result->AlphaCutoff               = Value.AlphaCutoff;
+
+    LoadTexture(*Result, TextureType::BaseColor, Value.BaseColorTexture);
+    LoadTexture(*Result, TextureType::Normals, Value.NormalTexture);
+    if (!Value.MetallicRoughnessTexture.empty()) {
+        LoadTexture(*Result, TextureType::Metalness, Value.MetallicRoughnessTexture);
+        LoadTexture(*Result, TextureType::DiffuseRoughness, Value.MetallicRoughnessTexture);
+    } else {
+        LoadTexture(*Result, TextureType::Metalness, Value.MetallicTexture);
+        LoadTexture(*Result, TextureType::DiffuseRoughness, Value.RoughnessTexture);
+    }
+    LoadTexture(*Result, TextureType::AmbientOcclusion, Value.OcclusionTexture);
+    LoadTexture(*Result, TextureType::Emissive, Value.EmissiveTexture);
+    return Result;
+}
+
+auto MaterialYamlLoader::LoadTexture(MaterialRecord& Material, TextureType Type, const String& Path) -> void {
+    if (Path.empty())
+        return;
+    const auto Id     = entt::hashed_string{Path.data(), Path.size()};
+    auto [It, Loaded] = m_TextureCache.load(Id, SoulEngine::Path(Path));
+    if (It->second)
+        Material.Textures.emplace_back(TextureRecord{.Type = Type, .Texture = It->second});
+    else
+        LogWarning("MaterialYamlLoader: failed to load texture '{}'", Path);
+}
+
+} // namespace SoulEngine
