@@ -25,6 +25,16 @@ import EditorTypes;
 
 namespace SoulEngine {
 
+// Tracy identifies instrumented strings by pointer address, not content (see Tracy manual, "Unique
+// pointers"): identical literals are not guaranteed to pool to one address, and a mismatched pointer silently
+// splits frame sources. Always pass these named constants instead of fresh literals.
+inline constexpr const char* kGameThreadName   = "GameThread";
+inline constexpr const char* kRenderThreadName = "RenderThread";
+inline constexpr const char* kRHIThreadName    = "RHIThread";
+inline constexpr const char* kGameFrameName    = "GameFrame";
+inline constexpr const char* kRenderFrameName  = "RenderFrame";
+inline constexpr const char* kRHIFrameName     = "RHIFrame";
+
 // Boot-time Launch CVars register during module initialization and configure startup.
 CVar<String> CVarApplicationName{"Application.Name", "Test", "Application opened at startup"};
 CVar<String> CVarRenderRHI{"Render.RHI", "Vulkan", "RHI backend created at startup"};
