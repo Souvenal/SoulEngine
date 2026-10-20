@@ -1,10 +1,12 @@
 target("Scene")
     set_kind("moduleonly")
+    set_policy("build.c++.modules", true)
 
     add_packages("hlslpp", "entt", "assimp", "magic_enum", {public = true})
     add_deps("Core", "Material", "RHI", {public = true})
 
-    add_files("*.cppm")
+    add_files("*.cppm", {public = true})
+    add_files("*.cpp")
 
 
 
