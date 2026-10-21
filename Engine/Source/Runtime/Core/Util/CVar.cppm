@@ -2,11 +2,11 @@ module;
 
 #include <toml++/toml.h>
 
-export module Core:Util.CVar;
+export module Core.Util.CVar;
 
-import :Util.Types;
-import :Util.Error;
-import :Util.Singleton;
+import Core.Util.Types;
+import Core.Util.Error;
+import Core.Util.Singleton;
 import std;
 
 /// @file
@@ -114,7 +114,7 @@ consteval auto CVarTypeName() -> StringView {
 }
 
 // Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:Util.CVar's linkage note.
+// Core.Util.CVar's linkage note.
 
 /// @brief Convert a TOML leaf to a CVar value.  Integers undergo a range
 ///        check for Int32; Float32 also accepts TOML integers.

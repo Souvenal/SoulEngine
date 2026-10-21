@@ -1,5 +1,5 @@
 export module Core;
 
-export import :Util;
-export import :ECS;
-export import :ECS.Transform;
+export import Core.Util;
+export import Core.ECS;
+export import Core.ECS.Transform;

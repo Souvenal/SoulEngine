@@ -1,7 +1,8 @@
-export module Core:Util.Paths;
+export module Core.Util.Paths;
 
-import :Util.Types;
-import :Util.Singleton;
+import Core.Util.Types;
+import Core.Util.Singleton;
+import std;
 
 namespace SoulEngine {
 

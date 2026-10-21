@@ -1,6 +1,4 @@
-module Core:Util.AssetManager.impl;
-
-import :Util.AssetManager;
+module Core.Util.AssetManager;
 
 namespace SoulEngine {
 

@@ -10,10 +10,10 @@ module;
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-export module Core:Util.Logging;
+export module Core.Util.Logging;
 
-import :Util.Types;
-import :Util.Singleton;
+import Core.Util.Types;
+import Core.Util.Singleton;
 import std;
 
 import magic_enum;

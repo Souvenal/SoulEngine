@@ -8,11 +8,11 @@ module;
 #include <hlsl++.h>
 #include <yaml.h>
 
-export module Core:Util.Yaml;
+export module Core.Util.Yaml;
 
-export import :Util.Types;
-export import :Util.Error;
-export import :Util.IO;
+export import Core.Util.Types;
+export import Core.Util.Error;
+export import Core.Util.IO;
 import std;
 
 namespace SoulEngine {

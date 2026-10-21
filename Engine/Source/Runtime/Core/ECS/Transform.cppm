@@ -3,10 +3,10 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Core:ECS.Transform;
+export module Core.ECS.Transform;
 
-export import :ECS;
-export import :Util;
+export import Core.ECS;
+export import Core.Util;
 
 import std;
 

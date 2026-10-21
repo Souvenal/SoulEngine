@@ -2,11 +2,11 @@
 /// @brief  File-system IO utilities.
 module;
 
-export module Core:Util.IO;
+export module Core.Util.IO;
 
 import std;
-export import :Util.Types;
-export import :Util.Error;
+export import Core.Util.Types;
+export import Core.Util.Error;
 
 namespace SoulEngine {
 

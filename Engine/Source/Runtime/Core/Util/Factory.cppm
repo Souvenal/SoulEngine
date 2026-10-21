@@ -8,11 +8,11 @@
 
 module;
 
-export module Core:Util.Factory;
+export module Core.Util.Factory;
 
 import std;
-import :Util.Types;
-import :Util.Singleton;
+import Core.Util.Types;
+import Core.Util.Singleton;
 
 namespace SoulEngine {
 

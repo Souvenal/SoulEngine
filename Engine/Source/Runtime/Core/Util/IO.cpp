@@ -1,6 +1,4 @@
-module Core:Util.IO.impl;
-
-import :Util.IO;
+module Core.Util.IO;
 
 namespace SoulEngine {
 

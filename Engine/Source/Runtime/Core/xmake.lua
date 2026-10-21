@@ -14,8 +14,15 @@ target("Core")
     add_packages("toml++")
 
     add_files("**.cppm", {public = true})
+
+target("Core.Impl")
+    set_kind("static")
+    set_policy("build.c++.modules", true)
+    add_deps("Core")
+    add_packages("spdlog", "hlslpp", "entt", "libyaml", "magic_enum", "toml++")
+    add_defines("TOML_COMPILER_HAS_EXCEPTIONS=0")
     add_files("**.cpp|Tests/**")
 
 test_module("Core", {
-    deps = {"Core"}
+    deps = {"Core", "Core.Impl"}
 })

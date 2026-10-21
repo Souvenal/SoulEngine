@@ -30,7 +30,7 @@ function test_module(module_name, opt)
     -- (get_config("toolchain") returns nil), so the check must run where
     -- target:toolchains() is resolved.
     local exclude_on_clang = opt.exclude_on_clang or {}
-    for _, testfile in ipairs(os.files("Tests/**.cpp")) do
+    for _, testfile in ipairs(os.files(path.join(tests_dir, "**.cpp"))) do
         local basename = path.basename(testfile)
         local excluded = false
         for _, pattern in ipairs(exclude_patterns) do
@@ -131,7 +131,7 @@ target("SoulEngine")
     set_default(true)
     set_kind("binary")
 
-    add_deps("Core", "Launch")
+    add_deps("Core", "Core.Impl", "Launch")
     add_files("main.cpp")
 
     -- ShaderCompiler is a moduleonly target; its shared-library packages

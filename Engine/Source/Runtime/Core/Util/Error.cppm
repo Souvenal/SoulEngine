@@ -7,10 +7,10 @@
 /// terminal to render the chain as a progressively indented "Caused by:" tree with per-layer source
 /// locations.
 
-export module Core:Util.Error;
+export module Core.Util.Error;
 
 import std;
-import :Util.Types;
+import Core.Util.Types;
 
 namespace SoulEngine {
 

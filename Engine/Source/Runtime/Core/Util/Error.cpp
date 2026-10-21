@@ -1,6 +1,4 @@
-module Core:Util.Error.impl;
-
-import :Util.Error;
+module Core.Util.Error;
 
 namespace SoulEngine {
 

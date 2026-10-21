@@ -6,10 +6,9 @@ module;
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-module Core:Util.Logging.impl;
+module Core.Util.Logging;
 
-import :Util.Logging;
-import :Util.CVar;
+import Core.Util.CVar;
 import magic_enum;
 
 namespace SoulEngine {

@@ -4,7 +4,7 @@ module;
 #include <entt/meta/type_traits.hpp>
 #include <hlsl++.h>
 
-export module Core:Util.Types;
+export module Core.Util.Types;
 
 import std;
 
