@@ -69,11 +69,15 @@ Code form and readability only, not behavior.
 
 - Ordinary non-template module members may be declared in a module interface and defined once in an attached implementation unit. This is the supported interface/implementation split for reducing importer recompilation.
 - A module interface partition uses `export module M:Part;`. Re-export it from the primary interface only when downstream modules need its API.
-- An implementation partition uses a distinct name such as `module M:Part.impl;`. Do not define `M:Part` in both an interface unit and an implementation unit.
-- Implementation partitions are private to the named module. They are added to the same build target but are not imported or re-exported by the primary interface. An implementation partition imports an interface partition itself only when it needs that partition’s declarations.
+- A feature implementation partition uses a distinct name such as `module M:Part.impl;`. The interface and implementation partition names must never be identical: do not declare `M:Part` in both units.
+- A primary module implementation unit may use `module M;` for definitions declared by `export module M;`. This rule is distinct from feature partition implementations, which use the `.impl` suffix.
+- Implementation partitions are private to the named module. They are added to the same build target but are not imported or re-exported by the primary interface. An implementation partition imports its interface partition itself with `import :Part;` when it needs those declarations.
+- A feature with ordinary runtime logic normally uses an interface/implementation pair: `Feature.cppm` declares `export module M:Feature;`, while `Feature.cpp` declares `module M:Feature.impl;`. Pure type, template, concept, and compile-time partitions may remain interface-only when no implementation unit provides value.
+- A primary interface may aggregate public feature interfaces. The aggregate interface is a facade and contains export imports, not feature implementation bodies.
+- Exporting a class does not export every declaration reachable through its definition. `exported` and `reachable` are separate properties in [module.interface] and [module.reach]. A private member may use a third-party type when importers do not need to name or instantiate that type; do not introduce PImpl solely to hide such members. Move ordinary function bodies and private helper definitions to the implementation partition instead.
 - Shared cross-backend APIs are declared and exported once in the primary module interface. Backend implementation partitions provide the one corresponding definition for the active platform.
 - Use ordinary `namespace SoulEngine` blocks and explicit per-declaration `export`; `export namespace` is prohibited.
-- In xmake targets that contain module implementation units, use `set_kind("static")` with `set_policy("build.c++.modules", true)`. Register interface `.cppm` files with `{public = true}` and implementation `.cpp` files as ordinary target sources.
+- Keep C++ module targets as `set_kind("moduleonly")` with `set_policy("build.c++.modules", true)` by default. Register interface `.cppm` files with `{public = true}` and implementation `.cpp` files as ordinary target sources. Glob patterns are allowed; module declarations, not matching filenames, establish the interface/implementation roles. Promote a module target to `static` only when a reproducible build or link requirement demonstrates that ordinary archive behavior is needed; validate with a clean full build.
 
 ## Profiling (Tracy)
 

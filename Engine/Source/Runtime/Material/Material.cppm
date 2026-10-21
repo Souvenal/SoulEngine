@@ -1,6 +1,6 @@
 export module Material;
 
-export import :Types;
-export import :Texture;
-export import :AssimpLoader;
-export import :YamlLoader;
+export import Material.Types;
+export import Material.Texture;
+export import Material.AssimpLoader;
+export import Material.YamlLoader;

@@ -6,7 +6,7 @@
 
 module;
 
-export module ShaderCompiler:Types;
+export module ShaderCompiler.Types;
 
 import magic_enum;
 import Shader;
@@ -14,29 +14,28 @@ import Core;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Supported shader compiler backends.
 ///
 /// The ShaderBackend field in shader compile descriptors is the canonical source of truth for selecting which
 /// compiler pipeline to use. Source file extensions are validated against this value (warning on mismatch),
 /// but the enum always wins.
-enum class ShaderBackend : Uint8 {
+export enum class ShaderBackend : Uint8 {
     Unknown = 0,
-
     /// Slang shading language — the project's primary shader compiler.
     Slang
 };
 
 /// @brief Request for a single shader entry point in a source file.
-struct ShaderEntry {
+export struct ShaderEntry {
     Path          SourcePath = {};
     String        EntryPoint = {};
     ShaderBackend Backend    = ShaderBackend::Slang;
 };
 
 /// @brief Descriptor for a graphics-pipeline shader compile request.
-struct GraphicsCompileDesc {
+export struct GraphicsCompileDesc {
     ShaderEntry Vertex   = {};
     ShaderEntry Fragment = {};
 
@@ -45,7 +44,7 @@ struct GraphicsCompileDesc {
 };
 
 /// @brief Descriptor for a compute-pipeline shader compile request.
-struct ComputeCompileDesc {
+export struct ComputeCompileDesc {
     ShaderEntry Compute = {};
 
     /// Additional include search directories.
@@ -53,7 +52,7 @@ struct ComputeCompileDesc {
 };
 
 /// @brief One logical ray-tracing hit group compile request.
-struct RayTracingHitGroupCompileDesc {
+export struct RayTracingHitGroupCompileDesc {
     ShaderRayTracingHitGroupType Type         = ShaderRayTracingHitGroupType::Triangles;
     std::optional<ShaderEntry>   ClosestHit   = std::nullopt;
     std::optional<ShaderEntry>   AnyHit       = std::nullopt;
@@ -61,7 +60,7 @@ struct RayTracingHitGroupCompileDesc {
 };
 
 /// @brief Compile request for one linked hardware ray-tracing shader program.
-struct RayTracingCompileDesc {
+export struct RayTracingCompileDesc {
     ShaderEntry                                RayGeneration   = {};
     std::vector<ShaderEntry>                   MissEntries     = {};
     std::vector<RayTracingHitGroupCompileDesc> HitGroups       = {};
@@ -74,7 +73,7 @@ struct RayTracingCompileDesc {
 /// @brief Abstract backend for shading-language compilation.
 ///
 /// Each supported shading language gets its own implementation. Owned by the ShaderCompiler facade.
-class IShaderBackend {
+export class IShaderBackend {
   public:
     IShaderBackend()                                         = default;
     IShaderBackend(const IShaderBackend&)                    = delete;
@@ -99,6 +98,6 @@ class IShaderBackend {
 
 /// @brief Factory type for compiler backends.
 /// Each backend auto-registers via AutoRegistrar in its own translation unit.
-using ShaderBackendFactory = Factory<IShaderBackend>;
+export using ShaderBackendFactory = Factory<IShaderBackend>;
 
 } // namespace SoulEngine

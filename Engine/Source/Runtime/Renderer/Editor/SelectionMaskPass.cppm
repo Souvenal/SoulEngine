@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:EditorPasses.SelectionMaskPass;
+export module Renderer.EditorPasses.SelectionMaskPass;
 
 import Core;
 import Material;
@@ -13,9 +13,9 @@ import Scene;
 import std;
 import ShaderCompiler;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
-class SelectionMaskPass final : public IRHIGraphicsPass {
+export class SelectionMaskPass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "SelectionMaskPass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

@@ -14,7 +14,7 @@ import Scene;
 
 namespace SoulEngine {
 
-class SponzaApplication final : public Application {
+export class SponzaApplication final : public Application {
   public:
     SponzaApplication() = default;
 };
