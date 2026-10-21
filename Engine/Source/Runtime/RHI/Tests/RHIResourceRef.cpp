@@ -11,8 +11,6 @@ import WindowSystem;
 
 using namespace SoulEngine;
 
-namespace {
-
 class MockSampler final : public RHISampler {
   public:
     MockSampler(StringView Name, Uint32& DestructionCount)
@@ -218,8 +216,6 @@ class MockRenderDevice final : public RHIRenderDevice {
   private:
     RHIDeferredDeletionQueue m_DeletionQueue = {};
 };
-
-} // namespace
 
 TEST(RHIResourceRefTest, DefaultConstructedRefIsEmpty) {
     RHIRef<RHISampler> Ref = {};

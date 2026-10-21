@@ -10,8 +10,6 @@ import EditorTypes;
 
 using namespace SoulEngine;
 
-namespace {
-
 class RendererSelectionTestRenderer final : public IRenderer {
   public:
     ~RendererSelectionTestRenderer() override {
@@ -71,5 +69,3 @@ TEST(RendererSelection, CachesSuccessfulSelectionAndPreservesCurrentRendererOnFa
     EXPECT_FALSE(GetCurrentRenderer());
     EXPECT_EQ(RendererSelectionTestRenderer::DetachCount, 1);
 }
-
-} // namespace

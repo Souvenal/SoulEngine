@@ -1,31 +1,18 @@
-target("EditorTypes")
-    set_kind("moduleonly")
-    set_policy("build.c++.modules", true)
+-- EditorTypes is a second, interface-only module living in this directory; the
+-- explicit files list keeps Editor's own interface units out of it.
+soul_module("EditorTypes", {
+    deps  = {"Core", "RHI", "Scene"},
+    files = "EditorTypes.cppm",
+})
 
-    add_deps("Core", "RHI", "Scene")
-    add_files("EditorTypes.cppm", {public = true})
-
-target("Editor")
-    set_kind("moduleonly")
-    set_policy("build.c++.modules", true)
-
-    add_deps("Application", "Core", "EditorTypes", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem")
-    add_packages("magic_enum", {public = true})
-    add_packages("entt", {public = true})
-    add_packages("hlslpp", {public = true})
+soul_module("Editor", {
+    deps     = {"Application", "Core", "EditorTypes", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem"},
     -- public: consumers (Launch -> SoulEngine.exe) must link the imgui archive.
-    add_packages("imgui", "imgui-club", {public = true})
-
-    add_files("**.cppm|EditorTypes.cppm", {public = true})
-
-target("Editor.Impl")
-    set_kind("static")
-    set_policy("build.c++.modules", true)
-    add_deps("Editor", "Application.Impl", "Core.Impl", "Renderer.Impl", "RHI.Impl", "Scene.Impl", "TaskGraph.Impl", "WindowSystem.Impl")
-    add_packages("magic_enum", "entt", "hlslpp", "imgui", "imgui-club")
-    add_files("*.cpp")
-
-test_module("Editor", {
-    additional_deps = {"Editor", "Editor.Impl"},
-    additional_packages = {"imgui", "imgui-club"}
+    packages = {"magic_enum", "entt", "hlslpp", "imgui", "imgui-club"},
+    excludes = {"EditorTypes.cppm"},
+    impl = {
+        deps     = {"Application", "Core", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem"},
+        packages = {"magic_enum", "entt", "hlslpp", "imgui", "imgui-club"},
+    },
+    tests = {additional_packages = {"imgui", "imgui-club"}},
 })

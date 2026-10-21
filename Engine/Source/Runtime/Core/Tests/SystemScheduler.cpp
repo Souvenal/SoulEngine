@@ -10,8 +10,6 @@ import std;
 
 using namespace SoulEngine;
 
-namespace {
-
 /// @brief System that appends its compile-time Id to a shared log on update.
 template <int Id>
 class RecordingSystem final : public ISystem {
@@ -36,8 +34,6 @@ struct SchedulerFixture {
 [[nodiscard]] auto PositionOf(const std::vector<int>& Log, int Value) -> std::size_t {
     return static_cast<std::size_t>(std::ranges::find(Log, Value) - Log.begin());
 }
-
-} // namespace
 
 TEST(SystemSchedulerTest, IndependentSystemsRunInRegistrationOrder) {
     SchedulerFixture F;

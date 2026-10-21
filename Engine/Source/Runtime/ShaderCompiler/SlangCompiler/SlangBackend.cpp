@@ -20,8 +20,6 @@ import Shader;
 
 namespace SoulEngine {
 
-namespace {
-
 [[nodiscard]] auto CreateSession(slang::IGlobalSession*                      GlobalSession,
                                  std::span<const slang::CompilerOptionEntry> CompilerOptions,
                                  std::span<const Path>                       IncludeDirs,
@@ -182,8 +180,6 @@ namespace {
     auto  Count = CodeBlob->getBufferSize() / sizeof(Uint32);
     return std::vector<Uint32>(Begin, Begin + Count);
 }
-
-} // anonymous namespace
 
 [[nodiscard]] auto SlangBackend::CompileGraphics(const GraphicsCompileDesc& Desc)
     -> std::expected<ShaderGraphicsProgram, ErrorMessage> {

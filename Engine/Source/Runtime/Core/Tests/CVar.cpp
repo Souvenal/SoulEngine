@@ -8,8 +8,6 @@ import std;
 
 using namespace SoulEngine;
 
-namespace {
-
 // Namespace-scope registration: these self-register with CVarManager at static-init time, before any TEST
 // runs.
 CVar<bool>    CVarTestCheckbox{"Test.Checkbox", false, "test bool"};
@@ -24,8 +22,6 @@ CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
 // Same name registered under two different types — legal: the registry key is (name, type).
 CVar<bool>  CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
 CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"};
-
-} // namespace
 
 TEST(CVarTest, HandleReturnsRegisteredDefault) {
     EXPECT_FALSE(CVarTestCheckbox.Get());

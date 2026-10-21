@@ -313,7 +313,6 @@ static_assert(offsetof(MaterialRecord::GpuData, EmissiveTexture) == 288);
 // path entirely. The split across these helpers additionally keeps clang 22.1.x debug builds (-g) out of a
 // debug-info-generation ICE that a single 37-field registration function hits.
 namespace SoulEngine {
-namespace {
 
 auto RegisterCoreScalarYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
     Factory.data<&MaterialYamlRecord::Name>("name");
@@ -371,8 +370,6 @@ auto RegisterMaterialYamlMeta() -> void {
     RegisterPbrYamlMeta(Factory);
     RegisterTextureYamlMeta(Factory);
 }
-
-} // namespace
 
 // Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
 // an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program

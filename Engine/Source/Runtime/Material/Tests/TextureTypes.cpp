@@ -12,8 +12,6 @@ import RHI;
 
 using namespace SoulEngine;
 
-namespace {
-
 class ScopedTemporaryFile final {
   public:
     explicit ScopedTemporaryFile(Path FilePath) : m_FilePath(std::move(FilePath)) {}
@@ -74,8 +72,6 @@ class MaterialGpuDataTest : public testing::Test {
   private:
     RHIDeferredDeletionQueue m_DeletionQueue = {};
 };
-
-} // namespace
 
 TEST(MaterialRecord, PreservesFlatTextureTypeOrder) {
     const MaterialRecord Material{

@@ -12,8 +12,6 @@ import std;
 
 using namespace SoulEngine;
 
-namespace {
-
 // SPIR-V opcodes/decoration needed by the byte-level assertions.
 inline constexpr Uint32 SpvOpSpecConstantTrue      = 48;
 inline constexpr Uint32 SpvOpSpecConstantFalse     = 49;
@@ -67,8 +65,6 @@ class SpecializationConstantTest : public ::testing::Test {
         m_ShaderPath = Path(TestSourceDir) / "Slang" / "SpecializationConstant.slang";
     }
 };
-
-} // namespace
 
 TEST_F(SpecializationConstantTest, ReflectsSpecializationConstants) {
     auto Result = ShaderCompiler::Get().CompileCompute(ComputeCompileDesc{

@@ -10,8 +10,6 @@ import std;
 
 using namespace SoulEngine;
 
-namespace {
-
 [[nodiscard]] auto MakeCompileDesc(const Path& SourcePath) -> RayTracingCompileDesc {
     return RayTracingCompileDesc{
         .RayGeneration =
@@ -191,5 +189,3 @@ TEST_F(RayTracingCompilerTest, TriangleHitGroupRequiresClosestHitEntry) {
     EXPECT_NE(Result.error().ToString().find("requires a closest-hit entry point"), String::npos)
         << Result.error().ToString();
 }
-
-} // namespace

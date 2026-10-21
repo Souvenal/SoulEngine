@@ -15,8 +15,6 @@ import Shader;
 
 namespace SoulEngine {
 
-namespace {
-
 // Reflection DFS
 // The whole program interface is collected by one depth-first walk over the Slang variable tree. Two
 // orthogonal dimensions meet at every node:
@@ -419,8 +417,6 @@ constexpr auto UnknownBindingIndex = static_cast<unsigned>(SLANG_UNKNOWN_SIZE);
 
     return VertexInputs;
 }
-
-} // anonymous namespace
 
 [[nodiscard]] auto BuildGraphicsShaderReflection(slang::ShaderReflection*     ProgramLayout,
                                                  slang::EntryPointReflection* VertexEntryPoint,

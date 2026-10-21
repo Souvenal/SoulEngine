@@ -1,17 +1,10 @@
-target("Platform")
-    set_kind("moduleonly")
-
-    set_policy("build.c++.modules", true)
-
-    add_deps("Core")
-
-    add_files("Platform.cppm", {public = true})
+soul_module("Platform", {
+    deps = {"Core"},
+    -- Platform sources are selected per-OS below, not by the conventional glob.
+    impl = {deps = {"Core"}, files = false},
+})
 
 target("Platform.Impl")
-    set_kind("static")
-    set_policy("build.c++.modules", true)
-    add_deps("Platform", "Core.Impl")
-
     if is_plat("windows") then
         add_files("Windows/**.cpp")
         add_syslinks("dbghelp")

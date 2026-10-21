@@ -10,7 +10,6 @@ import RHIVulkan.Context;
 import RHIVulkan.Debug;
 
 namespace SoulEngine {
-namespace {
 
 struct VulkanSamplerProfileInfo {
     bool bEnableAnisotropy = false;
@@ -28,8 +27,6 @@ struct VulkanSamplerProfileInfo {
     }
     return std::unexpected(ErrorMessage("Unsupported sampler profile"));
 }
-
-} // namespace
 
 VulkanSampler::VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler)
     : RHISampler(std::move(Name), Desc), m_Sampler(std::move(VulkanSampler)) {}

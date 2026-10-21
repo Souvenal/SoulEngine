@@ -20,8 +20,6 @@ import Core;
 
 using namespace SoulEngine;
 
-namespace {
-
 // Test device
 // Inherits the base RHIRenderDevice defaults (every other method logs "not implemented" and fails) except the
 // three transient-create calls the graph's realize step makes — those succeed with an empty RHIRef, so
@@ -453,7 +451,6 @@ auto ResetMockCounters() -> void {
         RHIBufferDesc{.SizeBytes = SizeBytes, .Usage = RHIBufferUsage::Storage, .Lifetime = RHILifetime::Transient});
 }
 
-} // namespace
 // Ordering
 
 TEST(RenderGraphOrder, IndependentPassesKeepRegistrationOrder) {

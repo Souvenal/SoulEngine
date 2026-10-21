@@ -8,8 +8,6 @@ import Core;
 
 namespace SoulEngine {
 
-namespace {
-
 [[nodiscard]] auto MakeStructuralError(const YamlNode& Node, StringView Message) -> std::unexpected<ErrorMessage> {
     return std::unexpected(ErrorMessage(Format("Scene document at {}: {}", Node.Location(), Message)));
 }
@@ -106,8 +104,6 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Sce
     }
     return {};
 }
-
-} // namespace
 
 [[nodiscard]] auto Scene::LoadFromFile(const Path& FilePath)
     -> std::expected<std::pair<UPtr<Scene>, SceneLoadReport>, ErrorMessage> {

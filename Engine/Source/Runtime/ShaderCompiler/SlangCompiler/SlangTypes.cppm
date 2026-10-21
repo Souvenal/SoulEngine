@@ -18,7 +18,6 @@ import Shader;
 namespace SoulEngine {
 
 // File-local helpers for normalizing Slang reflection details before public mappings.
-namespace {
 
 [[nodiscard]] auto ToShaderBindingAccess(SlangResourceAccess Access)
     -> std::expected<ShaderBindingAccess, ErrorMessage> {
@@ -37,8 +36,6 @@ namespace {
         return std::unexpected(ErrorMessage("Unsupported resource access mode in reflection"));
     }
 }
-
-} // namespace
 
 export [[nodiscard]] auto StripArrayTypeLayout(slang::TypeLayoutReflection* TypeLayout)
     -> slang::TypeLayoutReflection* {

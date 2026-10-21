@@ -1,21 +1,9 @@
-target("Renderer")
-    set_kind("moduleonly")
-    set_policy("build.c++.modules", true)
-
-    add_packages("magic_enum", {public = true})
-    add_packages("glfw", "hlslpp")
-    add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph")
-
-    add_files("**.cppm", {public = true})
-
-target("Renderer.Impl")
-    set_kind("static")
-    set_policy("build.c++.modules", true)
-    add_deps("Renderer", "Core.Impl", "Material.Impl", "RHI.Impl", "RHIVulkan.Impl", "Scene.Impl", "RenderGraph.Impl")
-    add_packages("magic_enum", "glfw", "hlslpp")
-    add_files("**.cpp|Tests/**")
-
-test_module("Renderer", {
-    deps = {"Renderer", "Renderer.Impl"},
-    additional_packages = {"entt", "glfw"}
+soul_module("Renderer", {
+    deps     = {"Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph"},
+    packages = {"magic_enum", "glfw", "hlslpp"},
+    impl = {
+        deps     = {"Core", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph"},
+        packages = {"magic_enum", "glfw", "hlslpp"},
+    },
+    tests = {additional_packages = {"entt", "glfw"}},
 })

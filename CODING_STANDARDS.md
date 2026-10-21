@@ -8,6 +8,7 @@ The repo's documented coding standards, consumed by /code-review at review time.
 - [C++](docs/standards/cpp.md) — error handling, ownership, style, module, and Tracy profiling rules.
 - [Slang](docs/standards/slang.md) — runtime shader rules, resource binding, modules, naming.
 - [Vulkan](docs/standards/vulkan.md) — backend API usage rules (StructureChain, timeline semaphores, object naming, Vulkan-Hpp).
+- [xmake](docs/standards/xmake.md) — module declaration (`soul_module`), visibility rule, test registration, final-binary wiring.
 
 ## Project-wide standards
 

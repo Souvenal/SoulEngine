@@ -11,8 +11,6 @@ import Core;
 
 using namespace SoulEngine;
 
-namespace {
-
 [[nodiscard]] auto WriteSceneFile(StringView Content) -> Path {
     const auto    FilePath = std::filesystem::temp_directory_path() / "soulengine_scene_test.yaml";
     std::ofstream Output(FilePath);
@@ -564,4 +562,3 @@ entities:
 
     std::filesystem::remove(FilePath);
 }
-} // namespace
