@@ -3,15 +3,14 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-module RHIVulkan:Types.impl;
-
-import :Types;
+module RHIVulkan.Types;
 
 import vulkan;
 
+import Core;
 import RHI;
 
-import :Capability;
+import RHIVulkan.Capability;
 
 namespace SoulEngine {
 

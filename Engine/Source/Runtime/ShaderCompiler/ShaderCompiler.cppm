@@ -19,5 +19,5 @@ module;
 
 export module ShaderCompiler;
 
-export import :Types;
-export import :Facade;
+export import ShaderCompiler.Types;
+export import ShaderCompiler.Facade;

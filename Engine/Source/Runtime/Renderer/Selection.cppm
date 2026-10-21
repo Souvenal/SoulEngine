@@ -1,8 +1,8 @@
-export module Renderer:Selection;
+export module Renderer.Selection;
 
 import Core;
 
-import :Interface;
+import Renderer.Interface;
 
 import std;
 

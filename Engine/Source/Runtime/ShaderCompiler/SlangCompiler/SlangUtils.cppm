@@ -10,7 +10,7 @@ module;
 
 #include <slang.h>
 
-export module Slang:Utils;
+export module Slang.Utils;
 
 import Core;
 
@@ -21,15 +21,16 @@ namespace SoulEngine {
 CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug info (OpLine/OpString) for RenderDoc"};
 
 /// Build the session-level compiler options vector from the engine config.
-[[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry>;
+export [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry>;
 
 /// Extract a human-readable diagnostic string from a Slang IBlob.
-[[nodiscard]] auto DiagView(slang::IBlob* Diag) -> StringView;
+export [[nodiscard]] auto DiagView(slang::IBlob* Diag) -> StringView;
 
 /// Check whether a variable layout reflection contains a given parameter category.
-[[nodiscard]] auto HasCategory(slang::VariableLayoutReflection* VarLayout, slang::ParameterCategory Category) -> bool;
+export [[nodiscard]] auto HasCategory(slang::VariableLayoutReflection* VarLayout, slang::ParameterCategory Category)
+    -> bool;
 
 /// Determine whether a semantic name is a system-value semantic (SV_*).
-[[nodiscard]] auto IsSystemValueSemantic(StringView SemanticName) -> bool;
+export [[nodiscard]] auto IsSystemValueSemantic(StringView SemanticName) -> bool;
 
 } // namespace SoulEngine

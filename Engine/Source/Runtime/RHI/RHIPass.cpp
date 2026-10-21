@@ -1,12 +1,11 @@
-module RHI:Pass.impl;
+module RHI.Pass;
 
 import Core;
 
-import :Pass;
-import :Command;
-import :Pipeline;
-import :Types;
-import :Ref;
+import RHI.Command;
+import RHI.Pipeline;
+import RHI.Types;
+import RHI.Ref;
 
 import std;
 

@@ -1,4 +1,4 @@
-module RHIVulkan:ShaderBindingSet.impl;
+module RHIVulkan.ShaderBindingSet;
 
 import RHI;
 import Shader;
@@ -6,15 +6,14 @@ import vulkan;
 import std;
 import Core;
 
-import :ShaderBindingSet;
-import :AccelerationStructure;
-import :Buffer;
-import :Capability;
-import :Context;
-import :Debug;
-import :Descriptor;
-import :Sampler;
-import :Texture;
+import RHIVulkan.AccelerationStructure;
+import RHIVulkan.Buffer;
+import RHIVulkan.Capability;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Descriptor;
+import RHIVulkan.Sampler;
+import RHIVulkan.Texture;
 
 namespace SoulEngine {
 

@@ -2,9 +2,7 @@ module;
 
 #include <tracy/Tracy.hpp>
 
-module TaskGraph:Runtime.impl;
-
-import :Runtime;
+module TaskGraph.Runtime;
 
 namespace SoulEngine {
 

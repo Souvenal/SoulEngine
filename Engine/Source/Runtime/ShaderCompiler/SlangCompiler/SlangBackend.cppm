@@ -6,7 +6,7 @@ module;
 #include <slang.h>
 #include <slang-com-ptr.h>
 
-export module Slang:Backend;
+export module Slang.Backend;
 
 import std;
 import Core;

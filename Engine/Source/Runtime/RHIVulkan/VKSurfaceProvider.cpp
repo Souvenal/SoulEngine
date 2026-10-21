@@ -3,7 +3,7 @@ module;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-module RHIVulkan:SurfaceProvider.impl;
+module RHIVulkan.SurfaceProvider;
 
 import magic_enum;
 import WindowSystem;
@@ -11,8 +11,6 @@ import RHI;
 import vulkan;
 import std;
 import Core;
-
-import :SurfaceProvider;
 
 namespace SoulEngine {
 

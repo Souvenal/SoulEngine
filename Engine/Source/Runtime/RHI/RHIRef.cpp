@@ -1,6 +1,4 @@
-module RHI:Ref.impl;
-
-import :Ref;
+module RHI.Ref;
 
 import std;
 

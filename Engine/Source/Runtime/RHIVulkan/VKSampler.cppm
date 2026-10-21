@@ -1,19 +1,19 @@
 module;
 
-export module RHIVulkan:Sampler;
+export module RHIVulkan.Sampler;
 
 import Core;
 import RHI;
 import vulkan;
 import std;
 
-import :Capability;
-import :Context;
-import :Debug;
+import RHIVulkan.Capability;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 
-class VulkanSampler final : public RHISampler {
+export class VulkanSampler final : public RHISampler {
   public:
     VulkanSampler(String Name, const RHISamplerDesc& Desc, vk::raii::Sampler&& VulkanSampler);
 

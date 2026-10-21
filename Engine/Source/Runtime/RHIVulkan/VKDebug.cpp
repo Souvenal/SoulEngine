@@ -1,11 +1,10 @@
-module RHIVulkan:Debug.impl;
+module RHIVulkan.Debug;
 
 import Core;
 import vulkan;
 import std;
 
-import :Debug;
-import :Capability;
+import RHIVulkan.Capability;
 
 namespace SoulEngine {
 

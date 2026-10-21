@@ -1,17 +1,17 @@
 module;
 
-export module RHIVulkan:Staging;
+export module RHIVulkan.Staging;
 
 import Core;
 import vulkan;
 import RHI;
 import std;
 
-import :RingBuffer;
-import :Types;
-import :Context;
-import :Debug;
-import :Profiling;
+import RHIVulkan.RingBuffer;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Profiling;
 
 namespace SoulEngine {
 
@@ -23,7 +23,7 @@ namespace SoulEngine {
 /// producer's last ref dies before the copy is submitted, native destruction rides the backend deferred
 /// deletion queue (a virtual timeline event), which keeps the handle valid until the submission completes;
 /// the slice's ring range retires via the ring's timeline markers.
-struct VulkanPendingBufferUpload {
+export struct VulkanPendingBufferUpload {
     RingAllocation   Staging     = {};      ///< ring slice holding the copied bytes
     vk::Buffer       DstBuffer   = nullptr; ///< native destination handle, snapshotted at enqueue time
     /// @brief Accesses performed after the batch's visibility barrier.
@@ -38,7 +38,7 @@ struct VulkanPendingBufferUpload {
 /// Same ring-slice transport and no-retention contract as the buffer lane (the backend deferred deletion
 /// queue covers VMA images too). The copy target is always mip 0 of a color image: UploadTexture performs
 /// full-pixel mip-0 uploads only.
-struct VulkanPendingImageUpload {
+export struct VulkanPendingImageUpload {
     RingAllocation Staging  = {};      ///< ring slice holding the copied texel bytes
     vk::Image      DstImage = nullptr; ///< native destination handle, snapshotted at enqueue time
     Uint32         Width    = 0;       ///< destination mip-0 extent
@@ -53,7 +53,7 @@ struct VulkanPendingImageUpload {
 /// retiring the markers the device timeline has passed and sealing the previous frame's pending uploads
 /// against the frame-begin timeline value. The render device owns the belt and the resource managers borrow
 /// it. RHI-thread confined.
-class VulkanStagingBelt {
+export class VulkanStagingBelt {
   public:
     VulkanStagingBelt()                                                = default;
     VulkanStagingBelt(const VulkanStagingBelt&)                        = delete;

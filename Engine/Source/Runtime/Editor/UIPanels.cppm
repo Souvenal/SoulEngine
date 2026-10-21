@@ -1,6 +1,6 @@
 module;
 
-export module Editor:UIPanels;
+export module Editor.UIPanels;
 
 import std;
 import Scene;

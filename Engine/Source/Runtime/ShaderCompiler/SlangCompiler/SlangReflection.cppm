@@ -9,10 +9,10 @@ module;
 
 #include <slang.h>
 
-export module Slang:Reflection;
+export module Slang.Reflection;
 
-import :Types;
-import :Utils;
+import Slang.Types;
+import Slang.Utils;
 
 import std;
 import Core;
@@ -20,17 +20,17 @@ import Shader;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto BuildGraphicsShaderReflection(slang::ShaderReflection*     ProgramLayout,
-                                                 slang::EntryPointReflection* VertexEntryPoint,
-                                                 slang::EntryPointReflection* FragmentEntryPoint)
+export [[nodiscard]] auto BuildGraphicsShaderReflection(slang::ShaderReflection*     ProgramLayout,
+                                                        slang::EntryPointReflection* VertexEntryPoint,
+                                                        slang::EntryPointReflection* FragmentEntryPoint)
     -> std::expected<ShaderReflection, ErrorMessage>;
 
-[[nodiscard]] auto BuildComputeShaderReflection(slang::ShaderReflection*     ProgramLayout,
-                                                slang::EntryPointReflection* ComputeEntryPoint)
+export [[nodiscard]] auto BuildComputeShaderReflection(slang::ShaderReflection*     ProgramLayout,
+                                                       slang::EntryPointReflection* ComputeEntryPoint)
     -> std::expected<ShaderReflection, ErrorMessage>;
 
-[[nodiscard]] auto BuildRayTracingShaderReflection(slang::ShaderReflection*                      ProgramLayout,
-                                                   std::span<slang::EntryPointReflection* const> EntryPoints)
+export [[nodiscard]] auto BuildRayTracingShaderReflection(slang::ShaderReflection*                      ProgramLayout,
+                                                          std::span<slang::EntryPointReflection* const> EntryPoints)
     -> std::expected<ShaderReflection, ErrorMessage>;
 
 } // namespace SoulEngine

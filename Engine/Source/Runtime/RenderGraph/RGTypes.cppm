@@ -1,6 +1,6 @@
 module;
 
-export module RenderGraph:Types;
+export module RenderGraph.Types;
 
 import Core;
 import RHI;

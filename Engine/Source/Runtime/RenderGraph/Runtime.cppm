@@ -1,10 +1,10 @@
 module;
 
-export module RenderGraph:Runtime;
+export module RenderGraph.Runtime;
 
 import Core;
-import :PipelineRegistry;
-import :TexturePool;
+import RenderGraph.PipelineRegistry;
+import RenderGraph.TexturePool;
 
 namespace SoulEngine {
 

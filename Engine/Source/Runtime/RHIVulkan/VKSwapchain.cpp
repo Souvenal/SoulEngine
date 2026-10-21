@@ -4,16 +4,15 @@ module;
 // textual include restores it.
 #include <cstdint>
 
-module RHIVulkan:Swapchain.impl;
+module RHIVulkan.Swapchain;
 
 import RHI;
 
 import vulkan;
 
-import :Swapchain;
-import :Debug;
-import :Context;
-import :SurfaceProvider;
+import RHIVulkan.Debug;
+import RHIVulkan.Context;
+import RHIVulkan.SurfaceProvider;
 import Core;
 import WindowSystem;
 

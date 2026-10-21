@@ -2,10 +2,10 @@ module;
 
 #include <hlsl++.h>
 
-export module RHI:Types;
+export module RHI.Types;
 
 import Core;
-import :Ref;
+import RHI.Ref;
 import magic_enum;
 
 import std;

@@ -5,11 +5,10 @@ module;
 
 #include <slang.h>
 
-module Slang:Reflection.impl;
+module Slang.Reflection;
 
-import :Reflection;
-import :Types;
-import :Utils;
+import Slang.Types;
+import Slang.Utils;
 import std;
 import Core;
 import Shader;

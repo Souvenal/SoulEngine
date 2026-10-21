@@ -2,11 +2,11 @@ module;
 
 #include <entt/entt.hpp>
 
-export module Material:YamlLoader;
+export module Material.YamlLoader;
 
 import Core;
-import :Types;
-import :Texture;
+import Material.Types;
+import Material.Texture;
 
 namespace SoulEngine {
 

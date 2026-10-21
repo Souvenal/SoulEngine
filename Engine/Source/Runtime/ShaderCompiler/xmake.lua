@@ -8,10 +8,16 @@ target("ShaderCompiler")
     add_deps("Core", "Shader")
 
     add_files("**.cppm", {public = true})
+
+target("ShaderCompiler.Impl")
+    set_kind("static")
+    set_policy("build.c++.modules", true)
+    add_deps("ShaderCompiler", "Core.Impl")
+    add_packages("slang", "magic_enum")
     add_files("**.cpp|Tests/**")
 
 test_module("ShaderCompiler", {
-    deps = {"ShaderCompiler", "Core", "Shader"},
+    deps = {"ShaderCompiler", "ShaderCompiler.Impl", "Core", "Core.Impl", "Shader"},
     packages = {"slang"},
     rpath_packages = {"slang"}
 })

@@ -11,7 +11,7 @@
 
 module;
 
-export module Application:Interface;
+export module Application.Interface;
 
 import Core;
 import Scene;

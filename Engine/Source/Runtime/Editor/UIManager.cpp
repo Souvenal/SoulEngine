@@ -1,9 +1,8 @@
 module;
 
-module Editor:UIManager.impl;
+module Editor.UIManager;
 
 import std;
-import :UIManager;
 
 namespace SoulEngine {
 

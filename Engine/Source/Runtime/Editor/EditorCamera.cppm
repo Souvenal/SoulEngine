@@ -3,7 +3,7 @@ module;
 #include <entt/entt.hpp>
 #include <imgui.h>
 
-export module Editor:EditorCamera;
+export module Editor.EditorCamera;
 
 import std;
 import Core;

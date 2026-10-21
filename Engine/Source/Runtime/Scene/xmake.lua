@@ -6,6 +6,12 @@ target("Scene")
     add_deps("Core", "Material", "RHI", {public = true})
 
     add_files("*.cppm", {public = true})
+
+target("Scene.Impl")
+    set_kind("static")
+    set_policy("build.c++.modules", true)
+    add_deps("Scene", "Core.Impl", "Material.Impl", "RHI.Impl")
+    add_packages("hlslpp", "entt", "assimp", "magic_enum")
     add_files("*.cpp")
 
 
@@ -20,6 +26,7 @@ target("Scene")
 -- v3 (get_config("toolchain") returns nil there), so the frontend check runs
 -- in on_config where target:toolchains() is resolved.
 test_module("Scene", {
+    additional_deps = {"Scene.Impl"},
     additional_packages = {"entt"},
     exclude_on_clang = {"SceneDocument"},
 })

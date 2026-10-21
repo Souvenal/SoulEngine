@@ -4,9 +4,9 @@ export module WindowSystem;
 
 import Core;
 
-export import :Types;
-export import :Interface;
-export import :Glfw;
+export import WindowSystem.Types;
+export import WindowSystem.Interface;
+export import WindowSystem.Glfw;
 import std;
 
 namespace SoulEngine {

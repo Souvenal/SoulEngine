@@ -3,7 +3,7 @@ module;
 #include <cstddef>
 #include <hlsl++.h>
 
-export module Renderer:Common.Utilities;
+export module Renderer.Common.Utilities;
 
 import Core;
 import Material;
@@ -20,7 +20,7 @@ export [[nodiscard]] auto ResolveBindlessTextureIndices(std::span<const RHIRef<R
     -> std::expected<std::unordered_map<Uint64, Uint32>, ErrorMessage>;
 
 /// @brief Shared frame constant-buffer ABI used by every renderer.
-struct alignas(16) RendererFrameConstants {
+export struct alignas(16) RendererFrameConstants {
     Float32 Time          = 0.0f;
     Float32 ExposureEV100 = 15.0f;
     Uint32  LightCount    = 0;
@@ -31,7 +31,7 @@ static_assert(offsetof(RendererFrameConstants, ExposureEV100) == 4);
 static_assert(offsetof(RendererFrameConstants, LightCount) == 8);
 
 /// @brief Shared view constant-buffer ABI used by every renderer.
-struct alignas(16) RendererViewConstants {
+export struct alignas(16) RendererViewConstants {
     /// @brief Build the shared view constants from an immutable camera record.
     explicit RendererViewConstants(const CameraViewRecord& View)
         : ViewProjection(View.ViewProjection),
@@ -74,7 +74,7 @@ export [[nodiscard]] auto BuildLightGpuData(std::span<const LightRecord> Lights)
 /// thread-safe) and enqueues its build through BuildBlas in the same step, guarded by BlasRequested so each
 /// BLAS is built exactly once. The build task is frame-affined: the device records the whole BLAS batch at
 /// the start of the frame's execution, after the upload batch.
-class GeometryUploader {
+export class GeometryUploader {
   public:
     GeometryUploader() = default;
 
@@ -234,7 +234,7 @@ class GeometryUploader {
 /// order follow the same sequence. Material slot 0 is always the default entry. Geometry and material are
 /// deliberately unbound here: the material is resolved through the instance record, never through the
 /// geometry.
-struct SceneGpuData {
+export struct SceneGpuData {
     std::vector<InstanceRecord::GpuData>                     InstanceRecords     = {};
     std::vector<GeometryRecord::GpuData>                     GeometryRecords     = {};
     std::vector<MaterialRecord::GpuData>                     MaterialRecords     = {};

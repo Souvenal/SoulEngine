@@ -1,9 +1,8 @@
-module RHIVulkan:Semaphore.impl;
+module RHIVulkan.Semaphore;
 
 import Core;
-import :Semaphore;
-import :Capability;
-import :Debug;
+import RHIVulkan.Capability;
+import RHIVulkan.Debug;
 
 import vulkan;
 import std;

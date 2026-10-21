@@ -6,7 +6,7 @@
 
 module;
 
-export module ShaderCompiler:Types;
+export module ShaderCompiler.Types;
 
 import magic_enum;
 import Shader;

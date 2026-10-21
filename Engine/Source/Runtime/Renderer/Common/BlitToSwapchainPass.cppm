@@ -1,6 +1,6 @@
 module;
 
-export module Renderer:Common.BlitToSwapchainPass;
+export module Renderer.Common.BlitToSwapchainPass;
 
 import RenderGraph;
 import Core;

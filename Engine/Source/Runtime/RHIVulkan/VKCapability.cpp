@@ -1,10 +1,8 @@
-module RHIVulkan:Capability.impl;
+module RHIVulkan.Capability;
 
 import Core;
 import vulkan;
 import std;
-
-import :Capability;
 
 namespace SoulEngine {
 

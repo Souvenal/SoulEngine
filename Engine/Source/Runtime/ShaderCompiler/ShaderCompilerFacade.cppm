@@ -3,13 +3,13 @@
 
 module;
 
-export module ShaderCompiler:Facade;
+export module ShaderCompiler.Facade;
 
 import magic_enum;
 import std;
 import Core;
 import Shader;
-import :Types;
+import ShaderCompiler.Types;
 
 namespace SoulEngine {
 

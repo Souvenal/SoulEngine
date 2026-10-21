@@ -8,4 +8,10 @@ target("WindowSystem")
     add_deps("Core")
 
     add_files("**.cppm", {public = true})
+
+target("WindowSystem.Impl")
+    set_kind("static")
+    set_policy("build.c++.modules", true)
+    add_deps("WindowSystem", "Core.Impl")
+    add_packages("entt", "glfw", "imgui", "magic_enum")
     add_files("**.cpp")

@@ -4,13 +4,12 @@ module;
 #include <entt/entt.hpp>
 #include <imgui_impl_glfw.h>
 
-module WindowSystem:Glfw.impl;
+module WindowSystem.Glfw;
 
-import :Glfw;
 import magic_enum;
 import Core;
-import :Types;
-import :Interface;
+import WindowSystem.Types;
+import WindowSystem.Interface;
 import std;
 
 namespace SoulEngine {

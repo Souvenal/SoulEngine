@@ -2,7 +2,7 @@ module;
 
 #include <entt/entt.hpp>
 
-export module Editor:EditorWorld;
+export module Editor.EditorWorld;
 
 import std;
 import Core;

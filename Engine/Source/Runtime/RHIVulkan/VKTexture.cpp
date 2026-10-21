@@ -5,7 +5,7 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-module RHIVulkan:Texture.impl;
+module RHIVulkan.Texture;
 
 import Core;
 import TaskGraph;
@@ -13,11 +13,10 @@ import vulkan;
 import RHI;
 import std;
 
-import :Texture;
-import :Types;
-import :Context;
-import :Debug;
-import :Staging;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Staging;
 
 namespace SoulEngine {
 

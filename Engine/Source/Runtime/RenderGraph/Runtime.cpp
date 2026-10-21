@@ -1,9 +1,8 @@
-module RenderGraph:Runtime.impl;
+module RenderGraph.Runtime;
 
-import :Runtime;
 import Core;
-import :PipelineRegistry;
-import :TexturePool;
+import RenderGraph.PipelineRegistry;
+import RenderGraph.TexturePool;
 
 namespace SoulEngine {
 

@@ -1,6 +1,6 @@
 module;
 
-export module WindowSystem:Types;
+export module WindowSystem.Types;
 
 import magic_enum;
 import std;

@@ -1,12 +1,12 @@
-export module Renderer:RayTracing.RayTracingRenderer;
+export module Renderer.RayTracing.RayTracingRenderer;
 
 import Core;
 import EditorTypes;
 import RHI;
 import Scene;
 
-import :Common;
-import :Interface;
+import Renderer.Common;
+import Renderer.Interface;
 
 import std;
 

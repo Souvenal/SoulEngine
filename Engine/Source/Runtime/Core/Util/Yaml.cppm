@@ -19,7 +19,7 @@ namespace SoulEngine {
 
 // Module linkage, not an anonymous namespace: this class is named by the exported inline YamlDocument::Create
 // below, and TU-local entities cannot be named from exported code.
-class YamlParser {
+export class YamlParser {
   public:
     [[nodiscard]] static auto Create(std::span<const unsigned char> Source) -> std::expected<YamlParser, ErrorMessage> {
         YamlParser Result = {};

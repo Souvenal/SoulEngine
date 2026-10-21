@@ -4,12 +4,12 @@ module;
 #include <entt/entt.hpp>
 #include <imgui_impl_glfw.h>
 
-export module WindowSystem:Glfw;
+export module WindowSystem.Glfw;
 
 import magic_enum;
 import Core;
-import :Types;
-import :Interface;
+import WindowSystem.Types;
+import WindowSystem.Interface;
 
 import std;
 

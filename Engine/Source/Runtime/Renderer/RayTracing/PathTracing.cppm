@@ -1,4 +1,4 @@
-export module Renderer:RayTracing.PathTracing;
+export module Renderer.RayTracing.PathTracing;
 
 import Core;
 import RHI;

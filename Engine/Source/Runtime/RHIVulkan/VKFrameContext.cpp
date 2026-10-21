@@ -1,12 +1,11 @@
-module RHIVulkan:FrameContext.impl;
+module RHIVulkan.FrameContext;
 
 import Core;
 import RHI;
 import vulkan;
 import std;
 
-import :FrameContext;
-import :Context;
+import RHIVulkan.Context;
 
 namespace SoulEngine {
 

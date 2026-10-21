@@ -4,7 +4,7 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Material:Types;
+export module Material.Types;
 
 import Core;
 import RHI;
@@ -379,7 +379,7 @@ auto RegisterMaterialYamlMeta() -> void {
 // startup.
 namespace MetaRegistration {
 
-struct MaterialYamlMetaRegistration {
+export struct MaterialYamlMetaRegistration {
     MaterialYamlMetaRegistration() {
         RegisterMaterialYamlMeta();
     }

@@ -2,4 +2,4 @@ module;
 
 export module TaskGraph;
 
-export import :Runtime;
+export import TaskGraph.Runtime;

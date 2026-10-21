@@ -4,7 +4,7 @@ module;
 #include <hlsl++.h>
 #include <imgui.h>
 
-module Editor:EditorCamera.impl;
+module Editor.EditorCamera;
 
 import std;
 import Core;
@@ -13,7 +13,6 @@ import Scene;
 import Renderer;
 import WindowSystem;
 import EditorTypes;
-import :EditorCamera;
 
 namespace SoulEngine {
 

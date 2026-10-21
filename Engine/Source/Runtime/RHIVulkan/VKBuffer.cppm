@@ -5,7 +5,7 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RHIVulkan:Buffer;
+export module RHIVulkan.Buffer;
 
 import Core;
 import TaskGraph;
@@ -13,13 +13,13 @@ import vulkan;
 import RHI;
 import std;
 
-import :Capability;
-import :Types;
-import :Context;
-import :Debug;
-import :Semaphore;
-import :RingBuffer;
-import :Staging;
+import RHIVulkan.Capability;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Semaphore;
+import RHIVulkan.RingBuffer;
+import RHIVulkan.Staging;
 
 namespace SoulEngine {
 
@@ -32,7 +32,7 @@ namespace SoulEngine {
 /// contract violation the frame-task ordinals cannot see because the misused upload's task ordinal still
 /// matches the current frame — is detected and dropped instead of corrupting a recycled or in-flight range.
 /// RHI-thread confined.
-class VulkanUniformBelt {
+export class VulkanUniformBelt {
   public:
     VulkanUniformBelt()                                                = default;
     VulkanUniformBelt(const VulkanUniformBelt&)                        = delete;
@@ -71,7 +71,7 @@ class VulkanUniformBelt {
 /// Serves per-frame storage/indirect data rebuilt during command execution. Same ring, growth,
 /// dynamic-binding, and generation-guard contract as the uniform belt; instances additionally carry the
 /// indirect-buffer usage bit for draw-indirect slices. RHI-thread confined.
-class VulkanShaderStorageBelt {
+export class VulkanShaderStorageBelt {
   public:
     VulkanShaderStorageBelt()                                                      = default;
     VulkanShaderStorageBelt(const VulkanShaderStorageBelt&)                        = delete;
@@ -106,13 +106,13 @@ class VulkanShaderStorageBelt {
 };
 
 /// Pure RHIBufferUsage → vk::BufferUsageFlags mapping: no implicit bits.
-[[nodiscard]] auto ToVkBufferUsage(RHIBufferUsage Usage) -> vk::BufferUsageFlags;
+export [[nodiscard]] auto ToVkBufferUsage(RHIBufferUsage Usage) -> vk::BufferUsageFlags;
 
 /// @brief Persistent-flavor state: the buffer owns its VMA allocation.
 ///
 /// GpuOnly and CpuToGpu share this exact member shape — they differ only in values (baked device address or
 /// zero) and behavior (upload path), never in layout.
-struct PersistentBufferProp {
+export struct PersistentBufferProp {
     VmaAllocator                 Allocator     = nullptr; ///< allocator that produced Allocation
     VulkanDeferredDeletionQueue* DeferredQueue = nullptr; ///< borrowed destruction queue, owned by the resource context
     vk::Buffer                   Buffer        = nullptr; ///< native handle
@@ -125,7 +125,7 @@ struct PersistentBufferProp {
 /// Owns nothing — the backing buffer belongs to the belt, which retires the range after the GPU passes it;
 /// destruction is a no-op for this flavor. Belt instances are persistently mapped and contractually
 /// host-coherent: callers write the range directly, no flush is needed.
-struct TransientBufferProp {
+export struct TransientBufferProp {
     RingAllocation Allocation         = {}; ///< backing belt range (handle, mapped base, offset)
     /// @brief Belt generation stamped at slice creation.
     ///
@@ -140,7 +140,7 @@ struct TransientBufferProp {
 /// PersistentBufferProp; the transient belt-slice flavor borrows its range in TransientBufferProp. The
 /// variant makes mixed-flavor state unrepresentable; GetProp<T>() is the only access path to flavor state.
 /// The host-visible readback ring below is a separate class.
-class VulkanBuffer final : public RHIBuffer {
+export class VulkanBuffer final : public RHIBuffer {
   public:
     VulkanBuffer(const VulkanBuffer&)                    = delete;
     auto operator=(const VulkanBuffer&) -> VulkanBuffer& = delete;
@@ -188,7 +188,7 @@ class VulkanBuffer final : public RHIBuffer {
 /// Desc validation and creation dispatch (persistent / transient belt slice), uploads, and the transient
 /// belts. GpuOnly upload bytes stage through the device-owned staging belt. The render device owns one
 /// instance and forwards; belts are RHI-thread confined (touched by frame tasks and Execute only).
-class VulkanBufferManager final {
+export class VulkanBufferManager final {
   public:
     VulkanBufferManager()                                              = default;
     VulkanBufferManager(const VulkanBufferManager&)                    = delete;

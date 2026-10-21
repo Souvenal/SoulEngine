@@ -14,7 +14,7 @@ import Scene;
 
 namespace SoulEngine {
 
-class VikingApplication final : public Application {
+export class VikingApplication final : public Application {
   public:
     VikingApplication() = default;
 };

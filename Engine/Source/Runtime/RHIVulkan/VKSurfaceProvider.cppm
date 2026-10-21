@@ -3,7 +3,7 @@ module;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-export module RHIVulkan:SurfaceProvider;
+export module RHIVulkan.SurfaceProvider;
 
 import magic_enum;
 import WindowSystem;
@@ -15,7 +15,7 @@ import Core;
 namespace SoulEngine {
 
 /// @brief Creates a Vulkan presentation surface for one window-system implementation.
-class IVulkanSurfaceProvider {
+export class IVulkanSurfaceProvider {
   public:
     IVulkanSurfaceProvider()          = default;
     virtual ~IVulkanSurfaceProvider() = default;
@@ -37,7 +37,7 @@ class IVulkanSurfaceProvider {
     [[nodiscard]] virtual auto GetFramebufferExtent() const -> FramebufferExtent = 0;
 };
 
-class GlfwVulkanSurfaceProvider final : public IVulkanSurfaceProvider {
+export class GlfwVulkanSurfaceProvider final : public IVulkanSurfaceProvider {
   public:
     explicit GlfwVulkanSurfaceProvider(IWindowSystem* WindowSys);
 
@@ -55,7 +55,7 @@ class GlfwVulkanSurfaceProvider final : public IVulkanSurfaceProvider {
 };
 
 /// @brief Create the Vulkan surface adapter for @p WindowSys.
-[[nodiscard]] auto CreateVulkanSurfaceProvider(IWindowSystem* WindowSys)
+export [[nodiscard]] auto CreateVulkanSurfaceProvider(IWindowSystem* WindowSys)
     -> std::expected<UPtr<IVulkanSurfaceProvider>, ErrorMessage>;
 
 } // namespace SoulEngine

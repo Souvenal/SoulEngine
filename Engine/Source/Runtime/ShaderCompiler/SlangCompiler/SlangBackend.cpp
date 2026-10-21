@@ -7,13 +7,12 @@ module;
 #include <slang.h>
 #include <slang-com-ptr.h>
 
-module Slang:Backend.impl;
+module Slang.Backend;
 
-import :Backend;
 import magic_enum;
-import :Types;
-import :Utils;
-import :Reflection;
+import Slang.Types;
+import Slang.Utils;
+import Slang.Reflection;
 import std;
 import Core;
 import ShaderCompiler;

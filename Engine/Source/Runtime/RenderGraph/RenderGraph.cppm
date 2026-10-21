@@ -1,6 +1,6 @@
 export module RenderGraph;
 
-export import :Types;
-export import :Builder;
-export import :PipelineRegistry;
-export import :Runtime;
+export import RenderGraph.Types;
+export import RenderGraph.Builder;
+export import RenderGraph.PipelineRegistry;
+export import RenderGraph.Runtime;

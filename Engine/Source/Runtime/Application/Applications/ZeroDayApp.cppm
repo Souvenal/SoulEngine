@@ -14,7 +14,7 @@ import Scene;
 
 namespace SoulEngine {
 
-class ZeroDayApplication final : public Application {
+export class ZeroDayApplication final : public Application {
   public:
     ZeroDayApplication() = default;
 };

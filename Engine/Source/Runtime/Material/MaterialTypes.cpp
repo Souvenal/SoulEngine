@@ -6,9 +6,8 @@ module;
 // pass compilation with c++23. Before it is fixed, we now use header only in this file.
 #include <magic_enum/magic_enum.hpp>
 
-module Material:Types.impl;
+module Material.Types;
 
-import :Types;
 import Core;
 import RHI;
 import std;

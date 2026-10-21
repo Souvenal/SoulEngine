@@ -2,12 +2,12 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:Raster.GeometryPass;
+export module Renderer.Raster.GeometryPass;
 
 import Core;
 import RHI;
 import RenderGraph;
-import :Common.GBuffer;
+import Renderer.Common.GBuffer;
 
 import std;
 import ShaderCompiler;

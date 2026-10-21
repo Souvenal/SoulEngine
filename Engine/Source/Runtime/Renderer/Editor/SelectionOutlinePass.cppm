@@ -1,6 +1,6 @@
 module;
 
-export module Renderer:EditorPasses.SelectionOutlinePass;
+export module Renderer.EditorPasses.SelectionOutlinePass;
 
 import Core;
 import RHI;

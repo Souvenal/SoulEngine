@@ -2,4 +2,4 @@ module;
 
 export module Application;
 
-export import :Interface;
+export import Application.Interface;

@@ -1,4 +1,4 @@
-export module RHIVulkan:Capability;
+export module RHIVulkan.Capability;
 
 import Core;
 import vulkan;
@@ -8,7 +8,7 @@ namespace SoulEngine {
 
 // Instance and device capability requests
 
-struct VulkanCapabilityRequest {
+export struct VulkanCapabilityRequest {
     const char* Name     = nullptr;
     bool        Required = false;
     bool        Enabled  = false; // set during resolve
@@ -16,23 +16,23 @@ struct VulkanCapabilityRequest {
 
 // VulkanCapability
 
-using VulkanFeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
-                                               vk::PhysicalDeviceVulkan11Features,
-                                               vk::PhysicalDeviceVulkan12Features,
-                                               vk::PhysicalDeviceVulkan13Features,
-                                               vk::PhysicalDeviceVulkan14Features,
-                                               vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
-                                               vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>;
+export using VulkanFeaturesChain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
+                                                      vk::PhysicalDeviceVulkan11Features,
+                                                      vk::PhysicalDeviceVulkan12Features,
+                                                      vk::PhysicalDeviceVulkan13Features,
+                                                      vk::PhysicalDeviceVulkan14Features,
+                                                      vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+                                                      vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>;
 
-using VulkanPropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
-                                                 vk::PhysicalDeviceVulkan11Properties,
-                                                 vk::PhysicalDeviceVulkan12Properties,
-                                                 vk::PhysicalDeviceVulkan13Properties,
-                                                 vk::PhysicalDeviceVulkan14Properties,
-                                                 vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
-                                                 vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>;
+export using VulkanPropertiesChain = vk::StructureChain<vk::PhysicalDeviceProperties2,
+                                                        vk::PhysicalDeviceVulkan11Properties,
+                                                        vk::PhysicalDeviceVulkan12Properties,
+                                                        vk::PhysicalDeviceVulkan13Properties,
+                                                        vk::PhysicalDeviceVulkan14Properties,
+                                                        vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
+                                                        vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>;
 
-class VulkanCapability : public Singleton<VulkanCapability> {
+export class VulkanCapability : public Singleton<VulkanCapability> {
     friend class Singleton<VulkanCapability>;
 
   private:

@@ -4,13 +4,13 @@
 module;
 #include <vulkan/vulkan.h>
 
-export module RHIVulkan:Debug;
+export module RHIVulkan.Debug;
 
 import Core;
 import vulkan;
 import std;
 
-import :Capability;
+import RHIVulkan.Capability;
 
 namespace SoulEngine {
 

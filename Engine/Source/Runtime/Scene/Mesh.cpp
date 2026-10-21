@@ -6,9 +6,7 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-module Scene:Mesh.impl;
-
-import :Mesh;
+module Scene.Mesh;
 
 namespace SoulEngine {
 

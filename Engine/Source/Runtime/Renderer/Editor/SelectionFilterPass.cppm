@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:EditorPasses.SelectionFilterPass;
+export module Renderer.EditorPasses.SelectionFilterPass;
 
 import Core;
 import RHI;

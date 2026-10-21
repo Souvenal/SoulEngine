@@ -3,15 +3,14 @@ module;
 #include <hlsl++.h>
 #include <imgui.h>
 
-module Editor:UIPanels.impl;
+module Editor.UIPanels;
 
 import std;
 import magic_enum;
 import Core;
 import Material;
 import Scene;
-import :UIManager;
-import :UIPanels;
+import Editor.UIManager;
 
 namespace SoulEngine {
 

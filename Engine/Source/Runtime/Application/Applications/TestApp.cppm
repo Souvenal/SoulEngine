@@ -14,7 +14,7 @@ import Scene;
 
 namespace SoulEngine {
 
-class TestApplication final : public Application {
+export class TestApplication final : public Application {
   public:
     TestApplication() = default;
 };

@@ -1,4 +1,4 @@
-export module Renderer:Common.GBuffer;
+export module Renderer.Common.GBuffer;
 
 import Core;
 import RenderGraph;

@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:Raster.DeferredLightingPass;
+export module Renderer.Raster.DeferredLightingPass;
 
 import Core;
 import RHI;

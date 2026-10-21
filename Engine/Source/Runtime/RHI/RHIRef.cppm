@@ -1,6 +1,6 @@
 module;
 
-export module RHI:Ref;
+export module RHI.Ref;
 
 import Core;
 import Shader;
@@ -39,7 +39,7 @@ export class RHIDeferredDeletionQueue {
 ///
 /// RHIRenderDevice::Create() points GDeferredDeletionQueue here; tests may temporarily redirect the pointer
 /// to a local queue instance.
-extern RHIDeferredDeletionQueue GDeferredDeletionQueueStorage;
+export extern RHIDeferredDeletionQueue GDeferredDeletionQueueStorage;
 
 /// @brief Process-wide deferred deletion queue. Set by RHIRenderDevice::Create().
 export extern RHIDeferredDeletionQueue* GDeferredDeletionQueue;
@@ -182,8 +182,6 @@ class RHIRef {
     }
 
     SPtr<RHIRefPayload<T>> m_Payload = nullptr;
-
-    friend class RHIRenderDevice;
 };
 
 /// @brief Shared CPU payload for an append-only bindless resource array.

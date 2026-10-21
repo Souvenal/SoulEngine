@@ -1,4 +1,4 @@
-export module Renderer:EditorPasses.EntityPicking;
+export module Renderer.EditorPasses.EntityPicking;
 
 import Core;
 import EditorTypes;

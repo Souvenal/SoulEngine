@@ -4,12 +4,11 @@ module;
 #include <hlsl++.h>
 #include <imgui.h>
 
-module Editor:EditorWorld.impl;
+module Editor.EditorWorld;
 
 import std;
 import Core;
-import :EditorCamera;
-import :EditorWorld;
+import Editor.EditorCamera;
 import EditorTypes;
 import RHI;
 import WindowSystem;

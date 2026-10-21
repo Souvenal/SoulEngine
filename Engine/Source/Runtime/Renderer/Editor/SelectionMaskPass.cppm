@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:EditorPasses.SelectionMaskPass;
+export module Renderer.EditorPasses.SelectionMaskPass;
 
 import Core;
 import Material;

@@ -2,7 +2,7 @@ module;
 
 #include <cstddef>
 
-export module RHIVulkan:Pipeline;
+export module RHIVulkan.Pipeline;
 
 import vulkan;
 
@@ -10,16 +10,16 @@ import RHI;
 import Shader;
 import std;
 
-import :Types;
-import :Shader;
-import :ShaderBindingSet;
-import :Context;
-import :Debug;
+import RHIVulkan.Types;
+import RHIVulkan.Shader;
+import RHIVulkan.ShaderBindingSet;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
 import Core;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto CountDynamicOffsets(const ShaderReflection& Reflection) -> Uint32 {
+export [[nodiscard]] auto CountDynamicOffsets(const ShaderReflection& Reflection) -> Uint32 {
     Uint32 Count = 0;
     for (const auto& Binding : Reflection.Bindings) {
         if (Binding.Type == ShaderResourceType::ConstantBuffer)
@@ -28,7 +28,7 @@ namespace SoulEngine {
     return Count;
 }
 
-struct VulkanReflectedDescriptorBinding {
+export struct VulkanReflectedDescriptorBinding {
     String             ParameterPath      = {};
     Uint32             Set                = 0;
     Uint32             Binding            = 0;
@@ -37,7 +37,7 @@ struct VulkanReflectedDescriptorBinding {
     Uint32             DynamicOffsetIndex = std::numeric_limits<Uint32>::max();
 };
 
-[[nodiscard]] auto BuildReflectedBindings(const ShaderReflection& Reflection)
+export [[nodiscard]] auto BuildReflectedBindings(const ShaderReflection& Reflection)
     -> std::vector<VulkanReflectedDescriptorBinding> {
     std::vector<ShaderBinding> Sorted = Reflection.Bindings;
     std::ranges::sort(Sorted, [](const ShaderBinding& Lhs, const ShaderBinding& Rhs) {
@@ -67,7 +67,7 @@ struct VulkanReflectedDescriptorBinding {
 /// @brief Vulkan graphics pipeline using the layout owned by its shader binding set.
 ///
 /// Created via the static `Create` factory. RHICommand lists only observe it.
-class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
+export class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
   public:
     explicit VulkanGraphicsPipeline(String Name, const RHIGraphicsPipelineDesc& Desc)
         : RHIGraphicsPipeline(std::move(Name), Desc.BindingSet) {}
@@ -333,7 +333,7 @@ class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
 
 // VulkanComputePipeline — concrete Vulkan compute pipeline.
 
-class VulkanComputePipeline final : public RHIComputePipeline {
+export class VulkanComputePipeline final : public RHIComputePipeline {
   public:
     explicit VulkanComputePipeline(String Name, const RHIComputePipelineDesc& Desc)
         : RHIComputePipeline(std::move(Name), Desc.BindingSet) {}
