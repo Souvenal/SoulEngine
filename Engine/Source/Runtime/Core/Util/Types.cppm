@@ -1,5 +1,6 @@
 module;
 
+#include <entt/core/type_info.hpp>
 #include <entt/core/type_traits.hpp>
 #include <entt/meta/type_traits.hpp>
 #include <hlsl++.h>
@@ -14,6 +15,29 @@ import std;
 // equality comparable for EnTT; the meta_any vtable then skips comparison wiring for them. Exported here so
 // every module unit importing Core shares this single definition.
 export namespace entt {
+
+// Persisted standard-library values share explicit identities across header and module instantiations.
+template <>
+struct type_hash<std::string> {
+    [[nodiscard]] static constexpr auto value() noexcept -> id_type {
+        return hashed_string::value("SoulEngine::String");
+    }
+
+    [[nodiscard]] constexpr operator id_type() const noexcept {
+        return value();
+    }
+};
+
+template <>
+struct type_hash<std::filesystem::path> {
+    [[nodiscard]] static constexpr auto value() noexcept -> id_type {
+        return hashed_string::value("SoulEngine::Path");
+    }
+
+    [[nodiscard]] constexpr operator id_type() const noexcept {
+        return value();
+    }
+};
 
 template <>
 struct is_equality_comparable<hlslpp::float2> : std::false_type {};
