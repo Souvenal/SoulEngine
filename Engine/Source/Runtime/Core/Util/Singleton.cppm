@@ -1,4 +1,6 @@
-export module Core:Util.Singleton;
+export module Core.Util.Singleton;
+
+import std;
 
 namespace SoulEngine {
 /// @brief Meyer's singleton base class.

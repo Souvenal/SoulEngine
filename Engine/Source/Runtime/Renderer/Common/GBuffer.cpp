@@ -1,6 +1,5 @@
-module Renderer:Common.GBuffer.impl;
+module Renderer.Common.GBuffer;
 
-import :Common.GBuffer;
 import Core;
 import RHI;
 import RenderGraph;

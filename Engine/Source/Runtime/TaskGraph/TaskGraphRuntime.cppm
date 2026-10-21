@@ -1,6 +1,6 @@
 module;
 
-export module TaskGraph:Runtime;
+export module TaskGraph.Runtime;
 
 import std;
 import Core;
@@ -9,7 +9,7 @@ import magic_enum;
 namespace SoulEngine {
 
 /// @brief Task that may execute only when its published frame is current.
-struct FrameTask {
+export struct FrameTask {
     Uint64                FrameIndex = 0;
     Uint64                Sequence   = 0;
     std::function<void()> Task       = {};
@@ -30,7 +30,7 @@ export enum class ThreadQueue {
 };
 
 /// @brief Thread-safe pair of unbound and frame-affined task queues.
-struct TaskQueue {
+export struct TaskQueue {
     std::mutex                        Mutex;
     std::queue<std::function<void()>> Tasks;
     std::deque<FrameTask>             FrameTasks;

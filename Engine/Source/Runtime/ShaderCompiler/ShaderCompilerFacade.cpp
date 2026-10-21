@@ -1,10 +1,9 @@
 /// @file   ShaderCompilerFacade.cpp
 /// @brief  ShaderCompiler module implementation.
 
-module ShaderCompiler:Facade.impl;
+module ShaderCompiler.Facade;
 
-import :Facade;
-import :Types;
+import ShaderCompiler.Types;
 import magic_enum;
 import std;
 import Core;

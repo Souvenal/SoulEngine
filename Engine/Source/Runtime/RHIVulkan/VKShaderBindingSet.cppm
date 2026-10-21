@@ -1,43 +1,43 @@
 module;
 
-export module RHIVulkan:ShaderBindingSet;
+export module RHIVulkan.ShaderBindingSet;
 
 import RHI;
 import Shader;
 import vulkan;
 import std;
 
-import :AccelerationStructure;
-import :Buffer;
-import :Capability;
-import :Context;
-import :Debug;
-import :Descriptor;
-import :Sampler;
-import :Texture;
+import RHIVulkan.AccelerationStructure;
+import RHIVulkan.Buffer;
+import RHIVulkan.Capability;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Descriptor;
+import RHIVulkan.Sampler;
+import RHIVulkan.Texture;
 import Core;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto ToVkShaderStageFlags(ShaderStage Stages) -> vk::ShaderStageFlags;
+export [[nodiscard]] auto ToVkShaderStageFlags(ShaderStage Stages) -> vk::ShaderStageFlags;
 
-[[nodiscard]] auto GetMaxRuntimeSampledTextureCount() -> Uint32;
+export [[nodiscard]] auto GetMaxRuntimeSampledTextureCount() -> Uint32;
 
 /// @brief Device-side ceiling for one array binding of the given resource type.
 ///
 /// Min of per-stage and per-set limits, capped at RHI.Vulkan.MaxTextures. Used both to size unbounded layouts
 /// and as the guardrail for fixed arrays.
-[[nodiscard]] auto GetMaxDescriptorArrayCount(ShaderResourceType Type, ShaderBindingAccess Access) -> Uint32;
+export [[nodiscard]] auto GetMaxDescriptorArrayCount(ShaderResourceType Type, ShaderBindingAccess Access) -> Uint32;
 
 // Slang's default SPIR-V lowering assigns read-only textures to binding 2 inside the reflected bindless
 // descriptor space. The descriptor set index is not hard-coded here; it comes from
 // ShaderReflection::BindlessSpace. The descriptor array's slot 0 is reserved for the zero/null material
 // handle; RHIRefArray supplies descriptor-facing slots starting at 1.
 
-[[nodiscard]] auto ValidateDescriptorSetIndices(const ShaderReflection& Reflection)
+export [[nodiscard]] auto ValidateDescriptorSetIndices(const ShaderReflection& Reflection)
     -> std::expected<void, ErrorMessage>;
 
-[[nodiscard]] auto ValidateBindlessSpace(std::span<const RHIShaderBindingSet::Slot> Bindings)
+export [[nodiscard]] auto ValidateBindlessSpace(std::span<const RHIShaderBindingSet::Slot> Bindings)
     -> std::expected<void, ErrorMessage>;
 
 /// @brief Vulkan descriptor layouts and sets for one reflected shader binding set.

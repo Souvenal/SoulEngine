@@ -5,15 +5,14 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-module Renderer:Raster.RasterRenderer.impl;
+module Renderer.Raster.RasterRenderer;
 
-import :Raster.RasterRenderer;
-import :Common;
-import :EditorPasses;
-import :Interface;
-import :Raster.CullingPass;
-import :Raster.DeferredLightingPass;
-import :Raster.GeometryPass;
+import Renderer.Common;
+import Renderer.EditorPasses;
+import Renderer.Interface;
+import Renderer.Raster.CullingPass;
+import Renderer.Raster.DeferredLightingPass;
+import Renderer.Raster.GeometryPass;
 
 import Core;
 import EditorTypes;

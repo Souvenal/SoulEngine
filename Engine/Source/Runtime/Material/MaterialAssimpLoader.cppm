@@ -3,11 +3,11 @@ module;
 #include <assimp/material.h>
 #include <entt/entt.hpp>
 
-export module Material:AssimpLoader;
+export module Material.AssimpLoader;
 
 import Core;
-import :Types;
-import :Texture;
+import Material.Types;
+import Material.Texture;
 
 namespace SoulEngine {
 

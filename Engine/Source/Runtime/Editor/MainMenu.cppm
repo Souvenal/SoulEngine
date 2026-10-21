@@ -1,5 +1,5 @@
 module;
 
-export module Editor:MainMenu;
+export module Editor.MainMenu;
 
-export namespace SoulEngine {}
+namespace SoulEngine {}

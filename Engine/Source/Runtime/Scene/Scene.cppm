@@ -2,7 +2,7 @@ module;
 
 export module Scene;
 
-export import :World;
-export import :Camera;
-export import :Mesh;
-export import :Light;
+export import Scene.World;
+export import Scene.Camera;
+export import Scene.Mesh;
+export import Scene.Light;

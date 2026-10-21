@@ -2,17 +2,16 @@ module;
 
 #include <vk_mem_alloc.h>
 
-module RHIVulkan:Readback.impl;
+module RHIVulkan.Readback;
 
 import Core;
 import vulkan;
 import RHI;
 import std;
 
-import :Readback;
-import :Context;
-import :Debug;
-import :Semaphore;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Semaphore;
 
 namespace SoulEngine {
 

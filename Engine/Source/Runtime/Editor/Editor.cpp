@@ -5,13 +5,12 @@ module;
 #include <imgui_impl_vulkan.h>
 #include <imgui_threaded_rendering.h>
 
-module Editor:Implementation;
+module Editor;
 
-import Editor;
 import magic_enum;
-import :UIManager;
-import :UIPanels;
-import :EditorWorld;
+import Editor.UIManager;
+import Editor.UIPanels;
+import Editor.EditorWorld;
 
 import Core;
 import EditorTypes;

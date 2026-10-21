@@ -8,11 +8,11 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RHI:Pipeline;
+export module RHI.Pipeline;
 
 import Core;
-export import :Types;
-import :Ref;
+export import RHI.Types;
+import RHI.Ref;
 import Shader;
 import std;
 

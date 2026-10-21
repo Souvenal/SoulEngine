@@ -9,8 +9,8 @@ module;
 export module RHIVulkan;
 
 // A little trick here: we use factory for RHI backend, thus no need for exporting symbols.
-import :RenderDevice;
-export import :RayTracingPipeline;
+import RHIVulkan.RenderDevice;
+export import RHIVulkan.RayTracingPipeline;
 
 import RHI;
 import Core;

@@ -2,11 +2,12 @@ module;
 
 #include <imgui_threaded_rendering.h>
 
-export module RHI:Command;
+export module RHI.Command;
 
-export import :Types;
-export import :Pipeline;
-import :Ref;
+export import RHI.Types;
+export import RHI.Pipeline;
+import RHI.Ref;
+import Core;
 
 import std;
 

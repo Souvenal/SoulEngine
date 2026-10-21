@@ -3,7 +3,7 @@ module;
 #include <hlsl++.h>
 #include <vk_mem_alloc.h>
 
-export module RHIVulkan:AccelerationStructure;
+export module RHIVulkan.AccelerationStructure;
 
 import Core;
 import RHI;
@@ -11,19 +11,19 @@ import TaskGraph;
 import vulkan;
 import std;
 
-import :Capability;
-import :Context;
-import :Debug;
-import :FrameContext;
-import :Profiling;
-import :RingBuffer;
+import RHIVulkan.Capability;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.FrameContext;
+import RHIVulkan.Profiling;
+import RHIVulkan.RingBuffer;
 
 namespace SoulEngine {
 
 /// @brief Pack a row-vector hlslpp world transform into Vulkan's row-major 3x4.
 ///
 /// The upper-left 3x3 block is transposed, the fourth row becomes translation.
-[[nodiscard]] auto ToVkInstanceTransform(const hlslpp::float4x4& Matrix) -> vk::TransformMatrixKHR {
+export [[nodiscard]] auto ToVkInstanceTransform(const hlslpp::float4x4& Matrix) -> vk::TransformMatrixKHR {
     return vk::TransformMatrixKHR{std::array<std::array<Float32, 4>, 3>{
         std::array<Float32, 4>{Matrix[0].x, Matrix[1].x, Matrix[2].x, Matrix[3].x},
         std::array<Float32, 4>{Matrix[0].y, Matrix[1].y, Matrix[2].y, Matrix[3].y},
@@ -36,7 +36,7 @@ namespace SoulEngine {
 /// The storage buffer carries no device address — AS storage is referenced only through the AS handle's own
 /// address. The buffer's native destruction rides the backend deferred deletion queue: a virtual timeline
 /// event keeps it valid until the submission that referenced it has drained.
-class VulkanNativeAccelerationStructure final {
+export class VulkanNativeAccelerationStructure final {
   public:
     VulkanNativeAccelerationStructure()                                                            = default;
     VulkanNativeAccelerationStructure(const VulkanNativeAccelerationStructure&)                    = delete;
@@ -116,7 +116,7 @@ class VulkanNativeAccelerationStructure final {
 /// Everything is snapshotted at descriptor creation: record-time work is a scratch-ring carve plus command
 /// emission, never a payload re-resolution or a device call. The ref carries retention and the recorded-flag
 /// guard.
-struct VulkanBlasBuildEntry {
+export struct VulkanBlasBuildEntry {
     RHIRef<RHIBottomLevelAccelerationStructure> Blas        = {};      ///< retention plus the recorded flag
     vk::AccelerationStructureKHR                Dst         = nullptr; ///< native handle, fixed at creation
     vk::AccelerationStructureGeometryKHR        Geometry    = {};      ///< baked triangles geometry
@@ -128,7 +128,7 @@ struct VulkanBlasBuildEntry {
 ///
 /// Instances are packed at descriptor creation (BLAS addresses are immutable once their payloads are
 /// created). BlasRefs is parallel to Instances and exists only for the recorded-flag guard at record time.
-struct VulkanTlasBuildEntry {
+export struct VulkanTlasBuildEntry {
     RHIRef<RHITopLevelAccelerationStructure>                 Tlas      = {};      ///< retention
     vk::AccelerationStructureKHR                             Dst       = nullptr; ///< native handle, fixed at creation
     std::vector<vk::AccelerationStructureInstanceKHR>        Instances = {};      ///< packed at creation
@@ -143,7 +143,7 @@ struct VulkanTlasBuildEntry {
 /// calls are thread-safe) — so Ready at return means the GPU resource exists. The build itself is GPU work
 /// submitted through BuildBlas and recorded by the AS manager's frame-start batch. A static BLAS is built
 /// exactly once.
-class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccelerationStructure {
+export class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccelerationStructure {
   public:
     explicit VulkanBottomLevelAccelerationStructure(String Name)
         : RHIBottomLevelAccelerationStructure(std::move(Name)) {}
@@ -270,7 +270,7 @@ class VulkanBottomLevelAccelerationStructure final : public RHIBottomLevelAccele
 /// Every frame creates a fresh TLAS object, so there is no capacity ring: storage lives and dies with this
 /// object via deferred deletion, while the build's scratch and instance ranges are bump-allocated out of the
 /// AS manager's rings and retire via the rings' frame-seal timeline markers.
-class VulkanTopLevelAccelerationStructure final : public RHITopLevelAccelerationStructure {
+export class VulkanTopLevelAccelerationStructure final : public RHITopLevelAccelerationStructure {
   public:
     explicit VulkanTopLevelAccelerationStructure(String Name) : RHITopLevelAccelerationStructure(std::move(Name)) {}
 
@@ -372,7 +372,7 @@ class VulkanTopLevelAccelerationStructure final : public RHITopLevelAcceleration
 /// device-local scratch ring and a host-mapped instance ring, both retiring through the ring frame-seal
 /// timeline markers. The render device owns one instance and forwards; the pending lists and the build phase
 /// are RHI-thread confined.
-class VulkanAccelerationStructureManager final {
+export class VulkanAccelerationStructureManager final {
   public:
     VulkanAccelerationStructureManager()                                                             = default;
     VulkanAccelerationStructureManager(const VulkanAccelerationStructureManager&)                    = delete;

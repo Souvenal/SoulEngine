@@ -2,15 +2,15 @@ module;
 
 #include <entt/entt.hpp>
 
-export module WindowSystem:Interface;
+export module WindowSystem.Interface;
 
-import :Types;
+import WindowSystem.Types;
 import Core;
 
 namespace SoulEngine {
 
-CVar<Int32> CVarWindowResolutionX{"Window.ResolutionX", 1280, "Window width in logical pixels"};
-CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", 720, "Window height in logical pixels"};
+export CVar<Int32> CVarWindowResolutionX{"Window.ResolutionX", 1280, "Window width in logical pixels"};
+export CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", 720, "Window height in logical pixels"};
 
 /// @brief Window-system (WIS) abstraction: window lifecycle, event polling,
 /// and per-frame input event publication.

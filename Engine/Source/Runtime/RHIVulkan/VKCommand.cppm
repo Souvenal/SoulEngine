@@ -1,28 +1,28 @@
-export module RHIVulkan:Command;
+export module RHIVulkan.Command;
 
 import Core;
 import RHI;
 import vulkan;
 import std;
 
-import :Types;
-import :Context;
-import :Capability;
-import :Swapchain;
-import :Buffer;
-import :Readback;
-import :Pipeline;
-import :RayTracingPipeline;
-import :Sampler;
-import :Texture;
-import :Descriptor;
-import :AccelerationStructure;
-import :ShaderBindingSet;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Capability;
+import RHIVulkan.Swapchain;
+import RHIVulkan.Buffer;
+import RHIVulkan.Readback;
+import RHIVulkan.Pipeline;
+import RHIVulkan.RayTracingPipeline;
+import RHIVulkan.Sampler;
+import RHIVulkan.Texture;
+import RHIVulkan.Descriptor;
+import RHIVulkan.AccelerationStructure;
+import RHIVulkan.ShaderBindingSet;
 import Shader;
 
 namespace SoulEngine {
 
-[[nodiscard]] static auto ToVkClearColor(const RHIClearColorValue& Value) -> vk::ClearColorValue {
+export [[nodiscard]] auto ToVkClearColor(const RHIClearColorValue& Value) -> vk::ClearColorValue {
     return std::visit(
         []<typename T>(const T& ClearValue) -> vk::ClearColorValue {
             vk::ClearColorValue Result = {};
@@ -38,7 +38,7 @@ namespace SoulEngine {
 }
 
 /// Shared Vulkan command execution context and operations.
-class VulkanCmdVisitor {
+export class VulkanCmdVisitor {
   public:
     VulkanCmdVisitor(const VulkanCmdVisitor&)                    = delete;
     auto operator=(const VulkanCmdVisitor&) -> VulkanCmdVisitor& = delete;
@@ -86,7 +86,7 @@ class VulkanCmdVisitor {
     std::optional<ErrorMessage> Error = std::nullopt;
 };
 
-class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
+export class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
@@ -235,7 +235,7 @@ class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
     RHIFormat               m_CurrentDepthFormat  = RHIFormat::Unknown;
 };
 
-class VulkanComputeCmdVisitor final : public VulkanCmdVisitor {
+export class VulkanComputeCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
@@ -257,7 +257,7 @@ class VulkanComputeCmdVisitor final : public VulkanCmdVisitor {
     VulkanComputePipeline& m_Pipeline;
 };
 
-class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
+export class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 
@@ -296,7 +296,7 @@ class VulkanRayTracingCmdVisitor final : public VulkanCmdVisitor {
     VulkanRayTracingPipeline& m_Pipeline;
 };
 
-class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
+export class VulkanTransferCmdVisitor final : public VulkanCmdVisitor {
   public:
     using VulkanCmdVisitor::operator();
 

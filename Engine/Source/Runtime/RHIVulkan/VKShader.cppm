@@ -9,7 +9,7 @@
 
 module;
 
-export module RHIVulkan:Shader;
+export module RHIVulkan.Shader;
 
 import magic_enum;
 import vulkan;
@@ -18,20 +18,22 @@ import Core;
 import Shader;
 import RHI;
 import std;
-import :Debug;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 
 // Resource-type conversion
 
-[[nodiscard]] auto ToVkVertexFormat(const ShaderValueType& ValueType) -> std::expected<vk::Format, ErrorMessage>;
+export [[nodiscard]] auto ToVkVertexFormat(const ShaderValueType& ValueType) -> std::expected<vk::Format, ErrorMessage>;
 
-[[nodiscard]] auto ToVkVertexFormat(RHIFormat Fmt) -> std::expected<vk::Format, ErrorMessage>;
+export [[nodiscard]] auto ToVkVertexFormat(RHIFormat Fmt) -> std::expected<vk::Format, ErrorMessage>;
 
-[[nodiscard]] auto FindReflectedVertexInputByLocation(const std::vector<ShaderVertexInputAttribute>& VertexInputs,
-                                                      Uint32 Location) -> const ShaderVertexInputAttribute*;
+export [[nodiscard]] auto
+FindReflectedVertexInputByLocation(const std::vector<ShaderVertexInputAttribute>& VertexInputs, Uint32 Location)
+    -> const ShaderVertexInputAttribute*;
 
-[[nodiscard]] auto ValidateVertexInputLayout(const RHIGraphicsPipelineDesc& Desc) -> std::expected<void, ErrorMessage>;
+export [[nodiscard]] auto ValidateVertexInputLayout(const RHIGraphicsPipelineDesc& Desc)
+    -> std::expected<void, ErrorMessage>;
 
 //
 // Shader-module management
@@ -40,7 +42,7 @@ namespace SoulEngine {
 /// creation.
 ///
 /// Owns VkShaderModule lifetimes; all modules are destroyed when this object is destroyed.
-class VulkanGraphicsShaderStates {
+export class VulkanGraphicsShaderStates {
   public:
     std::vector<vk::PipelineShaderStageCreateInfo> StageInfos = {};
 

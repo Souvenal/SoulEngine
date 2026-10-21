@@ -2,10 +2,9 @@ module;
 
 #include <entt/entt.hpp>
 
-module Core:ECS.impl;
+module Core.ECS;
 
 import std;
-import :ECS;
 
 namespace SoulEngine {
 

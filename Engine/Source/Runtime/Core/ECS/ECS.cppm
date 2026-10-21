@@ -2,9 +2,11 @@ module;
 
 #include <entt/entt.hpp>
 
-export module Core:ECS;
+export module Core.ECS;
 
-export import :Util;
+export import Core.Util;
+
+import std;
 
 namespace SoulEngine {
 

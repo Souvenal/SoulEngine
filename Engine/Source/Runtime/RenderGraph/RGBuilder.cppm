@@ -7,12 +7,12 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RenderGraph:Builder;
+export module RenderGraph.Builder;
 
-import :Types;
-import :PipelineRegistry;
-import :Runtime;
-import :SyncPlan;
+import RenderGraph.Types;
+import RenderGraph.PipelineRegistry;
+import RenderGraph.Runtime;
+import RenderGraph.SyncPlan;
 import RHI;
 import Core;
 import std;

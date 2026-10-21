@@ -2,15 +2,14 @@ module;
 
 #include <vk_mem_alloc.h>
 
-module RHIVulkan:RingBuffer.impl;
+module RHIVulkan.RingBuffer;
 
 import Core;
 import vulkan;
 import std;
 
-import :RingBuffer;
-import :Context;
-import :Debug;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 

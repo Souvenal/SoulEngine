@@ -1,6 +1,5 @@
-module RenderGraph:TexturePool.impl;
+module RenderGraph.TexturePool;
 
-import :TexturePool;
 import Core;
 import RHI;
 import std;

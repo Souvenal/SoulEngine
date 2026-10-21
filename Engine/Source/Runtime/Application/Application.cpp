@@ -1,8 +1,7 @@
 module;
 
-module Application:Implementation;
+module Application.Interface;
 
-import :Interface;
 import Core;
 import Scene;
 import std;

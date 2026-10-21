@@ -2,9 +2,7 @@ module;
 
 #include <entt/entt.hpp>
 
-module Scene:World.impl;
-
-import :World;
+module Scene.World;
 
 namespace SoulEngine {
 

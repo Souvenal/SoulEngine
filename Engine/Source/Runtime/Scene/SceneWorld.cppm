@@ -6,14 +6,14 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Scene:World;
+export module Scene.World;
 
 import std;
 import Core;
 import RHI;
-import :Camera;
-import :Mesh;
-import :Light;
+import Scene.Camera;
+import Scene.Mesh;
+import Scene.Light;
 import TaskGraph;
 
 namespace SoulEngine {

@@ -1,10 +1,10 @@
 module;
 
-export module RHIVulkan:Semaphore;
+export module RHIVulkan.Semaphore;
 
 import Core;
-import :Capability;
-import :Debug;
+import RHIVulkan.Capability;
+import RHIVulkan.Debug;
 
 import vulkan;
 import std;
@@ -16,7 +16,7 @@ namespace SoulEngine {
 /// @brief Thin wrapper around a single per-device VkSemaphore of type VK_SEMAPHORE_TYPE_TIMELINE.
 ///
 /// Owns the monotonic CPU signal counter and provides blocking CPU waits / non-blocking completion queries.
-class VulkanTimelineSemaphore {
+export class VulkanTimelineSemaphore {
   public:
     VulkanTimelineSemaphore() = default;
 

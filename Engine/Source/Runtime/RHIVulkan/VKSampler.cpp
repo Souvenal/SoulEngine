@@ -1,14 +1,13 @@
-module RHIVulkan:Sampler.impl;
+module RHIVulkan.Sampler;
 
 import Core;
 import RHI;
 import vulkan;
 import std;
 
-import :Sampler;
-import :Capability;
-import :Context;
-import :Debug;
+import RHIVulkan.Capability;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 namespace {

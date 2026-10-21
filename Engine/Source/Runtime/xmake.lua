@@ -20,6 +20,20 @@ function test_module(module_name, opt)
 
     local deps = opt.deps or opt.additional_deps or {}
     table.insert(deps, module_name)
+    local impl_targets = {
+        ["Application"] = true, ["Core"] = true, ["Editor"] = true, ["Launch"] = true,
+        ["Material"] = true, ["Platform"] = true, ["RHI"] = true, ["RHIVulkan"] = true,
+        ["RenderGraph"] = true, ["Renderer"] = true, ["Scene"] = true, ["ShaderCompiler"] = true,
+        ["TaskGraph"] = true, ["WindowSystem"] = true,
+    }
+    local with_impl = {}
+    for _, dep in ipairs(deps) do
+        table.insert(with_impl, dep)
+        if impl_targets[dep] then
+            table.insert(with_impl, dep .. ".Impl")
+        end
+    end
+    deps = with_impl
     local packages = opt.packages or opt.additional_packages or {}
     table.insert(packages, "gtest")
     local tests_dir = path.absolute(path.join(os.scriptdir(), "Tests"))
@@ -30,7 +44,7 @@ function test_module(module_name, opt)
     -- (get_config("toolchain") returns nil), so the check must run where
     -- target:toolchains() is resolved.
     local exclude_on_clang = opt.exclude_on_clang or {}
-    for _, testfile in ipairs(os.files("Tests/**.cpp")) do
+    for _, testfile in ipairs(os.files(path.join(tests_dir, "**.cpp"))) do
         local basename = path.basename(testfile)
         local excluded = false
         for _, pattern in ipairs(exclude_patterns) do
@@ -131,7 +145,10 @@ target("SoulEngine")
     set_default(true)
     set_kind("binary")
 
-    add_deps("Core", "Launch")
+    add_deps("Core", "Launch",
+             "Application.Impl", "Core.Impl", "Editor.Impl", "Launch.Impl", "Material.Impl",
+             "Platform.Impl", "RHI.Impl", "RHIVulkan.Impl", "RenderGraph.Impl", "Renderer.Impl",
+             "Scene.Impl", "ShaderCompiler.Impl", "TaskGraph.Impl", "WindowSystem.Impl")
     add_files("main.cpp")
 
     -- ShaderCompiler is a moduleonly target; its shared-library packages

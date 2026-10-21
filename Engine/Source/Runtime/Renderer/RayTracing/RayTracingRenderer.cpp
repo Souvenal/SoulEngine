@@ -4,12 +4,11 @@ module;
 #include <cstddef>
 #include <hlsl++.h>
 
-module Renderer:RayTracing.RayTracingRenderer.impl;
+module Renderer.RayTracing.RayTracingRenderer;
 
-import :RayTracing.PathTracing;
-import :RayTracing.RayTracingRenderer;
-import :Common;
-import :Interface;
+import Renderer.RayTracing.PathTracing;
+import Renderer.Common;
+import Renderer.Interface;
 
 import Core;
 import EditorTypes;

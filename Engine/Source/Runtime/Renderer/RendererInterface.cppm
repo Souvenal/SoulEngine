@@ -2,7 +2,7 @@ module;
 
 #include <imgui_threaded_rendering.h>
 
-export module Renderer:Interface;
+export module Renderer.Interface;
 
 import Core;
 import EditorTypes;

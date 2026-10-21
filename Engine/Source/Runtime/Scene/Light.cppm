@@ -8,7 +8,7 @@ module;
 // header directly here.
 #include <magic_enum/magic_enum.hpp>
 
-export module Scene:Light;
+export module Scene.Light;
 
 import std;
 import Core;

@@ -1,5 +1,5 @@
-export module Renderer:Common;
+export module Renderer.Common;
 
-export import :Common.Utilities;
-export import :Common.BlitToSwapchainPass;
-export import :Common.GBuffer;
+export import Renderer.Common.Utilities;
+export import Renderer.Common.BlitToSwapchainPass;
+export import Renderer.Common.GBuffer;

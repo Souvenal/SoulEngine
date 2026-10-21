@@ -1,11 +1,11 @@
 export module RHI;
 
-export import :Types;
-export import :Ref;
-export import :Pipeline;
-export import :RenderDevice;
-export import :Command;
-export import :Pass;
+export import RHI.Types;
+export import RHI.Ref;
+export import RHI.Pipeline;
+export import RHI.RenderDevice;
+export import RHI.Command;
+export import RHI.Pass;
 
 // RHI singleton lifecycle is now on RHIRenderDevice:
 //   RHIRenderDevice::Create(WindowSys) — select and initialize the backend

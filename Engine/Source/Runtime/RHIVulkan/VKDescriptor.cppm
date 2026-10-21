@@ -2,7 +2,7 @@ module;
 
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RHIVulkan:Descriptor;
+export module RHIVulkan.Descriptor;
 
 import Core;
 import RHI;
@@ -11,26 +11,26 @@ import vulkan;
 import std;
 import TaskGraph;
 
-import :Capability;
-import :Debug;
-import :AccelerationStructure;
-import :Buffer;
-import :Sampler;
-import :Texture;
+import RHIVulkan.Capability;
+import RHIVulkan.Debug;
+import RHIVulkan.AccelerationStructure;
+import RHIVulkan.Buffer;
+import RHIVulkan.Sampler;
+import RHIVulkan.Texture;
 
 namespace SoulEngine {
 
 inline constexpr Uint32 BindlessTextureBinding = 2;
 
-[[nodiscard]] auto GetBindlessDescriptorCount() -> Uint32;
+export [[nodiscard]] auto GetBindlessDescriptorCount() -> Uint32;
 
-struct DescriptorSetCacheKey {
+export struct DescriptorSetCacheKey {
     vk::DescriptorSetLayout Layout                                                 = nullptr;
     std::vector<Uint64>     ResourceIds                                            = {};
     auto                    operator==(const DescriptorSetCacheKey&) const -> bool = default;
 };
 
-struct DescriptorSetCacheKeyHash {
+export struct DescriptorSetCacheKeyHash {
     auto operator()(const DescriptorSetCacheKey& Key) const -> std::size_t;
 };
 
@@ -38,13 +38,13 @@ struct DescriptorSetCacheKeyHash {
 // accessors, and these helpers compose each write from the bound view (role, range, direction) plus the
 // slot's reflected (type, access) descriptor kind.
 
-[[nodiscard]] auto ToVkDescriptorType(ShaderResourceType Type, ShaderBindingAccess Access) -> vk::DescriptorType;
+export [[nodiscard]] auto ToVkDescriptorType(ShaderResourceType Type, ShaderBindingAccess Access) -> vk::DescriptorType;
 
 /// @brief Accumulates descriptor writes together with the pointee storage their pointers reference.
 ///
 /// vk::WriteDescriptorSet holds raw pointers (pImageInfo/pBufferInfo/pNext); the deques keep every payload at
 /// a stable address until updateDescriptorSets consumes the batch.
-struct VulkanDescriptorWriteBatch {
+export struct VulkanDescriptorWriteBatch {
     std::vector<vk::WriteDescriptorSet>                        Writes      = {};
     std::deque<vk::DescriptorImageInfo>                        ImageInfos  = {};
     std::deque<vk::DescriptorBufferInfo>                       BufferInfos = {};
@@ -74,7 +74,7 @@ struct VulkanDescriptorWriteBatch {
 /// @brief Global descriptor pool, persistent descriptor set allocation, and descriptor write primitives.
 ///
 /// Descriptor set layouts and pipeline layouts are created from shader reflection by VulkanShaderBindingSet.
-class VulkanDescriptorManager {
+export class VulkanDescriptorManager {
   public:
     VulkanDescriptorManager() = default;
 

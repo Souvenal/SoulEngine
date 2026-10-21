@@ -2,11 +2,11 @@ module;
 
 #include <toml++/toml.h>
 
-export module Core:Util.CVar;
+export module Core.Util.CVar;
 
-import :Util.Types;
-import :Util.Error;
-import :Util.Singleton;
+import Core.Util.Types;
+import Core.Util.Error;
+import Core.Util.Singleton;
 import std;
 
 /// @file
@@ -80,14 +80,14 @@ concept CVarValue =
 ///          cache an entry pointer at registration.  Arithmetic values are
 ///          atomic; String values are plain and guarded by the manager's
 ///          shared_mutex (the one inherent per-type storage difference).
-template <CVarValue T>
+export template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
 
     String       Description;
     ValueStorage Value;
 };
-template <>
+export template <>
 struct CVarEntry<String> {
     using ValueStorage = String;
 
@@ -97,7 +97,7 @@ struct CVarEntry<String> {
 
 /// @brief Per-type registry.  Type mismatch needs no tag or check: a name
 ///        registered under another type simply is not in this map.
-template <CVarValue T>
+export template <CVarValue T>
 using CVarRegistry = std::unordered_map<String, CVarEntry<T>>;
 
 /// @brief Display name of a CVar value type, for diagnostics only.
@@ -114,12 +114,12 @@ consteval auto CVarTypeName() -> StringView {
 }
 
 // Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core:Util.CVar's linkage note.
+// Core.Util.CVar's linkage note.
 
 /// @brief Convert a TOML leaf to a CVar value.  Integers undergo a range
 ///        check for Int32; Float32 also accepts TOML integers.
 ///        Pure function — no registry state — so it lives outside the manager.
-template <CVarValue T>
+export template <CVarValue T>
 [[nodiscard]] auto ConvertTomlNode(const toml::node& Node) -> std::optional<T> {
     if constexpr (std::same_as<T, bool>) {
         return Node.value<bool>();

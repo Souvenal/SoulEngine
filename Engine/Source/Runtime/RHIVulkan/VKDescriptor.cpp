@@ -2,7 +2,7 @@ module;
 
 #include <magic_enum/magic_enum_flags.hpp>
 
-module RHIVulkan:Descriptor.impl;
+module RHIVulkan.Descriptor;
 
 import Core;
 import RHI;
@@ -11,13 +11,12 @@ import vulkan;
 import std;
 import TaskGraph;
 
-import :Descriptor;
-import :Capability;
-import :Debug;
-import :AccelerationStructure;
-import :Buffer;
-import :Sampler;
-import :Texture;
+import RHIVulkan.Capability;
+import RHIVulkan.Debug;
+import RHIVulkan.AccelerationStructure;
+import RHIVulkan.Buffer;
+import RHIVulkan.Sampler;
+import RHIVulkan.Texture;
 
 namespace SoulEngine {
 

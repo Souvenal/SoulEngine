@@ -7,7 +7,7 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Scene:Mesh;
+export module Scene.Mesh;
 
 import std;
 import Core;
@@ -199,15 +199,15 @@ export struct InstanceRecord {
     }
 };
 
-struct GeometryLoader {
+export struct GeometryLoader {
     using result_type = std::shared_ptr<GeometryRecord>;
 
     auto operator()(StringView MeshPath, Uint32 MeshIndex, const aiMesh* AiMesh) const -> result_type;
 };
 
-using GeometryCache = entt::resource_cache<GeometryRecord, GeometryLoader>;
+export using GeometryCache = entt::resource_cache<GeometryRecord, GeometryLoader>;
 
-struct MeshLoader {
+export struct MeshLoader {
     using result_type = std::shared_ptr<MeshRecord>;
 
     auto operator()(const Path& MeshPath) -> result_type;
@@ -216,7 +216,7 @@ struct MeshLoader {
     MaterialAssimpCache m_MaterialAssimpCache;
 };
 
-using MeshCache = entt::resource_cache<MeshRecord, MeshLoader>;
+export using MeshCache = entt::resource_cache<MeshRecord, MeshLoader>;
 
 /// @brief System for loading mesh assets and collecting render records.
 export class MeshSystem : public ISystem {

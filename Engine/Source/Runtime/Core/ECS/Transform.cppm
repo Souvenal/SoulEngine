@@ -3,10 +3,10 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Core:ECS.Transform;
+export module Core.ECS.Transform;
 
-export import :ECS;
-export import :Util;
+export import Core.ECS;
+export import Core.Util;
 
 import std;
 
@@ -68,7 +68,7 @@ namespace MetaRegistration {
 
 using namespace entt::literals;
 
-struct TransformComponentMetaRegistration {
+export struct TransformComponentMetaRegistration {
     TransformComponentMetaRegistration() {
         entt::meta_factory<TransformComponent>{"transform"_hs}
             .data<&TransformComponent::Translation>("translation"_hs)

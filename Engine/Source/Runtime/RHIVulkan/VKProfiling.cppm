@@ -21,15 +21,15 @@ module;
 #include <vulkan/vulkan.h>
 #include <tracy/TracyVulkan.hpp>
 
-export module RHIVulkan:Profiling;
+export module RHIVulkan.Profiling;
 
 import Core;
 import vulkan;
 import std;
 
-import :Capability;
-import :Context;
-import :Debug;
+import RHIVulkan.Capability;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 

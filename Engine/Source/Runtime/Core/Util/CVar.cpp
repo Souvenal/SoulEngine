@@ -2,10 +2,9 @@ module;
 
 #include <toml++/toml.h>
 
-module Core:Util.CVar.impl;
+module Core.Util.CVar;
 
-import :Util.CVar;
-import :Util.Logging;
+import Core.Util.Logging;
 
 namespace SoulEngine {
 

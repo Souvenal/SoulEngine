@@ -1,11 +1,11 @@
-export module RHIVulkan:FrameContext;
+export module RHIVulkan.FrameContext;
 
 import Core;
 import RHI;
 import vulkan;
 import std;
 
-import :Context;
+import RHIVulkan.Context;
 
 namespace SoulEngine {
 
@@ -15,7 +15,7 @@ namespace SoulEngine {
 ///
 /// Named VulkanFrameContext to reserve FrameData for the future game→render thread transfer struct that will
 /// carry draw commands, view state, etc.
-struct VulkanFrameContext {
+export struct VulkanFrameContext {
     vk::raii::Semaphore                  PresentComplete                 = nullptr;
     Uint64                               SubmissionCompleteTimelineValue = 0;
     vk::raii::CommandPool                Pool                            = nullptr;

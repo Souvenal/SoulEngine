@@ -1,4 +1,4 @@
-export module Core:Util.Flags;
+export module Core.Util.Flags;
 
 import magic_enum;
 

@@ -4,9 +4,8 @@ module;
 #include <hlsl++.h>
 #include <yaml.h>
 
-module Core:Util.Yaml.impl;
+module Core.Util.Yaml;
 
-import :Util.Yaml;
 import std;
 
 namespace SoulEngine {

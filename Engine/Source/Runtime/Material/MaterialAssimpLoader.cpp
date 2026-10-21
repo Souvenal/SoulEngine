@@ -5,11 +5,10 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-module Material:AssimpLoader.impl;
+module Material.AssimpLoader;
 
-import :AssimpLoader;
-import :Types;
-import :Texture;
+import Material.Types;
+import Material.Texture;
 import Core;
 import std;
 

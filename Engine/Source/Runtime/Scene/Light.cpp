@@ -3,9 +3,7 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-module Scene:Light.impl;
-
-import :Light;
+module Scene.Light;
 
 namespace SoulEngine {
 

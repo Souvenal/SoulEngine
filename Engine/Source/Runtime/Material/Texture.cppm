@@ -2,12 +2,12 @@ module;
 
 #include <entt/entt.hpp>
 
-export module Material:Texture;
+export module Material.Texture;
 
 import Core;
 import RHI;
 import std;
-import :Types;
+import Material.Types;
 
 namespace SoulEngine {
 

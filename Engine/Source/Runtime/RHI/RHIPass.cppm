@@ -1,9 +1,10 @@
-export module RHI:Pass;
+export module RHI.Pass;
 
 import Core;
-import :Command;
-import :Pipeline;
-import :Types;
+import RHI.Command;
+import RHI.Pipeline;
+import RHI.Types;
+import RHI.Ref;
 
 import std;
 

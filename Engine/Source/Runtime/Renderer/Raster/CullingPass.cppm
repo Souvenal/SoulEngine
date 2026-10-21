@@ -2,7 +2,7 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:Raster.CullingPass;
+export module Renderer.Raster.CullingPass;
 
 import Core;
 import RHI;

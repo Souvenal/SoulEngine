@@ -1,14 +1,13 @@
-module RHI:RenderDevice.impl;
+module RHI.RenderDevice;
 
 import Core;
 import WindowSystem;
 
-import :RenderDevice;
-import :Types;
-import :Ref;
-import :Pipeline;
-import :Pass;
-import :Command;
+import RHI.Types;
+import RHI.Ref;
+import RHI.Pipeline;
+import RHI.Pass;
+import RHI.Command;
 
 import std;
 

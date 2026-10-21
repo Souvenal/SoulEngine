@@ -5,7 +5,7 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-module RHIVulkan:Buffer.impl;
+module RHIVulkan.Buffer;
 
 import Core;
 import TaskGraph;
@@ -13,14 +13,13 @@ import vulkan;
 import RHI;
 import std;
 
-import :Buffer;
-import :Capability;
-import :Types;
-import :Context;
-import :Debug;
-import :Semaphore;
-import :RingBuffer;
-import :Staging;
+import RHIVulkan.Capability;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Semaphore;
+import RHIVulkan.RingBuffer;
+import RHIVulkan.Staging;
 
 namespace SoulEngine {
 

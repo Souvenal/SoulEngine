@@ -1,6 +1,4 @@
-module Core:Util.Paths.impl;
-
-import :Util.Paths;
+module Core.Util.Paths;
 
 namespace SoulEngine {
 

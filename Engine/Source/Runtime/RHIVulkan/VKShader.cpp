@@ -1,4 +1,4 @@
-module RHIVulkan:Shader.impl;
+module RHIVulkan.Shader;
 
 import magic_enum;
 import vulkan;
@@ -7,8 +7,7 @@ import Core;
 import Shader;
 import RHI;
 import std;
-import :Shader;
-import :Debug;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 

@@ -5,7 +5,7 @@ module;
 #include <concepts>
 #include <entt/entt.hpp>
 
-export module RenderGraph:PipelineRegistry;
+export module RenderGraph.PipelineRegistry;
 
 import Core;
 import RHI;
@@ -61,25 +61,26 @@ export struct RayTracingPipelineRequest {
 ///
 /// Requests compare field by field (ShaderEntry paths and entry points are the meaningful identity; pipeline
 /// fixed-function state uses defaulted equality).
-[[nodiscard]] auto SameGraphicsRequest(const GraphicsPipelineRequest& A, const GraphicsPipelineRequest& B) -> bool {
+export [[nodiscard]] auto SameGraphicsRequest(const GraphicsPipelineRequest& A, const GraphicsPipelineRequest& B)
+    -> bool {
     return A.VertEntry.SourcePath == B.VertEntry.SourcePath && A.VertEntry.EntryPoint == B.VertEntry.EntryPoint &&
            A.FragEntry.SourcePath == B.FragEntry.SourcePath && A.FragEntry.EntryPoint == B.FragEntry.EntryPoint &&
            A.ColorFormats == B.ColorFormats && A.DepthFormat == B.DepthFormat;
 }
 
-[[nodiscard]] auto SameComputeRequest(const ComputePipelineRequest& A, const ComputePipelineRequest& B) -> bool {
+export [[nodiscard]] auto SameComputeRequest(const ComputePipelineRequest& A, const ComputePipelineRequest& B) -> bool {
     return A.ComputeEntry.SourcePath == B.ComputeEntry.SourcePath &&
            A.ComputeEntry.EntryPoint == B.ComputeEntry.EntryPoint &&
            A.SpecializationConstants == B.SpecializationConstants;
 }
 
-[[nodiscard]] auto SameEntryList(const std::vector<ShaderEntry>& A, const std::vector<ShaderEntry>& B) -> bool {
+export [[nodiscard]] auto SameEntryList(const std::vector<ShaderEntry>& A, const std::vector<ShaderEntry>& B) -> bool {
     return A.size() == B.size() && std::ranges::equal(A, B, [](const ShaderEntry& Lhs, const ShaderEntry& Rhs) {
                return Lhs.SourcePath == Rhs.SourcePath && Lhs.EntryPoint == Rhs.EntryPoint;
            });
 }
 
-[[nodiscard]] auto SameRayTracingRequest(const RayTracingPipelineRequest& A, const RayTracingPipelineRequest& B)
+export [[nodiscard]] auto SameRayTracingRequest(const RayTracingPipelineRequest& A, const RayTracingPipelineRequest& B)
     -> bool {
     const auto SameHitGroups = [](const std::vector<RayTracingHitGroupCompileDesc>& Lhs,
                                   const std::vector<RayTracingHitGroupCompileDesc>& Rhs) {
@@ -102,7 +103,7 @@ export struct RayTracingPipelineRequest {
 }
 
 /// Map an async RHIRef state onto the registry-facing pipeline state.
-[[nodiscard]] auto MapRefState(RHIRefState State) -> RGPipelineState {
+export [[nodiscard]] auto MapRefState(RHIRefState State) -> RGPipelineState {
     switch (State) {
     case RHIRefState::Ready:
         return RGPipelineState::Ready;
@@ -117,7 +118,7 @@ export struct RayTracingPipelineRequest {
 ///
 /// Build the binding set, publish it, create the pipeline, publish it. `Create` is the only
 /// pipeline-kind-specific step.
-template <typename PipelineT, typename PipelineDescT, typename CreateFn>
+export template <typename PipelineT, typename PipelineDescT, typename CreateFn>
 auto PublishPipelineOnRhiThread(RHIRef<PipelineT>           PipelineRef,
                                 RHIRef<RHIShaderBindingSet> BindingSetRef,
                                 String                      Name,

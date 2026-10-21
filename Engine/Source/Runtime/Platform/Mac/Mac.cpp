@@ -1,4 +1,4 @@
-module Platform:Mac.impl;
+module Platform;
 
 namespace SoulEngine {
 

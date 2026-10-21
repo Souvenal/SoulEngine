@@ -1,6 +1,6 @@
-export module Renderer:Raster;
+export module Renderer.Raster;
 
-export import :Raster.CullingPass;
-export import :Raster.DeferredLightingPass;
-export import :Raster.GeometryPass;
-export import :Raster.RasterRenderer;
+export import Renderer.Raster.CullingPass;
+export import Renderer.Raster.DeferredLightingPass;
+export import Renderer.Raster.GeometryPass;
+export import Renderer.Raster.RasterRenderer;

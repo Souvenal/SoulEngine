@@ -3,7 +3,7 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-export module Scene:Camera;
+export module Scene.Camera;
 
 import std;
 import Core;

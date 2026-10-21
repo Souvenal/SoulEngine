@@ -5,7 +5,7 @@ module;
 
 export module Editor;
 
-import :EditorWorld;
+import Editor.EditorWorld;
 
 import Core;
 import EditorTypes;

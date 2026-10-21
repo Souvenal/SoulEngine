@@ -1,7 +1,6 @@
-module Renderer:Selection.impl;
+module Renderer.Selection;
 
-import :Interface;
-import :Selection;
+import Renderer.Interface;
 import Core;
 
 import std;

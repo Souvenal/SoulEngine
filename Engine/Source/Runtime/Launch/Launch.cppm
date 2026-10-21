@@ -19,7 +19,7 @@ import EditorTypes;
 namespace SoulEngine {
 
 /// @brief Per-frame slot state in the triple-buffered Game→Render→RHI pipeline.
-enum class SlotState {
+export enum class SlotState {
     Unknown = 0,
     Empty,
     GameReady,
@@ -27,7 +27,7 @@ enum class SlotState {
 };
 
 /// @brief One element of the triple buffer.
-struct FrameSlot {
+export struct FrameSlot {
     std::mutex               Mutex;
     std::condition_variable  Cv;
     SlotState                State = SlotState::Empty;

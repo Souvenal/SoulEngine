@@ -3,9 +3,7 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-module Scene:Camera.impl;
-
-import :Camera;
+module Scene.Camera;
 
 namespace SoulEngine {
 

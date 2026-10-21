@@ -2,16 +2,16 @@ module;
 
 #include <imgui_threaded_rendering.h>
 
-export module RHI:RenderDevice;
+export module RHI.RenderDevice;
 
 import Core;
 import WindowSystem;
 import std;
-import :Types;
-import :Ref;
-import :Pipeline;
-import :Pass;
-import :Command;
+import RHI.Types;
+import RHI.Ref;
+import RHI.Pipeline;
+import RHI.Pass;
+import RHI.Command;
 
 namespace SoulEngine {
 

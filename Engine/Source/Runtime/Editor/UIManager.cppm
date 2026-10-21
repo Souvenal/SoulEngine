@@ -1,6 +1,6 @@
 module;
 
-export module Editor:UIManager;
+export module Editor.UIManager;
 
 import std;
 import Core;

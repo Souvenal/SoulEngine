@@ -2,10 +2,9 @@ module;
 
 #include <stb_image.h>
 
-module Material:Texture.impl;
+module Material.Texture;
 
-import :Texture;
-import :Types;
+import Material.Types;
 import Core;
 import RHI;
 import std;

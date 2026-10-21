@@ -2,11 +2,10 @@ module;
 
 #include <entt/entt.hpp>
 
-module Material:YamlLoader.impl;
+module Material.YamlLoader;
 
-import :YamlLoader;
-import :Types;
-import :Texture;
+import Material.Types;
+import Material.Texture;
 import Core;
 import std;
 

@@ -3,10 +3,9 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-module RenderGraph:SyncPlan.impl;
+module RenderGraph.SyncPlan;
 
-import :SyncPlan;
-import :Types;
+import RenderGraph.Types;
 import Core;
 import RHI;
 

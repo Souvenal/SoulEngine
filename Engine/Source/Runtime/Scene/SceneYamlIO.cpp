@@ -2,9 +2,8 @@ module;
 
 #include <entt/entt.hpp>
 
-module Scene:YamlIO.impl;
+module Scene.World;
 
-import :World;
 import Core;
 
 namespace SoulEngine {

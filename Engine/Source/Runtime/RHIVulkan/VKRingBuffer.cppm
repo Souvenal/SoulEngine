@@ -2,19 +2,19 @@ module;
 
 #include <vk_mem_alloc.h>
 
-export module RHIVulkan:RingBuffer;
+export module RHIVulkan.RingBuffer;
 
 import Core;
 import vulkan;
 import std;
 
-import :Context;
-import :Debug;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
 
 namespace SoulEngine {
 
 /// Memory placement of a ring's backing instances; decides whether ranges are host-writable.
-enum class VulkanRingMemoryClass : Uint8 {
+export enum class VulkanRingMemoryClass : Uint8 {
     Unknown,
     /// Host-visible, host-coherent, persistently mapped; callers write ranges through MappedData.
     HostMapped,
@@ -28,7 +28,7 @@ enum class VulkanRingMemoryClass : Uint8 {
 /// against the range. HostMapped instances are persistently mapped, so the caller writes the range directly
 /// through MappedData; memory is contractually host-coherent, no flush is needed. DeviceLocal instances leave
 /// MappedData null.
-struct RingAllocation {
+export struct RingAllocation {
     vk::Buffer        Buffer     = nullptr; ///< backing instance's buffer; non-owning, retired by the ring
     std::byte*        MappedData = nullptr; ///< persistently mapped host pointer to the range start (HostMapped only)
     Uint64            Offset     = 0;       ///< range start within the buffer
@@ -44,7 +44,7 @@ struct RingAllocation {
 /// persistently mapped host pointer — the caller writes the bytes directly (host-coherent, no flush); a
 /// DeviceLocal ring hands out GPU-only ranges consumed by device address. Sizing is a starting budget, not a
 /// limit: the ring grows on demand. RHI-thread confined.
-class VulkanRingBuffer {
+export class VulkanRingBuffer {
   public:
     VulkanRingBuffer()                                               = default;
     VulkanRingBuffer(const VulkanRingBuffer&)                        = delete;

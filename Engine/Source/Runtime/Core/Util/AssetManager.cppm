@@ -2,12 +2,12 @@
 /// @brief  Global asset registry: path -> handle -> cached content.
 module;
 
-export module Core:Util.AssetManager;
+export module Core.Util.AssetManager;
 
 import std;
-export import :Util.Types;
-export import :Util.Singleton;
-export import :Util.Logging;
+export import Core.Util.Types;
+export import Core.Util.Singleton;
+export import Core.Util.Logging;
 
 namespace SoulEngine {
 

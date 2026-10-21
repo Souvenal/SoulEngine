@@ -4,29 +4,29 @@ module;
 // textual include restores it.
 #include <cstdint>
 
-export module RHIVulkan:Swapchain;
+export module RHIVulkan.Swapchain;
 
 // import std;
 import RHI;
 
 import vulkan;
 
-import :Debug;
-import :Context;
-import :SurfaceProvider;
+import RHIVulkan.Debug;
+import RHIVulkan.Context;
+import RHIVulkan.SurfaceProvider;
 import Core;
 import WindowSystem;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto ResolveSurfaceFormat(std::span<const vk::SurfaceFormatKHR> Formats) -> vk::SurfaceFormatKHR;
+export [[nodiscard]] auto ResolveSurfaceFormat(std::span<const vk::SurfaceFormatKHR> Formats) -> vk::SurfaceFormatKHR;
 
-[[nodiscard]] auto ResolvePresentMode(std::span<const vk::PresentModeKHR> Modes) -> vk::PresentModeKHR;
+export [[nodiscard]] auto ResolvePresentMode(std::span<const vk::PresentModeKHR> Modes) -> vk::PresentModeKHR;
 
-[[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps)
+export [[nodiscard]] auto ResolveExtent(IVulkanSurfaceProvider& Provider, const vk::SurfaceCapabilitiesKHR& Caps)
     -> vk::Extent2D;
 
-[[nodiscard]] auto ResolveSwapImageCount(const vk::SurfaceCapabilitiesKHR& Caps) -> uint32_t;
+export [[nodiscard]] auto ResolveSwapImageCount(const vk::SurfaceCapabilitiesKHR& Caps) -> uint32_t;
 
 // VulkanSwapchain
 //
@@ -36,7 +36,7 @@ namespace SoulEngine {
 // VulkanSwapchain operations (AcquireNextImage, Present) are not thread-safe and must be serialized by the
 // caller (typically the main thread).
 
-class VulkanSwapchain {
+export class VulkanSwapchain {
   public:
     VulkanSwapchain() = default;
 

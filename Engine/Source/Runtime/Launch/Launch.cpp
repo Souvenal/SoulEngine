@@ -7,9 +7,8 @@ module;
 #include <entt/entt.hpp>
 #include <imgui_threaded_rendering.h>
 
-module Launch:impl;
+module Launch;
 
-import Launch;
 import Core;
 import Platform;
 import WindowSystem;

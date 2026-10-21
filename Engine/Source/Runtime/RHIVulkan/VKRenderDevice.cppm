@@ -13,33 +13,33 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RHIVulkan:RenderDevice;
+export module RHIVulkan.RenderDevice;
 
 import RHI; // RenderPassList and RHI command types.
 import TaskGraph;
 import vulkan;
 import std;
 
-import :Swapchain;
-import :SurfaceProvider;
-import :Command;
-import :Types;
-import :Semaphore;
-import :Buffer;
-import :Readback;
-import :Staging;
-import :FrameContext;
-import :Capability;
-import :Descriptor;
-import :ShaderBindingSet;
-import :Pipeline;
-import :RayTracingPipeline;
-import :AccelerationStructure;
-import :Sampler;
-import :Texture;
-import :Context;
-import :Debug;
-import :Profiling;
+import RHIVulkan.Swapchain;
+import RHIVulkan.SurfaceProvider;
+import RHIVulkan.Command;
+import RHIVulkan.Types;
+import RHIVulkan.Semaphore;
+import RHIVulkan.Buffer;
+import RHIVulkan.Readback;
+import RHIVulkan.Staging;
+import RHIVulkan.FrameContext;
+import RHIVulkan.Capability;
+import RHIVulkan.Descriptor;
+import RHIVulkan.ShaderBindingSet;
+import RHIVulkan.Pipeline;
+import RHIVulkan.RayTracingPipeline;
+import RHIVulkan.AccelerationStructure;
+import RHIVulkan.Sampler;
+import RHIVulkan.Texture;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Profiling;
 import Core;
 import magic_enum;
 import WindowSystem;
@@ -68,7 +68,7 @@ CVar<Int32> CVarRhiVulkanASInstanceRingSize{"RHI.Vulkan.ASInstanceRingSize",
                                             "Initial TLAS instance ring capacity (bytes); grows on demand, "
                                             "never shrinks. Read once at device init"};
 
-class VulkanRenderDevice final : public RHIRenderDevice {
+export class VulkanRenderDevice final : public RHIRenderDevice {
   public:
     VulkanRenderDevice() {}
     ~VulkanRenderDevice() {

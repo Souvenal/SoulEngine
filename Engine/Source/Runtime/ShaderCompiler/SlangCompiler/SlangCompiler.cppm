@@ -27,12 +27,12 @@ module;
 
 export module Slang;
 
-export import :Backend;
+export import Slang.Backend;
 
 import magic_enum;
-import :Types;
-import :Utils;
-import :Reflection;
+import Slang.Types;
+import Slang.Utils;
+import Slang.Reflection;
 
 import std;
 import Core;

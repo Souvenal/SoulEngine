@@ -7,6 +7,11 @@ target("Platform")
 
     add_files("Platform.cppm", {public = true})
 
+target("Platform.Impl")
+    set_kind("static")
+    set_policy("build.c++.modules", true)
+    add_deps("Platform", "Core.Impl")
+
     if is_plat("windows") then
         add_files("Windows/**.cpp")
         add_syslinks("dbghelp")

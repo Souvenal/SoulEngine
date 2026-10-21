@@ -2,10 +2,10 @@ module;
 
 #include <hlsl++.h>
 
-export module RHI:Types;
+export module RHI.Types;
 
 import Core;
-import :Ref;
+import RHI.Ref;
 import magic_enum;
 
 import std;
@@ -556,20 +556,21 @@ export struct RHIBarrierList {
 };
 } // namespace SoulEngine
 
-export namespace magic_enum::customize {
-template <>
+namespace magic_enum::customize {
+
+export template <>
 struct enum_range<SoulEngine::RHITextureUsage> {
     static constexpr bool is_flags = true;
 };
-template <>
+export template <>
 struct enum_range<SoulEngine::RHIBufferUsage> {
     static constexpr bool is_flags = true;
 };
-template <>
+export template <>
 struct enum_range<SoulEngine::RHIAccess> {
     static constexpr bool is_flags = true;
 };
-template <>
+export template <>
 struct enum_range<SoulEngine::RHISyncStage> {
     static constexpr bool is_flags = true;
 };

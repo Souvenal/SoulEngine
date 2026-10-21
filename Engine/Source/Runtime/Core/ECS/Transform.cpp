@@ -3,10 +3,9 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-module Core:ECS.Transform.impl;
+module Core.ECS.Transform;
 
 import std;
-import :ECS.Transform;
 
 namespace SoulEngine {
 

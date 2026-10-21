@@ -1,16 +1,15 @@
-module RHIVulkan:Staging.impl;
+module RHIVulkan.Staging;
 
 import Core;
 import vulkan;
 import RHI;
 import std;
 
-import :Staging;
-import :RingBuffer;
-import :Types;
-import :Context;
-import :Debug;
-import :Profiling;
+import RHIVulkan.RingBuffer;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Profiling;
 
 namespace SoulEngine {
 

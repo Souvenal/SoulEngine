@@ -5,9 +5,8 @@ module;
 
 #include <slang.h>
 
-module Slang:Utils.impl;
+module Slang.Utils;
 
-import :Utils;
 import Core;
 import std;
 

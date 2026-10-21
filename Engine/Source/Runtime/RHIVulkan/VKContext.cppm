@@ -12,16 +12,16 @@ module;
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
 
-export module RHIVulkan:Context;
+export module RHIVulkan.Context;
 
 import Core;
 import vulkan;
 import std;
 
-import :Capability;
-import :Debug;
-import :SurfaceProvider;
-import :Semaphore;
+import RHIVulkan.Capability;
+import RHIVulkan.Debug;
+import RHIVulkan.SurfaceProvider;
+import RHIVulkan.Semaphore;
 import WindowSystem;
 
 namespace SoulEngine {

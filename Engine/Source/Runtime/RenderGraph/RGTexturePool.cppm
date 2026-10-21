@@ -1,6 +1,6 @@
 module;
 
-export module RenderGraph:TexturePool;
+export module RenderGraph.TexturePool;
 
 import Core;
 import RHI;
@@ -10,10 +10,10 @@ import std;
 namespace SoulEngine {
 
 /// @brief Bucket key of a pooled texture: extent + format + creation-declared usage.
-using RGTexturePoolKey = std::tuple<Uint32, Uint32, Uint32, Uint32>;
+export using RGTexturePoolKey = std::tuple<Uint32, Uint32, Uint32, Uint32>;
 
 /// @brief Lift the bucket key from a texture descriptor.
-[[nodiscard]] auto RGTexturePoolKeyOf(const RHITextureDesc& Desc) -> RGTexturePoolKey;
+export [[nodiscard]] auto RGTexturePoolKeyOf(const RHITextureDesc& Desc) -> RGTexturePoolKey;
 
 /// @brief Idle frames after which a free pooled texture is evicted.
 export inline constexpr Uint32 kRGEvictIdleFrames = 10;

@@ -5,7 +5,7 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RHIVulkan:Texture;
+export module RHIVulkan.Texture;
 
 import Core;
 import TaskGraph;
@@ -13,10 +13,10 @@ import vulkan;
 import RHI;
 import std;
 
-import :Types;
-import :Context;
-import :Debug;
-import :Staging;
+import RHIVulkan.Types;
+import RHIVulkan.Context;
+import RHIVulkan.Debug;
+import RHIVulkan.Staging;
 
 namespace SoulEngine {
 
@@ -27,7 +27,7 @@ namespace SoulEngine {
 /// synchronous and byte-free (same contract as persistent buffers); texel data flows separately through
 /// UploadTexture, staged into the staging belt's frame-start image lane (→ TransferDst → ShaderReadOnly
 /// through the image tracker) — this class performs no upload.
-class VulkanTexture final : public RHITexture {
+export class VulkanTexture final : public RHITexture {
   public:
     /// @brief Forward the identity to the RHI base; prefer Create().
     ///
@@ -79,7 +79,7 @@ class VulkanTexture final : public RHITexture {
 /// and hands a frame-affined task to the RHI thread, which stages the texels through the device-owned staging
 /// belt's image lane. The render device owns one instance and forwards; the upload task is RHI-thread
 /// confined.
-class VulkanTextureManager final {
+export class VulkanTextureManager final {
   public:
     VulkanTextureManager()                                               = default;
     VulkanTextureManager(const VulkanTextureManager&)                    = delete;
