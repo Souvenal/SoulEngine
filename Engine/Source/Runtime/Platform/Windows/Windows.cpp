@@ -5,7 +5,7 @@ module;
 #include <wchar.h>
 #include <signal.h>
 
-module Platform.Windows;
+module Platform;
 
 import std;
 import Core;
