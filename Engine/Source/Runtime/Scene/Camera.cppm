@@ -53,7 +53,7 @@ export struct CameraViewRecord {
 /// viewport rectangle.
 ///
 /// Viewport is Runtime State driven by CameraResizeEvent, not authoring data; it is intentionally absent from
-/// the EnTT meta registration below. View render targets are not component state.
+/// the field table below. View render targets are not component state.
 export struct CameraComponent {
     float          FOV           = 60.0f;
     float          NearPlane     = 0.1f;
@@ -66,6 +66,9 @@ export struct CameraComponent {
         return Viewport.Width != 0 && Viewport.Height != 0;
     }
 };
+
+/// @brief Field descriptors of the YAML-persisted CameraComponent members.
+export [[nodiscard]] auto CameraComponentFields() -> FieldTable;
 
 /// @brief CameraSystem manages camera viewport changes.
 ///

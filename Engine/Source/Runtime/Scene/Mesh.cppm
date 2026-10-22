@@ -169,6 +169,9 @@ export struct MeshComponent {
     MeshHandle     Mesh                 = {};
 };
 
+/// @brief Field descriptors of the YAML-persisted MeshComponent members.
+export [[nodiscard]] auto MeshComponentFields() -> FieldTable;
+
 /// @brief Immutable render-facing geometry/material instance.
 export struct InstanceRecord {
     Uint32           EntityId       = 0;

@@ -31,9 +31,9 @@ export struct LightComponent {
     Float32   Intensity   = 0.0f;
     Float32   RangeMeters = 10.0f;
 
-    // Enum field bridges to the YAML string vocabulary so generic meta assignment works. Unknown strings keep
-    // the current value and log a warning; LightSystem skips components whose Type stays LightType::Unknown,
-    // so they remain inert.
+    // Enum field bridges to the YAML string vocabulary so descriptor-based assignment works. Unknown strings
+    // keep the current value and log a warning; LightSystem skips components whose Type stays
+    // LightType::Unknown, so they remain inert.
     [[nodiscard]] auto GetType() const -> String {
         return String(magic_enum::enum_name(Type));
     }
@@ -46,6 +46,9 @@ export struct LightComponent {
         LogWarning("LightComponent: unknown light type '{}'; keeping LightType::Unknown", Value);
     }
 };
+
+/// @brief Field descriptors of the YAML-persisted LightComponent members.
+export [[nodiscard]] auto LightComponentFields() -> FieldTable;
 
 /// @brief Immutable world-space light record consumed by renderers.
 export struct LightRecord {

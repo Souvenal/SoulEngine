@@ -54,6 +54,16 @@ Canonical CVar identifier in "Module.Feature" dot convention, isomorphic to the 
 Singleton answering "where is X" (engine root, Shaders/, Logs/, Configs/, Binaries/, Applications/). Paths are engine-environment facts, not configuration values.
 _Avoid_: ConfigManager (retired)
 
+### Reflection
+
+**FieldDescriptor**:
+Type-erased accessor pair (name, FieldType, Get, Set) for one reflected field; registration sites build descriptors from compile-time member pointers, so the table is the only hand-maintained surface.
+_Avoid_: runtime type registration, RTTI-based reflection
+
+**FieldTable**:
+The full descriptor set of one reflected type, exposed by an accessor function defined next to the type. YAML loading and editor panels consume the same table; presentation metadata lives in a separate editor-side table.
+_Avoid_: per-consumer registration, reflection macros
+
 ### Logging
 
 **LogManager**:

@@ -35,6 +35,18 @@ export struct SceneLoadReport {
     std::vector<ComponentWarning> Warnings = {};
 };
 
+/// @brief Descriptor tying one YAML component name to its component type: the field table assigns persisted
+/// values, and the registry callbacks place or roll back the component during scene loading.
+export struct SceneComponentDescriptor {
+    StringView Name                                                                = {};
+    FieldTable Fields                                                              = {};
+    auto (*EmplaceDefault)(entt::registry& Registry, entt::entity Entity) -> void* = nullptr;
+    auto (*Remove)(entt::registry& Registry, entt::entity Entity) -> void          = nullptr;
+};
+
+/// @brief Descriptors of every component type accepted in scene YAML documents.
+export [[nodiscard]] auto SceneComponentDescriptors() -> std::span<const SceneComponentDescriptor>;
+
 /// @brief World state container read by renderers each frame.
 ///
 /// Holds the camera and (future) mesh, material, light, and transform collections.

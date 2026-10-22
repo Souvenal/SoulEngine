@@ -1,16 +1,16 @@
 /// @file   Yaml.cppm
 /// @brief  libyaml-backed YAML document reader: validated-subset parsing into an owned node tree,
-///         plus EnTT meta field assignment shared by YAML-driven record loading.
+///         plus descriptor-based field assignment shared by YAML-driven record loading.
 
 module;
 
-#include <entt/entt.hpp>
 #include <hlsl++.h>
 #include <yaml.h>
 
 export module Core.Util.Yaml;
 
 export import Core.Util.Types;
+export import Core.Util.Reflection;
 export import Core.Util.Error;
 export import Core.Util.IO;
 import std;
@@ -359,12 +359,11 @@ export class YamlDocument {
     UPtr<YamlNode> m_Root = {};
 };
 
-/// @brief Decode a YAML node as the registered type of a meta field and assign it.
+/// @brief Decode a YAML node as the descriptor's field type and assign it through the descriptor.
 ///
-/// The YAML side is untyped; the target type comes from the field's registered meta type. Fails when the node
-/// does not decode as that type or the meta assignment fails.
-export [[nodiscard]] auto AssignYamlValue(const entt::meta_data& Field,
-                                          entt::meta_any&        Component,
-                                          const YamlNode&        Value) -> std::expected<void, ErrorMessage>;
+/// The YAML side is untyped; the target type comes from the descriptor. Fails when the node does not
+/// decode as that type or the descriptor rejects the value.
+export [[nodiscard]] auto AssignYamlField(const FieldDescriptor& Field, void* Object, const YamlNode& Value)
+    -> std::expected<void, ErrorMessage>;
 
 } // namespace SoulEngine

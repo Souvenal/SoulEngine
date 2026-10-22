@@ -1,6 +1,7 @@
 export module Core.Util;
 
 export import Core.Util.Types;
+export import Core.Util.Reflection;
 export import Core.Util.Flags;
 export import Core.Util.Error;
 export import Core.Util.Singleton;

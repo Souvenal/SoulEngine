@@ -17,17 +17,12 @@ TEST(LightYaml, AssignsRegisteredTypeThroughYamlImplementation) {
     const auto Document = YamlDocument::Create(FilePath);
     std::filesystem::remove(FilePath);
     ASSERT_TRUE(Document.has_value());
-    const auto Type = entt::resolve(entt::hashed_string{"light"}.value());
-    ASSERT_TRUE(Type);
-    auto Component = Type.construct();
-    ASSERT_TRUE(Component);
-    const auto Field = Type.data(entt::hashed_string{"type"}.value());
-    ASSERT_TRUE(Field);
-    const auto Result = AssignYamlValue(Field, Component, Document->Root());
+    const auto* Field = FindField(LightComponentFields(), "type");
+    ASSERT_NE(Field, nullptr);
+    LightComponent Component = {};
+    const auto     Result    = AssignYamlField(*Field, &Component, Document->Root());
     ASSERT_TRUE(Result.has_value());
-    const auto* Light = Component.try_cast<LightComponent>();
-    ASSERT_NE(Light, nullptr);
-    EXPECT_EQ(Light->Type, LightType::Directional);
+    EXPECT_EQ(Component.Type, LightType::Directional);
 }
 
 TEST(LightYaml, LoadsDirectionalLightWithoutComponentWarnings) {

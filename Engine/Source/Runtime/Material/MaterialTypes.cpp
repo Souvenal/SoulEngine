@@ -50,6 +50,49 @@ auto MaterialYamlRecord::SetShadingModel(String Value) -> void {
     return String(magic_enum::enum_name(ShadingModel));
 }
 
+[[nodiscard]] auto MaterialYamlRecordFields() -> FieldTable {
+    static constexpr FieldDescriptor Table[] = {
+        Field<&MaterialYamlRecord::Name>("name"),
+        Field<&MaterialYamlRecord::Ambient>("ambient"),
+        Field<&MaterialYamlRecord::Diffuse>("diffuse"),
+        Field<&MaterialYamlRecord::Specular>("specular"),
+        Field<&MaterialYamlRecord::Emissive>("emissive"),
+        Field<&MaterialYamlRecord::Transparent>("transparent"),
+        Field<&MaterialYamlRecord::Reflective>("reflective"),
+        Field<&MaterialYamlRecord::Opacity>("opacity"),
+        Field<&MaterialYamlRecord::BumpScaling>("bump_scaling"),
+        Field<&MaterialYamlRecord::Shininess>("shininess"),
+        Field<&MaterialYamlRecord::ShininessStrength>("shininess_strength"),
+        Field<&MaterialYamlRecord::RefractionIndex>("refraction_index"),
+        Field<&MaterialYamlRecord::Reflectivity>("reflectivity"),
+        Field<&MaterialYamlRecord::EnableWireframe>("enable_wireframe"),
+        Field<&MaterialYamlRecord::TwoSided>("two_sided"),
+        Field<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function"),
+        Field<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model"),
+        Field<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode"),
+        Field<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff"),
+        Field<&MaterialYamlRecord::BaseColorFactor>("base_color_factor"),
+        Field<&MaterialYamlRecord::MetallicFactor>("metallic_factor"),
+        Field<&MaterialYamlRecord::RoughnessFactor>("roughness_factor"),
+        Field<&MaterialYamlRecord::SheenColorFactor>("sheen_color_factor"),
+        Field<&MaterialYamlRecord::SheenRoughnessFactor>("sheen_roughness_factor"),
+        Field<&MaterialYamlRecord::ClearcoatFactor>("clearcoat_factor"),
+        Field<&MaterialYamlRecord::ClearcoatRoughnessFactor>("clearcoat_roughness_factor"),
+        Field<&MaterialYamlRecord::TransmissionFactor>("transmission_factor"),
+        Field<&MaterialYamlRecord::VolumeThicknessFactor>("volume_thickness_factor"),
+        Field<&MaterialYamlRecord::VolumeAttenuationDistance>("volume_attenuation_distance"),
+        Field<&MaterialYamlRecord::VolumeAttenuationColor>("volume_attenuation_color"),
+        Field<&MaterialYamlRecord::BaseColorTexture>("base_color_texture"),
+        Field<&MaterialYamlRecord::NormalTexture>("normal_texture"),
+        Field<&MaterialYamlRecord::MetallicRoughnessTexture>("metallic_roughness_texture"),
+        Field<&MaterialYamlRecord::MetallicTexture>("metallic_texture"),
+        Field<&MaterialYamlRecord::RoughnessTexture>("roughness_texture"),
+        Field<&MaterialYamlRecord::OcclusionTexture>("occlusion_texture"),
+        Field<&MaterialYamlRecord::EmissiveTexture>("emissive_texture"),
+    };
+    return Table;
+}
+
 [[nodiscard]] auto
 MaterialRecord::HasUnresolvedBindlessTextures(const std::unordered_map<Uint64, Uint32>& TextureIndices) const -> bool {
     const auto FirstSlot = [this](TextureType Type) -> TextureDataHandle {
