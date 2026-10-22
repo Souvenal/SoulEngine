@@ -80,14 +80,14 @@ concept CVarValue =
 ///          cache an entry pointer at registration.  Arithmetic values are
 ///          atomic; String values are plain and guarded by the manager's
 ///          shared_mutex (the one inherent per-type storage difference).
-export template <CVarValue T>
+template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
 
     String       Description;
     ValueStorage Value;
 };
-export template <>
+template <>
 struct CVarEntry<String> {
     using ValueStorage = String;
 
@@ -97,52 +97,8 @@ struct CVarEntry<String> {
 
 /// @brief Per-type registry.  Type mismatch needs no tag or check: a name
 ///        registered under another type simply is not in this map.
-export template <CVarValue T>
-using CVarRegistry = std::unordered_map<String, CVarEntry<T>>;
-
-/// @brief Display name of a CVar value type, for diagnostics only.
 template <CVarValue T>
-consteval auto CVarTypeName() -> StringView {
-    if constexpr (std::same_as<T, bool>)
-        return "Bool";
-    else if constexpr (std::same_as<T, Int32>)
-        return "Int32";
-    else if constexpr (std::same_as<T, Float32>)
-        return "Float32";
-    else
-        return "String";
-}
-
-// Module linkage (plain namespace scope), not an anonymous namespace: named by the exported code below — see
-// Core.Util.CVar's linkage note.
-
-/// @brief Convert a TOML leaf to a CVar value.  Integers undergo a range
-///        check for Int32; Float32 also accepts TOML integers.
-///        Pure function — no registry state — so it lives outside the manager.
-export template <CVarValue T>
-[[nodiscard]] auto ConvertTomlNode(const toml::node& Node) -> std::optional<T> {
-    if constexpr (std::same_as<T, bool>) {
-        return Node.value<bool>();
-    } else if constexpr (std::same_as<T, Int32>) {
-        if (const auto V = Node.value<std::int64_t>();
-            V && *V >= std::numeric_limits<Int32>::min() && *V <= std::numeric_limits<Int32>::max())
-            return std::optional<T>{static_cast<Int32>(*V)};
-        return std::nullopt;
-    } else if constexpr (std::same_as<T, Float32>) {
-        if (const auto V = Node.value<double>())
-            return std::optional<T>{static_cast<Float32>(*V)};
-        if (const auto V = Node.value<std::int64_t>())
-            return std::optional<T>{static_cast<Float32>(*V)};
-        return std::nullopt;
-    } else {
-        return Node.value<String>();
-    }
-}
-
-// Forward declaration required for the CVarManager friendship grant; CVar's definition follows CVarManager
-// below.
-export template <CVarValue T>
-class CVar;
+using CVarRegistry = std::unordered_map<String, CVarEntry<T>>;
 
 /// @brief Central registry of all console variables.
 ///
@@ -155,8 +111,6 @@ class CVar;
 /// synchronization state.
 export class CVarManager final : public Singleton<CVarManager> {
     friend class Singleton<CVarManager>;
-    template <CVarValue T>
-    friend class CVar;
 
     CVarManager() = default;
 
@@ -195,7 +149,6 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///        (duplicate names).  Safe to call multiple times.
     auto FlushPendingDiagnostics() -> void;
 
-  private:
     /// @brief Register a CVar and return its registry entry.  Infallible:
     ///        the registry key is (name, type) — the same name under another
     ///        type is simply a different CVar.  A same-type duplicate is
@@ -212,11 +165,6 @@ export class CVarManager final : public Singleton<CVarManager> {
             m_PendingDiagnostics.push_back(
                 Format("Duplicate CVar registration '{}' ignored (first registration wins)", NameStr));
         return It->second;
-    }
-
-    template <CVarValue T>
-    auto Entries() -> CVarRegistry<T>& {
-        return std::get<CVarRegistry<T>>(m_Registries);
     }
 
     /// @brief The single read path for all CVar values.
@@ -239,6 +187,12 @@ export class CVarManager final : public Singleton<CVarManager> {
         } else {
             Entry.Value.store(Value, std::memory_order_relaxed);
         }
+    }
+
+  private:
+    template <CVarValue T>
+    auto Entries() -> CVarRegistry<T>& {
+        return std::get<CVarRegistry<T>>(m_Registries);
     }
 
     /// @brief Recursive TOML walk: tables descend with a dotted prefix,

@@ -68,7 +68,7 @@ namespace MetaRegistration {
 
 using namespace entt::literals;
 
-export struct TransformComponentMetaRegistration {
+struct TransformComponentMetaRegistration {
     TransformComponentMetaRegistration() {
         entt::meta_factory<TransformComponent>{"transform"_hs}
             .data<&TransformComponent::Translation>("translation"_hs)

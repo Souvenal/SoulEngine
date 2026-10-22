@@ -8,6 +8,41 @@ import Core.Util.Logging;
 
 namespace SoulEngine {
 
+/// @brief Display name of a CVar value type, for diagnostics only.
+template <CVarValue T>
+consteval auto CVarTypeName() -> StringView {
+    if constexpr (std::same_as<T, bool>)
+        return "Bool";
+    else if constexpr (std::same_as<T, Int32>)
+        return "Int32";
+    else if constexpr (std::same_as<T, Float32>)
+        return "Float32";
+    else
+        return "String";
+}
+
+/// @brief Convert a TOML leaf to a CVar value.  Integers undergo a range
+///        check for Int32; Float32 also accepts TOML integers.
+template <CVarValue T>
+[[nodiscard]] auto ConvertTomlNode(const toml::node& Node) -> std::optional<T> {
+    if constexpr (std::same_as<T, bool>) {
+        return Node.value<bool>();
+    } else if constexpr (std::same_as<T, Int32>) {
+        if (const auto V = Node.value<std::int64_t>();
+            V && *V >= std::numeric_limits<Int32>::min() && *V <= std::numeric_limits<Int32>::max())
+            return std::optional<T>{static_cast<Int32>(*V)};
+        return std::nullopt;
+    } else if constexpr (std::same_as<T, Float32>) {
+        if (const auto V = Node.value<double>())
+            return std::optional<T>{static_cast<Float32>(*V)};
+        if (const auto V = Node.value<std::int64_t>())
+            return std::optional<T>{static_cast<Float32>(*V)};
+        return std::nullopt;
+    } else {
+        return Node.value<String>();
+    }
+}
+
 auto CVarManager::LoadConfig(const Path& FilePath) -> std::expected<void, ErrorMessage> {
     // Registration diagnostics were queued during static init, before the logger existed; LoadConfig is
     // the first point where logging is guaranteed live, so flush them here.
