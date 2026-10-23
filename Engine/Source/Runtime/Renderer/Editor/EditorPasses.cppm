@@ -1,6 +1,6 @@
-export module Renderer:EditorPasses;
+export module Renderer.EditorPasses;
 
-export import :EditorPasses.EntityPicking;
-export import :EditorPasses.SelectionMaskPass;
-export import :EditorPasses.SelectionOutlinePass;
-export import :EditorPasses.SelectionFilterPass;
+export import Renderer.EditorPasses.EntityPicking;
+export import Renderer.EditorPasses.SelectionMaskPass;
+export import Renderer.EditorPasses.SelectionOutlinePass;
+export import Renderer.EditorPasses.SelectionFilterPass;

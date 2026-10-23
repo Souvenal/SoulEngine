@@ -22,7 +22,8 @@ Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md
 
 - `Engine/Source/Runtime/Core/` — Foundation module. Utility types, logging (spdlog), toml++ config. Every module depends on this.
 - `Engine/Source/Runtime/WindowSystem/` — Window-system (WIS) abstraction. GLFW implementation behind `IWindowSystem`; dispatch on `WindowSystemType` for native handles.
-- `Engine/Source/Runtime/RHI/` — Vulkan rendering hardware interface.
+- `Engine/Source/Runtime/RHI/` — Abstract GPU rendering hardware interface (resources, views, frame packets, submission contracts).
+- `Engine/Source/Runtime/RHIVulkan/` — Vulkan RHI backend. Self-registers through the RHI factory; C++ module `RHIVulkan`.
 - `Engine/Source/Runtime/Shader/` — Shader type system (descriptor bindings, resource types).
 - `Engine/Source/Runtime/Material/` — Renderer-neutral material data model.
 - `Engine/Source/Runtime/ShaderCompiler/` — Slang-based shader offline compiler + test suite (gtest).
@@ -53,7 +54,7 @@ Multi-context — root `GLOSSARY-MAP.md` indexes one `GLOSSARY.md` per module; A
 
 ## C++ Module Conventions
 
-- **Module Organization:** New Vulkan/RHI module partitions go in own `.cppm` file, not appended to existing modules. Partitions use `export module Vulkan:PartitionName;` syntax.
+- **Module Organization:** New Vulkan/RHI module partitions go in own `.cppm` file, not appended to existing modules. Partitions use `export module RHIVulkan:PartitionName;` syntax.
 
 ## Coding Specs
 
@@ -61,7 +62,7 @@ For code work and review, use [`CODING_STANDARDS.md`](CODING_STANDARDS.md), the 
 
 ## Code Editing Rules
 
-- **Comment Preservation:** NEVER delete/modify user-written comments (especially `// Note:`) unless asked. Preserve ALL existing comments verbatim.
+- **Comment Preservation:** NEVER delete/modify user-written comments (especially `// Note:`) unless asked. Preserve ALL existing comments verbatim. Exception: a change that falsifies a comment's premise owns updating it — see docs/standards/comments.md.
 
 ## Build System Notes
 

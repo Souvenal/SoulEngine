@@ -14,8 +14,6 @@ import Core;
 
 using namespace SoulEngine;
 
-namespace {
-
 class MockRenderTarget final : public RHITexture {
   public:
     MockRenderTarget()
@@ -159,8 +157,6 @@ class ShaderBindingArrayTest : public ::testing::Test {
 
     RHIDeferredDeletionQueue m_DeletionQueue;
 };
-
-} // namespace
 
 TEST_F(ShaderBindingArrayTest, BindsElementsAtExplicitIndices) {
     auto Set          = MakeArraySet();

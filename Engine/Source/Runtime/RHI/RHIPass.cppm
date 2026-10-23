@@ -1,15 +1,16 @@
-export module RHI:Pass;
+export module RHI.Pass;
 
 import Core;
-import :Command;
-import :Pipeline;
-import :Types;
+import RHI.Command;
+import RHI.Pipeline;
+import RHI.Types;
+import RHI.Ref;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
-enum class RHIPassType : Uint8 {
+export enum class RHIPassType : Uint8 {
     Unknown = 0,
     Graphics,
     Compute,
@@ -18,7 +19,7 @@ enum class RHIPassType : Uint8 {
 };
 
 /// @brief Renderer-independent pass builder and final RHI execution packet.
-class IRHIPass {
+export class IRHIPass {
   public:
     IRHIPass()                                   = default;
     IRHIPass(const IRHIPass&)                    = delete;
@@ -41,20 +42,10 @@ class IRHIPass {
 
   protected:
     [[nodiscard]] auto BindResources(std::span<const RHIShaderBindingRequest> Resources)
-        -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet();
-        if (!BindingSet)
-            return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
-        return BindingSet->BindResources(Resources);
-    }
+        -> std::expected<void, ErrorMessage>;
 
     [[nodiscard]] auto BindArrayResources(std::span<const RHIShaderArrayBindingRequest> Requests)
-        -> std::expected<void, ErrorMessage> {
-        auto* BindingSet = GetShaderBindingSet();
-        if (!BindingSet)
-            return std::unexpected(ErrorMessage("Pass has no pipeline shader binding set"));
-        return BindingSet->BindArrayResources(Requests);
-    }
+        -> std::expected<void, ErrorMessage>;
 
     template <typename T>
     [[nodiscard]] auto PushConstants(Uint32 Offset, const T& Data) -> std::expected<void, ErrorMessage> {
@@ -64,17 +55,12 @@ class IRHIPass {
         return BindingSet->PushConstants(Offset, Data);
     }
 
-    [[nodiscard]] auto GetShaderBindingSet() const -> RHIShaderBindingSet* {
-        auto* Pipeline = GetPipeline();
-        if (!Pipeline)
-            return nullptr;
-        return Pipeline->GetShaderBindingSet().TryGet();
-    }
+    [[nodiscard]] auto GetShaderBindingSet() const -> RHIShaderBindingSet*;
 
     std::vector<RHICommand> m_Commands = {};
 };
 
-class IRHIGraphicsPass : public IRHIPass {
+export class IRHIGraphicsPass : public IRHIPass {
   public:
     IRHIGraphicsPass() = default;
 
@@ -100,31 +86,16 @@ class IRHIGraphicsPass : public IRHIPass {
 
   protected:
     auto SetViewport(Float32 X, Float32 Y, Float32 W, Float32 H, Float32 MinDepth = 0.0f, Float32 MaxDepth = 1.0f)
-        -> void {
-        m_Commands.emplace_back(RHISetViewportCmd{X, Y, W, H, MinDepth, MaxDepth});
-    }
+        -> void;
 
-    auto SetScissorRect(Int32 X, Int32 Y, Uint32 W, Uint32 H) -> void {
-        m_Commands.emplace_back(RHISetScissorCmd{X, Y, W, H});
-    }
+    auto SetScissorRect(Int32 X, Int32 Y, Uint32 W, Uint32 H) -> void;
 
-    auto Draw() -> void {
-        m_Commands.emplace_back(RHIDrawCmd{});
-    }
+    auto Draw() -> void;
 
     auto DrawIndirect(RHIRef<RHIBuffer> IndirectBuffer,
                       Uint64            Offset    = 0,
                       Uint32            DrawCount = 1,
-                      Uint32            Stride    = sizeof(Uint32) * 4) -> void {
-        if (IndirectBuffer.GetState() == RHIRefState::Unknown || DrawCount == 0 || Stride < sizeof(Uint32) * 4)
-            return;
-        m_Commands.emplace_back(RHIDrawIndirectCmd{
-            .IndirectBuffer = std::move(IndirectBuffer),
-            .Offset         = Offset,
-            .DrawCount      = DrawCount,
-            .Stride         = Stride,
-        });
-    }
+                      Uint32            Stride    = sizeof(Uint32) * 4) -> void;
 
     RHIGraphicsAttachments m_Attachments = {};
 
@@ -132,7 +103,7 @@ class IRHIGraphicsPass : public IRHIPass {
     RHIRef<RHIGraphicsPipeline> m_Pipeline = nullptr;
 };
 
-class IRHIComputePass : public IRHIPass {
+export class IRHIComputePass : public IRHIPass {
   public:
     IRHIComputePass() = default;
 
@@ -153,15 +124,7 @@ class IRHIComputePass : public IRHIPass {
     }
 
   protected:
-    auto Dispatch(Uint32 GroupCountX, Uint32 GroupCountY = 1, Uint32 GroupCountZ = 1) -> void {
-        if (GroupCountX == 0)
-            return;
-        m_Commands.emplace_back(RHIDispatchCmd{
-            .GroupCountX = GroupCountX,
-            .GroupCountY = GroupCountY,
-            .GroupCountZ = GroupCountZ,
-        });
-    }
+    auto Dispatch(Uint32 GroupCountX, Uint32 GroupCountY = 1, Uint32 GroupCountZ = 1) -> void;
 
   private:
     /// @brief The compute pipeline this pass dispatches with.
@@ -171,7 +134,7 @@ class IRHIComputePass : public IRHIPass {
     RHIRef<RHIComputePipeline> m_Pipeline = nullptr;
 };
 
-class IRHITransferPass : public IRHIPass {
+export class IRHITransferPass : public IRHIPass {
   public:
     IRHITransferPass() = default;
 
@@ -188,17 +151,7 @@ class IRHITransferPass : public IRHIPass {
     ///
     /// This is the only present path.
     auto BlitToSwapchain(RHIRef<RHITexture> Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight)
-        -> void {
-        if (!Source || DstWidth == 0 || DstHeight == 0)
-            return;
-        m_Commands.emplace_back(RHIBlitToSwapchainCmd{
-            .Source    = std::move(Source),
-            .DstX      = DstX,
-            .DstY      = DstY,
-            .DstWidth  = DstWidth,
-            .DstHeight = DstHeight,
-        });
-    }
+        -> void;
 
     /// @brief Read back a texel region of a render target into a readback's backend ring.
     auto ReadbackTexture(RHIRef<RHITexture>  Source,
@@ -206,21 +159,10 @@ class IRHITransferPass : public IRHIPass {
                          Uint32              SrcY,
                          RHIRef<RHIReadback> Target,
                          Uint32              SrcWidth  = 1,
-                         Uint32              SrcHeight = 1) -> void {
-        if (!Source || !Target || SrcWidth == 0 || SrcHeight == 0)
-            return;
-        m_Commands.emplace_back(RHIReadbackTextureCmd{
-            .Source    = std::move(Source),
-            .SrcX      = SrcX,
-            .SrcY      = SrcY,
-            .SrcWidth  = SrcWidth,
-            .SrcHeight = SrcHeight,
-            .Target    = std::move(Target),
-        });
-    }
+                         Uint32              SrcHeight = 1) -> void;
 };
 
-class IRHIRayTracingPass : public IRHIPass {
+export class IRHIRayTracingPass : public IRHIPass {
   public:
     IRHIRayTracingPass() = default;
 
@@ -241,13 +183,7 @@ class IRHIRayTracingPass : public IRHIPass {
     }
 
   protected:
-    auto TraceRays(Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void {
-        m_Commands.emplace_back(RHITraceRaysCmd{
-            .Width  = Width,
-            .Height = Height,
-            .Depth  = Depth,
-        });
-    }
+    auto TraceRays(Uint32 Width, Uint32 Height, Uint32 Depth = 1) -> void;
 
   private:
     RHIRef<RHIRayTracingPipeline> m_Pipeline = nullptr;
@@ -256,13 +192,13 @@ class IRHIRayTracingPass : public IRHIPass {
 /// @brief One scheduled pass plus its prologue: the graph-produced,
 /// destination-only state requirements for the pass's declared accesses The prologue is a property of the
 /// pass's position in this frame's schedule, not of the pass itself.
-struct RHIPassEntry {
+export struct RHIPassEntry {
     UPtr<IRHIPass> Pass     = nullptr;
     RHIBarrierList Prologue = {};
 };
 
 /// @brief Complete frame packet transferred from RenderLoop to the RHI thread.
-struct RenderPassList {
+export struct RenderPassList {
     RenderPassList()                                             = default;
     RenderPassList(const RenderPassList&)                        = delete;
     auto operator=(const RenderPassList&) -> RenderPassList&     = delete;

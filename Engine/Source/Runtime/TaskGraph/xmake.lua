@@ -1,13 +1,9 @@
-target("TaskGraph")
-    set_kind("static")
-
-    set_policy("build.c++.modules", true)
-
-    add_deps("Core")
-    add_packages("magic_enum", "tracy", {public = true})
-    add_files("*.cppm", {public = true})
-    add_files("*.cpp")
-
-test_module("TaskGraph", {
-    deps = {"TaskGraph"}
+soul_module("TaskGraph", {
+    deps     = {"Core"},
+    packages = {"magic_enum", "tracy"},
+    impl = {
+        deps     = {"Core"},
+        packages = {"magic_enum", "tracy"},
+    },
+    tests = {},
 })

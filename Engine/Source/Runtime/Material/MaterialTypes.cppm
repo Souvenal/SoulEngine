@@ -4,22 +4,15 @@ module;
 #include <entt/entt.hpp>
 #include <hlsl++.h>
 
-// magic_enum::case_insensitive is not exported in v0.9.8. master branch has a fix for this, however it can't
-// pass compilation with c++23. Before it is fixed, we now use header only in this file.
-#include <magic_enum/magic_enum.hpp>
-
-export module Material:Types;
+export module Material.Types;
 
 import Core;
 import RHI;
 import std;
-import magic_enum;
 
-// import magic_enum;
+namespace SoulEngine {
 
-export namespace SoulEngine {
-
-enum class TextureMapping : Uint8 {
+export enum class TextureMapping : Uint8 {
     Unknown = 0,
     UV,
     Sphere,
@@ -29,7 +22,7 @@ enum class TextureMapping : Uint8 {
     Other,
 };
 
-enum class TextureOperation : Uint8 {
+export enum class TextureOperation : Uint8 {
     Unknown = 0,
     Multiply,
     Add,
@@ -39,7 +32,7 @@ enum class TextureOperation : Uint8 {
     SignedAdd,
 };
 
-enum class TextureMapMode : Uint8 {
+export enum class TextureMapMode : Uint8 {
     Unknown = 0,
     Wrap,
     Clamp,
@@ -47,7 +40,7 @@ enum class TextureMapMode : Uint8 {
     Decal,
 };
 
-enum class TextureType : Uint8 {
+export enum class TextureType : Uint8 {
     Unknown = 0,
     Diffuse,
     Specular,
@@ -77,20 +70,20 @@ enum class TextureType : Uint8 {
     GltfMetallicRoughness,
 };
 
-enum class MaterialBlendFunction : Uint8 {
+export enum class MaterialBlendFunction : Uint8 {
     Unknown = 0,
     Default,
     Additive,
 };
 
-enum class MaterialAlphaMode : Uint8 {
+export enum class MaterialAlphaMode : Uint8 {
     Unknown = 0,
     Opaque,
     Mask,
     Blend,
 };
 
-enum class MaterialShadingModel : Uint8 {
+export enum class MaterialShadingModel : Uint8 {
     Unknown = 0,
     Flat,
     Gouraud,
@@ -106,7 +99,7 @@ enum class MaterialShadingModel : Uint8 {
 };
 
 /// @brief YAML-authorable material data before texture paths resolve to runtime resources.
-struct MaterialYamlRecord {
+export struct MaterialYamlRecord {
     String Name = {};
 
     hlslpp::float3 Ambient     = hlslpp::float3{0.0f, 0.0f, 0.0f};
@@ -149,55 +142,72 @@ struct MaterialYamlRecord {
     String OcclusionTexture         = {};
     String EmissiveTexture          = {};
 
-    // Enum fields bridge to the YAML string vocabulary so generic meta assignment works. Unknown strings keep
-    // the current value.
-    auto SetBlendFunction(String Value) -> void {
-        if (const auto Parsed = magic_enum::enum_cast<MaterialBlendFunction>(Value, magic_enum::case_insensitive)) {
-            BlendFunction = *Parsed;
-            return;
-        }
-        LogWarning("MaterialYamlRecord: unknown blend function '{}'; keeping current value", Value);
-    }
+    // Enum fields bridge to the YAML string vocabulary so descriptor-based assignment works. Unknown strings
+    // keep the current value.
+    auto SetBlendFunction(String Value) -> void;
 
-    [[nodiscard]] auto GetBlendFunction() const -> String {
-        return String(magic_enum::enum_name(BlendFunction));
-    }
+    [[nodiscard]] auto GetBlendFunction() const -> String;
 
-    auto SetAlphaMode(String Value) -> void {
-        if (const auto Parsed = magic_enum::enum_cast<MaterialAlphaMode>(Value, magic_enum::case_insensitive)) {
-            AlphaMode = *Parsed;
-            return;
-        }
-        LogWarning("MaterialYamlRecord: unknown alpha mode '{}'; keeping current value", Value);
-    }
+    auto SetAlphaMode(String Value) -> void;
 
-    [[nodiscard]] auto GetAlphaMode() const -> String {
-        return String(magic_enum::enum_name(AlphaMode));
-    }
+    [[nodiscard]] auto GetAlphaMode() const -> String;
 
-    auto SetShadingModel(String Value) -> void {
-        if (const auto Parsed = magic_enum::enum_cast<MaterialShadingModel>(Value, magic_enum::case_insensitive)) {
-            ShadingModel = *Parsed;
-            return;
-        }
-        LogWarning("MaterialYamlRecord: unknown shading model '{}'; keeping current value", Value);
-    }
+    auto SetShadingModel(String Value) -> void;
 
-    [[nodiscard]] auto GetShadingModel() const -> String {
-        return String(magic_enum::enum_name(ShadingModel));
-    }
+    [[nodiscard]] auto GetShadingModel() const -> String;
+
+    /// @brief Field descriptors of the YAML-authorable members.
+    static constexpr std::array Fields = {
+        Field<&MaterialYamlRecord::Name>("name"),
+        Field<&MaterialYamlRecord::Ambient>("ambient"),
+        Field<&MaterialYamlRecord::Diffuse>("diffuse"),
+        Field<&MaterialYamlRecord::Specular>("specular"),
+        Field<&MaterialYamlRecord::Emissive>("emissive"),
+        Field<&MaterialYamlRecord::Transparent>("transparent"),
+        Field<&MaterialYamlRecord::Reflective>("reflective"),
+        Field<&MaterialYamlRecord::Opacity>("opacity"),
+        Field<&MaterialYamlRecord::BumpScaling>("bump_scaling"),
+        Field<&MaterialYamlRecord::Shininess>("shininess"),
+        Field<&MaterialYamlRecord::ShininessStrength>("shininess_strength"),
+        Field<&MaterialYamlRecord::RefractionIndex>("refraction_index"),
+        Field<&MaterialYamlRecord::Reflectivity>("reflectivity"),
+        Field<&MaterialYamlRecord::EnableWireframe>("enable_wireframe"),
+        Field<&MaterialYamlRecord::TwoSided>("two_sided"),
+        Field<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function"),
+        Field<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model"),
+        Field<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode"),
+        Field<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff"),
+        Field<&MaterialYamlRecord::BaseColorFactor>("base_color_factor"),
+        Field<&MaterialYamlRecord::MetallicFactor>("metallic_factor"),
+        Field<&MaterialYamlRecord::RoughnessFactor>("roughness_factor"),
+        Field<&MaterialYamlRecord::SheenColorFactor>("sheen_color_factor"),
+        Field<&MaterialYamlRecord::SheenRoughnessFactor>("sheen_roughness_factor"),
+        Field<&MaterialYamlRecord::ClearcoatFactor>("clearcoat_factor"),
+        Field<&MaterialYamlRecord::ClearcoatRoughnessFactor>("clearcoat_roughness_factor"),
+        Field<&MaterialYamlRecord::TransmissionFactor>("transmission_factor"),
+        Field<&MaterialYamlRecord::VolumeThicknessFactor>("volume_thickness_factor"),
+        Field<&MaterialYamlRecord::VolumeAttenuationDistance>("volume_attenuation_distance"),
+        Field<&MaterialYamlRecord::VolumeAttenuationColor>("volume_attenuation_color"),
+        Field<&MaterialYamlRecord::BaseColorTexture>("base_color_texture"),
+        Field<&MaterialYamlRecord::NormalTexture>("normal_texture"),
+        Field<&MaterialYamlRecord::MetallicRoughnessTexture>("metallic_roughness_texture"),
+        Field<&MaterialYamlRecord::MetallicTexture>("metallic_texture"),
+        Field<&MaterialYamlRecord::RoughnessTexture>("roughness_texture"),
+        Field<&MaterialYamlRecord::OcclusionTexture>("occlusion_texture"),
+        Field<&MaterialYamlRecord::EmissiveTexture>("emissive_texture"),
+    };
 };
 
 /// @brief Runtime texture data cached by normalized asset path.
-struct TextureData {
+export struct TextureData {
     Path               AssetPath = {};
     RHIRef<RHITexture> Texture   = nullptr;
 };
 
-using TextureDataHandle = entt::resource<TextureData>;
+export using TextureDataHandle = entt::resource<TextureData>;
 
 /// @brief Runtime representation of one material texture slot.
-struct TextureRecord {
+export struct TextureRecord {
     TextureType       Type      = TextureType::Unknown;
     TextureDataHandle Texture   = {};
     TextureMapping    Mapping   = TextureMapping::UV;
@@ -211,14 +221,14 @@ struct TextureRecord {
 };
 
 /// @brief Material loader that created a runtime material record.
-enum class MaterialSource {
+export enum class MaterialSource {
     Unknown = 0,
     Yaml,
     Assimp,
 };
 
 /// @brief Renderer-neutral material record with source provenance.
-struct MaterialRecord {
+export struct MaterialRecord {
     MaterialSource Source      = MaterialSource::Unknown;
     Path           SourceAsset = {};
     String         Name        = {};
@@ -310,116 +320,9 @@ struct MaterialRecord {
     };
 
     [[nodiscard]] auto HasUnresolvedBindlessTextures(const std::unordered_map<Uint64, Uint32>& TextureIndices) const
-        -> bool {
-        const auto FirstSlot = [this](TextureType Type) -> TextureDataHandle {
-            const auto Slot = std::ranges::find_if(
-                Textures, [Type](const TextureRecord& Record) -> bool { return Record.Type == Type; });
-            return Slot == Textures.end() ? TextureDataHandle{} : Slot->Texture;
-        };
-        const auto IsUnresolved = [&TextureIndices](const TextureDataHandle& Texture) -> bool {
-            return Texture && Texture->Texture && !TextureIndices.contains(Texture->Texture->GetId());
-        };
+        -> bool;
 
-        auto BaseColor = FirstSlot(TextureType::BaseColor);
-        if (!BaseColor)
-            BaseColor = FirstSlot(TextureType::Diffuse);
-        auto Normal = FirstSlot(TextureType::NormalCamera);
-        if (!Normal)
-            Normal = FirstSlot(TextureType::Normals);
-        auto Emissive = FirstSlot(TextureType::EmissionColor);
-        if (!Emissive)
-            Emissive = FirstSlot(TextureType::Emissive);
-        if (IsUnresolved(BaseColor) || IsUnresolved(Normal) || IsUnresolved(Emissive) ||
-            IsUnresolved(FirstSlot(TextureType::AmbientOcclusion)))
-            return true;
-
-        const auto GltfMetallicRoughness = FirstSlot(TextureType::GltfMetallicRoughness);
-        if (GltfMetallicRoughness)
-            return IsUnresolved(GltfMetallicRoughness);
-
-        const auto Metallic  = FirstSlot(TextureType::Metalness);
-        const auto Roughness = FirstSlot(TextureType::DiffuseRoughness);
-        if (Metallic && Roughness && Metallic->Texture == Roughness->Texture)
-            return IsUnresolved(Metallic);
-        return IsUnresolved(Metallic) || IsUnresolved(Roughness);
-    }
-
-    [[nodiscard]] auto BuildGpuData(const std::unordered_map<Uint64, Uint32>& TextureIndices) const -> GpuData {
-        const auto FirstSlot = [this](TextureType Type) -> TextureDataHandle {
-            const auto Slot = std::ranges::find_if(
-                Textures, [Type](const TextureRecord& Record) -> bool { return Record.Type == Type; });
-            return Slot == Textures.end() ? TextureDataHandle{} : Slot->Texture;
-        };
-        const auto ResolveTexture = [&TextureIndices](const TextureDataHandle& Texture) -> std::array<Uint32, 2> {
-            if (!Texture || !Texture->Texture)
-                return {};
-            const auto Index = TextureIndices.find(Texture->Texture->GetId());
-            return Index != TextureIndices.end() ? std::array<Uint32, 2>{Index->second, 0} : std::array<Uint32, 2>{};
-        };
-
-        GpuData Result{
-            .Ambient                   = hlslpp::interop::float3{Ambient},
-            .Diffuse                   = hlslpp::interop::float3{Diffuse},
-            .Specular                  = hlslpp::interop::float3{Specular},
-            .Emissive                  = hlslpp::interop::float3{Emissive},
-            .Transparent               = hlslpp::interop::float3{Transparent},
-            .Reflective                = hlslpp::interop::float3{Reflective},
-            .Opacity                   = Opacity,
-            .BumpScaling               = BumpScaling,
-            .Shininess                 = Shininess,
-            .ShininessStrength         = ShininessStrength,
-            .RefractionIndex           = RefractionIndex,
-            .Reflectivity              = Reflectivity,
-            .EnableWireframe           = EnableWireframe ? 1U : 0U,
-            .TwoSided                  = TwoSided ? 1U : 0U,
-            .BlendFunction             = static_cast<Uint32>(BlendFunction),
-            .ShadingModel              = static_cast<Uint32>(ShadingModel),
-            .AlphaMode                 = static_cast<Uint32>(AlphaMode),
-            .AlphaCutoff               = AlphaCutoff,
-            .BaseColorFactor           = hlslpp::interop::float4{BaseColorFactor},
-            .MetallicFactor            = MetallicFactor,
-            .RoughnessFactor           = RoughnessFactor,
-            .SheenColorFactor          = hlslpp::interop::float3{SheenColorFactor},
-            .SheenRoughnessFactor      = SheenRoughnessFactor,
-            .ClearcoatFactor           = ClearcoatFactor,
-            .ClearcoatRoughnessFactor  = ClearcoatRoughnessFactor,
-            .TransmissionFactor        = TransmissionFactor,
-            .VolumeThicknessFactor     = VolumeThicknessFactor,
-            .VolumeAttenuationDistance = VolumeAttenuationDistance,
-            .VolumeAttenuationColor    = hlslpp::interop::float3{VolumeAttenuationColor},
-        };
-
-        auto BaseColor = FirstSlot(TextureType::BaseColor);
-        if (!BaseColor)
-            BaseColor = FirstSlot(TextureType::Diffuse);
-        auto Normal = FirstSlot(TextureType::NormalCamera);
-        if (!Normal)
-            Normal = FirstSlot(TextureType::Normals);
-        auto EmissiveSlot = FirstSlot(TextureType::EmissionColor);
-        if (!EmissiveSlot)
-            EmissiveSlot = FirstSlot(TextureType::Emissive);
-
-        const auto GltfMetallicRoughness = FirstSlot(TextureType::GltfMetallicRoughness);
-
-        Result.BaseColorTexture = ResolveTexture(BaseColor);
-        Result.NormalTexture    = ResolveTexture(Normal);
-        if (GltfMetallicRoughness) {
-            Result.MetallicRoughnessTexture = ResolveTexture(GltfMetallicRoughness);
-        } else {
-            const auto Metallic                = FirstSlot(TextureType::Metalness);
-            const auto Roughness               = FirstSlot(TextureType::DiffuseRoughness);
-            const bool SharedMetallicRoughness = Metallic && Roughness && Metallic->Texture == Roughness->Texture;
-            if (SharedMetallicRoughness) {
-                Result.MetallicRoughnessTexture = ResolveTexture(Metallic);
-            } else {
-                Result.MetallicTexture  = ResolveTexture(Metallic);
-                Result.RoughnessTexture = ResolveTexture(Roughness);
-            }
-        }
-        Result.OcclusionTexture = ResolveTexture(FirstSlot(TextureType::AmbientOcclusion));
-        Result.EmissiveTexture  = ResolveTexture(EmissiveSlot);
-        return Result;
-    }
+    [[nodiscard]] auto BuildGpuData(const std::unordered_map<Uint64, Uint32>& TextureIndices) const -> GpuData;
 };
 
 static_assert(sizeof(MaterialRecord::GpuData) == 304);
@@ -443,86 +346,4 @@ static_assert(offsetof(MaterialRecord::GpuData, RoughnessTexture) == 272);
 static_assert(offsetof(MaterialRecord::GpuData, OcclusionTexture) == 280);
 static_assert(offsetof(MaterialRecord::GpuData, EmissiveTexture) == 288);
 
-} // namespace SoulEngine
-
-// NOTE: entt meta registration for MaterialYamlRecord must live in this TU, the partition that defines the
-// type. Clang 22.1.3 and 23.1.1 ICE (SEGV 0xC0000005 while mangling entt::meta_factory<T>::data) when the
-// registered type is imported from another partition; keeping the registration beside the type avoids that
-// path entirely. The split across these helpers additionally keeps clang 22.1.x debug builds (-g) out of a
-// debug-info-generation ICE that a single 37-field registration function hits.
-namespace SoulEngine {
-namespace {
-
-auto RegisterCoreScalarYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::Name>("name");
-    Factory.data<&MaterialYamlRecord::Ambient>("ambient");
-    Factory.data<&MaterialYamlRecord::Diffuse>("diffuse");
-    Factory.data<&MaterialYamlRecord::Specular>("specular");
-    Factory.data<&MaterialYamlRecord::Emissive>("emissive");
-    Factory.data<&MaterialYamlRecord::Transparent>("transparent");
-    Factory.data<&MaterialYamlRecord::Reflective>("reflective");
-    Factory.data<&MaterialYamlRecord::Opacity>("opacity");
-    Factory.data<&MaterialYamlRecord::BumpScaling>("bump_scaling");
-    Factory.data<&MaterialYamlRecord::Shininess>("shininess");
-    Factory.data<&MaterialYamlRecord::ShininessStrength>("shininess_strength");
-    Factory.data<&MaterialYamlRecord::RefractionIndex>("refraction_index");
-    Factory.data<&MaterialYamlRecord::Reflectivity>("reflectivity");
-    Factory.data<&MaterialYamlRecord::EnableWireframe>("enable_wireframe");
-    Factory.data<&MaterialYamlRecord::TwoSided>("two_sided");
-}
-
-auto RegisterBlendAndShadingYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function");
-    Factory.data<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model");
-    Factory.data<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode");
-    Factory.data<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff");
-}
-
-auto RegisterPbrYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::BaseColorFactor>("base_color_factor");
-    Factory.data<&MaterialYamlRecord::MetallicFactor>("metallic_factor");
-    Factory.data<&MaterialYamlRecord::RoughnessFactor>("roughness_factor");
-    Factory.data<&MaterialYamlRecord::SheenColorFactor>("sheen_color_factor");
-    Factory.data<&MaterialYamlRecord::SheenRoughnessFactor>("sheen_roughness_factor");
-    Factory.data<&MaterialYamlRecord::ClearcoatFactor>("clearcoat_factor");
-    Factory.data<&MaterialYamlRecord::ClearcoatRoughnessFactor>("clearcoat_roughness_factor");
-    Factory.data<&MaterialYamlRecord::TransmissionFactor>("transmission_factor");
-    Factory.data<&MaterialYamlRecord::VolumeThicknessFactor>("volume_thickness_factor");
-    Factory.data<&MaterialYamlRecord::VolumeAttenuationDistance>("volume_attenuation_distance");
-    Factory.data<&MaterialYamlRecord::VolumeAttenuationColor>("volume_attenuation_color");
-}
-
-auto RegisterTextureYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::BaseColorTexture>("base_color_texture");
-    Factory.data<&MaterialYamlRecord::NormalTexture>("normal_texture");
-    Factory.data<&MaterialYamlRecord::MetallicRoughnessTexture>("metallic_roughness_texture");
-    Factory.data<&MaterialYamlRecord::MetallicTexture>("metallic_texture");
-    Factory.data<&MaterialYamlRecord::RoughnessTexture>("roughness_texture");
-    Factory.data<&MaterialYamlRecord::OcclusionTexture>("occlusion_texture");
-    Factory.data<&MaterialYamlRecord::EmissiveTexture>("emissive_texture");
-}
-
-auto RegisterMaterialYamlMeta() -> void {
-    entt::meta_factory<MaterialYamlRecord> Factory = entt::meta_factory<MaterialYamlRecord>{}.type("material");
-    RegisterCoreScalarYamlMeta(Factory);
-    RegisterBlendAndShadingYamlMeta(Factory);
-    RegisterPbrYamlMeta(Factory);
-    RegisterTextureYamlMeta(Factory);
-}
-
-} // namespace
-
-// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
-// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
-// startup.
-namespace MetaRegistration {
-
-struct MaterialYamlMetaRegistration {
-    MaterialYamlMetaRegistration() {
-        RegisterMaterialYamlMeta();
-    }
-};
-MaterialYamlMetaRegistration g_MaterialYamlMetaRegistration = {};
-
-} // namespace MetaRegistration
 } // namespace SoulEngine

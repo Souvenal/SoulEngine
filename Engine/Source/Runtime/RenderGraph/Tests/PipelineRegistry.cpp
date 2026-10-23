@@ -18,8 +18,6 @@ import ShaderCompiler;
 
 using namespace SoulEngine;
 
-namespace {
-
 /// @brief Shared fixture: registry starts clean and the process-global TaskGraph is stopped before every
 /// test.
 ///
@@ -111,8 +109,6 @@ struct ConsumerPass final : IRHIGraphicsPass {
   private:
     UPtr<Parameter> m_Parameter;
 };
-
-} // namespace
 
 TEST_F(PipelineRegistryTest, RegisterIsIdempotentAndUnknownKeysReportUnknown) {
     PipelineRegistry::Get().RegisterGraphics("GeometryPass", GraphicsPipelineRequest{});

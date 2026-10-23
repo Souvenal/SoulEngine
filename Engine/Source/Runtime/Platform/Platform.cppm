@@ -5,13 +5,10 @@ export module Platform;
 import Core;
 import std;
 
-#if defined(_WIN32)
-export import :Windows;
-#elif defined(__APPLE__)
-export import :Mac;
-#endif
+namespace SoulEngine {
 
-namespace Platform {
+/// Install the platform crash handler.
+export auto InstallCrashHandler() -> void;
 
 /// Compile-time OS detection.
 export enum class PlatformOS {
@@ -34,4 +31,4 @@ export constexpr auto GetOS() -> PlatformOS {
 #endif
 }
 
-} // namespace Platform
+} // namespace SoulEngine

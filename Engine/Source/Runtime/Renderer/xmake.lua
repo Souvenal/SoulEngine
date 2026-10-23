@@ -1,14 +1,9 @@
-target("Renderer")
-    set_kind("moduleonly")
-
-    add_packages("magic_enum", {public = true})
-    add_packages("glfw", "hlslpp")
-    add_deps("Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph")
-
-    add_files("*.cppm")
-    add_files("Common/*.cppm")
-    add_files("Editor/*.cppm")
-    add_files("Raster/*.cppm")
-    add_files("RayTracing/*.cppm")
-
-test_module("Renderer", {additional_packages = {"entt", "glfw"}})
+soul_module("Renderer", {
+    deps     = {"Core", "EditorTypes", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph"},
+    packages = {"magic_enum", "glfw", "hlslpp"},
+    impl = {
+        deps     = {"Core", "Material", "RHI", "RHIVulkan", "Scene", "RenderGraph"},
+        packages = {"magic_enum", "glfw", "hlslpp"},
+    },
+    tests = {additional_packages = {"entt", "glfw"}},
+})

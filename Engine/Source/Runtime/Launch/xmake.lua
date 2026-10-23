@@ -1,9 +1,8 @@
-target("Launch")
-    set_kind("moduleonly")
-
-    add_packages("magic_enum", {public = true})
-    add_packages("tracy", {public = true})
-    add_packages("imgui-club")
-    add_deps("Core", "Platform", "WindowSystem", "Application", "Editor", "RHI", "Scene", "Renderer", "TaskGraph", "RenderGraph")
-
-    add_files("**.cppm")
+soul_module("Launch", {
+    deps     = {"Core", "Platform", "WindowSystem", "Application", "Editor", "RHI", "Scene", "Renderer", "TaskGraph", "RenderGraph"},
+    packages = {"magic_enum", "tracy", "imgui-club"},
+    impl = {
+        deps     = {"Core", "Platform", "WindowSystem", "Application", "Editor", "RHI", "Scene", "Renderer", "TaskGraph", "RenderGraph"},
+        packages = {"magic_enum", "tracy", "imgui-club"},
+    },
+})

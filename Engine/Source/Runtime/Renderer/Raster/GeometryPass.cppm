@@ -2,19 +2,19 @@ module;
 
 #include <hlsl++.h>
 
-export module Renderer:RasterPasses.GeometryPass;
+export module Renderer.Raster.GeometryPass;
 
 import Core;
 import RHI;
 import RenderGraph;
-import :GBuffer;
+import Renderer.Common.GBuffer;
 
 import std;
 import ShaderCompiler;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
-class GeometryPass final : public IRHIGraphicsPass {
+export class GeometryPass final : public IRHIGraphicsPass {
   public:
     static constexpr StringView Name = "GeometryPass";
     [[nodiscard]] auto          GetName() const noexcept -> StringView override {

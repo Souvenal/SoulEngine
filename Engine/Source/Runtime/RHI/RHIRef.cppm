@@ -1,29 +1,26 @@
 module;
 
-export module RHI:Ref;
+export module RHI.Ref;
 
 import Core;
 import Shader;
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 // Deferred Deletion Queue
 
 /// @brief Thread-safe queue of destruction callbacks drained on the RHI thread.
 ///
 /// When an RHI resource's last reference is released, its destructor is captured in a lambda and enqueued
 /// here. The RHI thread calls Drain() each frame to reclaim GPU resources safely.
-class RHIDeferredDeletionQueue {
+export class RHIDeferredDeletionQueue {
   public:
     RHIDeferredDeletionQueue()                                                   = default;
     RHIDeferredDeletionQueue(const RHIDeferredDeletionQueue&)                    = delete;
     auto operator=(const RHIDeferredDeletionQueue&) -> RHIDeferredDeletionQueue& = delete;
 
     /// @brief Enqueue a destruction callback. Thread-safe.
-    auto Enqueue(std::function<void()> Destructor) -> void {
-        std::scoped_lock Lock(m_Mutex);
-        m_Pending.push_back(std::move(Destructor));
-    }
+    auto Enqueue(std::function<void()> Destructor) -> void;
 
     /// @brief Destroy all pending resources. Must run on the RHI thread.
     ///
@@ -31,19 +28,7 @@ class RHIDeferredDeletionQueue {
     /// own destructors (e.g. a pipeline releases its shader binding set, which then releases bound textures).
     /// Drain in batches until the queue is empty so the final shutdown flush cannot leave cascade-enqueued
     /// destructors behind.
-    auto Drain() -> void {
-        for (;;) {
-            std::vector<std::function<void()>> Batch;
-            {
-                std::scoped_lock Lock(m_Mutex);
-                if (m_Pending.empty())
-                    return;
-                Batch = std::move(m_Pending);
-            }
-            for (auto& Destroy : Batch)
-                Destroy();
-        }
-    }
+    auto Drain() -> void;
 
   private:
     std::mutex                         m_Mutex;
@@ -54,25 +39,25 @@ class RHIDeferredDeletionQueue {
 ///
 /// RHIRenderDevice::Create() points GDeferredDeletionQueue here; tests may temporarily redirect the pointer
 /// to a local queue instance.
-RHIDeferredDeletionQueue GDeferredDeletionQueueStorage = {};
+export extern RHIDeferredDeletionQueue GDeferredDeletionQueueStorage;
 
 /// @brief Process-wide deferred deletion queue. Set by RHIRenderDevice::Create().
-RHIDeferredDeletionQueue* GDeferredDeletionQueue = nullptr;
+export extern RHIDeferredDeletionQueue* GDeferredDeletionQueue;
 
 /// @brief Drain the process-wide deferred deletion queue; no-op while no device is alive.
 ///
 /// Driven by RHILoop on the RHI thread once per frame after RHIRenderDevice::Tick(), and by backend
 /// Shutdown() for the final flush.
-inline auto DrainRHIDeferredDeletions() -> void {
+export inline auto DrainRHIDeferredDeletions() -> void {
     if (GDeferredDeletionQueue)
         GDeferredDeletionQueue->Drain();
 }
 // RHI Ref State
 
-enum class RHIRefState : Uint8 { Unknown = 0, RhiCommitting, Ready, Failed };
+export enum class RHIRefState : Uint8 { Unknown = 0, RhiCommitting, Ready, Failed };
 // RHI Ref Payload
 
-template <typename T>
+export template <typename T>
 class RHIRefPayload final {
   public:
     RHIRefPayload()                                        = default;
@@ -132,7 +117,7 @@ class RHIRefPayload final {
     UPtr<T>                     m_Object = nullptr;
 };
 
-template <typename T>
+export template <typename T>
 class RHIRef {
   public:
     /// @brief Create an empty resource handle.
@@ -197,15 +182,13 @@ class RHIRef {
     }
 
     SPtr<RHIRefPayload<T>> m_Payload = nullptr;
-
-    friend class RHIRenderDevice;
 };
 
 /// @brief Shared CPU payload for an append-only bindless resource array.
 ///
 /// This payload owns the resource list and append-cycle state without participating in the RHI
 /// deferred-deletion queue.
-template <typename T>
+export template <typename T>
 class RHIRefArrayPayload final {
   public:
     static constexpr Uint32 FrameSlotCount = 3;
@@ -278,7 +261,7 @@ class RHIRefArrayPayload final {
 ///
 /// The array is a CPU-side object. Its payload owns the resource list and the three FrameSlot append-cycle
 /// buffers; copied handles share that state.
-template <typename T>
+export template <typename T>
 class RHIRefArray {
   public:
     static constexpr Uint32 FrameSlotCount     = RHIRefArrayPayload<T>::FrameSlotCount;

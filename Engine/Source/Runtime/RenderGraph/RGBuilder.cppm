@@ -7,17 +7,17 @@ module;
 // magic_enum::enum_flags_test is not exported by the v0.9.8 module.
 #include <magic_enum/magic_enum_flags.hpp>
 
-export module RenderGraph:Builder;
+export module RenderGraph.Builder;
 
-import :Types;
-import :PipelineRegistry;
-import :Runtime;
-import :SyncPlan;
+import RenderGraph.Types;
+import RenderGraph.PipelineRegistry;
+import RenderGraph.Runtime;
+import RenderGraph.SyncPlan;
 import RHI;
 import Core;
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 // The templates below are exported on purpose: the exported AddPass template is instantiated inside renderer
 // module units, and at that instantiation point only exported declarations of this partition are visible.
@@ -30,15 +30,15 @@ export namespace SoulEngine {
 // view records (samplers, bindless arrays, CPU scalars) are passthrough — only views declare access. Cap: 16
 // fields per Parameter.
 
-struct FieldProbe {
+export struct FieldProbe {
     template <typename T>
     constexpr operator T&() const noexcept;
 };
 
-template <typename T, typename... Args>
+export template <typename T, typename... Args>
 concept AggregateBraceConstructible = requires { T{std::declval<Args>()...}; };
 
-template <typename T, std::size_t N>
+export template <typename T, std::size_t N>
 consteval auto AcceptsFieldCount() -> bool {
     if constexpr (N == 0)
         return AggregateBraceConstructible<T>;
@@ -51,7 +51,7 @@ consteval auto AcceptsFieldCount() -> bool {
 /// @brief Highest arity the aggregate still accepts.
 ///
 /// Fields all carry defaults, so the maximum constructible arity is exactly the field count.
-template <typename T>
+export template <typename T>
 consteval auto CountFields() -> std::size_t {
     return []<std::size_t... Is>(std::index_sequence<Is...>) consteval {
         std::size_t Result = 0;
@@ -60,7 +60,7 @@ consteval auto CountFields() -> std::size_t {
     }(std::make_index_sequence<16>{});
 }
 
-template <typename FieldT, typename FnT>
+export template <typename FieldT, typename FnT>
 auto VisitField(FieldT& Field, FnT& On) -> void {
     // The detectable set is anything deriving from the two view records — passthrough fields (samplers,
     // bindless arrays, CPU scalars) are everything else.
@@ -69,19 +69,15 @@ auto VisitField(FieldT& Field, FnT& On) -> void {
         On(Field);
 }
 
-} // namespace SoulEngine
-
-// Boilerplate generator for the structured-binding arities of ForEachView. Defined outside the export block:
-// macros cannot be exported from a module, and this one must never leak to consumers.
+// Boilerplate generator for the structured-binding arities of ForEachView. Macros cannot be exported from a
+// module, and this one must never leak to consumers.
 #define RG_FOREACH_VIEW_BRANCH(ARITY, ...)                                                                             \
     if constexpr (Arity == ARITY) {                                                                                    \
         auto& [__VA_ARGS__] = Value;                                                                                   \
         std::apply([&](auto&... Field) { (VisitField(Field, On), ...); }, std::forward_as_tuple(__VA_ARGS__));         \
     }
 
-export namespace SoulEngine {
-
-template <typename ParameterT, typename FnT>
+export template <typename ParameterT, typename FnT>
 auto ForEachView(ParameterT& Value, FnT&& On) -> void {
     constexpr std::size_t Arity = CountFields<std::remove_cvref_t<ParameterT>>();
     static_assert(Arity > 0, "RenderGraph Parameter must declare at least one field");
@@ -181,7 +177,7 @@ auto ForEachView(ParameterT& Value, FnT&& On) -> void {
 
 #undef RG_FOREACH_VIEW_BRANCH
 
-template <typename ViewT>
+export template <typename ViewT>
 [[nodiscard]] auto ViewResourceIndex(const ViewT& View) -> Uint32 {
     if constexpr (requires { View.Texture; })
         return View.Texture.Index;
@@ -191,10 +187,6 @@ template <typename ViewT>
         static_assert(false, "RenderGraph view must expose either .Texture or .Buffer");
 }
 
-} // namespace SoulEngine
-
-export namespace SoulEngine {
-
 /// @brief Per-frame render graph builder (the UE FRDGBuilder analogue).
 ///
 /// Registration (Create*/Import/AddPass) records resources and constructs passes; a single Compile()
@@ -203,7 +195,7 @@ export namespace SoulEngine {
 /// return to RGTexturePool when the builder is destroyed (end of Render) — the compiled pass list holds its
 /// own copies, and reuse is safe by single-queue submission ordering plus per-frame image state
 /// initialization.
-class RenderGraphBuilder {
+export class RenderGraphBuilder {
   public:
     RenderGraphBuilder()                                             = default;
     RenderGraphBuilder(const RenderGraphBuilder&)                    = delete;

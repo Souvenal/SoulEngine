@@ -4,12 +4,14 @@ target("STBImage")
     add_packages("stb")
     add_files("STBImage.cpp")
 
-target("Material")
-    set_kind("moduleonly")
-
-    add_packages("assimp", "entt", "hlslpp", "stb", "magic_enum", {public = true})
-    add_deps("Core", "RHI", "STBImage", {public = true})
-
-    add_files("*.cppm")
-
-test_module("Material")
+soul_module("Material", {
+    deps     = {"Core", "RHI", "STBImage"},
+    packages = {"assimp", "entt", "hlslpp", "stb", "magic_enum"},
+    impl = {
+        deps     = {"Core", "RHI", "STBImage"},
+        packages = {"assimp", "entt", "hlslpp", "stb", "magic_enum"},
+        -- Keep the STBImage implementation with its dedicated target.
+        excludes = {"STBImage.cpp"},
+    },
+    tests = {},
+})

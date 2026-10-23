@@ -1,6 +1,6 @@
 module;
 
-export module Renderer:Common.BlitToSwapchainPass;
+export module Renderer.Common.BlitToSwapchainPass;
 
 import RenderGraph;
 import Core;
@@ -8,7 +8,7 @@ import RHI;
 
 import std;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Terminal blit of a view's final output into the swapchain.
 ///
@@ -16,7 +16,7 @@ export namespace SoulEngine {
 /// with its Parameter. This is the only present path: the backend resolves the acquired swapchain image,
 /// which stays backend-private. NeverPrune — the pass writes no graph resource, so without the marker pruning
 /// would drop the frame's present.
-class BlitToSwapchainPass final : public IRHITransferPass {
+export class BlitToSwapchainPass final : public IRHITransferPass {
   public:
     static constexpr StringView Name       = "BlitToSwapchainPass";
     static constexpr bool       NeverPrune = true;

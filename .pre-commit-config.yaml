@@ -35,3 +35,9 @@ repos:
         language: python
         pass_filenames: true
         files: ^(Engine/Source/.+\.(h|hpp|cpp|cppm)|Engine/Shaders/.+\.slang|Applications/[^/]+/Shaders/.+\.slang)$
+      - id: check-export-namespace
+        name: check-export-namespace
+        entry: python Tools/check_export_namespace.py
+        language: python
+        pass_filenames: true
+        files: ^Engine/Source/.+\.(cpp|cppm)$

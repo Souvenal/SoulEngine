@@ -8,7 +8,7 @@ module;
 
 #include <slang.h>
 
-export module Slang:Types;
+export module Slang.Types;
 
 import magic_enum;
 import std;
@@ -18,7 +18,6 @@ import Shader;
 namespace SoulEngine {
 
 // File-local helpers for normalizing Slang reflection details before public mappings.
-namespace {
 
 [[nodiscard]] auto ToShaderBindingAccess(SlangResourceAccess Access)
     -> std::expected<ShaderBindingAccess, ErrorMessage> {
@@ -38,16 +37,15 @@ namespace {
     }
 }
 
-} // namespace
-
-[[nodiscard]] auto StripArrayTypeLayout(slang::TypeLayoutReflection* TypeLayout) -> slang::TypeLayoutReflection* {
+export [[nodiscard]] auto StripArrayTypeLayout(slang::TypeLayoutReflection* TypeLayout)
+    -> slang::TypeLayoutReflection* {
     while (TypeLayout && TypeLayout->getKind() == slang::TypeReflection::Kind::Array)
         TypeLayout = TypeLayout->getElementTypeLayout();
     return TypeLayout;
 }
 
 /// @brief One reflected binding's classification: resource kind and shader-declared access as separate axes.
-struct ShaderBindingShape {
+export struct ShaderBindingShape {
     ShaderResourceType  Type   = ShaderResourceType::Unknown;
     ShaderBindingAccess Access = ShaderBindingAccess::Unknown;
 };
@@ -57,7 +55,7 @@ struct ShaderBindingShape {
 /// Used by the reflection DFS, which reaches leaves through the variable tree rather than through binding
 /// ranges. Textures and storage buffers take their access from the Slang resource access mode; constant
 /// buffers are read-only by construction and samplers/acceleration structures carry no access.
-[[nodiscard]] auto ToShaderBindingShapeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
+export [[nodiscard]] auto ToShaderBindingShapeFromLeafLayout(slang::TypeLayoutReflection* TypeLayout)
     -> std::expected<ShaderBindingShape, ErrorMessage> {
     TypeLayout = StripArrayTypeLayout(TypeLayout);
     if (!TypeLayout)
@@ -89,7 +87,7 @@ struct ShaderBindingShape {
 }
 
 /// Map a SlangStage enum value to the project's Stage.
-[[nodiscard]] auto ToShaderStage(SlangStage Stage) -> ShaderStage {
+export [[nodiscard]] auto ToShaderStage(SlangStage Stage) -> ShaderStage {
     switch (Stage) {
     case SLANG_STAGE_VERTEX:
         return ShaderStage::Vertex;
@@ -124,7 +122,7 @@ struct ShaderBindingShape {
     }
 }
 
-[[nodiscard]] auto ToShaderScalarType(slang::TypeReflection::ScalarType ScalarType) -> ShaderScalarType {
+export [[nodiscard]] auto ToShaderScalarType(slang::TypeReflection::ScalarType ScalarType) -> ShaderScalarType {
     switch (ScalarType) {
     case slang::TypeReflection::ScalarType::Float32:
         return ShaderScalarType::Float32;
@@ -140,7 +138,7 @@ struct ShaderBindingShape {
 }
 
 /// Build a ValueType from a Slang type-layout reflection object.
-[[nodiscard]] auto ToShaderValueType(slang::TypeLayoutReflection* TypeLayout) -> ShaderValueType {
+export [[nodiscard]] auto ToShaderValueType(slang::TypeLayoutReflection* TypeLayout) -> ShaderValueType {
     if (!TypeLayout)
         return {};
 

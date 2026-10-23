@@ -8,13 +8,13 @@
 
 module;
 
-export module Core:Util.Factory;
+export module Core.Util.Factory;
 
 import std;
-import :Util.Types;
-import :Util.Singleton;
+import Core.Util.Types;
+import Core.Util.Singleton;
 
-export namespace SoulEngine {
+namespace SoulEngine {
 
 /// @brief Type-safe factory that creates named instances of Interface
 ///        subclasses, forwarding CtorArgs to their constructors.
@@ -26,7 +26,7 @@ export namespace SoulEngine {
 ///
 ///   // Anywhere:
 ///   auto Obj = MyFactory::Get().Create("my_impl", 42, 3.14f);
-template <typename Interface, typename... CtorArgs>
+export template <typename Interface, typename... CtorArgs>
 class Factory : public Singleton<Factory<Interface, CtorArgs...>> {
     friend class Singleton<Factory<Interface, CtorArgs...>>;
 
