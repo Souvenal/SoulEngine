@@ -27,7 +27,7 @@ TEST_F(MaterialYamlFieldsTest, AssignsPbrFactorThroughDescriptor) {
     const auto Document = WriteDocument("0.9\n");
     ASSERT_TRUE(Document.has_value());
     MaterialYamlRecord Value     = {};
-    const auto*        Roughness = FindField(MaterialYamlRecordFields(), "roughness_factor");
+    const auto*        Roughness = FindField(MaterialYamlRecord::Fields, "roughness_factor");
     ASSERT_NE(Roughness, nullptr);
     ASSERT_TRUE(AssignYamlField(*Roughness, &Value, Document->Root()).has_value());
     EXPECT_FLOAT_EQ(Value.RoughnessFactor, 0.9f);
@@ -37,7 +37,7 @@ TEST_F(MaterialYamlFieldsTest, BridgesEnumFieldThroughString) {
     const auto Document = WriteDocument("additive\n");
     ASSERT_TRUE(Document.has_value());
     MaterialYamlRecord Value = {};
-    const auto*        Field = FindField(MaterialYamlRecordFields(), "blend_function");
+    const auto*        Field = FindField(MaterialYamlRecord::Fields, "blend_function");
     ASSERT_NE(Field, nullptr);
     ASSERT_TRUE(AssignYamlField(*Field, &Value, Document->Root()).has_value());
     EXPECT_EQ(Value.BlendFunction, MaterialBlendFunction::Additive);
@@ -45,5 +45,5 @@ TEST_F(MaterialYamlFieldsTest, BridgesEnumFieldThroughString) {
 }
 
 TEST_F(MaterialYamlFieldsTest, RejectsUnknownFieldName) {
-    EXPECT_EQ(FindField(MaterialYamlRecordFields(), "not_a_field"), nullptr);
+    EXPECT_EQ(FindField(MaterialYamlRecord::Fields, "not_a_field"), nullptr);
 }

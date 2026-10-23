@@ -7,18 +7,6 @@ module Scene.Light;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto LightComponentFields() -> FieldTable {
-    static constexpr FieldDescriptor Table[] = {
-        Field<&LightComponent::SetType, &LightComponent::GetType>("type"),
-        Field<&LightComponent::ColorR>("color_r"),
-        Field<&LightComponent::ColorG>("color_g"),
-        Field<&LightComponent::ColorB>("color_b"),
-        Field<&LightComponent::Intensity>("intensity"),
-        Field<&LightComponent::RangeMeters>("range_meters"),
-    };
-    return Table;
-}
-
 auto LightSystem::OnUpdate(Float32 DeltaTime) -> void {
     // LightSystem doesn't need per-frame updates currently
 }

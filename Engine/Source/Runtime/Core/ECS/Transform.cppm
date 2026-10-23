@@ -26,6 +26,13 @@ export struct TransformComponent {
     /// Rotation composes as Rx * Ry * Rz (row-vector convention): the X, Y, then Z rotations are applied
     /// about the fixed parent-space axes.
     [[nodiscard]] auto GetLocalMatrix() const -> hlslpp::float4x4;
+
+    /// @brief Field descriptors of the YAML-persisted members (WorldTransform is derived).
+    static constexpr std::array Fields = {
+        Field<&TransformComponent::Translation>("translation"),
+        Field<&TransformComponent::Rotation>("rotation"),
+        Field<&TransformComponent::Scale>("scale"),
+    };
 };
 
 /// @brief System for updating transform hierarchies.
@@ -56,8 +63,5 @@ export class TransformSystem : public ISystem {
     /// @brief Return the registry-owned dirty transform storage.
     [[nodiscard]] auto GetDirtyTransforms() const -> entt::storage_type_t<entt::reactive>&;
 };
-
-/// @brief Field descriptors of the YAML-persisted TransformComponent members (WorldTransform is derived).
-export [[nodiscard]] auto TransformComponentFields() -> FieldTable;
 
 } // namespace SoulEngine

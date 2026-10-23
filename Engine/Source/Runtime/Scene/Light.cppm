@@ -45,10 +45,17 @@ export struct LightComponent {
         }
         LogWarning("LightComponent: unknown light type '{}'; keeping LightType::Unknown", Value);
     }
-};
 
-/// @brief Field descriptors of the YAML-persisted LightComponent members.
-export [[nodiscard]] auto LightComponentFields() -> FieldTable;
+    /// @brief Field descriptors of the YAML-persisted members.
+    static constexpr std::array Fields = {
+        Field<&LightComponent::SetType, &LightComponent::GetType>("type"),
+        Field<&LightComponent::ColorR>("color_r"),
+        Field<&LightComponent::ColorG>("color_g"),
+        Field<&LightComponent::ColorB>("color_b"),
+        Field<&LightComponent::Intensity>("intensity"),
+        Field<&LightComponent::RangeMeters>("range_meters"),
+    };
+};
 
 /// @brief Immutable world-space light record consumed by renderers.
 export struct LightRecord {

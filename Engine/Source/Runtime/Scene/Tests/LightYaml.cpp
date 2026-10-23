@@ -17,7 +17,7 @@ TEST(LightYaml, AssignsRegisteredTypeThroughYamlImplementation) {
     const auto Document = YamlDocument::Create(FilePath);
     std::filesystem::remove(FilePath);
     ASSERT_TRUE(Document.has_value());
-    const auto* Field = FindField(LightComponentFields(), "type");
+    const auto* Field = FindField(LightComponent::Fields, "type");
     ASSERT_NE(Field, nullptr);
     LightComponent Component = {};
     const auto     Result    = AssignYamlField(*Field, &Component, Document->Root());

@@ -9,15 +9,6 @@ import std;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto TransformComponentFields() -> FieldTable {
-    static constexpr FieldDescriptor Table[] = {
-        Field<&TransformComponent::Translation>("translation"),
-        Field<&TransformComponent::Rotation>("rotation"),
-        Field<&TransformComponent::Scale>("scale"),
-    };
-    return Table;
-}
-
 [[nodiscard]] auto TransformComponent::GetLocalMatrix() const -> hlslpp::float4x4 {
     const auto TranslationMatrix = hlslpp::float4x4::translation(Translation);
     const auto RotationX         = hlslpp::float4x4::rotation_x(Rotation.x * std::numbers::pi_v<float> / 180.0f);

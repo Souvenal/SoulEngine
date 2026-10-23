@@ -7,16 +7,6 @@ module Scene.Camera;
 
 namespace SoulEngine {
 
-[[nodiscard]] auto CameraComponentFields() -> FieldTable {
-    static constexpr FieldDescriptor Table[] = {
-        Field<&CameraComponent::FOV>("fov_degrees"),
-        Field<&CameraComponent::NearPlane>("near_plane"),
-        Field<&CameraComponent::FarPlane>("far_plane"),
-        Field<&CameraComponent::ExposureEV100>("exposure_ev100"),
-    };
-    return Table;
-}
-
 auto CameraSystem::OnUpdate(Float32 DeltaTime) -> void {
     m_Registry.ctx().get<entt::dispatcher>().update<CameraResizeEvent>();
 }

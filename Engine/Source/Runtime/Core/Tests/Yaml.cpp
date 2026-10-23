@@ -16,15 +16,12 @@ struct PersistedValues {
     [[nodiscard]] auto GetText() const -> String {
         return Text;
     }
-};
 
-[[nodiscard]] auto PersistedValuesFields() -> FieldTable {
-    static constexpr FieldDescriptor Table[] = {
+    static constexpr std::array Fields = {
         Field<&PersistedValues::SetText, &PersistedValues::GetText>("text"),
         Field<&PersistedValues::Asset>("asset"),
     };
-    return Table;
-}
+};
 
 class YamlAssignmentTest : public testing::Test {
   protected:
@@ -44,7 +41,7 @@ TEST_F(YamlAssignmentTest, AssignsStringSetterAndPathAcrossYamlBoundary) {
     const auto Document = YamlDocument::Create(m_FilePath);
     ASSERT_TRUE(Document.has_value());
     PersistedValues Values = {};
-    const auto      Fields = PersistedValuesFields();
+    const auto      Fields = FieldTable{PersistedValues::Fields};
     const auto*     Text   = FindField(Fields, "text");
     const auto*     Asset  = FindField(Fields, "asset");
     ASSERT_NE(Text, nullptr);
@@ -63,7 +60,7 @@ TEST_F(YamlAssignmentTest, RejectsSequenceWithoutChangingString) {
     const auto Document = YamlDocument::Create(m_FilePath);
     ASSERT_TRUE(Document.has_value());
     PersistedValues Values{.Text = "original"};
-    const auto*     Field = FindField(PersistedValuesFields(), "text");
+    const auto*     Field = FindField(PersistedValues::Fields, "text");
     ASSERT_NE(Field, nullptr);
     const auto Invalid = Document->Root()["invalid"];
     ASSERT_TRUE(Invalid);

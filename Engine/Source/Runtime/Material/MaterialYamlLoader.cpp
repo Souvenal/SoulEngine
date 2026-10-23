@@ -38,7 +38,7 @@ auto MaterialYamlLoader::operator()(const Path& MaterialPath, const Path& AssetR
     MaterialYamlRecord Value = {};
     for (const auto& [FieldName, FieldNodePtr] : Material->get().Items()) {
         const auto& FieldNode = *FieldNodePtr;
-        const auto* Field     = FindField(MaterialYamlRecordFields(), FieldName);
+        const auto* Field     = FindField(MaterialYamlRecord::Fields, FieldName);
         if (!Field) {
             LogWarning("MaterialYamlLoader: unknown field '{}' at {} in '{}'",
                        FieldName,

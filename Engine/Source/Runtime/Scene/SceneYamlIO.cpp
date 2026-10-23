@@ -36,10 +36,10 @@ template <typename T>
 
 auto SceneComponentDescriptors() -> std::span<const SceneComponentDescriptor> {
     static const std::array Table = {
-        DescribeComponent<TransformComponent>("transform", TransformComponentFields()),
-        DescribeComponent<CameraComponent>("camera", CameraComponentFields()),
-        DescribeComponent<LightComponent>("light", LightComponentFields()),
-        DescribeComponent<MeshComponent>("mesh", MeshComponentFields()),
+        DescribeComponent<TransformComponent>("transform", TransformComponent::Fields),
+        DescribeComponent<CameraComponent>("camera", CameraComponent::Fields),
+        DescribeComponent<LightComponent>("light", LightComponent::Fields),
+        DescribeComponent<MeshComponent>("mesh", MeshComponent::Fields),
     };
     return Table;
 }

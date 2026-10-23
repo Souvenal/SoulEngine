@@ -239,14 +239,6 @@ auto MeshLoader::operator()(const Path& MeshPath) -> result_type {
     return Result;
 }
 
-[[nodiscard]] auto MeshComponentFields() -> FieldTable {
-    static constexpr FieldDescriptor Table[] = {
-        Field<&MeshComponent::Asset>("asset"),
-        Field<&MeshComponent::MaterialOverridePath>("material_override"),
-    };
-    return Table;
-}
-
 auto MeshSystem::SetAssetRoot(Path AssetRoot) -> void {
     m_AssetRoot = AssetRoot.lexically_normal();
 }
