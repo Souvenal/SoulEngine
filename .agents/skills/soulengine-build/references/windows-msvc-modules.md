@@ -48,14 +48,14 @@ Open the `*.module.json` matching the source. Its `requires` list should include
 Diagnostic signature, any of:
 
 - `clang++: error: no such file or directory: '/WHOLEARCHIVE:gmock_main.lib'` at the link step of any `TestsFor*` target.
-- Clang-frontend-only test exclusions silently not applying (for example the SceneDocument clang 23.1.1 optimizer SEGV workaround): the target still builds and either crashes the compiler or `xmake test` reports a missing-binary failure for a test that was never built.
+- A disabled test target that still registers its test: `xmake test` reports a missing-binary failure for a test that was never built. Test registration must be skipped when a target is disabled.
 
 Root cause: under xmake v3.1.1, `get_config("toolchain")` and `is_config("toolchain", ...)` return nil/false at `xmake.lua` script scope — in both `xmake f` and build runs — even though `toolchain = "clang"` is persisted in `.xmake/windows/<arch>/xmake.conf`. Any driver- or frontend-style branch decided at script scope silently takes the non-clang path. The resolved toolchain is only visible on the target: iterate `target:toolchains()` and read `toolchain_inst:name()`. That API is valid in `on_config` (after toolchain checking); it is not reliable in `on_load`.
 
 Verified repair, applied in `test_module` (`Engine/Source/Runtime/xmake.lua`):
 
 - GNU-style drivers (`clang`, `gcc` toolchains) need `-Wl,/WHOLEARCHIVE:gmock_main.lib`; MSVC-style drivers (`msvc` toolchain = link.exe, `llvm` toolchain = clang-cl) accept `/WHOLEARCHIVE:gmock_main.lib` directly.
-- Clang-frontend test exclusions arrive as `exclude_on_clang = {"Pattern"}` (see `Engine/Source/Runtime/Scene/xmake.lua`). An excluded target is disabled with `target:set("enabled", false)` and must also skip test registration: `xmake test` otherwise runs a binary that was never built and counts it as a failure. Registration therefore moved into the same `on_config` block via `target:add("tests", "default", {...})`.
+- Test registration lives in the same `on_config` block via `target:add("tests", "default", {...})`; a target disabled there must skip registration or `xmake test` runs a binary that was never built and counts it as a failure.
 
 Tempting but wrong: more script-scope `is_config("toolchain", ...)` guards; parsing `xmake.conf` by hand; excluding the test file unconditionally on windows (loses MSVC coverage).
 

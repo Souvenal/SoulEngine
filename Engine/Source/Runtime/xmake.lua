@@ -143,12 +143,6 @@ function run_pending_tests()
         local packages = opt.packages or opt.additional_packages or {}
         table.insert(packages, "gtest")
         local exclude_patterns = opt.exclude_tests or {}
-        -- Test base-name patterns dropped when the active toolchain is a clang
-        -- frontend (any driver style).  Evaluated per target in on_config: the
-        -- configured toolchain name is not visible at script scope in xmake v3
-        -- (get_config("toolchain") returns nil), so the check must run where
-        -- target:toolchains() is resolved.
-        local exclude_on_clang = opt.exclude_on_clang or {}
         for _, testfile in ipairs(os.files(path.join(tests_dir, "**.cpp"))) do
             local basename = path.basename(testfile)
             local excluded = false
@@ -171,43 +165,23 @@ function run_pending_tests()
                     -- form: link.exe / clang-cl accept /WHOLEARCHIVE directly; the
                     -- GNU-style clang++ driver (toolchain "clang"/"gcc" on Windows)
                     -- needs -Wl, forwarding.  Both decisions need the resolved
-                    -- toolchain, so they run in on_config (see exclude_on_clang).
+                    -- toolchain, and the configured toolchain name is not visible at
+                    -- script scope in xmake v3, so this runs in on_config.
                     on_config(function(target)
-                        local clang_frontend = false
-                        local gnu_driver     = false
+                        local gnu_driver = false
                         for _, toolchain_inst in pairs(target:toolchains()) do
                             local name = toolchain_inst:name()
-                            if name == "clang" or name == "llvm" then
-                                clang_frontend = true
-                            end
                             if name == "clang" or name == "gcc" then
                                 gnu_driver = true
                             end
                         end
 
-                        -- Clang-frontend exclusions (e.g. the clang 23.1.1
-                        -- optimizer SEGV workaround in Scene).  Disabled targets
-                        -- must not register tests either, or `xmake test` runs a
-                        -- binary that was never built.
-                        local disabled = false
-                        for _, pattern in ipairs(exclude_on_clang) do
-                            if basename:match(pattern) then
-                                if clang_frontend then
-                                    target:set("enabled", false)
-                                    disabled = true
-                                end
-                                break
-                            end
-                        end
-
-                        if not disabled then
-                            target:add("tests", "default", {
-                                group = module_name,
-                                runenvs = {
-                                    SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
-                                }
-                            })
-                        end
+                        target:add("tests", "default", {
+                            group = module_name,
+                            runenvs = {
+                                SOUL_ENGINE_TEST_SOURCE_DIR = tests_dir
+                            }
+                        })
 
                         -- Windows-only: Apple/GNU ld pull main() from the archive
                         -- normally; /WHOLEARCHIVE is a link.exe flag and the .lib
