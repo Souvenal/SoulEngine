@@ -347,5 +347,3 @@ static_assert(offsetof(MaterialRecord::GpuData, OcclusionTexture) == 280);
 static_assert(offsetof(MaterialRecord::GpuData, EmissiveTexture) == 288);
 
 } // namespace SoulEngine
-
-namespace SoulEngine {} // namespace SoulEngine

@@ -49,6 +49,28 @@ class ExportNamespaceCheckerTest(unittest.TestCase):
         self.assertIn(f"{self.fixture}:2", result.stdout)
         self.assertIn("export namespace", result.stdout)
 
+    def test_single_namespace_block_passes(self):
+        self.fixture.write_text(
+            "namespace SoulEngine {\nclass A {};\n}\n// comment namespace SoulEngine {\n",
+            encoding="utf-8",
+        )
+
+        result = run_checker(str(self.fixture))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_duplicate_namespace_block_fails_with_location(self):
+        self.fixture.write_text(
+            "namespace SoulEngine {\nclass A {};\n}\n\nnamespace SoulEngine {\nclass B {};\n}\n",
+            encoding="utf-8",
+        )
+
+        result = run_checker(str(self.fixture))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"{self.fixture}:5", result.stdout)
+        self.assertIn("duplicate namespace SoulEngine block", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

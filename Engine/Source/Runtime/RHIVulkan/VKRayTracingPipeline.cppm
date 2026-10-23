@@ -50,10 +50,6 @@ export [[nodiscard]] auto VulkanCreateShaderBindingTableLayout(Uint32 HandleSize
                                                                Uint32 CallableRecordCount)
     -> std::expected<VulkanShaderBindingTableLayout, ErrorMessage>;
 
-} // namespace SoulEngine
-
-namespace SoulEngine {
-
 export [[nodiscard]] auto AlignUp(Uint64 Value, Uint64 Alignment) -> std::expected<Uint64, ErrorMessage> {
     if (Alignment == 0)
         return std::unexpected(ErrorMessage("SBT alignment must be non-zero"));
