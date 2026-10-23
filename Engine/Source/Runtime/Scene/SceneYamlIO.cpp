@@ -22,11 +22,11 @@ auto AppendComponentWarning(SceneLoadReport& Report, String Location, String Mes
     });
 }
 
-template <typename T>
-[[nodiscard]] auto DescribeComponent(StringView Name, FieldTable Fields) -> SceneComponentDescriptor {
+template <Reflectable T>
+[[nodiscard]] auto DescribeComponent(StringView Name) -> SceneComponentDescriptor {
     return SceneComponentDescriptor{
         .Name           = Name,
-        .Fields         = Fields,
+        .Fields         = T::Fields,
         .EmplaceDefault = [](entt::registry& Registry, entt::entity Entity) -> void* {
             return &Registry.emplace_or_replace<T>(Entity, T{});
         },
@@ -36,10 +36,10 @@ template <typename T>
 
 auto SceneComponentDescriptors() -> std::span<const SceneComponentDescriptor> {
     static const std::array Table = {
-        DescribeComponent<TransformComponent>("transform", TransformComponent::Fields),
-        DescribeComponent<CameraComponent>("camera", CameraComponent::Fields),
-        DescribeComponent<LightComponent>("light", LightComponent::Fields),
-        DescribeComponent<MeshComponent>("mesh", MeshComponent::Fields),
+        DescribeComponent<TransformComponent>("transform"),
+        DescribeComponent<CameraComponent>("camera"),
+        DescribeComponent<LightComponent>("light"),
+        DescribeComponent<MeshComponent>("mesh"),
     };
     return Table;
 }

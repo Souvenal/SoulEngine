@@ -37,6 +37,12 @@ export struct FieldDescriptor {
 /// @brief Field descriptors of one reflected type.
 export using FieldTable = std::span<const FieldDescriptor>;
 
+/// @brief A reflected type carries its field descriptors as a static constexpr Fields member.
+export template <typename T>
+concept Reflectable = requires {
+    { T::Fields } -> std::convertible_to<FieldTable>;
+};
+
 /// @brief Return the descriptor named Name, or nullptr when the table has no such field.
 export [[nodiscard]] constexpr auto FindField(FieldTable Fields, StringView Name) -> const FieldDescriptor* {
     for (const auto& Descriptor : Fields) {
