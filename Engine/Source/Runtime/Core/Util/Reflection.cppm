@@ -46,8 +46,6 @@ export [[nodiscard]] constexpr auto FindField(FieldTable Fields, StringView Name
     return nullptr;
 }
 
-namespace Detail {
-
 template <typename T>
 inline constexpr auto FieldTypeOf = [] {
     if constexpr (std::same_as<T, Float32>)
@@ -75,18 +73,16 @@ struct MemberPointerTraits<MemberT OwnerT::*> {
     using Member = MemberT;
 };
 
-} // namespace Detail
-
 /// @brief Build the descriptor of a data member; accessors derive from the member pointer.
 export template <auto MemberPtr>
     requires std::is_member_object_pointer_v<decltype(MemberPtr)>
 [[nodiscard]] consteval auto Field(StringView Name) -> FieldDescriptor {
-    using Traits = Detail::MemberPointerTraits<decltype(MemberPtr)>;
+    using Traits = MemberPointerTraits<decltype(MemberPtr)>;
     using Owner  = typename Traits::Owner;
     using Member = typename Traits::Member;
     return FieldDescriptor{
         .Name = Name,
-        .Type = Detail::FieldTypeOf<Member>,
+        .Type = FieldTypeOf<Member>,
         .Get  = [](const void* Object) -> FieldValue {
             return FieldValue{static_cast<const Owner*>(Object)->*MemberPtr};
         },
@@ -103,7 +99,7 @@ export template <auto MemberPtr>
 /// @brief Build the descriptor of a field exposed through a String setter/getter pair.
 export template <auto Setter, auto Getter>
 [[nodiscard]] consteval auto Field(StringView Name) -> FieldDescriptor {
-    using Owner = typename Detail::MemberPointerTraits<decltype(Getter)>::Owner;
+    using Owner = typename MemberPointerTraits<decltype(Getter)>::Owner;
     static_assert(std::same_as<std::invoke_result_t<decltype(Getter), const Owner&>, String>);
     static_assert(std::same_as<std::invoke_result_t<decltype(Setter), Owner&, String>, void>);
     return FieldDescriptor{
