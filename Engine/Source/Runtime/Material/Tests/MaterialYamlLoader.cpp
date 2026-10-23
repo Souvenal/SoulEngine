@@ -6,8 +6,6 @@ import Material;
 
 using namespace SoulEngine;
 
-namespace {
-
 class MaterialYamlFieldsTest : public testing::Test {
   protected:
     Path m_FilePath = std::filesystem::temp_directory_path() / "soulengine_material_yaml_fields_test.yaml";
@@ -49,5 +47,3 @@ TEST_F(MaterialYamlFieldsTest, BridgesEnumFieldThroughString) {
 TEST_F(MaterialYamlFieldsTest, RejectsUnknownFieldName) {
     EXPECT_EQ(FindField(MaterialYamlRecordFields(), "not_a_field"), nullptr);
 }
-
-} // namespace

@@ -5,8 +5,6 @@ import Core;
 
 using namespace SoulEngine;
 
-namespace {
-
 struct PersistedValues {
     String Text  = {};
     Path   Asset = {};
@@ -72,5 +70,3 @@ TEST_F(YamlAssignmentTest, RejectsSequenceWithoutChangingString) {
     EXPECT_FALSE(AssignYamlField(*Field, &Values, Invalid->get()).has_value());
     EXPECT_EQ(Values.Text, "original");
 }
-
-} // namespace
