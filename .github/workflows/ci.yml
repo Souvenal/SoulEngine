@@ -49,8 +49,9 @@ jobs:
           clang --version
           clang --version | grep -q 'clang version 23'
 
-      # Package cache key hashes the project's xmake build files. Known limitation: a stale cache after
-      # dependency changes is resolved by bumping the v1 component.
+      # The action appends xmake's utils.ci.packageskey (hash of every required package's
+      # name/version/buildhash) to this prefix, so dependency version changes invalidate the cache
+      # automatically. Bump v2 when a package's content changes without a version change.
       - name: Set up xmake
         uses: xmake-io/github-action-setup-xmake@v1
         with:
@@ -58,7 +59,7 @@ jobs:
           actions-cache-folder: '.xmake-cache'
           actions-cache-key: xmake-${{ runner.os }}-homebrew-llvm23-3.1.1
           package-cache: true
-          package-cache-key: pkg-v2-${{ runner.os }}-homebrew-llvm23-${{ hashFiles('xmake.lua', 'Engine/**/xmake.lua') }}
+          package-cache-key: pkg-v2-${{ runner.os }}-homebrew-llvm23
 
       # Required on fresh checkouts: the project's souvenal-repo clone lives under .xmake/ and xmake does not
       # re-clone it automatically; omitting it yields a misleading "package not found in any repository" error.
@@ -102,7 +103,7 @@ jobs:
           actions-cache-folder: '.xmake-cache'
           actions-cache-key: xmake-${{ runner.os }}-llvm23-3.1.1
           package-cache: true
-          package-cache-key: pkg-v2-${{ runner.os }}-llvm23-${{ hashFiles('xmake.lua', 'Engine/**/xmake.lua') }}
+          package-cache-key: pkg-v2-${{ runner.os }}-llvm23
 
       - name: Sync package repositories
         run: xmake repo -u
