@@ -1,6 +1,14 @@
 # xmake Specifications
 
-How SoulEngine modules, their tests, and the final binary are declared in xmake. The wrappers live in `Engine/Source/Runtime/xmake.lua`; module `xmake.lua` files use them instead of raw `target()` calls.
+How SoulEngine modules, their tests, and the final binary are declared in xmake. The wrappers live in `xmake/soul_module.lua`, loaded by the root `xmake.lua` via `includes()` before any module file runs; module `xmake.lua` files use them instead of raw `target()` calls.
+
+## Build helpers: location and naming
+
+All project-owned Lua build helpers live under the top-level `xmake/` directory, one file per domain (`soul_module.lua` today; future `rules/`, platform scripts, etc. follow the same roof). They are loaded with `includes()` from the root `xmake.lua`, before `includes("Engine")`.
+
+This is dictated by xmake's two scope kinds. Module files call `soul_module(...)` in the *description scope* (the declarative top level of an xmake.lua), where the interpreter exposes only a whitelist of APIs — `import()` is **not** available there, so `add_moduledirs` + `import()` cannot deliver helpers to module files. `includes()` is the only description-scope code-sharing channel (custom `interp_add_scopeapis` scopes exist but collect data, they do not create targets). `import()` is available inside *script scope* (`on_xxx`/`before_xxx`/`after_xxx` function bodies); if a helper ever needs xmake's internal modules, move that logic into a script-scope callback.
+
+Because `includes()` shares one global namespace with xmake's own APIs, every description-scope helper this project defines carries the `soul_` prefix (`soul_module`, `soul_finalize_modules`, `soul_finalize_tests`, `soul_impl_targets`, `soul_add_package_rpath`). State such as the module registry stays file-local inside `xmake/soul_module.lua` and is only reachable through those functions.
 
 ## Module declaration: soul_module
 
@@ -48,7 +56,7 @@ Tests are a `tests` sub-table on the same `soul_module` call; a module with a `T
 
 Supported keys: `deps`/`additional_deps`, `packages`/`additional_packages`, `exclude_tests` (basename patterns), `rpath_packages`.
 
-Registration is deferred: `test_module` queues during the module's script and targets materialize after all `includes()`, because a module's tests may link modules declared later (RHI tests link RHIVulkan.Impl).
+Registration is deferred: the `tests` sub-table is queued during the module's script and targets materialize after all `includes()` (via `soul_finalize_tests()`), because a module's tests may link modules declared later (RHI tests link RHIVulkan.Impl).
 
 ## Final binary
 

@@ -55,4 +55,8 @@ add_defines("HLSLPP_COORDINATES=1")
 set_targetdir("$(projectdir)/Engine/Binaries")
 set_installdir("$(projectdir)/Engine/Binaries")
 
+-- Build helpers (soul_module & friends) must be defined before any module
+-- xmake.lua runs. Description scope has no import(); includes() is the channel.
+includes("xmake/soul_module.lua")
+
 includes("Engine")
