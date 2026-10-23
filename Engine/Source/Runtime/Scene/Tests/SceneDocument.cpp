@@ -112,27 +112,34 @@ TEST(MeshRecord, TraversesNestedAssetNodesAndRepeatedSubMeshes) {
     EXPECT_NE(static_cast<float>(ActualWorldPoint.x), static_cast<float>(ReversedWorldPoint.x));
 }
 
-TEST(SceneMeta, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
-    const auto Camera = entt::resolve(entt::hashed_string{"camera"}.value());
-    ASSERT_TRUE(Camera);
-    EXPECT_TRUE(Camera.data(entt::hashed_string{"fov_degrees"}.value()));
-    EXPECT_TRUE(Camera.data(entt::hashed_string{"near_plane"}.value()));
-    EXPECT_TRUE(Camera.data(entt::hashed_string{"far_plane"}.value()));
-    EXPECT_TRUE(Camera.data(entt::hashed_string{"exposure_ev100"}.value()));
+TEST(SceneDescriptors, RegistersBuiltInComponentTypesAndFieldsBeforeSceneLoading) {
+    const auto Descriptors = SceneComponentDescriptors();
+    const auto Find        = [&Descriptors](StringView Name) -> const SceneComponentDescriptor* {
+        const auto It = std::ranges::find_if(
+            Descriptors, [Name](const SceneComponentDescriptor& Entry) { return Entry.Name == Name; });
+        return It == Descriptors.end() ? nullptr : &*It;
+    };
 
-    const auto Transform = entt::resolve(entt::hashed_string{"transform"}.value());
-    ASSERT_TRUE(Transform);
-    EXPECT_TRUE(Transform.data(entt::hashed_string{"translation"}.value()));
-    EXPECT_TRUE(Transform.data(entt::hashed_string{"rotation"}.value()));
-    EXPECT_TRUE(Transform.data(entt::hashed_string{"scale"}.value()));
+    const auto* Camera = Find("camera");
+    ASSERT_NE(Camera, nullptr);
+    EXPECT_NE(FindField(Camera->Fields, "fov_degrees"), nullptr);
+    EXPECT_NE(FindField(Camera->Fields, "near_plane"), nullptr);
+    EXPECT_NE(FindField(Camera->Fields, "far_plane"), nullptr);
+    EXPECT_NE(FindField(Camera->Fields, "exposure_ev100"), nullptr);
 
-    const auto Mesh = entt::resolve(entt::hashed_string{"mesh"}.value());
-    ASSERT_TRUE(Mesh);
-    EXPECT_TRUE(Mesh.data(entt::hashed_string{"material_override"}.value()));
+    const auto* Transform = Find("transform");
+    ASSERT_NE(Transform, nullptr);
+    EXPECT_NE(FindField(Transform->Fields, "translation"), nullptr);
+    EXPECT_NE(FindField(Transform->Fields, "rotation"), nullptr);
+    EXPECT_NE(FindField(Transform->Fields, "scale"), nullptr);
 
-    const auto Light = entt::resolve(entt::hashed_string{"light"}.value());
-    ASSERT_TRUE(Light);
-    EXPECT_TRUE(Light.data(entt::hashed_string{"type"}.value()));
+    const auto* Mesh = Find("mesh");
+    ASSERT_NE(Mesh, nullptr);
+    EXPECT_NE(FindField(Mesh->Fields, "material_override"), nullptr);
+
+    const auto* Light = Find("light");
+    ASSERT_NE(Light, nullptr);
+    EXPECT_NE(FindField(Light->Fields, "type"), nullptr);
 }
 
 TEST(SceneDocument, BuildsOrderedHierarchyAndSkipsUnknownComponent) {

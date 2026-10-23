@@ -5,6 +5,9 @@ module;
 module Scene.World;
 
 import Core;
+import Scene.Camera;
+import Scene.Mesh;
+import Scene.Light;
 
 namespace SoulEngine {
 
@@ -19,6 +22,28 @@ auto AppendComponentWarning(SceneLoadReport& Report, String Location, String Mes
     });
 }
 
+template <Reflectable T>
+[[nodiscard]] auto DescribeComponent(StringView Name) -> SceneComponentDescriptor {
+    return SceneComponentDescriptor{
+        .Name           = Name,
+        .Fields         = T::Fields,
+        .EmplaceDefault = [](entt::registry& Registry, entt::entity Entity) -> void* {
+            return &Registry.emplace_or_replace<T>(Entity, T{});
+        },
+        .Remove = [](entt::registry& Registry, entt::entity Entity) { Registry.remove<T>(Entity); },
+    };
+}
+
+auto SceneComponentDescriptors() -> std::span<const SceneComponentDescriptor> {
+    static const std::array Table = {
+        DescribeComponent<TransformComponent>("transform"),
+        DescribeComponent<CameraComponent>("camera"),
+        DescribeComponent<LightComponent>("light"),
+        DescribeComponent<MeshComponent>("mesh"),
+    };
+    return Table;
+}
+
 auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, SceneLoadReport& Report) -> void {
     if (Node.IsNull())
         return;
@@ -27,7 +52,8 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Sce
         return;
     }
 
-    auto& Registry = Scene.GetRegistry();
+    auto&      Registry    = Scene.GetRegistry();
+    const auto Descriptors = SceneComponentDescriptors();
     for (const auto& [ComponentName, ComponentNodePtr] : Node.Items()) {
         const auto& ComponentNode = *ComponentNodePtr;
         if (!ComponentNode.IsMap()) {
@@ -36,38 +62,33 @@ auto LoadComponents(Scene& Scene, entt::entity Entity, const YamlNode& Node, Sce
             continue;
         }
 
-        const auto Type = entt::resolve(entt::hashed_string{ComponentName.c_str(), ComponentName.size()}.value());
-        if (!Type) {
+        const auto Descriptor =
+            std::ranges::find_if(Descriptors, [ComponentName](const SceneComponentDescriptor& Entry) {
+                return Entry.Name == ComponentName;
+            });
+        if (Descriptor == Descriptors.end()) {
             AppendComponentWarning(Report, ComponentNode.Location(), "unknown component; component was omitted");
             continue;
         }
-        auto Component = Type.construct();
-        if (!Component) {
-            AppendComponentWarning(Report, ComponentNode.Location(), "component could not be default constructed");
-            continue;
-        }
-        bool Valid = true;
-        for (const auto& [FieldName, FieldValuePtr] : ComponentNode.Items()) {
-            const auto& FieldValue = *FieldValuePtr;
-            const auto  Field      = Type.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
+
+        void* Component = Descriptor->EmplaceDefault(Registry, Entity);
+        bool  Valid     = true;
+        for (const auto& [FieldName, FieldNodePtr] : ComponentNode.Items()) {
+            const auto& FieldNode = *FieldNodePtr;
+            const auto* Field     = FindField(Descriptor->Fields, FieldName);
             if (!Field) {
-                AppendComponentWarning(Report, FieldValue.Location(), "unknown component field");
+                AppendComponentWarning(Report, FieldNode.Location(), "unknown component field");
                 Valid = false;
                 break;
             }
-            if (auto Result = AssignYamlValue(Field, Component, FieldValue); !Result) {
-                AppendComponentWarning(Report, FieldValue.Location(), Result.error().ToString());
-                Valid = false;
-                break;
-            }
+            // Invalid values keep the component's declared default for that field; unknown fields omit the
+            // component entirely.
+            if (auto Result = AssignYamlField(*Field, Component, FieldNode); !Result)
+                AppendComponentWarning(Report, FieldNode.Location(), Result.error().ToString());
         }
 
         if (!Valid)
-            continue;
-
-        const auto Emplace = Type.func(entt::hashed_string{"emplace"}.value());
-        if (!Emplace || !Emplace.invoke({}, &Registry, Entity, Component))
-            AppendComponentWarning(Report, ComponentNode.Location(), "could not emplace component through metadata");
+            Descriptor->Remove(Registry, Entity);
     }
 }
 

@@ -1,6 +1,5 @@
 module;
 
-#include <entt/entt.hpp>
 #include <hlsl++.h>
 #include <yaml.h>
 
@@ -105,62 +104,47 @@ auto YamlDocument::operator=(YamlDocument&& Other) noexcept -> YamlDocument& {
     return *m_Root;
 }
 
-[[nodiscard]] auto AssignYamlValue(const entt::meta_data& Field, entt::meta_any& Component, const YamlNode& Value)
+[[nodiscard]] auto AssignYamlField(const FieldDescriptor& Field, void* Object, const YamlNode& Value)
     -> std::expected<void, ErrorMessage> {
-    // Compare runtime type indices, not type_hash values: EnTT's type_hash derives from __PRETTY_FUNCTION__,
-    // whose spelling of std types (e.g. "std::string" vs "std::basic_string<char>") varies between module TUs
-    // that see the declarations through different include/import paths, and link order decides which spelling
-    // wins. The runtime type_index is one process-wide counter slot per type and is stable across TUs.
-    const auto Type = Field.type().info().index();
-    if (Type == entt::type_id<float>().index()) {
-        const auto ConvertedValue = Value.As<float>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar number"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign numeric value through metadata"));
-        return {};
+    std::optional<FieldValue> Converted   = {};
+    String                    Expectation = {};
+    switch (Field.Type) {
+    case FieldType::Float32:
+        Expectation = "must be a scalar number";
+        if (const auto V = Value.As<float>())
+            Converted = FieldValue{*V};
+        break;
+    case FieldType::Bool:
+        Expectation = "must be a scalar boolean";
+        if (const auto V = Value.As<bool>())
+            Converted = FieldValue{*V};
+        break;
+    case FieldType::String:
+        Expectation = "must be a scalar string";
+        if (const auto V = Value.As<String>())
+            Converted = FieldValue{*V};
+        break;
+    case FieldType::Path:
+        Expectation = "must be a scalar string";
+        if (const auto V = Value.As<String>())
+            Converted = FieldValue{Path{*V}};
+        break;
+    case FieldType::Float3:
+        Expectation = "must be a sequence of exactly three numbers";
+        if (const auto V = Value.As<hlslpp::float3>())
+            Converted = FieldValue{*V};
+        break;
+    case FieldType::Float4:
+        Expectation = "must be a sequence of exactly four numbers";
+        if (const auto V = Value.As<hlslpp::float4>())
+            Converted = FieldValue{*V};
+        break;
     }
-    if (Type == entt::type_id<bool>().index()) {
-        const auto ConvertedValue = Value.As<bool>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar boolean"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign boolean value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_id<String>().index()) {
-        const auto ConvertedValue = Value.As<String>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar string"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign string value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_id<hlslpp::float3>().index()) {
-        const auto ConvertedValue = Value.As<hlslpp::float3>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a sequence of exactly three numbers"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign float3 value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_id<Path>().index()) {
-        const auto ConvertedValue = Value.As<String>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a scalar string"));
-        if (!Field.set(Component, Path{ConvertedValue.value()}))
-            return std::unexpected(ErrorMessage("could not assign path value through metadata"));
-        return {};
-    }
-    if (Type == entt::type_id<hlslpp::float4>().index()) {
-        const auto ConvertedValue = Value.As<hlslpp::float4>();
-        if (!ConvertedValue)
-            return std::unexpected(ErrorMessage("must be a sequence of exactly four numbers"));
-        if (!Field.set(Component, ConvertedValue.value()))
-            return std::unexpected(ErrorMessage("could not assign float4 value through metadata"));
-        return {};
-    }
-    return std::unexpected(ErrorMessage("uses an unsupported persisted field type"));
+    if (!Converted)
+        return std::unexpected(ErrorMessage(Expectation));
+    if (!Field.Set(Object, *Converted))
+        return std::unexpected(ErrorMessage("could not assign value through the field descriptor"));
+    return {};
 }
 
 } // namespace SoulEngine

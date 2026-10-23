@@ -239,19 +239,6 @@ auto MeshLoader::operator()(const Path& MeshPath) -> result_type {
     return Result;
 }
 
-using namespace entt::literals;
-
-struct MeshComponentMetaRegistration {
-    MeshComponentMetaRegistration() {
-        entt::meta_factory<MeshComponent>{"mesh"_hs}
-            .data<&MeshComponent::Asset>("asset"_hs)
-            .data<&MeshComponent::MaterialOverridePath>("material_override"_hs)
-            .func<&EmplaceComponent<MeshComponent>>("emplace"_hs);
-    }
-};
-
-MeshComponentMetaRegistration g_MeshComponentMetaRegistration = {};
-
 auto MeshSystem::SetAssetRoot(Path AssetRoot) -> void {
     m_AssetRoot = AssetRoot.lexically_normal();
 }

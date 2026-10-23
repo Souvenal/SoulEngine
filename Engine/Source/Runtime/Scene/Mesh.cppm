@@ -167,6 +167,12 @@ export struct MeshComponent {
     Path           MaterialOverridePath = {}; ///< YAML-normalized path relative to the Scene Assets directory.
     MaterialHandle MaterialOverride     = {};
     MeshHandle     Mesh                 = {};
+
+    /// @brief Field descriptors of the YAML-persisted members.
+    static constexpr std::array Fields = {
+        Field<&MeshComponent::Asset>("asset"),
+        Field<&MeshComponent::MaterialOverridePath>("material_override"),
+    };
 };
 
 /// @brief Immutable render-facing geometry/material instance.

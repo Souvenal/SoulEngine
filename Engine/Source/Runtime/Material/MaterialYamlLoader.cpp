@@ -35,12 +35,10 @@ auto MaterialYamlLoader::operator()(const Path& MaterialPath, const Path& AssetR
         return nullptr;
     }
 
-    MaterialYamlRecord Value    = {};
-    auto               Record   = entt::forward_as_meta(Value);
-    const auto         MetaType = entt::resolve<MaterialYamlRecord>();
+    MaterialYamlRecord Value = {};
     for (const auto& [FieldName, FieldNodePtr] : Material->get().Items()) {
         const auto& FieldNode = *FieldNodePtr;
-        const auto  Field     = MetaType.data(entt::hashed_string{FieldName.c_str(), FieldName.size()}.value());
+        const auto* Field     = FindField(MaterialYamlRecord::Fields, FieldName);
         if (!Field) {
             LogWarning("MaterialYamlLoader: unknown field '{}' at {} in '{}'",
                        FieldName,
@@ -49,7 +47,7 @@ auto MaterialYamlLoader::operator()(const Path& MaterialPath, const Path& AssetR
             return nullptr;
         }
         // Invalid values keep the record's declared default for that field.
-        if (auto Result = AssignYamlValue(Field, Record, FieldNode); !Result)
+        if (auto Result = AssignYamlField(*Field, &Value, FieldNode); !Result)
             LogWarning("MaterialYamlLoader: field '{}' at {} in '{}': {}",
                        FieldName,
                        FieldNode.Location(),

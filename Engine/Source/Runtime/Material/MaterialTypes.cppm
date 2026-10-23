@@ -142,8 +142,8 @@ export struct MaterialYamlRecord {
     String OcclusionTexture         = {};
     String EmissiveTexture          = {};
 
-    // Enum fields bridge to the YAML string vocabulary so generic meta assignment works. Unknown strings keep
-    // the current value.
+    // Enum fields bridge to the YAML string vocabulary so descriptor-based assignment works. Unknown strings
+    // keep the current value.
     auto SetBlendFunction(String Value) -> void;
 
     [[nodiscard]] auto GetBlendFunction() const -> String;
@@ -155,6 +155,47 @@ export struct MaterialYamlRecord {
     auto SetShadingModel(String Value) -> void;
 
     [[nodiscard]] auto GetShadingModel() const -> String;
+
+    /// @brief Field descriptors of the YAML-authorable members.
+    static constexpr std::array Fields = {
+        Field<&MaterialYamlRecord::Name>("name"),
+        Field<&MaterialYamlRecord::Ambient>("ambient"),
+        Field<&MaterialYamlRecord::Diffuse>("diffuse"),
+        Field<&MaterialYamlRecord::Specular>("specular"),
+        Field<&MaterialYamlRecord::Emissive>("emissive"),
+        Field<&MaterialYamlRecord::Transparent>("transparent"),
+        Field<&MaterialYamlRecord::Reflective>("reflective"),
+        Field<&MaterialYamlRecord::Opacity>("opacity"),
+        Field<&MaterialYamlRecord::BumpScaling>("bump_scaling"),
+        Field<&MaterialYamlRecord::Shininess>("shininess"),
+        Field<&MaterialYamlRecord::ShininessStrength>("shininess_strength"),
+        Field<&MaterialYamlRecord::RefractionIndex>("refraction_index"),
+        Field<&MaterialYamlRecord::Reflectivity>("reflectivity"),
+        Field<&MaterialYamlRecord::EnableWireframe>("enable_wireframe"),
+        Field<&MaterialYamlRecord::TwoSided>("two_sided"),
+        Field<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function"),
+        Field<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model"),
+        Field<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode"),
+        Field<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff"),
+        Field<&MaterialYamlRecord::BaseColorFactor>("base_color_factor"),
+        Field<&MaterialYamlRecord::MetallicFactor>("metallic_factor"),
+        Field<&MaterialYamlRecord::RoughnessFactor>("roughness_factor"),
+        Field<&MaterialYamlRecord::SheenColorFactor>("sheen_color_factor"),
+        Field<&MaterialYamlRecord::SheenRoughnessFactor>("sheen_roughness_factor"),
+        Field<&MaterialYamlRecord::ClearcoatFactor>("clearcoat_factor"),
+        Field<&MaterialYamlRecord::ClearcoatRoughnessFactor>("clearcoat_roughness_factor"),
+        Field<&MaterialYamlRecord::TransmissionFactor>("transmission_factor"),
+        Field<&MaterialYamlRecord::VolumeThicknessFactor>("volume_thickness_factor"),
+        Field<&MaterialYamlRecord::VolumeAttenuationDistance>("volume_attenuation_distance"),
+        Field<&MaterialYamlRecord::VolumeAttenuationColor>("volume_attenuation_color"),
+        Field<&MaterialYamlRecord::BaseColorTexture>("base_color_texture"),
+        Field<&MaterialYamlRecord::NormalTexture>("normal_texture"),
+        Field<&MaterialYamlRecord::MetallicRoughnessTexture>("metallic_roughness_texture"),
+        Field<&MaterialYamlRecord::MetallicTexture>("metallic_texture"),
+        Field<&MaterialYamlRecord::RoughnessTexture>("roughness_texture"),
+        Field<&MaterialYamlRecord::OcclusionTexture>("occlusion_texture"),
+        Field<&MaterialYamlRecord::EmissiveTexture>("emissive_texture"),
+    };
 };
 
 /// @brief Runtime texture data cached by normalized asset path.
@@ -305,83 +346,4 @@ static_assert(offsetof(MaterialRecord::GpuData, RoughnessTexture) == 272);
 static_assert(offsetof(MaterialRecord::GpuData, OcclusionTexture) == 280);
 static_assert(offsetof(MaterialRecord::GpuData, EmissiveTexture) == 288);
 
-} // namespace SoulEngine
-
-// NOTE: entt meta registration for MaterialYamlRecord must live in this TU, the partition that defines the
-// type. Clang 22.1.3 and 23.1.1 ICE (SEGV 0xC0000005 while mangling entt::meta_factory<T>::data) when the
-// registered type is imported from another partition; keeping the registration beside the type avoids that
-// path entirely. The split across these helpers additionally keeps clang 22.1.x debug builds (-g) out of a
-// debug-info-generation ICE that a single 37-field registration function hits.
-namespace SoulEngine {
-
-auto RegisterCoreScalarYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::Name>("name");
-    Factory.data<&MaterialYamlRecord::Ambient>("ambient");
-    Factory.data<&MaterialYamlRecord::Diffuse>("diffuse");
-    Factory.data<&MaterialYamlRecord::Specular>("specular");
-    Factory.data<&MaterialYamlRecord::Emissive>("emissive");
-    Factory.data<&MaterialYamlRecord::Transparent>("transparent");
-    Factory.data<&MaterialYamlRecord::Reflective>("reflective");
-    Factory.data<&MaterialYamlRecord::Opacity>("opacity");
-    Factory.data<&MaterialYamlRecord::BumpScaling>("bump_scaling");
-    Factory.data<&MaterialYamlRecord::Shininess>("shininess");
-    Factory.data<&MaterialYamlRecord::ShininessStrength>("shininess_strength");
-    Factory.data<&MaterialYamlRecord::RefractionIndex>("refraction_index");
-    Factory.data<&MaterialYamlRecord::Reflectivity>("reflectivity");
-    Factory.data<&MaterialYamlRecord::EnableWireframe>("enable_wireframe");
-    Factory.data<&MaterialYamlRecord::TwoSided>("two_sided");
-}
-
-auto RegisterBlendAndShadingYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::SetBlendFunction, &MaterialYamlRecord::GetBlendFunction>("blend_function");
-    Factory.data<&MaterialYamlRecord::SetShadingModel, &MaterialYamlRecord::GetShadingModel>("shading_model");
-    Factory.data<&MaterialYamlRecord::SetAlphaMode, &MaterialYamlRecord::GetAlphaMode>("alpha_mode");
-    Factory.data<&MaterialYamlRecord::AlphaCutoff>("alpha_cutoff");
-}
-
-auto RegisterPbrYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::BaseColorFactor>("base_color_factor");
-    Factory.data<&MaterialYamlRecord::MetallicFactor>("metallic_factor");
-    Factory.data<&MaterialYamlRecord::RoughnessFactor>("roughness_factor");
-    Factory.data<&MaterialYamlRecord::SheenColorFactor>("sheen_color_factor");
-    Factory.data<&MaterialYamlRecord::SheenRoughnessFactor>("sheen_roughness_factor");
-    Factory.data<&MaterialYamlRecord::ClearcoatFactor>("clearcoat_factor");
-    Factory.data<&MaterialYamlRecord::ClearcoatRoughnessFactor>("clearcoat_roughness_factor");
-    Factory.data<&MaterialYamlRecord::TransmissionFactor>("transmission_factor");
-    Factory.data<&MaterialYamlRecord::VolumeThicknessFactor>("volume_thickness_factor");
-    Factory.data<&MaterialYamlRecord::VolumeAttenuationDistance>("volume_attenuation_distance");
-    Factory.data<&MaterialYamlRecord::VolumeAttenuationColor>("volume_attenuation_color");
-}
-
-auto RegisterTextureYamlMeta(entt::meta_factory<MaterialYamlRecord>& Factory) -> void {
-    Factory.data<&MaterialYamlRecord::BaseColorTexture>("base_color_texture");
-    Factory.data<&MaterialYamlRecord::NormalTexture>("normal_texture");
-    Factory.data<&MaterialYamlRecord::MetallicRoughnessTexture>("metallic_roughness_texture");
-    Factory.data<&MaterialYamlRecord::MetallicTexture>("metallic_texture");
-    Factory.data<&MaterialYamlRecord::RoughnessTexture>("roughness_texture");
-    Factory.data<&MaterialYamlRecord::OcclusionTexture>("occlusion_texture");
-    Factory.data<&MaterialYamlRecord::EmissiveTexture>("emissive_texture");
-}
-
-auto RegisterMaterialYamlMeta() -> void {
-    entt::meta_factory<MaterialYamlRecord> Factory = entt::meta_factory<MaterialYamlRecord>{}.type("material");
-    RegisterCoreScalarYamlMeta(Factory);
-    RegisterBlendAndShadingYamlMeta(Factory);
-    RegisterPbrYamlMeta(Factory);
-    RegisterTextureYamlMeta(Factory);
-}
-
-// Note: this namespace must stay named. In a named module, clang 23 silently drops the dynamic initializer of
-// an unreferenced anonymous-namespace variable, which would skip this entt meta registration at program
-// startup.
-namespace MetaRegistration {
-
-export struct MaterialYamlMetaRegistration {
-    MaterialYamlMetaRegistration() {
-        RegisterMaterialYamlMeta();
-    }
-};
-MaterialYamlMetaRegistration g_MaterialYamlMetaRegistration = {};
-
-} // namespace MetaRegistration
 } // namespace SoulEngine

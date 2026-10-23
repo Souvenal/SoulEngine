@@ -40,4 +40,4 @@ repos:
         entry: python Tools/check_export_namespace.py
         language: python
         pass_filenames: true
-        files: ^Engine/Source/.+\.cppm$
+        files: ^Engine/Source/.+\.(cpp|cppm)$

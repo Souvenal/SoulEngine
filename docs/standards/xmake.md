@@ -46,7 +46,7 @@ The interface target exists to be consumed: anything its module units touch can 
 
 Tests are a `tests` sub-table on the same `soul_module` call; a module with a `Tests/` directory passes one, others omit it. Each `Tests/**.cpp` file becomes one binary target `TestsFor<Module>_<File>` (never aggregate many files onto one target: module BMI/object ownership is target-scoped, and mixed artifacts go stale). Test targets automatically depend on the module's interface and implementation targets; `deps`/`additional_deps` list only *other* modules, still as module names with the same `.Impl` mapping.
 
-Supported keys: `deps`/`additional_deps`, `packages`/`additional_packages`, `exclude_tests` (basename patterns), `exclude_on_clang` (basename patterns dropped under any clang frontend), `rpath_packages`.
+Supported keys: `deps`/`additional_deps`, `packages`/`additional_packages`, `exclude_tests` (basename patterns), `rpath_packages`.
 
 Registration is deferred: `test_module` queues during the module's script and targets materialize after all `includes()`, because a module's tests may link modules declared later (RHI tests link RHIVulkan.Impl).
 
