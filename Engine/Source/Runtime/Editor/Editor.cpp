@@ -10,6 +10,7 @@ module Editor;
 import magic_enum;
 import Editor.UIManager;
 import Editor.UIPanels;
+import Editor.SettingsPanel;
 import Editor.EditorWorld;
 
 import Core;
@@ -122,11 +123,18 @@ auto Editor::InitializeImGui() -> void {
 
 auto Editor::InitializeUI() -> void {
     RegisterAllUI([this]() -> const Scene* { return m_Scene; });
+    RegisterSettingsPanel();
 }
 
 auto Editor::DrawMainMenu() -> void {
     if (!ImGui::BeginMainMenuBar())
         return;
+
+    if (ImGui::BeginMenu("Settings")) {
+        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")))
+            UIManager::Get().ToggleUI("Settings");
+        ImGui::EndMenu();
+    }
 
     if (ImGui::BeginMenu("Project")) {
         if (ImGui::BeginMenu("Open Application")) {

@@ -38,11 +38,9 @@ import std;
 ///     CVarManager::LoadConfig().  Consumers never spell a fallback.
 ///
 ///  4. **Every CVar is runtime-mutable.**
-///     There is deliberately no read-only/init-only flag.  If mutating a
-///     value at runtime breaks a consumer, that is a consumer bug, not a
-///     CVar-system concern.  bool/Int32/Float32 values are atomic; String
-///     values sit behind a shared_mutex.  Readers poll; there are no
-///     change callbacks.
+///     Consumption timing declares when readers use a value: Runtime readers poll continuously; Startup
+///     readers consume it during startup. Later writes update the stored value for either timing.
+///     bool/Int32/Float32 values are atomic; String values sit behind a shared_mutex.
 ///
 ///  5. **Static-init diagnostics are deferred.**
 ///     Registration runs before LogManager::Init, so duplicate-name
@@ -71,28 +69,43 @@ export template <typename T>
 concept CVarValue =
     std::same_as<T, bool> || std::same_as<T, Int32> || std::same_as<T, Float32> || std::same_as<T, String>;
 
-// Registry internals (module linkage: invisible outside Core, reachable from the exported templates'
-// instantiations in consumer TUs)
+/// @brief When a CVar's value is consumed.
+export enum class CVarTiming : Uint8 {
+    Unknown = 0,
+    Runtime, ///< Readers poll the current value while running.
+    Startup, ///< Readers consume the value during startup; later edits require restart.
+};
+
+/// @brief Owned copy of one CVar record, usable on any thread after collection.
+export template <CVarValue T>
+struct CVarSnapshot {
+    String     Name;
+    String     Description;
+    T          Value;
+    CVarTiming Timing = CVarTiming::Runtime;
+};
 
 /// @brief One registry entry: description plus the value itself.
 /// @details Entries live in unordered_map nodes, whose addresses are stable
 ///          across rehashes — that stability is what lets CVar<T> handles
 ///          cache an entry pointer at registration.  Arithmetic values are
-///          atomic; String values are plain and guarded by the manager's
-///          shared_mutex (the one inherent per-type storage difference).
+///          atomic; each String entry owns a shared_mutex guarding its value.
 template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
 
     String       Description;
     ValueStorage Value;
+    CVarTiming   Timing = CVarTiming::Runtime;
 };
 template <>
 struct CVarEntry<String> {
     using ValueStorage = String;
 
-    String       Description;
-    ValueStorage Value;
+    String                    Description;
+    ValueStorage              Value;
+    CVarTiming                Timing = CVarTiming::Runtime;
+    mutable std::shared_mutex Mutex; ///< Guards this entry's String value.
 };
 
 /// @brief Per-type registry.  Type mismatch needs no tag or check: a name
@@ -107,8 +120,8 @@ using CVarRegistry = std::unordered_map<String, CVarEntry<T>>;
 /// Validation` → "RHI.Vulkan.Validation") and each leaf value is written to the matching CVar. Keys with no
 /// registered CVar and values of the wrong type are logged as warnings and skipped.
 ///
-/// Reads are non-const by design: String reads take the shared lock, so a "read" mutates registry
-/// synchronization state.
+/// Registration completes during single-threaded startup before concurrent access begins. Registry
+/// structure and entry metadata stay fixed while values are read and written from any thread.
 export class CVarManager final : public Singleton<CVarManager> {
     friend class Singleton<CVarManager>;
 
@@ -126,6 +139,19 @@ export class CVarManager final : public Singleton<CVarManager> {
         if (It == Registry.end())
             return std::nullopt;
         return LoadEntry(It->second);
+    }
+
+    /// @brief Copy all records of type T with their current values, sorted by dotted name.
+    template <CVarValue T>
+    [[nodiscard]] auto Collect() -> std::vector<CVarSnapshot<T>> {
+        std::vector<CVarSnapshot<T>> Records;
+        const auto&                  Registry = Entries<T>();
+        Records.reserve(Registry.size());
+        for (const auto& [Name, Entry] : Registry)
+            Records.push_back(
+                {.Name = Name, .Description = Entry.Description, .Value = LoadEntry(Entry), .Timing = Entry.Timing});
+        std::ranges::sort(Records, {}, &CVarSnapshot<T>::Name);
+        return Records;
     }
 
     /// @brief Write a CVar's value by name.
@@ -157,10 +183,12 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
     template <CVarValue T>
-    auto Register(StringView Name, StringView Description, const T& DefaultValue) -> CVarEntry<T>& {
+    auto
+    Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
+        -> CVarEntry<T>& {
         auto&        Registry = Entries<T>();
         const String NameStr{Name};
-        const auto [It, Inserted] = Registry.try_emplace(NameStr, String{Description}, DefaultValue);
+        const auto [It, Inserted] = Registry.try_emplace(NameStr, String{Description}, DefaultValue, Timing);
         if (!Inserted)
             m_PendingDiagnostics.push_back(
                 Format("Duplicate CVar registration '{}' ignored (first registration wins)", NameStr));
@@ -171,7 +199,7 @@ export class CVarManager final : public Singleton<CVarManager> {
     template <CVarValue T>
     [[nodiscard]] auto LoadEntry(const CVarEntry<T>& Entry) -> T {
         if constexpr (std::same_as<T, String>) {
-            std::shared_lock Lock{m_StringMutex};
+            std::shared_lock Lock{Entry.Mutex};
             return Entry.Value;
         } else {
             return Entry.Value.load(std::memory_order_relaxed);
@@ -182,7 +210,7 @@ export class CVarManager final : public Singleton<CVarManager> {
     template <CVarValue T>
     auto StoreEntry(CVarEntry<T>& Entry, const T& Value) -> void {
         if constexpr (std::same_as<T, String>) {
-            std::unique_lock Lock{m_StringMutex};
+            std::unique_lock Lock{Entry.Mutex};
             Entry.Value = Value;
         } else {
             Entry.Value.store(Value, std::memory_order_relaxed);
@@ -202,7 +230,6 @@ export class CVarManager final : public Singleton<CVarManager> {
     auto ApplyValue(const String& Name, const toml::node& Node) -> void;
 
     std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>> m_Registries;
-    std::shared_mutex   m_StringMutex; ///< Guards String entry values; arithmetic values are atomic.
     std::vector<String> m_PendingDiagnostics;
 };
 
@@ -226,8 +253,9 @@ class CVar {
     /// @param DefaultValue The one-and-only default; the TOML config may
     ///                     override it at startup.
     /// @param Description  Human-readable explanation for future UI and logs.
-    CVar(StringView Name, const T& DefaultValue, StringView Description)
-        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue)), m_Name(Name) {}
+    /// @param Timing       When readers consume the stored value.
+    CVar(StringView Name, const T& DefaultValue, StringView Description, CVarTiming Timing = CVarTiming::Runtime)
+        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Timing)), m_Name(Name) {}
 
     /// @brief Read the current value.  Safe to call from any thread.
     [[nodiscard]] auto Get() const -> T {

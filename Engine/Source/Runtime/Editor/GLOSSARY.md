@@ -14,7 +14,13 @@ Editor-owned ECS world containing editor-only entities, systems, and the viewpor
 Self-owning deep copy of one frame of ImGui draw data, handed from the main thread to the render thread through a latest-wins mailbox.
 
 **UIPanel**:
-One registered debug/editor panel: a name plus an immediate-mode callback invoked in registration order during the frame build.
+One registered debug/editor panel: a name plus an immediate-mode callback invoked during the frame build.
+
+**Scene-bound panel**:
+A panel whose content comes from the active Scene, resolved through a scene provider at draw time.
+
+**Standalone panel**:
+A panel registered directly with the UIManager whose content is independent of the active Scene, such as Settings over the CVar registry.
 
 **EditorCameraComponent**:
 Editor-only camera component: camera parameters, the editor Viewport, picking readback state, and selected-entity state. Holds no RHI resources; the editor view's render targets are renderer-created pooled graph transients (ADR 05).

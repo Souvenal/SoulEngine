@@ -18,7 +18,8 @@ import std;
 
 namespace SoulEngine {
 
-CVar<bool> CVarShaderDebugInfo{"Shader.DebugInfo", false, "Emit SPIR-V debug info (OpLine/OpString) for RenderDoc"};
+CVar<bool> CVarShaderDebugInfo{
+    "Shader.DebugInfo", false, "Emit SPIR-V debug info (OpLine/OpString) for RenderDoc", CVarTiming::Startup};
 
 /// Build the session-level compiler options vector from the engine config.
 export [[nodiscard]] auto ResolveCompilerOptions() -> std::vector<slang::CompilerOptionEntry>;

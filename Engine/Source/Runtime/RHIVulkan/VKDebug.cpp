@@ -8,7 +8,8 @@ import RHIVulkan.Capability;
 
 namespace SoulEngine {
 
-CVar<bool> CVarRhiVulkanDebugUtils{"RHI.Vulkan.DebugUtils", true, "Enable VK_EXT_debug_utils and the debug messenger"};
+CVar<bool> CVarRhiVulkanDebugUtils{
+    "RHI.Vulkan.DebugUtils", true, "Enable VK_EXT_debug_utils and the debug messenger", CVarTiming::Startup};
 
 auto VulkanDebugUtils::PrepareInstanceChain() -> std::optional<vk::DebugUtilsMessengerCreateInfoEXT> {
     if (!IsConfigEnabled())
