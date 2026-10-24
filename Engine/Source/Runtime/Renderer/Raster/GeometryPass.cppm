@@ -25,13 +25,13 @@ export class GeometryPass final : public IRHIGraphicsPass {
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "RasterGeometry.slang";
         return GraphicsPipelineRequest{
-            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
-            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
-            .ColorFormats = {RHIFormat::B8G8R8A8_UNORM,
-                             RHIFormat::R16G16B16A16_SFLOAT,
-                             RHIFormat::R32_UINT,
-                             RHIFormat::R32_UINT},
-            .DepthFormat  = RHIFormat::D32_SFLOAT,
+            .VertEntry        = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry        = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .ColorAttachments = {{.Format = RHIFormat::B8G8R8A8_UNORM},
+                                 {.Format = RHIFormat::R16G16B16A16_SFLOAT},
+                                 {.Format = RHIFormat::R32_UINT},
+                                 {.Format = RHIFormat::R32_UINT}},
+            .DepthFormat      = RHIFormat::D32_SFLOAT,
         };
     }
 

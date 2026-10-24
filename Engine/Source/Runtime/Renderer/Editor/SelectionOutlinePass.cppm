@@ -34,18 +34,16 @@ export class SelectionOutlinePass final : public IRHIGraphicsPass {
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionOutline.slang";
         return GraphicsPipelineRequest{
-            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
-            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
-            .Blend        = RHIBlendState{.Attachments = {RHIBlendAttachment{
-                                              .BlendEnable         = true,
-                                              .SrcColorBlendFactor = RHIBlendFactor::SrcAlpha,
-                                              .DstColorBlendFactor = RHIBlendFactor::OneMinusSrcAlpha,
-                                              .ColorBlendOp        = RHIBlendOp::Add,
-                                              .SrcAlphaBlendFactor = RHIBlendFactor::One,
-                                              .DstAlphaBlendFactor = RHIBlendFactor::Zero,
-                                              .AlphaBlendOp        = RHIBlendOp::Add,
-                                          }}},
-            .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
+            .VertEntry        = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry        = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .ColorAttachments = {{.Format = RHIFormat::B8G8R8A8_UNORM,
+                                  .Blend  = {.BlendEnable         = true,
+                                             .SrcColorBlendFactor = RHIBlendFactor::SrcAlpha,
+                                             .DstColorBlendFactor = RHIBlendFactor::OneMinusSrcAlpha,
+                                             .ColorBlendOp        = RHIBlendOp::Add,
+                                             .SrcAlphaBlendFactor = RHIBlendFactor::One,
+                                             .DstAlphaBlendFactor = RHIBlendFactor::Zero,
+                                             .AlphaBlendOp        = RHIBlendOp::Add}}},
         };
     }
 

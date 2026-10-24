@@ -149,10 +149,16 @@ export struct RHIBlendAttachment {
     RHIBlendFactor SrcAlphaBlendFactor = RHIBlendFactor::One;
     RHIBlendFactor DstAlphaBlendFactor = RHIBlendFactor::Zero;
     RHIBlendOp     AlphaBlendOp        = RHIBlendOp::Add;
+
+    bool operator==(const RHIBlendAttachment&) const = default;
 };
 
-export struct RHIBlendState {
-    RHIBlendAttachment Attachments[8] = {};
+/// @brief One color attachment's fixed-function pipeline state: output format plus its blend configuration.
+export struct RHIColorAttachmentState {
+    RHIFormat          Format = RHIFormat::Unknown;
+    RHIBlendAttachment Blend  = {}; ///< Blending disabled.
+
+    bool operator==(const RHIColorAttachmentState&) const = default;
 };
 
 export struct RHIDepthStencilState {

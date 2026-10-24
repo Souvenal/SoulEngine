@@ -27,15 +27,14 @@ export enum class RGPipelineState : Uint8 {
 
 /// @brief Async graphics pipeline request descriptor (moved from Resource:Types).
 export struct GraphicsPipelineRequest {
-    ShaderEntry              VertEntry         = {};
-    ShaderEntry              FragEntry         = {};
-    RHIVertexInputLayoutDesc VertexInputLayout = {};
-    RHIPrimitiveTopology     Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState       Rasterizer        = {};
-    RHIBlendState            Blend             = {};
-    RHIDepthStencilState     DepthStencil      = {};
-    std::vector<RHIFormat>   ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                DepthFormat       = RHIFormat::Unknown;
+    ShaderEntry                          VertEntry         = {};
+    ShaderEntry                          FragEntry         = {};
+    RHIVertexInputLayoutDesc             VertexInputLayout = {};
+    RHIPrimitiveTopology                 Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState                   Rasterizer        = {};
+    RHIDepthStencilState                 DepthStencil      = {};
+    std::vector<RHIColorAttachmentState> ColorAttachments  = {};
+    RHIFormat                            DepthFormat       = RHIFormat::Unknown;
 };
 
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
@@ -65,7 +64,7 @@ export [[nodiscard]] auto SameGraphicsRequest(const GraphicsPipelineRequest& A, 
     -> bool {
     return A.VertEntry.SourcePath == B.VertEntry.SourcePath && A.VertEntry.EntryPoint == B.VertEntry.EntryPoint &&
            A.FragEntry.SourcePath == B.FragEntry.SourcePath && A.FragEntry.EntryPoint == B.FragEntry.EntryPoint &&
-           A.ColorFormats == B.ColorFormats && A.DepthFormat == B.DepthFormat;
+           A.ColorAttachments == B.ColorAttachments && A.DepthFormat == B.DepthFormat;
 }
 
 export [[nodiscard]] auto SameComputeRequest(const ComputePipelineRequest& A, const ComputePipelineRequest& B) -> bool {
@@ -395,9 +394,8 @@ export class PipelineRegistry final : public Singleton<PipelineRegistry> {
                 .VertexInputLayout = Desc.VertexInputLayout,
                 .Topology          = Desc.Topology,
                 .Rasterizer        = Desc.Rasterizer,
-                .Blend             = Desc.Blend,
                 .DepthStencil      = Desc.DepthStencil,
-                .ColorFormats      = Desc.ColorFormats,
+                .ColorAttachments  = Desc.ColorAttachments,
                 .DepthFormat       = Desc.DepthFormat,
             };
             auto EnqueueResult = TaskGraph::Get().EnqueueTask(

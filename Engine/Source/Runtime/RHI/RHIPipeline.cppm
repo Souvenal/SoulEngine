@@ -187,15 +187,14 @@ export class RHIPipeline : public RHIObject {
 // Graphics pipeline
 
 export struct RHIGraphicsPipelineDesc {
-    ShaderGraphicsProgram       Program           = {};
-    RHIRef<RHIShaderBindingSet> BindingSet        = nullptr;
-    RHIVertexInputLayoutDesc    VertexInputLayout = {};
-    RHIPrimitiveTopology        Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState          Rasterizer        = {};
-    RHIBlendState               Blend             = {};
-    RHIDepthStencilState        DepthStencil      = {};
-    std::vector<RHIFormat>      ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                   DepthFormat       = RHIFormat::Unknown;
+    ShaderGraphicsProgram                Program           = {};
+    RHIRef<RHIShaderBindingSet>          BindingSet        = nullptr;
+    RHIVertexInputLayoutDesc             VertexInputLayout = {};
+    RHIPrimitiveTopology                 Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState                   Rasterizer        = {};
+    RHIDepthStencilState                 DepthStencil      = {};
+    std::vector<RHIColorAttachmentState> ColorAttachments  = {};
+    RHIFormat                            DepthFormat       = RHIFormat::Unknown;
 };
 
 export class RHIGraphicsPipeline : public RHIPipeline {
