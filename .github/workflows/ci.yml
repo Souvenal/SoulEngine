@@ -22,7 +22,7 @@ jobs:
     name: build-macos
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Locate Homebrew download cache
         id: brew-cache
@@ -78,7 +78,7 @@ jobs:
     name: build-windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install LLVM 23 on Windows
         shell: pwsh
