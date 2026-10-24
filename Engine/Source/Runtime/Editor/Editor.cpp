@@ -130,6 +130,12 @@ auto Editor::DrawMainMenu() -> void {
     if (!ImGui::BeginMainMenuBar())
         return;
 
+    if (ImGui::BeginMenu("Settings")) {
+        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")))
+            UIManager::Get().ToggleUI("Settings");
+        ImGui::EndMenu();
+    }
+
     if (ImGui::BeginMenu("Project")) {
         if (ImGui::BeginMenu("Open Application")) {
             const auto* CurrentApplication = GetCurrentApplication();
@@ -170,12 +176,6 @@ auto Editor::DrawMainMenu() -> void {
     if (ImGui::BeginMenu("Debug")) {
         if (ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials")))
             UIManager::Get().ToggleUI("Debug.ShowMaterials");
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Settings")) {
-        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")))
-            UIManager::Get().ToggleUI("Settings");
         ImGui::EndMenu();
     }
 
