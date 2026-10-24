@@ -32,6 +32,8 @@ export struct ShaderEntry {
     Path          SourcePath = {};
     String        EntryPoint = {};
     ShaderBackend Backend    = ShaderBackend::Slang;
+
+    bool operator==(const ShaderEntry&) const = default;
 };
 
 /// @brief Descriptor for a graphics-pipeline shader compile request.
@@ -57,6 +59,8 @@ export struct RayTracingHitGroupCompileDesc {
     std::optional<ShaderEntry>   ClosestHit   = std::nullopt;
     std::optional<ShaderEntry>   AnyHit       = std::nullopt;
     std::optional<ShaderEntry>   Intersection = std::nullopt;
+
+    bool operator==(const RayTracingHitGroupCompileDesc&) const = default;
 };
 
 /// @brief Compile request for one linked hardware ray-tracing shader program.
