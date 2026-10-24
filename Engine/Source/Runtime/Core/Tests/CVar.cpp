@@ -137,19 +137,10 @@ auto CheckOwnedCVarSnapshot(const T& InitialValue, const T& ChangedValue) -> voi
     EXPECT_EQ(FreshStartup->Description, "startup record");
 }
 
-TEST(CVarTest, CollectBoolOwnsCurrentValuesAndConsumptionTiming) {
+TEST(CVarTest, CollectOwnsCurrentValuesAndConsumptionTiming) {
     CheckOwnedCVarSnapshot<bool>(false, true);
-}
-
-TEST(CVarTest, CollectIntOwnsCurrentValuesAndConsumptionTiming) {
     CheckOwnedCVarSnapshot<Int32>(12, -34);
-}
-
-TEST(CVarTest, CollectFloatOwnsCurrentValuesAndConsumptionTiming) {
     CheckOwnedCVarSnapshot<Float32>(1.5F, -2.25F);
-}
-
-TEST(CVarTest, CollectStringOwnsCurrentValuesAndConsumptionTiming) {
     CheckOwnedCVarSnapshot<String>("initial text", "updated text");
 }
 
