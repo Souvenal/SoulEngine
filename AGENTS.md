@@ -4,7 +4,7 @@ Guidance for AI agents on this repo.
 
 ## Development Workflow
 
-Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
+Never edit files in the primary worktree. Every agent-initiated change — code, documentation, comments, glossary, ADR, CI, configuration — starts with a GitHub issue and a dedicated worktree from fetched `origin/main`; this includes writes produced during design-discussion sessions. Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
 
 ## Build & Run
 
