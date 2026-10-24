@@ -24,6 +24,11 @@ import std;
 
 namespace SoulEngine {
 
+CVar<bool> CVarRenderRasterEnableStatsOverlay{"Render.Raster.EnableStatsOverlay",
+                                              false,
+                                              "Settings-panel test toggle; no rendering consumer yet.",
+                                              CVarTiming::Runtime};
+
 [[nodiscard]] auto BuildRasterIndirectCommands(const SceneGpuData& DrawData) -> std::vector<RasterIndirectCommand> {
     std::vector<RasterIndirectCommand> Result = {};
     for (Uint32 InstanceIndex = 0; InstanceIndex < DrawData.InstanceRecords.size();) {

@@ -10,6 +10,7 @@ module Editor;
 import magic_enum;
 import Editor.UIManager;
 import Editor.UIPanels;
+import Editor.SettingsPanel;
 import Editor.EditorWorld;
 
 import Core;
@@ -122,6 +123,7 @@ auto Editor::InitializeImGui() -> void {
 
 auto Editor::InitializeUI() -> void {
     RegisterAllUI([this]() -> const Scene* { return m_Scene; });
+    RegisterSettingsPanel();
 }
 
 auto Editor::DrawMainMenu() -> void {
@@ -168,6 +170,12 @@ auto Editor::DrawMainMenu() -> void {
     if (ImGui::BeginMenu("Debug")) {
         if (ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials")))
             UIManager::Get().ToggleUI("Debug.ShowMaterials");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Settings")) {
+        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")))
+            UIManager::Get().ToggleUI("Settings");
         ImGui::EndMenu();
     }
 
