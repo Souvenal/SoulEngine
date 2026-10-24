@@ -32,9 +32,9 @@ auto DrawBooleanSetting(const CVarSnapshot<bool>& Setting) -> void {
 
 auto RegisterSettingsPanel() -> void {
     UIManager::Get().Register("Settings", [SelectedCategory = String{}]() mutable -> void {
-        auto& Entry = UIManager::Get().GetAll().at("Settings");
+        bool IsShowing = UIManager::Get().IsUIShowing("Settings");
         ImGui::SetNextWindowSize(ImVec2(680.0F, 460.0F), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Settings", &Entry.Show)) {
+        if (ImGui::Begin("Settings", &IsShowing)) {
             const auto       Settings   = CVarManager::Get().Collect<bool>();
             std::set<String> Categories = {};
             for (const auto& Setting : Settings)
@@ -79,6 +79,8 @@ auto RegisterSettingsPanel() -> void {
             }
         }
         ImGui::End();
+        if (!IsShowing)
+            UIManager::Get().CloseUI("Settings");
     });
 }
 
