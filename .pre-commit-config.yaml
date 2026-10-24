@@ -27,6 +27,8 @@ repos:
       - id: check-case-conflict
       - id: check-added-large-files
       - id: detect-private-key
+      # Block commits directly on main/master; the maintainer's deliberate escape hatch is `git commit --no-verify`.
+      - id: no-commit-to-branch
   - repo: local
     hooks:
       - id: check-comments
