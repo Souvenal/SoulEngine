@@ -85,9 +85,6 @@ struct CVarSnapshot {
     CVarTiming Timing = CVarTiming::Runtime;
 };
 
-// Registry internals (module linkage: invisible outside Core, reachable from the exported templates'
-// instantiations in consumer TUs)
-
 /// @brief One registry entry: description plus the value itself.
 /// @details Entries live in unordered_map nodes, whose addresses are stable
 ///          across rehashes — that stability is what lets CVar<T> handles
