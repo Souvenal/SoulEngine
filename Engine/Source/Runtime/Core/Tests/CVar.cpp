@@ -23,6 +23,58 @@ CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
 CVar<bool>  CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
 CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"};
 
+CVar<String> CVarTestConcurrentStringA{"Test.Concurrent.StringA", "initial", "concurrent string A"};
+CVar<String> CVarTestConcurrentStringB{"Test.Concurrent.StringB", "initial", "concurrent string B"};
+
+TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {
+    const String First(256, 'a');
+    const String Second(4096, 'b');
+    CVarTestConcurrentStringA.Set(First);
+    CVarTestConcurrentStringB.Set(First);
+    std::atomic<bool>   IsValid    = true;
+    std::atomic<bool>   IsFinished = false;
+    std::atomic<Uint64> WritesA    = 0;
+    std::atomic<Uint64> WritesB    = 0;
+    std::barrier        Start(3);
+    {
+        std::jthread WriterA([&]() -> void {
+            Start.arrive_and_wait();
+            while (!IsFinished.load()) {
+                CVarTestConcurrentStringA.Set(WritesA.load() % 2 == 0 ? First : Second);
+                WritesA.fetch_add(1);
+            }
+        });
+        std::jthread WriterB([&]() -> void {
+            Start.arrive_and_wait();
+            while (!IsFinished.load()) {
+                if (!CVarManager::Get().SetByName<String>(CVarTestConcurrentStringB.Name(),
+                                                          WritesB.load() % 2 == 0 ? First : Second))
+                    IsValid.store(false);
+                WritesB.fetch_add(1);
+            }
+        });
+        Start.arrive_and_wait();
+        for (int Index = 0; Index < 1000; ++Index) {
+            const auto PreviousA = WritesA.load();
+            const auto PreviousB = WritesB.load();
+            while (WritesA.load() == PreviousA || WritesB.load() == PreviousB)
+                std::this_thread::yield();
+            const auto HandleValue = CVarTestConcurrentStringA.Get();
+            const auto FoundValue  = CVarManager::Get().Find<String>(CVarTestConcurrentStringB.Name());
+            if ((HandleValue != First && HandleValue != Second) || !FoundValue ||
+                (*FoundValue != First && *FoundValue != Second))
+                IsValid.store(false);
+            for (const auto& Record : CVarManager::Get().Collect<String>())
+                if ((Record.Name == CVarTestConcurrentStringA.Name() ||
+                     Record.Name == CVarTestConcurrentStringB.Name()) &&
+                    Record.Value != First && Record.Value != Second)
+                    IsValid.store(false);
+        }
+        IsFinished.store(true);
+    }
+    EXPECT_TRUE(IsValid.load());
+}
+
 TEST(CVarTest, CollectReturnsSortedRecordsWithCurrentValuesAndMetadata) {
     CVar<Int32> Zebra{"Test.Collect.Zebra", 10, "last record"};
     CVar<Int32> Alpha{"Test.Collect.Alpha", 20, "first record"};

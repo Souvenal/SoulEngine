@@ -92,8 +92,7 @@ struct CVarSnapshot {
 /// @details Entries live in unordered_map nodes, whose addresses are stable
 ///          across rehashes — that stability is what lets CVar<T> handles
 ///          cache an entry pointer at registration.  Arithmetic values are
-///          atomic; String values are plain and guarded by the manager's
-///          shared_mutex (the one inherent per-type storage difference).
+///          atomic; each String entry owns a shared_mutex guarding its value.
 template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
@@ -106,9 +105,10 @@ template <>
 struct CVarEntry<String> {
     using ValueStorage = String;
 
-    String       Description;
-    ValueStorage Value;
-    CVarTiming   Timing = CVarTiming::Runtime;
+    String                    Description;
+    ValueStorage              Value;
+    CVarTiming                Timing = CVarTiming::Runtime;
+    mutable std::shared_mutex Mutex; ///< Guards this entry's String value.
 };
 
 /// @brief Per-type registry.  Type mismatch needs no tag or check: a name
@@ -123,8 +123,8 @@ using CVarRegistry = std::unordered_map<String, CVarEntry<T>>;
 /// Validation` → "RHI.Vulkan.Validation") and each leaf value is written to the matching CVar. Keys with no
 /// registered CVar and values of the wrong type are logged as warnings and skipped.
 ///
-/// Reads are non-const by design: String reads take the shared lock, so a "read" mutates registry
-/// synchronization state.
+/// Registration completes during single-threaded startup before concurrent access begins. Registry
+/// structure and entry metadata stay fixed while values are read and written from any thread.
 export class CVarManager final : public Singleton<CVarManager> {
     friend class Singleton<CVarManager>;
 
@@ -137,28 +137,22 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///         type).  Never logs.
     template <CVarValue T>
     [[nodiscard]] auto Find(StringView Name) -> std::optional<T> {
-        std::shared_lock Lock{m_RegistryMutex};
-        const auto&      Registry = Entries<T>();
-        const auto       It       = Registry.find(String{Name});
+        const auto& Registry = Entries<T>();
+        const auto  It       = Registry.find(String{Name});
         if (It == Registry.end())
             return std::nullopt;
         return LoadEntry(It->second);
     }
 
-    /// @brief Copy all records of type T, sorted by dotted name, with the registry locked only for copying.
+    /// @brief Copy all records of type T with their current values, sorted by dotted name.
     template <CVarValue T>
     [[nodiscard]] auto Collect() -> std::vector<CVarSnapshot<T>> {
         std::vector<CVarSnapshot<T>> Records;
-        {
-            std::shared_lock Lock{m_RegistryMutex};
-            const auto&      Registry = Entries<T>();
-            Records.reserve(Registry.size());
-            for (const auto& [Name, Entry] : Registry)
-                Records.push_back({.Name        = Name,
-                                   .Description = Entry.Description,
-                                   .Value       = LoadEntry(Entry),
-                                   .Timing      = Entry.Timing});
-        }
+        const auto&                  Registry = Entries<T>();
+        Records.reserve(Registry.size());
+        for (const auto& [Name, Entry] : Registry)
+            Records.push_back(
+                {.Name = Name, .Description = Entry.Description, .Value = LoadEntry(Entry), .Timing = Entry.Timing});
         std::ranges::sort(Records, {}, &CVarSnapshot<T>::Name);
         return Records;
     }
@@ -167,9 +161,8 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @return false when the name is not registered under type T.
     template <CVarValue T>
     auto SetByName(StringView Name, const T& Value) -> bool {
-        std::shared_lock Lock{m_RegistryMutex};
-        auto&            Registry = Entries<T>();
-        const auto       It       = Registry.find(String{Name});
+        auto&      Registry = Entries<T>();
+        const auto It       = Registry.find(String{Name});
         if (It == Registry.end())
             return false;
         StoreEntry(It->second, Value);
@@ -196,9 +189,8 @@ export class CVarManager final : public Singleton<CVarManager> {
     auto
     Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
         -> CVarEntry<T>& {
-        std::unique_lock Lock{m_RegistryMutex};
-        auto&            Registry = Entries<T>();
-        const String     NameStr{Name};
+        auto&        Registry = Entries<T>();
+        const String NameStr{Name};
         const auto [It, Inserted] = Registry.try_emplace(NameStr, String{Description}, DefaultValue, Timing);
         if (!Inserted)
             m_PendingDiagnostics.push_back(
@@ -210,7 +202,7 @@ export class CVarManager final : public Singleton<CVarManager> {
     template <CVarValue T>
     [[nodiscard]] auto LoadEntry(const CVarEntry<T>& Entry) -> T {
         if constexpr (std::same_as<T, String>) {
-            std::shared_lock Lock{m_StringMutex};
+            std::shared_lock Lock{Entry.Mutex};
             return Entry.Value;
         } else {
             return Entry.Value.load(std::memory_order_relaxed);
@@ -221,7 +213,7 @@ export class CVarManager final : public Singleton<CVarManager> {
     template <CVarValue T>
     auto StoreEntry(CVarEntry<T>& Entry, const T& Value) -> void {
         if constexpr (std::same_as<T, String>) {
-            std::unique_lock Lock{m_StringMutex};
+            std::unique_lock Lock{Entry.Mutex};
             Entry.Value = Value;
         } else {
             Entry.Value.store(Value, std::memory_order_relaxed);
@@ -241,8 +233,6 @@ export class CVarManager final : public Singleton<CVarManager> {
     auto ApplyValue(const String& Name, const toml::node& Node) -> void;
 
     std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>> m_Registries;
-    std::shared_mutex   m_RegistryMutex; ///< Guards registration and registry traversal.
-    std::shared_mutex   m_StringMutex;   ///< Guards String entry values; arithmetic values are atomic.
     std::vector<String> m_PendingDiagnostics;
 };
 

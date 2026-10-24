@@ -67,10 +67,7 @@ auto CVarManager::LoadConfig(const Path& FilePath) -> std::expected<void, ErrorM
 
 auto CVarManager::FlushPendingDiagnostics() -> void {
     std::vector<String> Diagnostics;
-    {
-        std::unique_lock Lock{m_RegistryMutex};
-        Diagnostics.swap(m_PendingDiagnostics);
-    }
+    Diagnostics.swap(m_PendingDiagnostics);
     for (const auto& Diagnostic : Diagnostics)
         LogError("{}", Diagnostic);
 }
