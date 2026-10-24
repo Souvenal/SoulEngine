@@ -205,13 +205,14 @@ TEST(CVarTest, LoadConfigAppliesMatchingLeavesAndToleratesUnknownKeys) {
     const auto ConfigPath = TempDir / "cvar_test.toml";
     {
         std::ofstream Out{ConfigPath};
-        Out << "[Test.Sweep]\n"
-               "Int = 99\n"
-               "Bool = true\n"
-               "Unknown = 5\n" // no registered CVar: warned, skipped
-               "\n"
-               "[Elsewhere]\n" // unknown table: warned, skipped
-               "Key = \"value\"\n";
+        Out << R"toml([Test.Sweep]
+Int = 99
+Bool = true
+Unknown = 5 # no registered CVar: warned, skipped
+
+[Elsewhere] # unknown table: warned, skipped
+Key = "value"
+)toml";
     }
 
     const auto Result = CVarManager::Get().LoadConfig(ConfigPath);
