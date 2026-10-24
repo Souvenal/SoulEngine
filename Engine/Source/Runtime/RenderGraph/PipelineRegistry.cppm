@@ -27,15 +27,16 @@ export enum class RGPipelineState : Uint8 {
 
 /// @brief Async graphics pipeline request descriptor (moved from Resource:Types).
 export struct GraphicsPipelineRequest {
-    ShaderEntry              VertEntry         = {};
-    ShaderEntry              FragEntry         = {};
-    RHIVertexInputLayoutDesc VertexInputLayout = {};
-    RHIPrimitiveTopology     Topology          = RHIPrimitiveTopology::TriangleList;
-    RHIRasterizerState       Rasterizer        = {};
-    RHIBlendState            Blend             = {};
-    RHIDepthStencilState     DepthStencil      = {};
-    std::vector<RHIFormat>   ColorFormats      = {RHIFormat::B8G8R8A8_UNORM};
-    RHIFormat                DepthFormat       = RHIFormat::Unknown;
+    ShaderEntry                          VertEntry         = {};
+    ShaderEntry                          FragEntry         = {};
+    RHIVertexInputLayoutDesc             VertexInputLayout = {};
+    RHIPrimitiveTopology                 Topology          = RHIPrimitiveTopology::TriangleList;
+    RHIRasterizerState                   Rasterizer        = {};
+    RHIDepthStencilState                 DepthStencil      = {};
+    std::vector<RHIColorAttachmentState> ColorAttachments  = {};
+    RHIFormat                            DepthFormat       = RHIFormat::Unknown;
+
+    bool operator==(const GraphicsPipelineRequest&) const = default;
 };
 
 /// @brief Async compute pipeline request descriptor (moved from Resource:Types).
@@ -43,9 +44,10 @@ export struct ComputePipelineRequest {
     ShaderEntry                            ComputeEntry            = {};
     /// @brief Specialization constant values fixed at pipeline creation.
     ///
-    /// They are part of the pipeline identity: two value sets must produce two pipelines, so the idempotence
-    /// predicate compares them.
+    /// They are part of the pipeline identity: two value sets must produce two pipelines.
     std::vector<RHISpecializationConstant> SpecializationConstants = {};
+
+    bool operator==(const ComputePipelineRequest&) const = default;
 };
 
 /// @brief Async ray-tracing pipeline request descriptor (moved from
@@ -55,52 +57,9 @@ export struct RayTracingPipelineRequest {
     std::vector<ShaderEntry>                   MissEntries       = {};
     std::vector<RayTracingHitGroupCompileDesc> HitGroups         = {};
     Uint32                                     MaxRecursionDepth = 1;
+
+    bool operator==(const RayTracingPipelineRequest&) const = default;
 };
-
-/// @brief Idempotence predicate for Register: same key + same descriptor is a no-op.
-///
-/// Requests compare field by field (ShaderEntry paths and entry points are the meaningful identity; pipeline
-/// fixed-function state uses defaulted equality).
-export [[nodiscard]] auto SameGraphicsRequest(const GraphicsPipelineRequest& A, const GraphicsPipelineRequest& B)
-    -> bool {
-    return A.VertEntry.SourcePath == B.VertEntry.SourcePath && A.VertEntry.EntryPoint == B.VertEntry.EntryPoint &&
-           A.FragEntry.SourcePath == B.FragEntry.SourcePath && A.FragEntry.EntryPoint == B.FragEntry.EntryPoint &&
-           A.ColorFormats == B.ColorFormats && A.DepthFormat == B.DepthFormat;
-}
-
-export [[nodiscard]] auto SameComputeRequest(const ComputePipelineRequest& A, const ComputePipelineRequest& B) -> bool {
-    return A.ComputeEntry.SourcePath == B.ComputeEntry.SourcePath &&
-           A.ComputeEntry.EntryPoint == B.ComputeEntry.EntryPoint &&
-           A.SpecializationConstants == B.SpecializationConstants;
-}
-
-export [[nodiscard]] auto SameEntryList(const std::vector<ShaderEntry>& A, const std::vector<ShaderEntry>& B) -> bool {
-    return A.size() == B.size() && std::ranges::equal(A, B, [](const ShaderEntry& Lhs, const ShaderEntry& Rhs) {
-               return Lhs.SourcePath == Rhs.SourcePath && Lhs.EntryPoint == Rhs.EntryPoint;
-           });
-}
-
-export [[nodiscard]] auto SameRayTracingRequest(const RayTracingPipelineRequest& A, const RayTracingPipelineRequest& B)
-    -> bool {
-    const auto SameHitGroups = [](const std::vector<RayTracingHitGroupCompileDesc>& Lhs,
-                                  const std::vector<RayTracingHitGroupCompileDesc>& Rhs) {
-        const auto SameOptionalEntry = [](const std::optional<ShaderEntry>& L, const std::optional<ShaderEntry>& R) {
-            if (L.has_value() != R.has_value())
-                return false;
-            return !L || (L->SourcePath == R->SourcePath && L->EntryPoint == R->EntryPoint);
-        };
-        return Lhs.size() == Rhs.size() &&
-               std::ranges::equal(
-                   Lhs, Rhs, [&](const RayTracingHitGroupCompileDesc& L, const RayTracingHitGroupCompileDesc& R) {
-                       return L.Type == R.Type && SameOptionalEntry(L.ClosestHit, R.ClosestHit) &&
-                              SameOptionalEntry(L.AnyHit, R.AnyHit) &&
-                              SameOptionalEntry(L.Intersection, R.Intersection);
-                   });
-    };
-    return A.RayGeneration.SourcePath == B.RayGeneration.SourcePath &&
-           A.RayGeneration.EntryPoint == B.RayGeneration.EntryPoint && SameEntryList(A.MissEntries, B.MissEntries) &&
-           SameHitGroups(A.HitGroups, B.HitGroups) && A.MaxRecursionDepth == B.MaxRecursionDepth;
-}
 
 /// Map an async RHIRef state onto the registry-facing pipeline state.
 export [[nodiscard]] auto MapRefState(RHIRefState State) -> RGPipelineState {
@@ -207,15 +166,15 @@ export class PipelineRegistry final : public Singleton<PipelineRegistry> {
     }
 
     auto RegisterGraphics(StringView Key, const GraphicsPipelineRequest& Desc) -> void {
-        Register(Key, RHIPassType::Graphics, Desc, &Entry::GraphicsDesc, SameGraphicsRequest);
+        Register(Key, RHIPassType::Graphics, Desc, &Entry::GraphicsDesc);
     }
 
     auto RegisterCompute(StringView Key, const ComputePipelineRequest& Desc) -> void {
-        Register(Key, RHIPassType::Compute, Desc, &Entry::ComputeDesc, SameComputeRequest);
+        Register(Key, RHIPassType::Compute, Desc, &Entry::ComputeDesc);
     }
 
     auto RegisterRayTracing(StringView Key, const RayTracingPipelineRequest& Desc) -> void {
-        Register(Key, RHIPassType::RayTracing, Desc, &Entry::RayTracingDesc, SameRayTracingRequest);
+        Register(Key, RHIPassType::RayTracing, Desc, &Entry::RayTracingDesc);
     }
 
     // Lazy start + query (idempotent; D5: first frame that needs the Pass)
@@ -328,15 +287,14 @@ export class PipelineRegistry final : public Singleton<PipelineRegistry> {
     /// Idempotent on same key + same descriptor; on conflict, LogWarning and keep the first registration (t9
     /// repair option: later may return expected<void,ErrorMessage> or emit a LogError with a descriptor diff
     /// for RasterRenderer::OnAttach — this pass keeps current semantics per review).
-    template <typename DescT, typename SamePred>
-    auto Register(StringView Key, RHIPassType Kind, const DescT& Desc, DescT Entry::* DescMember, SamePred&& Same)
-        -> void {
+    template <typename DescT>
+    auto Register(StringView Key, RHIPassType Kind, const DescT& Desc, DescT Entry::* DescMember) -> void {
         std::scoped_lock Lock(m_Mutex);
         const auto       KeyString = String(Key);
         auto [It, Inserted]        = m_Entries.try_emplace(KeyString);
         auto& E                    = It->second;
         if (!Inserted) {
-            if (E.Kind == Kind && Same(E.*DescMember, Desc))
+            if (E.Kind == Kind && E.*DescMember == Desc)
                 return; // Idempotent: same key + same descriptor ⇒ no-op.
             LogWarning("PipelineRegistry: Register('{}') ignored: the key already holds a different pipeline "
                        "registration (keeping the first)",
@@ -395,9 +353,8 @@ export class PipelineRegistry final : public Singleton<PipelineRegistry> {
                 .VertexInputLayout = Desc.VertexInputLayout,
                 .Topology          = Desc.Topology,
                 .Rasterizer        = Desc.Rasterizer,
-                .Blend             = Desc.Blend,
                 .DepthStencil      = Desc.DepthStencil,
-                .ColorFormats      = Desc.ColorFormats,
+                .ColorAttachments  = Desc.ColorAttachments,
                 .DepthFormat       = Desc.DepthFormat,
             };
             auto EnqueueResult = TaskGraph::Get().EnqueueTask(

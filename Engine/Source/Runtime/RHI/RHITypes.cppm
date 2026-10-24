@@ -95,11 +95,15 @@ export struct RHIVertexInputAttributeDesc {
     Uint32    Binding  = 0;
     RHIFormat Format   = RHIFormat::Unknown;
     Uint32    Offset   = 0;
+
+    bool operator==(const RHIVertexInputAttributeDesc&) const = default;
 };
 
 export struct RHIVertexInputBindingDesc {
     Uint32 Binding = 0;
     Uint32 Stride  = 0;
+
+    bool operator==(const RHIVertexInputBindingDesc&) const = default;
 };
 
 export inline constexpr Uint32 kMaxVertexBufferBindings = 4;
@@ -107,6 +111,8 @@ export inline constexpr Uint32 kMaxVertexBufferBindings = 4;
 export struct RHIVertexInputLayoutDesc {
     std::vector<RHIVertexInputBindingDesc>   Bindings   = {};
     std::vector<RHIVertexInputAttributeDesc> Attributes = {};
+
+    bool operator==(const RHIVertexInputLayoutDesc&) const = default;
 };
 
 export enum class RHIPrimitiveTopology : Uint8 {
@@ -118,6 +124,8 @@ export struct RHIRasterizerState {
     bool    FillMode  = true; // true = solid, false = wireframe
     bool    CullMode  = true; // true = back cull
     Float32 LineWidth = 1.0f;
+
+    bool operator==(const RHIRasterizerState&) const = default;
 };
 
 export enum class RHIBlendFactor : Uint8 {
@@ -149,15 +157,23 @@ export struct RHIBlendAttachment {
     RHIBlendFactor SrcAlphaBlendFactor = RHIBlendFactor::One;
     RHIBlendFactor DstAlphaBlendFactor = RHIBlendFactor::Zero;
     RHIBlendOp     AlphaBlendOp        = RHIBlendOp::Add;
+
+    bool operator==(const RHIBlendAttachment&) const = default;
 };
 
-export struct RHIBlendState {
-    RHIBlendAttachment Attachments[8] = {};
+/// @brief One color attachment's fixed-function pipeline state: output format plus its blend configuration.
+export struct RHIColorAttachmentState {
+    RHIFormat          Format = RHIFormat::Unknown;
+    RHIBlendAttachment Blend  = {}; ///< Blending disabled.
+
+    bool operator==(const RHIColorAttachmentState&) const = default;
 };
 
 export struct RHIDepthStencilState {
     bool DepthTestEnable  = true;
     bool DepthWriteEnable = true;
+
+    bool operator==(const RHIDepthStencilState&) const = default;
 };
 
 export enum class RHITextureUsage : Uint32 {

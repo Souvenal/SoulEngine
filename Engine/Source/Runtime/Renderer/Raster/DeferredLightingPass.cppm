@@ -28,9 +28,9 @@ export class DeferredLightingPass final : public IRHIGraphicsPass {
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "DeferredLighting.slang";
         return GraphicsPipelineRequest{
-            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
-            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
-            .ColorFormats = {RHIFormat::B8G8R8A8_UNORM},
+            .VertEntry        = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry        = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .ColorAttachments = {{.Format = RHIFormat::B8G8R8A8_UNORM}},
         };
     }
 

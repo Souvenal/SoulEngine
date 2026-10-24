@@ -168,10 +168,10 @@ auto VulkanGraphicsPipeline::Create(const VulkanResourceContext&   Context,
     // PipelineColorBlendAttachmentState is for per attached framebuffer PipelineColorBlendStateCreateInfo
     // is for global settings
     //
-    std::vector<vk::PipelineColorBlendAttachmentState> RHIBlendAttachments;
-    RHIBlendAttachments.reserve(Desc.ColorFormats.size());
-    for (size_t i = 0; i < Desc.ColorFormats.size(); ++i) {
-        const auto& Attachment      = Desc.Blend.Attachments[i];
+    std::vector<vk::PipelineColorBlendAttachmentState> BlendAttachments;
+    BlendAttachments.reserve(Desc.ColorAttachments.size());
+    for (const auto& ColorAttachment : Desc.ColorAttachments) {
+        const auto& Blend           = ColorAttachment.Blend;
         const auto  ToVkBlendFactor = [](RHIBlendFactor F) -> vk::BlendFactor {
             switch (F) {
             case RHIBlendFactor::Zero:
@@ -212,14 +212,14 @@ auto VulkanGraphicsPipeline::Create(const VulkanResourceContext&   Context,
             }
             return vk::BlendOp::eAdd;
         };
-        RHIBlendAttachments.push_back(vk::PipelineColorBlendAttachmentState{
-            .blendEnable         = Attachment.BlendEnable ? vk::True : vk::False,
-            .srcColorBlendFactor = ToVkBlendFactor(Attachment.SrcColorBlendFactor),
-            .dstColorBlendFactor = ToVkBlendFactor(Attachment.DstColorBlendFactor),
-            .colorBlendOp        = ToVkBlendOp(Attachment.ColorBlendOp),
-            .srcAlphaBlendFactor = ToVkBlendFactor(Attachment.SrcAlphaBlendFactor),
-            .dstAlphaBlendFactor = ToVkBlendFactor(Attachment.DstAlphaBlendFactor),
-            .alphaBlendOp        = ToVkBlendOp(Attachment.AlphaBlendOp),
+        BlendAttachments.push_back(vk::PipelineColorBlendAttachmentState{
+            .blendEnable         = Blend.BlendEnable ? vk::True : vk::False,
+            .srcColorBlendFactor = ToVkBlendFactor(Blend.SrcColorBlendFactor),
+            .dstColorBlendFactor = ToVkBlendFactor(Blend.DstColorBlendFactor),
+            .colorBlendOp        = ToVkBlendOp(Blend.ColorBlendOp),
+            .srcAlphaBlendFactor = ToVkBlendFactor(Blend.SrcAlphaBlendFactor),
+            .dstAlphaBlendFactor = ToVkBlendFactor(Blend.DstAlphaBlendFactor),
+            .alphaBlendOp        = ToVkBlendOp(Blend.AlphaBlendOp),
             .colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                                    vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         });
@@ -228,12 +228,14 @@ auto VulkanGraphicsPipeline::Create(const VulkanResourceContext&   Context,
         // set to True if we want bitwise op, which will disable blending settings above
         .logicOpEnable   = vk::False,
         .logicOp         = vk::LogicOp::eCopy,
-        .attachmentCount = static_cast<Uint32>(RHIBlendAttachments.size()),
-        .pAttachments    = RHIBlendAttachments.data(),
+        .attachmentCount = static_cast<Uint32>(BlendAttachments.size()),
+        .pAttachments    = BlendAttachments.data(),
     };
 
+    const auto ColorRHIFormats = Desc.ColorAttachments | std::views::transform(&RHIColorAttachmentState::Format) |
+                                 std::ranges::to<std::vector<RHIFormat>>();
     const auto ColorFormats =
-        Desc.ColorFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
+        ColorRHIFormats | std::views::transform(ToVkFormat) | std::ranges::to<std::vector<vk::Format>>();
     vk::Format DepthVkFormat = HasDepth ? ToVkFormat(Desc.DepthFormat) : vk::Format::eUndefined;
 
     // Dynamic rendering allows us to specify color, depth, stencil attachments directly after the
@@ -271,7 +273,7 @@ auto VulkanGraphicsPipeline::Create(const VulkanResourceContext&   Context,
     Ret->m_VkPipeline         = std::make_shared<vk::raii::Pipeline>(std::move(VkPipeline));
     Ret->m_DynamicOffsetCount = CountDynamicOffsets(Desc.Program.Reflection);
     Ret->m_Bindings           = BuildReflectedBindings(Desc.Program.Reflection);
-    Ret->m_ColorFormats       = Desc.ColorFormats;
+    Ret->m_ColorFormats       = ColorRHIFormats;
     Ret->m_DepthFormat        = Desc.DepthFormat;
     return Ret;
 }

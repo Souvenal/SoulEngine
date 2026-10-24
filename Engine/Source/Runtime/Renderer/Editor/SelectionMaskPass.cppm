@@ -26,9 +26,9 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionMask.slang";
         return GraphicsPipelineRequest{
-            .VertEntry    = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
-            .FragEntry    = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
-            .ColorFormats = {RHIFormat::R8_UNORM},
+            .VertEntry        = {.SourcePath = ShaderPath, .EntryPoint = "vertMain"},
+            .FragEntry        = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .ColorAttachments = {{.Format = RHIFormat::R8_UNORM}},
         };
     }
 
