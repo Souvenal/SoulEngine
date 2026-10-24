@@ -23,6 +23,84 @@ CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
 CVar<bool>  CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
 CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"};
 
+TEST(CVarTest, CollectReturnsSortedRecordsWithCurrentValuesAndMetadata) {
+    CVar<Int32> Zebra{"Test.Collect.Zebra", 10, "last record"};
+    CVar<Int32> Alpha{"Test.Collect.Alpha", 20, "first record"};
+    Zebra.Set(30);
+
+    const auto Records = CVarManager::Get().Collect<Int32>();
+    const auto First   = std::ranges::find(Records, "Test.Collect.Alpha", &CVarSnapshot<Int32>::Name);
+    const auto Last    = std::ranges::find(Records, "Test.Collect.Zebra", &CVarSnapshot<Int32>::Name);
+    ASSERT_NE(First, Records.end());
+    ASSERT_NE(Last, Records.end());
+    EXPECT_LT(First, Last);
+    EXPECT_EQ(First->Description, "first record");
+    EXPECT_EQ(First->Value, 20);
+    EXPECT_EQ(First->Timing, CVarTiming::Runtime);
+    EXPECT_EQ(Last->Description, "last record");
+    EXPECT_EQ(Last->Value, 30);
+    EXPECT_EQ(Last->Timing, CVarTiming::Runtime);
+    EXPECT_TRUE(std::ranges::is_sorted(Records, {}, &CVarSnapshot<Int32>::Name));
+    EXPECT_EQ(std::ranges::find(Records, "Test.Checkbox", &CVarSnapshot<Int32>::Name), Records.end());
+}
+
+template <CVarValue T>
+auto CheckOwnedCVarSnapshot(const T& InitialValue, const T& ChangedValue) -> void {
+    CVar<T> Runtime{"Test.CollectOwned.Runtime", InitialValue, "runtime record"};
+    CVar<T> Startup{"Test.CollectOwned.Startup", InitialValue, "startup record", CVarTiming::Startup};
+    Runtime.Set(ChangedValue);
+    ASSERT_TRUE(CVarManager::Get().SetByName<T>(Startup.Name(), ChangedValue));
+
+    auto       Records       = CVarManager::Get().Collect<T>();
+    const auto RuntimeRecord = std::ranges::find(Records, Runtime.Name(), &CVarSnapshot<T>::Name);
+    const auto StartupRecord = std::ranges::find(Records, Startup.Name(), &CVarSnapshot<T>::Name);
+    ASSERT_NE(RuntimeRecord, Records.end());
+    ASSERT_NE(StartupRecord, Records.end());
+    EXPECT_EQ(RuntimeRecord->Description, "runtime record");
+    EXPECT_EQ(RuntimeRecord->Value, ChangedValue);
+    EXPECT_EQ(RuntimeRecord->Timing, CVarTiming::Runtime);
+    EXPECT_EQ(StartupRecord->Description, "startup record");
+    EXPECT_EQ(StartupRecord->Value, ChangedValue);
+    EXPECT_EQ(StartupRecord->Timing, CVarTiming::Startup);
+    EXPECT_TRUE(std::ranges::is_sorted(Records, {}, &CVarSnapshot<T>::Name));
+
+    Runtime.Set(InitialValue);
+    Startup.Set(InitialValue);
+    EXPECT_EQ(RuntimeRecord->Value, ChangedValue);
+    EXPECT_EQ(StartupRecord->Value, ChangedValue);
+
+    RuntimeRecord->Value       = ChangedValue;
+    StartupRecord->Value       = ChangedValue;
+    RuntimeRecord->Name        = "detached name";
+    StartupRecord->Description = "detached description";
+    EXPECT_EQ(Runtime.Get(), InitialValue);
+    EXPECT_EQ(Startup.Get(), InitialValue);
+    const auto FreshRecords = CVarManager::Get().Collect<T>();
+    const auto FreshRuntime = std::ranges::find(FreshRecords, Runtime.Name(), &CVarSnapshot<T>::Name);
+    const auto FreshStartup = std::ranges::find(FreshRecords, Startup.Name(), &CVarSnapshot<T>::Name);
+    ASSERT_NE(FreshRuntime, FreshRecords.end());
+    ASSERT_NE(FreshStartup, FreshRecords.end());
+    EXPECT_EQ(FreshRuntime->Value, InitialValue);
+    EXPECT_EQ(FreshStartup->Value, InitialValue);
+    EXPECT_EQ(FreshStartup->Description, "startup record");
+}
+
+TEST(CVarTest, CollectBoolOwnsCurrentValuesAndConsumptionTiming) {
+    CheckOwnedCVarSnapshot<bool>(false, true);
+}
+
+TEST(CVarTest, CollectIntOwnsCurrentValuesAndConsumptionTiming) {
+    CheckOwnedCVarSnapshot<Int32>(12, -34);
+}
+
+TEST(CVarTest, CollectFloatOwnsCurrentValuesAndConsumptionTiming) {
+    CheckOwnedCVarSnapshot<Float32>(1.5F, -2.25F);
+}
+
+TEST(CVarTest, CollectStringOwnsCurrentValuesAndConsumptionTiming) {
+    CheckOwnedCVarSnapshot<String>("initial text", "updated text");
+}
+
 TEST(CVarTest, HandleReturnsRegisteredDefault) {
     EXPECT_FALSE(CVarTestCheckbox.Get());
     EXPECT_EQ(CVarTestInt.Get(), 42);

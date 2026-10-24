@@ -47,6 +47,10 @@ _Avoid_: TAutoCVar, AutoCVar, central registration function
 Singleton registry behind all CVars and the only reader of the TOML config file: the file's nested tables flatten into dotted names applied to matching CVars, and unknown keys are warned about and skipped. CVars are runtime-mutable from any thread; readers poll — there are no change callbacks.
 _Avoid_: CVarSystem, ConsoleVariableManager
 
+**CVar consumption timing**:
+When a CVar value is consumed: Runtime values are polled while running; Startup values are consumed during startup and require a restart for later edits to affect the running consumer. Both timings allow edits to the stored value.
+_Avoid_: read-only CVar, init-only flag
+
 **Dotted CVar name**:
 Canonical CVar identifier in "Module.Feature" dot convention, isomorphic to the TOML table nesting.
 

@@ -6,7 +6,8 @@ import std;
 
 namespace SoulEngine {
 
-CVar<bool> CVarRhiVulkanValidation{"RHI.Vulkan.Validation", true, "Enable VK_LAYER_KHRONOS_validation"};
+CVar<bool> CVarRhiVulkanValidation{
+    "RHI.Vulkan.Validation", true, "Enable VK_LAYER_KHRONOS_validation", CVarTiming::Startup};
 
 auto VulkanCapability::AddRequiredRequests(std::vector<VulkanCapabilityRequest>& Requests,
                                            std::span<const char*>                RequiredNames) -> void {

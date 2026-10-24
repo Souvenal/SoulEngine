@@ -38,11 +38,9 @@ import std;
 ///     CVarManager::LoadConfig().  Consumers never spell a fallback.
 ///
 ///  4. **Every CVar is runtime-mutable.**
-///     There is deliberately no read-only/init-only flag.  If mutating a
-///     value at runtime breaks a consumer, that is a consumer bug, not a
-///     CVar-system concern.  bool/Int32/Float32 values are atomic; String
-///     values sit behind a shared_mutex.  Readers poll; there are no
-///     change callbacks.
+///     Consumption timing declares when readers use a value: Runtime readers poll continuously; Startup
+///     readers consume it during startup. Later writes update the stored value for either timing.
+///     bool/Int32/Float32 values are atomic; String values sit behind a shared_mutex.
 ///
 ///  5. **Static-init diagnostics are deferred.**
 ///     Registration runs before LogManager::Init, so duplicate-name
@@ -71,6 +69,22 @@ export template <typename T>
 concept CVarValue =
     std::same_as<T, bool> || std::same_as<T, Int32> || std::same_as<T, Float32> || std::same_as<T, String>;
 
+/// @brief When a CVar's value is consumed.
+export enum class CVarTiming : Uint8 {
+    Unknown = 0,
+    Runtime, ///< Readers poll the current value while running.
+    Startup, ///< Readers consume the value during startup; later edits require restart.
+};
+
+/// @brief Owned copy of one CVar record, usable on any thread after collection.
+export template <CVarValue T>
+struct CVarSnapshot {
+    String     Name;
+    String     Description;
+    T          Value;
+    CVarTiming Timing = CVarTiming::Runtime;
+};
+
 // Registry internals (module linkage: invisible outside Core, reachable from the exported templates'
 // instantiations in consumer TUs)
 
@@ -86,6 +100,7 @@ struct CVarEntry {
 
     String       Description;
     ValueStorage Value;
+    CVarTiming   Timing = CVarTiming::Runtime;
 };
 template <>
 struct CVarEntry<String> {
@@ -93,6 +108,7 @@ struct CVarEntry<String> {
 
     String       Description;
     ValueStorage Value;
+    CVarTiming   Timing = CVarTiming::Runtime;
 };
 
 /// @brief Per-type registry.  Type mismatch needs no tag or check: a name
@@ -121,19 +137,39 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///         type).  Never logs.
     template <CVarValue T>
     [[nodiscard]] auto Find(StringView Name) -> std::optional<T> {
-        const auto& Registry = Entries<T>();
-        const auto  It       = Registry.find(String{Name});
+        std::shared_lock Lock{m_RegistryMutex};
+        const auto&      Registry = Entries<T>();
+        const auto       It       = Registry.find(String{Name});
         if (It == Registry.end())
             return std::nullopt;
         return LoadEntry(It->second);
+    }
+
+    /// @brief Copy all records of type T, sorted by dotted name, with the registry locked only for copying.
+    template <CVarValue T>
+    [[nodiscard]] auto Collect() -> std::vector<CVarSnapshot<T>> {
+        std::vector<CVarSnapshot<T>> Records;
+        {
+            std::shared_lock Lock{m_RegistryMutex};
+            const auto&      Registry = Entries<T>();
+            Records.reserve(Registry.size());
+            for (const auto& [Name, Entry] : Registry)
+                Records.push_back({.Name        = Name,
+                                   .Description = Entry.Description,
+                                   .Value       = LoadEntry(Entry),
+                                   .Timing      = Entry.Timing});
+        }
+        std::ranges::sort(Records, {}, &CVarSnapshot<T>::Name);
+        return Records;
     }
 
     /// @brief Write a CVar's value by name.
     /// @return false when the name is not registered under type T.
     template <CVarValue T>
     auto SetByName(StringView Name, const T& Value) -> bool {
-        auto&      Registry = Entries<T>();
-        const auto It       = Registry.find(String{Name});
+        std::shared_lock Lock{m_RegistryMutex};
+        auto&            Registry = Entries<T>();
+        const auto       It       = Registry.find(String{Name});
         if (It == Registry.end())
             return false;
         StoreEntry(It->second, Value);
@@ -157,10 +193,13 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
     template <CVarValue T>
-    auto Register(StringView Name, StringView Description, const T& DefaultValue) -> CVarEntry<T>& {
-        auto&        Registry = Entries<T>();
-        const String NameStr{Name};
-        const auto [It, Inserted] = Registry.try_emplace(NameStr, String{Description}, DefaultValue);
+    auto
+    Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
+        -> CVarEntry<T>& {
+        std::unique_lock Lock{m_RegistryMutex};
+        auto&            Registry = Entries<T>();
+        const String     NameStr{Name};
+        const auto [It, Inserted] = Registry.try_emplace(NameStr, String{Description}, DefaultValue, Timing);
         if (!Inserted)
             m_PendingDiagnostics.push_back(
                 Format("Duplicate CVar registration '{}' ignored (first registration wins)", NameStr));
@@ -202,7 +241,8 @@ export class CVarManager final : public Singleton<CVarManager> {
     auto ApplyValue(const String& Name, const toml::node& Node) -> void;
 
     std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>> m_Registries;
-    std::shared_mutex   m_StringMutex; ///< Guards String entry values; arithmetic values are atomic.
+    std::shared_mutex   m_RegistryMutex; ///< Guards registration and registry traversal.
+    std::shared_mutex   m_StringMutex;   ///< Guards String entry values; arithmetic values are atomic.
     std::vector<String> m_PendingDiagnostics;
 };
 
@@ -226,8 +266,9 @@ class CVar {
     /// @param DefaultValue The one-and-only default; the TOML config may
     ///                     override it at startup.
     /// @param Description  Human-readable explanation for future UI and logs.
-    CVar(StringView Name, const T& DefaultValue, StringView Description)
-        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue)), m_Name(Name) {}
+    /// @param Timing       When readers consume the stored value.
+    CVar(StringView Name, const T& DefaultValue, StringView Description, CVarTiming Timing = CVarTiming::Runtime)
+        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Timing)), m_Name(Name) {}
 
     /// @brief Read the current value.  Safe to call from any thread.
     [[nodiscard]] auto Get() const -> T {
