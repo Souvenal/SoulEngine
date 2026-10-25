@@ -39,7 +39,7 @@ Slang was chosen over writing raw HLSL/GLSL/SPIR-V. Two reasons: a consistent pr
 
 ### Exceptions and RTTI
 
-The strengths and weaknesses of exceptions both stem from the same behavior: they hide what errors an interface might produce. The caller gets convenience at the cost of ignorance. C++23's `std::expected<T, E>` — borrowed from Rust — forces the caller to consider failure cases and is a strictly better design. Strong exception safety is practically impossible to guarantee in real codebases, and constructors in particular cannot be made exception-safe. The project's standard pattern is `static Create()` factory methods returning `std::expected`, which sidesteps the constructor problem entirely (see [ADR 02](02-static-create-factory.md)). Error-path performance is not a relevant factor in this decision.
+The project uses explicit error returns rather than exceptions because callers must see when an operation can fail. C++23's `std::expected<T, E>` makes failure part of the interface contract. The concrete error-return and fallible-construction conventions live in the [C++ standards](../standards/cpp/), where they can evolve as coding rules rather than as architecture decisions.
 
 RTTI is disabled per game-engine convention.
 

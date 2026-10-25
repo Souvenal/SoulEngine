@@ -16,8 +16,6 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
-      - id: mixed-line-ending
-        args: [--fix=lf]
       - id: check-toml
       - id: check-yaml
       - id: check-json
@@ -43,3 +41,9 @@ repos:
         language: python
         pass_filenames: true
         files: ^Engine/Source/.+\.(cpp|cppm)$
+      - id: check-adr
+        name: check-adr
+        entry: python Tools/check_adr.py
+        language: python
+        pass_filenames: true
+        files: ^docs/adr/[0-9]{2}-.*\.md$

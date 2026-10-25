@@ -5,7 +5,7 @@ The repo's documented coding standards, consumed by /code-review at review time.
 ## Standards files
 
 - [Comments](docs/standards/comments.md) — comment placement, form, and content. **Read before writing or modifying any comment** (implementation time). The mechanical width and form rules are enforced by `Tools/check_comments.py`.
-- [C++](docs/standards/cpp.md) — error handling, ownership, style, module, and Tracy profiling rules.
+- [C++ index](docs/standards/cpp/index.md) — **read for every C++ change**; it contains high-frequency rules and explicit triggers for error paths, fallible construction, modules, and Tracy profiling.
 - [Slang](docs/standards/slang.md) — runtime shader rules, resource binding, modules, naming.
 - [Vulkan](docs/standards/vulkan.md) — backend API usage rules (StructureChain, timeline semaphores, object naming, Vulkan-Hpp).
 - [xmake](docs/standards/xmake.md) — module declaration (`soul_module`), visibility rule, test registration, final-binary wiring.
