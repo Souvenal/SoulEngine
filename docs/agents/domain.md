@@ -5,7 +5,7 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`GLOSSARY-MAP.md`** at the repo root: it points at one `GLOSSARY.md` per module context. Read each one relevant to the topic.
-- **`docs/adr/`**: read ADRs that touch the area you're about to work in.
+- **`docs/adr/`**: read ADRs that touch the area you're about to work in. **ADR work:** before creating, renumbering, superseding, or editing an ADR, read [ADR catalog guidance](../adr/README.md) and the ADRs in the affected area.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs`) creates them lazily when terms or decisions actually get resolved.
 
