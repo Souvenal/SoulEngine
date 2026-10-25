@@ -6,6 +6,8 @@ Guidance for AI agents on this repo.
 
 Never edit files in the primary worktree. Every agent-initiated change — code, documentation, comments, glossary, ADR, CI, configuration — starts with a GitHub issue and a dedicated worktree from fetched `origin/main`; this includes writes produced during design-discussion sessions. Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
 
+**Ticket work:** before planning, implementing, or resuming an issue, follow [issue-context recovery and session handoff](docs/development/agent-workflow.md#issue-context-recovery).
+
 ## Build & Run
 
 - Sync package repos: `xmake repo -u` (required before configuring — the project's souvenal-repo clone lives under `.xmake/`, so any fresh checkout or deleted `.xmake` needs this; xmake does not auto-clone it when the global network mode is `private`, and the resulting "package not found in any repository" error does not mention the real cause)

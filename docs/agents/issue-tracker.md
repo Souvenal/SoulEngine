@@ -14,6 +14,16 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Recover Complete Issue Context
+
+The [development workflow](../development/agent-workflow.md#issue-context-recovery) owns reading order, conflict handling, and handoff placement. Use these GitHub operations to retrieve its inputs; run them from the repository clone.
+
+- **Body and parent:** use `gh api repos/{owner}/{repo}/issues/<number>`. Preserve `body`, `state`, `updated_at`, `parent_issue_url`, and `issue_dependencies_summary`. Follow each `parent_issue_url` until the root, retaining intermediate capability issues. If the server lacks parent support, follow the explicit Parent / Part of reference; report ambiguous or inaccessible ancestry.
+- **Every comment:** use `gh api --paginate 'repos/{owner}/{repo}/issues/<number>/comments?per_page=100' --jq '.[] | {html_url,user:.user.login,created_at,updated_at,body}'` for each issue in the chain. Preserve author, timestamps, and URL so decisions and supersession links can be traced. Do not infer completeness from a partial tool output; save large output and read all chunks before claiming recovery.
+- **Direct blockers:** use `gh api --paginate repos/{owner}/{repo}/issues/<number>/dependencies/blocked_by`, then check blocker state and relevant delivery PRs. A closed issue is not by itself proof that a specific branch contains the required code.
+- **Referenced PR:** use `gh pr view <number> --json url,state,mergedAt,baseRefName,headRefName,body`; retrieve relevant review discussion with `gh pr view <number> --comments` and paginated REST issue comments, review records, or inline review comments when needed. Inspect the branch or merged commit for facts needed by this ticket.
+- **Publish handoff:** prepare Markdown in a temporary UTF-8 file and use `gh issue comment <number> --body-file <file>`; read back the created comment by its returned URL or comment ID. Publish at the scope prescribed by the workflow and return the durable comment URL.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
