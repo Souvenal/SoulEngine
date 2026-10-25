@@ -13,6 +13,16 @@ Before planning, implementing, reviewing, or resuming a ticket:
 
 ## Session Handoff
 
+### Minimal invocation
+
+`/handoff` or “收尾本次 session” invokes this entire procedure. Infer the active ticket, capability, and root from the conversation, branch/PR association, and tracker parent links; an explicit issue number selects the focus. For a session spanning multiple tickets, partition the useful context by scope. Ask only when the destination remains ambiguous after inspection. The user need not repeat destinations, formatting, evidence, or publication instructions. An explicit “local only” request keeps the handoff unpublished.
+
+Read existing handoffs and later comments before publishing. Reuse unchanged handoffs by returning their URLs; add a new comment only for materially new context or a superseding continuation state. A local handoff file required by a skill is a preparation artifact; the default repository handoff also publishes the useful Markdown to the appropriate issues and verifies it by reading back the comments. Return those durable links and one short next-session prompt naming the next issue and action. A handoff request alone does not authorize commits, PR creation, merge, issue closure, or cleanup.
+
+For a fresh session, “继续 #<ticket>” invokes issue-context recovery. Recover any clearly unfinished task from the latest valid handoff; when the requested action is unclear, propose the next action after recovery instead of treating continuation as automatic permission to publish a PR or merge.
+
+### Publication contract
+
 Publish a compact handoff when design decisions converge, a session ends or transfers work, implementation pauses, or a review handoff is ready. When the user requests ticket work or a session handoff, publishing the scoped context comment is part of that request; approval gates for PRs, merges, issue closure, and cleanup remain separate.
 
 Place each summary on the narrowest issue whose scope it affects: program-wide design on the root spec, capability interfaces or integration context on the capability issue, and implementation progress on the leaf ticket. Link broader context instead of copying it into every child. Post upward only when a finding changes an ancestor's scope, contract, shared constraints, or integration status.

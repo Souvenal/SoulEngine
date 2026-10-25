@@ -6,7 +6,7 @@ Guidance for AI agents on this repo.
 
 Never edit files in the primary worktree. Every agent-initiated change — code, documentation, comments, glossary, ADR, CI, configuration — starts with a GitHub issue and a dedicated worktree from fetched `origin/main`; this includes writes produced during design-discussion sessions. Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
 
-**Ticket work:** before planning, implementing, or resuming an issue, follow [issue-context recovery and session handoff](docs/development/agent-workflow.md#issue-context-recovery).
+**Ticket work:** before planning, implementing, or resuming an issue, follow [issue-context recovery](docs/development/agent-workflow.md#issue-context-recovery). **Session close:** `/handoff` or a request to wrap up invokes [session handoff](docs/development/agent-workflow.md#session-handoff).
 
 ## Build & Run
 
