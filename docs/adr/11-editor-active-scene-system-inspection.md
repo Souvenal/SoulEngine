@@ -12,6 +12,8 @@ The Editor tick currently draws the main menu before registered panels. The main
 
 ## Decision
 
+[ADR 02](02-agent-native-editor-control-plane.md) extends the menu-only execution model below with shared queued human/Agent actions. When implementing that command boundary, follow the [Editor command phases](../standards/editor-commands.md#three-execution-phases): semantic actions execute outside panel callbacks and every Application replacement clears/rebinds the borrowed Scene before subsequent consumers run. The single-phase/menu-only statements below describe the implemented inspection baseline, not a restriction on that accepted extension. The read-only query and Scene lifetime rules remain authoritative.
+
 - `Editor` stores a non-owning `const Scene*` binding. It never owns a Scene and panel code never retains the pointer or query results across frames.
 - `Editor::Tick()` keeps one phase and draws its member `DrawMainMenu()` first. A successful menu-driven Application replacement immediately rebinds the Editor pointer to the replacement Application's Scene. Registered panels then query the newly bound Scene during the same UI tick.
 - `Launch` binds the initial Scene after the initial `OpenApplication()` succeeds and unbinds the Editor before `CloseApplication()` during shutdown. All Application replacement paths are restricted to the Editor menu path so this rebind is authoritative.

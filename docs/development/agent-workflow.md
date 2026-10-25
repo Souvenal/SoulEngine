@@ -57,24 +57,24 @@ Before ending, read back published comments, provide their URLs, and distinguish
 ## Before Implementation
 
 1. **Discuss the change in the issue tracker.** Complete issue-context recovery, then use a GitHub issue to record the purpose, expected scope, acceptance criteria, and relevant constraints. Do not begin implementation until the scope is agreed with the maintainer.
-2. **Fetch current remote state.** From the primary worktree, run `git fetch origin` and inspect the current `origin/main` tip. The implementation base is `origin/main`, not an arbitrary local branch.
-3. **Create isolated implementation state.** Create a dedicated worktree and temporary branch from `origin/main`, for example:
+2. **Fetch current remote state.** From the primary worktree, run `git fetch origin` and record the current `origin/main` hash. Ordinary changes and capability integration branches start there. For an explicitly approved stack, leaves start at the capability integration tip rooted in that fetched-main base; record both hashes and actual branch names. See [Branch Model](branch-model.md) for the direct and capability/leaf paths.
+3. **Create isolated implementation state.** Create a dedicated worktree and temporary branch from the selected base. For ordinary work, for example:
 
    ```text
    git fetch origin
    git worktree add -b dev/<ticket> ../<repository>-<ticket> origin/main
    ```
 
-   Confirm that the temporary branch starts at the fetched `origin/main` commit before editing.
+   Confirm that the temporary branch starts at the recorded base before editing. For approved stacked delivery, create the capability integration worktree from fetched `origin/main`, then create each leaf worktree from its current integration tip. Confirm that the leaf is based on that tip; reset an incorrectly based leaf only while it has no work to preserve, otherwise reconcile its ancestry without discarding work. For #125, leaf PRs target `dev/125-mcp-control-plane` and the capability PR targets `main`; record any actual local branch-name mapping in the handoff.
 4. **Keep the primary worktree clean for shared operations.** The primary worktree is reserved for inspection, fetching, and user-directed operations. Agent implementation, generated files, and commits belong in the dedicated worktree.
 
 ## Implementation And Handoff
 
-1. Implement only the agreed issue scope in the temporary feature branch.
+1. Implement only the agreed issue scope in the temporary feature branch. Before a stacked leaf handoff, merge the current capability integration tip into the leaf and rerun affected checks; report the tip incorporated. Coordinate local integration changes with the stack owner.
 2. Run the validation appropriate to the change and record the commands and results. Documentation-only changes should use document-contract and diff-scope checks; runtime or C++ tests are not required unless the issue changes runtime behavior.
 3. Finish with a review handoff containing:
    - issue and agreed scope;
-   - temporary branch name;
+   - temporary branch name, recorded fetched-main/integration base hashes, and intended PR target;
    - dedicated worktree path;
    - implementation commit(s);
    - validation commands and results;
@@ -85,15 +85,15 @@ Before ending, read back published comments, provide their URLs, and distinguish
 ## Review And Approval Gates
 
 1. The maintainer reviews the handoff and the branch diff in the preserved worktree.
-2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, create the pull request against `main` and include the issue and validation results.
+2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, use the recorded target: `main` for ordinary features and completed capabilities, or the approved capability integration branch for leaves. Include issue scope and validation results. Stacked delivery and local integration authorization do not waive this PR gate.
 3. The maintainer decides when the pull request is merged. Automated checks are validation evidence, not human review or merge authorization.
 4. Issue closure, remote branch deletion, branch protection changes, force pushes, releases, and other repository administration each require separate explicit maintainer authorization.
 
 ## Integration And Cleanup
 
-1. After explicit approval, verify that `origin/main` has not moved unexpectedly. If the baseline changed, update the feature branch in the preserved worktree, rerun validation, and obtain review approval again.
+1. After explicit approval, verify the actual target baseline: the capability integration tip for a leaf, and fetched `origin/main` for ordinary or final capability integration. If it changed, update in the preserved worktree, rerun affected validation, and obtain review approval again. A local leaf/integration merge explicitly requested by the implementation workflow may proceed within that scope; remote PR/mainline merge and administration gates remain separate.
 2. The maintainer merges the approved pull request to `main` with squash merge, producing one concentrated mainline commit for the reviewed development effort.
-3. Verify the merged commit and required checks on `main` before cleanup.
+3. Validate each combined capability after local/approved leaf integration. Before the final capability PR, incorporate fetched `origin/main`, validate the complete capability diff, and obtain maintainer review approval. Verify the final squash commit and required checks on `main` before cleanup; leaf integration alone does not establish mainline delivery.
 4. Only after maintainer authorization and successful verification, remove the temporary worktree first, then delete its local and remote feature branch:
 
    ```text
@@ -110,10 +110,10 @@ Before ending, read back published comments, provide their URLs, and distinguish
 The workflow is satisfied only when an external check can confirm all of the following from the document and repository state:
 
 - issue discussion and agreed scope precede implementation;
-- the implementation base is fetched `origin/main`;
+- ordinary and capability integration bases are recorded fetched `origin/main` commits, and leaves start at the recorded capability tip and incorporate its current tip before handoff;
 - implementation is isolated from the primary worktree;
-- the handoff identifies branch, worktree, commit, and validation;
+- the handoff identifies branch, worktree, base hashes, PR target, commit, and validation, including target-specific CI coverage;
 - implementation completion is distinct from maintainer approval and integration;
 - pull-request creation, merge, issue closure, and cleanup require the appropriate explicit maintainer authorization;
-- integration uses squash merge and produces one concentrated mainline commit;
+- final integration to `main` uses squash merge and produces one concentrated mainline commit;
 - the change remains within the agreed issue scope.

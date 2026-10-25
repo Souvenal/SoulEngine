@@ -6,5 +6,5 @@ This section is distinct from [`docs/adr/`](../adr/), which is reserved for code
 
 ## Documents
 
-- [Main-Only Branch Model](branch-model.md) — feature branches, direct pull requests to `main`, merge-queue validation, and squash integration
+- [Branch Model](branch-model.md) — direct feature PRs and approved capability/leaf stacks, merge-queue validation, and squash mainline integration
 - [Agent Development Workflow](agent-workflow.md) — issue-first scope, isolated worktrees, review handoff, approval gates, and cleanup for agent-initiated changes

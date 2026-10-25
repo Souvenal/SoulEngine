@@ -20,21 +20,25 @@ Foundation supports one explicitly pinned stable MCP protocol release. It implem
 
 There is no official C++ MCP SDK. Foundation therefore owns a deliberately small MCP adapter rather than initially adopting a community C++ SDK. The adapter is replaceable: a future library adoption requires a pinned revision, license and dependency review, Clang and xmake validation, MCP Inspector and supported-client interoperability, and applicable official conformance validation.
 
-The MCP adapter may use version-pinned C++ HTTP and JSON building blocks that meet the repository dependency policy. Those libraries run on protocol worker threads and remain hidden behind the adapter boundary; Core, WindowSystem, Editor, Scene, and CVar APIs do not expose HTTP or JSON types.
+The MCP adapter may use version-pinned C++ HTTP and JSON building blocks that meet the repository dependency policy. Direct nlohmann/json use is permitted in MCP, EditorCommands, and command-facing Editor contracts, including named arguments, schemas, structured failures, and optional query output. HTTP and JSON-RPC response construction remain MCP responsibilities; using JSON does not grant a worker access to Editor state. Dependency versions and the stable MCP protocol release still require build and interoperability validation.
 
-### Main-thread command boundary
+### Shared main-thread command boundary
 
-The MCP host validates requests and converts them into immutable Agent Commands. A dedicated Agent Command Queue passes those commands to the Editor main-thread tick, which serially executes the corresponding handler and completes the response. Protocol workers never access thread-affine Editor, ImGui, EditorWorld, or mutable Scene state.
+EditorCommands and MCP are separate modules. EditorCommands owns the shared registry, argument validation, owning invocation envelopes, bounded queue, phase scheduling, and transport-neutral completion. Editor and other command providers own business handlers and thread-affine state. MCP owns protocol discovery, request validation, and HTTP/JSON-RPC responses. Human input and UI actions enter the same registry and queue as agent operations; the Editor main-thread tick is the sole execution authority. Protocol workers never access thread-affine Editor, ImGui, EditorWorld, or mutable Scene state.
 
-Each registered tool has an immutable descriptor: name, human and agent readable description, tool version, input schema, execution category, request and result budgets, and main-thread handler. Tool discovery derives from the registry. Schema, size, and method validation happen before an Agent Command enters the queue, so Editor code never receives arbitrary transport JSON.
+SubmitByUser and SubmitByAgent share argument contracts and one registered void business handler per string name. Registration provides ordered named parameter descriptors and generates positional C++ and named-JSON adapters; JSON member order has no meaning. The execution context supports structured failure and optional JSON output. The Agent entry attaches a transport-neutral completion sink; the User entry retains validation and failure diagnostics without requiring that sink. EnTT meta, per-operation command class hierarchies, and heterogeneous C++ return frameworks are outside this design.
 
-Each call has a deadline. Cancellation, client disconnect, deadline expiry, and Editor shutdown discard a command that has not started. A handler already running on the Editor main thread reaches its defined atomic completion point; protocol workers do not forcibly interrupt ImGui, CVar, input, or Editor work. Every result identifies the request and Editor frame and reports whether work is pending, completed, cancelled, or failed. Enqueued work and started asynchronous readback are not reported as verified effects.
+Descriptors carry descriptions, versions, named parameter types/defaults/bounds, schema, execution phase/category, exposure policy, and request/result budgets. MCP tool discovery derives from the explicitly exposed subset; registering an internal human command does not expose it to agents. Both entry points validate arguments before queue admission, and execution revalidates live targets and policy.
+
+The [Editor command contract](../standards/editor-commands.md) defines registration lifetime, owning arguments/completions, and the input, action, and post-update phases. Each phase executes a frozen bounded batch in deterministic order; reentrant submission enters a later eligible batch. Input transitions retain frame visibility and physical-user precedence. This scheduling does not confer transactions, gesture conflict resolution, or undo.
+
+Each Agent call has a deadline. Cancellation, client disconnect, deadline expiry, provider retirement, and Editor shutdown discard unstarted work with a structured terminal outcome. A handler already running on the Editor main thread reaches its bounded completion point while its provider remains alive. Results identify invocation and Editor frame and distinguish admission, handler completion, and observed frame effect. A void handler returning normally defaults to successful handler completion; queued work or a started asynchronous readback does not prove the downstream effect. The main thread never waits for its own queued work.
 
 ### Foundation tools and input ownership
 
 Foundation exposes bounded observation and input tools only. Its initial product scope is baseline Editor state, CVar observation and runtime switching, and frame-scoped Viewport and ImGui input. CVar changes affect in-memory runtime state; project-setting persistence is a later capability.
 
-Agent input merges at the existing WindowSystem per-frame input seam and is consumed by the current ImGui and EditorCameraComponent paths. A bounded control lease serializes agent input. Physical user input remains authoritative and interrupts or revokes the agent lease. Current Viewport picking is asynchronous; tools report the latest completed observation and frame identity rather than promising synchronous object selection.
+Human platform input enters SubmitByUser once; agent input enters SubmitByAgent. The shared input phase feeds the existing WindowSystem frame-input seam and the current ImGui and EditorCameraComponent consumers. UI-generated semantic actions enqueue the same handler as the corresponding agent action. A bounded control lease serializes agent input. Physical user input remains authoritative and interrupts or revokes the agent lease. Current Viewport picking is asynchronous; tools report the latest completed observation and frame identity rather than promising synchronous object selection.
 
 Tool descriptors classify execution as `observe`, `input`, `edit`, `persist`, or `destructive`. Foundation enables only `observe` and lease-bound `input`. Later tool registration does not grant authority by default; session capability policy and remote authorization are later work.
 
@@ -42,13 +46,13 @@ Tool descriptors classify execution as `observe`, `input`, `edit`, `persist`, or
 
 Loopback is not a trust boundary. Foundation validates Origin, bounds request body size, JSON depth, tool arguments, concurrent connections, queued commands, and deadlines, and rejects unsupported methods and unknown tools.
 
-Editor shutdown first stops new MCP requests, discards unstarted Agent Commands, releases agent input lease and virtual input state, and stops protocol workers before Editor, WindowSystem, or RHI teardown. MCP host startup failure disables Agent Control but does not prevent normal Editor startup.
+Editor shutdown closes MCP admission and both shared submission entry points, settles unstarted invocations, lets a running bounded handler finish, releases agent input lease and virtual input state, retires registrations, and stops protocol workers before callback owners, Editor, WindowSystem, or RHI teardown. Completion delivery remains alive until terminal notifications are settled. MCP host startup failure disables Agent Control but leaves the shared human command path available.
 
 ## Considered Options
 
 ### External MCP sidecar
 
-A sidecar can reuse an official TypeScript or Python SDK and isolate protocol runtime failures. It adds a process, startup coordination, local IPC, and an additional deployment boundary to the normal Editor workflow. An embedded host keeps the Editor lifecycle and local MCP endpoint together while retaining the same Engine-side Agent Command Queue.
+A sidecar can reuse an official TypeScript or Python SDK and isolate protocol runtime failures. It adds a process, startup coordination, local IPC, and an additional deployment boundary to the normal Editor workflow. An embedded host keeps the Editor lifecycle and local MCP endpoint together while retaining the same Engine-side shared command boundary.
 
 ### Community C++ MCP SDK
 
