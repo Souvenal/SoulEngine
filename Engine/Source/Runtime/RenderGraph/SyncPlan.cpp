@@ -18,8 +18,8 @@ namespace SoulEngine {
 // The prologue derives only the stage; the backend derives the native access mask and the image layout from
 // the view's (Usage, Access) at emission. The declared direction translates faithfully: a shader that
 // read-modify-writes (atomic append, counters) declares Read|Write on the view. Initial mapping is coarse:
-// shader accesses in graphics passes map to AllGraphics; Transfer/Compute/Indirect/Attachment kinds map
-// precisely. Refining precision is a table-data change, never a schema change.
+// shader accesses map to AllGraphics in graphics passes; other kinds map precisely. Precision upgrades are
+// table-data changes, never schema changes.
 
 [[nodiscard]] auto ShaderStageFor(RHIPassType Class) -> RHISyncStage {
     switch (Class) {
@@ -37,6 +37,9 @@ namespace SoulEngine {
 }
 
 [[nodiscard]] auto BufferStageFor(RHIBufferUsage Usage, RHIPassType Class) -> RHISyncStage {
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
+        magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index))
+        return RHISyncStage::VertexInput;
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Indirect))
         // The indirect buffer may be produced by an earlier compute pass (e.g. GPU culling); the DrawIndirect
         // stage is exact here.
