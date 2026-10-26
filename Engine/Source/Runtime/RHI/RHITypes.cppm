@@ -543,8 +543,9 @@ export enum class RHISyncStage : Uint32 {
     LateFragmentTests     = 1 << 7,
     Transfer              = 1 << 8,
     Host                  = 1 << 9,
+    VertexInput           = 1 << 10,
     AllGraphics           = VertexShader | FragmentShader | DrawIndirect | ColorAttachmentOutput | EarlyFragmentTests |
-        LateFragmentTests,
+        LateFragmentTests | VertexInput,
 };
 
 /// @brief A dst-only state requirement for one buffer: "the pass needs this

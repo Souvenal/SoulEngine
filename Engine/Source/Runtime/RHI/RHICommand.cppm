@@ -46,6 +46,48 @@ export struct RHIDrawIndirectCmd {
     Uint32            Stride         = sizeof(Uint32) * 4;
 };
 
+/// @brief Bind a Uint32 index buffer at a byte offset.
+export struct RHIBindIndexBufferCmd {
+    RHIRef<RHIBuffer> IndexBuffer = nullptr;
+    Uint64            Offset      = 0;
+
+    /// @brief Validate the buffer reference, Uint32 alignment, and binding range.
+    [[nodiscard]] auto Validate() const -> std::expected<void, ErrorMessage> {
+        if (!IndexBuffer)
+            return std::unexpected(ErrorMessage("Index binding requires a ready buffer"));
+        if (Offset % sizeof(Uint32) != 0)
+            return std::unexpected(ErrorMessage("Index binding offset must be aligned to Uint32"));
+        if (Offset >= IndexBuffer->GetSize())
+            return std::unexpected(ErrorMessage("Index binding offset exceeds the buffer"));
+        return {};
+    }
+};
+
+/// @brief Draw indexed primitives from GPU-written indexed indirect commands.
+export struct RHIDrawIndexedIndirectCmd {
+    RHIRef<RHIBuffer> IndirectBuffer = nullptr;
+    Uint64            Offset         = 0;
+    Uint32            DrawCount      = 1;
+    Uint32            Stride         = sizeof(Uint32) * 5;
+
+    /// @brief Validate the buffer reference, arguments, native draw-count limit, and command range.
+    [[nodiscard]] auto Validate(Uint64 BufferSize, Uint32 MaxDrawCount) const -> std::expected<void, ErrorMessage> {
+        if (!IndirectBuffer)
+            return std::unexpected(ErrorMessage("Indexed indirect draw requires a ready buffer"));
+        if (Offset % sizeof(Uint32) != 0)
+            return std::unexpected(ErrorMessage("Indexed indirect draw offset must be aligned to Uint32"));
+        if (Stride != sizeof(Uint32) * 5)
+            return std::unexpected(ErrorMessage("Indexed indirect draw stride must be 20 bytes"));
+        if (DrawCount == 0)
+            return std::unexpected(ErrorMessage("Indexed indirect draw count must be greater than zero"));
+        if (DrawCount > MaxDrawCount)
+            return std::unexpected(ErrorMessage("Indexed indirect draw count exceeds maxDrawIndirectCount"));
+        if (Offset > BufferSize || DrawCount > (BufferSize - Offset) / Stride)
+            return std::unexpected(ErrorMessage("Indexed indirect draw range exceeds its buffer"));
+        return {};
+    }
+};
+
 /// @brief Dispatch compute workgroups.
 export struct RHIDispatchCmd {
     Uint32 GroupCountX = 1;
@@ -88,6 +130,8 @@ export using RHICommand = std::variant<RHISetViewportCmd,
                                        RHISetScissorCmd,
                                        RHIDrawCmd,
                                        RHIDrawIndirectCmd,
+                                       RHIBindIndexBufferCmd,
+                                       RHIDrawIndexedIndirectCmd,
                                        RHIDispatchCmd,
                                        RHITraceRaysCmd,
                                        RHIReadbackTextureCmd,

@@ -45,6 +45,12 @@ export struct VulkanPendingImageUpload {
     Uint32         Height   = 0;
 };
 
+/// @brief Compute the post-upload read mask for one destination usage union.
+///
+/// Geometry inputs include acceleration-structure reads when ray tracing is available because the frame-start
+/// batch also makes uploaded bytes visible to later BLAS builds.
+export [[nodiscard]] auto ToVkBufferUploadAccess(RHIBufferUsage Usage) -> vk::AccessFlags2;
+
 /// @brief The frame-start upload staging lane: owns the staging ring and the pending batch
 /// entries of both resource kinds (buffer copies and mip-0 texture uploads).
 ///

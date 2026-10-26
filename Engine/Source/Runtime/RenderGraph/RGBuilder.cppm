@@ -25,10 +25,8 @@ namespace SoulEngine {
 
 // Aggregate walk
 
-// Hand-rolled aggregate field enumeration (no reflection): probe the aggregate's brace-acceptance arity at
-// compile time, then bind that many names with a structured binding. Fields not deriving from one of the two
-// view records (samplers, bindless arrays, CPU scalars) are passthrough — only views declare access. Cap: 16
-// fields per Parameter.
+// Aggregate field enumeration uses structured bindings. Direct views and vector view elements declare access;
+// other fields are passthrough. Cap: 16 fields per Parameter.
 
 export struct FieldProbe {
     template <typename T>
@@ -62,11 +60,18 @@ consteval auto CountFields() -> std::size_t {
 
 export template <typename FieldT, typename FnT>
 auto VisitField(FieldT& Field, FnT& On) -> void {
-    // The detectable set is anything deriving from the two view records — passthrough fields (samplers,
-    // bindless arrays, CPU scalars) are everything else.
     if constexpr (std::derived_from<std::remove_cvref_t<FieldT>, RGTextureViewData> ||
                   std::derived_from<std::remove_cvref_t<FieldT>, RGBufferViewData>)
         On(Field);
+}
+
+/// @brief Visit every view element in an owned dynamic view collection.
+export template <typename ViewT, typename FnT>
+auto VisitField(std::vector<ViewT>& Views, FnT& On) -> void {
+    if constexpr (std::derived_from<ViewT, RGTextureViewData> || std::derived_from<ViewT, RGBufferViewData>) {
+        for (auto& View : Views)
+            On(View);
+    }
 }
 
 // Boilerplate generator for the structured-binding arities of ForEachView. Macros cannot be exported from a
@@ -308,12 +313,11 @@ export class RenderGraphBuilder {
 
     /// @brief Register a typed pass.
     ///
-    /// The Parameter IS the resource declaration: every view-typed field contributes one access to the
-    /// ordering chain; non-view fields pass through to the constructor untouched. The pass is constructed
-    /// here and lives on its node from then on; a pipeline pass's pipeline is bound at Compile, when
-    /// readiness is known. Rvalue-only: registration takes ownership of the Parameter. After AddPass the
-    /// Parameter is frozen — wiring ran before the call, and the graph's collected view pointers assume
-    /// nothing mutates it.
+    /// The Parameter IS the resource declaration: every direct view and every element of an owned vector view
+    /// collection contributes one access to the ordering chain; other fields pass through untouched. The pass
+    /// is constructed here and lives on its node; a pipeline pass's pipeline is bound at Compile,
+    /// when readiness is known. Rvalue-only: registration takes ownership of the Parameter. After AddPass the
+    /// Parameter and its vector view collections are frozen after wiring; their size and storage stay fixed.
     template <typename TPass>
     auto AddPass(typename TPass::Parameter&& In) -> void {
         constexpr StringView PassName = TPass::Name;
