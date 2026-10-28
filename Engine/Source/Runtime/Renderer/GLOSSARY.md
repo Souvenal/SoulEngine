@@ -32,6 +32,10 @@ Editor post-process that reads the entity-id target at the selected pixel and ou
 
 ### Geometry and instances
 
+**Geometry submission path**:
+The vertex-fetch mechanism used when rasterizing geometry instances. VertexPulling fetches vertex data in shaders through device addresses; VertexInput uses fixed-function index and vertex fetching.
+_Avoid_: BDA path, traditional path, fallback path
+
 **SceneGpuData**:
 Per-frame renderer-neutral GPU table bundle (instances, geometry, materials, lights) built from renderer-filtered instance records and the full light list. Instances are sorted by geometry id as the canonical order; lights bake once per frame shared by every view; material resolves through the instance record, never through the geometry.
 
