@@ -33,15 +33,17 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
     }
 
     struct Parameter {
-        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Mask;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         SelectedInstances;
-        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>        SelectedIndirect;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         GeometryTable;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         MaterialTable;
-        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        FrameBuffer;
-        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        ViewBuffer;
-        RHIRef<RHISampler>                                             LinearSampler = nullptr;
-        Uint32                                                         DrawCount     = 0;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>      Mask;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>              SelectedInstances;
+        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>             SelectedIndirect;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>              GeometryTable;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>              MaterialTable;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>             FrameBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>             ViewBuffer;
+        std::vector<RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>> AttributeBuffers = {};
+        std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>   IndexBuffers     = {};
+        RHIRef<RHISampler>                                                  LinearSampler    = nullptr;
+        Uint32                                                              DrawCount        = 0;
     };
 
     SelectionMaskPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
@@ -55,6 +57,16 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
             !m_Parameter->GeometryTable.Resolved || !m_Parameter->MaterialTable.Resolved ||
             !m_Parameter->SelectedIndirect.Resolved || m_Parameter->DrawCount == 0)
             return std::unexpected(ErrorMessage("Selection mask pass resources are not ready"));
+        if (m_Parameter->IndexBuffers.size() != m_Parameter->DrawCount)
+            return std::unexpected(ErrorMessage("Selection mask pass resources are not ready: index buffer count"));
+        for (const auto& View : m_Parameter->AttributeBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Selection mask pass resources are not ready: attribute buffer"));
+        }
+        for (const auto& View : m_Parameter->IndexBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Selection mask pass resources are not ready: index buffer"));
+        }
 
         m_Attachments = RHIGraphicsAttachments{
             .ColorAttachments =
@@ -85,7 +97,10 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
             });
             !R)
             return std::unexpected(R.error());
-        DrawIndirect(m_Parameter->SelectedIndirect.Resolved, 0, m_Parameter->DrawCount);
+        for (Uint32 Slot = 0; Slot < m_Parameter->DrawCount; ++Slot) {
+            BindIndexBuffer(m_Parameter->IndexBuffers[Slot].Resolved);
+            DrawIndexedIndirect(m_Parameter->SelectedIndirect.Resolved, Slot * sizeof(Uint32) * 5);
+        }
         return {};
     }
 

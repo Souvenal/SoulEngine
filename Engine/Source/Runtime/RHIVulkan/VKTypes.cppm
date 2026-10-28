@@ -23,13 +23,9 @@ export [[nodiscard]] auto ToVkFormat(RHIFormat Fmt) -> vk::Format;
 /// Access picks the direction.
 ///
 /// Direction participates only for bidirectional mechanisms (Storage — RMW arrives as Read|Write);
-/// unidirectional usages carry an implied direction and ignore Access. Accumulates over the usage union, so
-/// both the creation union (upload batch) and single-role view declarations (pass prologue) map correctly.
-/// The declared direction translates faithfully — a read-modify-writing shader declares Read|Write on the
-/// view.
-///
-/// Not a pure flag mapping: vertex/index buffers additionally feed acceleration structure builds when ray
-/// tracing is available (mirrors ToVkBufferUsage).
+/// unidirectional usages carry an implied direction and ignore Access. Accumulates over the usage union:
+/// each declared role contributes its direct access mask. The declared direction translates faithfully —
+/// a read-modify-writing shader declares Read|Write on the view.
 export [[nodiscard]] auto ToVkBufferAccess(RHIBufferUsage Usage, RHIAccess Access) -> vk::AccessFlags2;
 
 /// @brief Texture counterpart of ToVkBufferAccess. RenderTarget/Storage are bidirectional and

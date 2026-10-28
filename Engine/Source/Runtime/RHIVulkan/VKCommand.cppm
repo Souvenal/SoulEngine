@@ -74,6 +74,8 @@ export class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
     auto operator()(const RHIDrawCmd& Cmd) -> void;
 
     auto operator()(const RHIDrawIndirectCmd& Cmd) -> void;
+    auto operator()(const RHIBindIndexBufferCmd& Cmd) -> void;
+    auto operator()(const RHIDrawIndexedIndirectCmd& Cmd) -> void;
 
   private:
     VulkanGraphicsPipeline& m_Pipeline;

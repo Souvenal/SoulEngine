@@ -2,11 +2,12 @@ module CullingCompute;
 
 import Common.All;
 
-/// @brief GPU indirect-draw command ABI matching C++ RasterIndirectCommand.
+/// @brief GPU indexed-indirect command ABI matching C++ RasterIndirectCommand.
 public struct RasterIndirectCommand {
-    public uint vertexCount;
+    public uint indexCount;
     public uint instanceCount;
-    public uint firstVertex;
+    public uint firstIndex;
+    public int vertexOffset;
     public uint firstInstance;
 };
 

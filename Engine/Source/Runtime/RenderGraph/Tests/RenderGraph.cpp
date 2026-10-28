@@ -13,6 +13,7 @@
 #include <magic_enum/magic_enum_flags.hpp>
 
 import RenderGraph;
+import RenderGraph.SyncPlan;
 import RHI;
 import WindowSystem;
 import std;
@@ -409,6 +410,80 @@ struct AnchorPass final : IRHITransferPass {
 
     AnchorPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        return {};
+    }
+
+  private:
+    UPtr<Parameter> m_Parameter;
+};
+
+class MockGeometryBuffer final : public RHIBuffer {
+  public:
+    MockGeometryBuffer(StringView Name, RHIBufferUsage Usage, Uint32* Destructions = nullptr)
+        : RHIBuffer(String(Name), 64, Usage, RHIMemoryUsage::CpuToGpu, RHILifetime::Transient),
+          m_Destructions(Destructions) {}
+    ~MockGeometryBuffer() override {
+        if (m_Destructions)
+            ++*m_Destructions;
+    }
+
+  private:
+    Uint32* m_Destructions = nullptr;
+};
+
+[[nodiscard]] auto MakeGeometryBuffer(StringView Name, RHIBufferUsage Usage, Uint32* Destructions = nullptr)
+    -> RHIRef<RHIBuffer> {
+    auto Result = RHIRef<RHIBuffer>::Create();
+    auto Published =
+        Result.Publish(std::make_unique<MockGeometryBuffer>(Name, Usage, Destructions), RHIRefState::Ready);
+    EXPECT_TRUE(Published.has_value());
+    return Result;
+}
+
+struct DynamicIndirectPass final : IRHIGraphicsPass {
+    static constexpr StringView Name       = "DynamicIndirect";
+    static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
+
+    struct Parameter {
+        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>              Ordinary;
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> Dynamic = {};
+    };
+
+    DynamicIndirectPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        m_Commands.clear();
+        DrawIndirect(m_Parameter->Ordinary.Resolved);
+        for (const auto& View : m_Parameter->Dynamic)
+            DrawIndirect(View.Resolved);
+        return {};
+    }
+
+  private:
+    UPtr<Parameter> m_Parameter;
+};
+
+struct DynamicIndexedInputPass final : IRHIGraphicsPass {
+    static constexpr StringView Name       = "DynamicIndexedInput";
+    static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
+
+    struct Parameter {
+        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>           Indirect;
+        std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>> IndexBuffers = {};
+    };
+
+    DynamicIndexedInputPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        m_Commands.clear();
+        for (std::size_t I = 0; I < m_Parameter->IndexBuffers.size(); ++I) {
+            BindIndexBuffer(m_Parameter->IndexBuffers[I].Resolved);
+            DrawIndexedIndirect(m_Parameter->Indirect.Resolved, I * sizeof(Uint32) * 5);
+        }
         return {};
     }
 
@@ -901,6 +976,144 @@ TEST(RenderGraphParameter, PassthroughFieldsSurviveTheAggregateWalkUntouched) {
     EXPECT_EQ(FilterPass::LastTag, 42u);
     EXPECT_EQ(FilterPass::Constructed, 1u);
 }
+TEST(RenderGraphDynamicViews, ElementsDeclareResolveAndRecordAlongsideOrdinaryFields) {
+    ResetMockCounters();
+    auto OrdinaryRef = MakeGeometryBuffer("Ordinary", RHIBufferUsage::Indirect);
+    auto FirstRef    = MakeGeometryBuffer("Dynamic0", RHIBufferUsage::Indirect);
+    auto SecondRef   = MakeGeometryBuffer("Dynamic1", RHIBufferUsage::Indirect);
+
+    RenderGraphBuilder Graph;
+    const auto         Ordinary = Graph.Import(OrdinaryRef);
+    const auto         First    = Graph.Import(FirstRef);
+    const auto         Second   = Graph.Import(SecondRef);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Ordinary, .Dynamic = {First, Second}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(List->Entries.size(), 1u);
+    auto& Entry = List->Entries.front();
+    EXPECT_EQ(Entry.Prologue.Buffers.size(), 3u);
+
+    auto Recorded = Entry.Pass->Record();
+    ASSERT_TRUE(Recorded);
+    const auto Commands = Entry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 3u);
+    const auto* OrdinaryCommand = std::get_if<RHIDrawIndirectCmd>(&Commands[0]);
+    const auto* FirstCommand    = std::get_if<RHIDrawIndirectCmd>(&Commands[1]);
+    const auto* SecondCommand   = std::get_if<RHIDrawIndirectCmd>(&Commands[2]);
+    ASSERT_NE(OrdinaryCommand, nullptr);
+    ASSERT_NE(FirstCommand, nullptr);
+    ASSERT_NE(SecondCommand, nullptr);
+    EXPECT_EQ(OrdinaryCommand->IndirectBuffer.TryGet(), OrdinaryRef.TryGet());
+    EXPECT_EQ(FirstCommand->IndirectBuffer.TryGet(), FirstRef.TryGet());
+    EXPECT_EQ(SecondCommand->IndirectBuffer.TryGet(), SecondRef.TryGet());
+}
+
+TEST(RenderGraphDynamicViews, EmptyCollectionLeavesTheOrdinaryDeclarationIntact) {
+    ResetMockCounters();
+    auto OrdinaryRef = MakeGeometryBuffer("Ordinary", RHIBufferUsage::Indirect);
+
+    RenderGraphBuilder Graph;
+    const auto         Ordinary = Graph.Import(OrdinaryRef);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Ordinary, .Dynamic = {}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(List->Entries.size(), 1u);
+    auto& Entry = List->Entries.front();
+    EXPECT_EQ(Entry.Prologue.Buffers.size(), 1u);
+    ASSERT_TRUE(Entry.Pass->Record());
+    EXPECT_EQ(Entry.Pass->GetCommands().size(), 1u);
+}
+
+TEST(RenderGraphDynamicViews, ElementsParticipateInDependencyPlanning) {
+    ResetMockCounters();
+    auto InputRef = MakeGeometryBuffer("Input", RHIBufferUsage::Storage | RHIBufferUsage::Indirect);
+
+    RenderGraphBuilder Graph;
+    const auto         Input = Graph.Import(InputRef);
+    Graph.AddPass<WriteStoragePass>({.Output = Input});
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Input, .Dynamic = {Input}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    EXPECT_EQ(PassNames(*List), (std::vector<StringView>{"WriteStorage", "DynamicIndirect"}));
+}
+
+TEST(RenderGraphDynamicViews, SurvivingElementOutsideCreationUsageIsAFrameError) {
+    ResetMockCounters();
+    auto InputRef = MakeGeometryBuffer("Input", RHIBufferUsage::Storage);
+
+    RenderGraphBuilder Graph;
+    const auto         Input = Graph.Import(InputRef);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Input, .Dynamic = {Input}});
+
+    auto List = Graph.Compile();
+    ASSERT_FALSE(List);
+    EXPECT_NE(List.error().ToString().find("creation usage"), String::npos);
+}
+
+TEST(RenderGraphDynamicViews, IndexedElementsProduceVertexInputPrologueAndCommandPacket) {
+    ResetMockCounters();
+    auto IndirectRef = MakeGeometryBuffer("Indirect", RHIBufferUsage::Indirect);
+    auto FirstRef    = MakeGeometryBuffer("Index0", RHIBufferUsage::Index);
+    auto SecondRef   = MakeGeometryBuffer("Index1", RHIBufferUsage::Index);
+
+    RenderGraphBuilder Graph;
+    const auto         Indirect = Graph.Import(IndirectRef);
+    const auto         First    = Graph.Import(FirstRef);
+    const auto         Second   = Graph.Import(SecondRef);
+    Graph.AddPass<DynamicIndexedInputPass>({.Indirect = Indirect, .IndexBuffers = {First, Second}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(List->Entries.size(), 1u);
+    auto& Entry = List->Entries.front();
+    ASSERT_EQ(Entry.Prologue.Buffers.size(), 3u);
+    const auto FindStage = [](const RHIBarrierList& Prologue, const RHIRef<RHIBuffer>& Buffer) {
+        for (const auto& Transition : Prologue.Buffers) {
+            if (Transition.View.Buffer.TryGet() == Buffer.TryGet())
+                return Transition.Stage;
+        }
+        return RHISyncStage::None;
+    };
+    EXPECT_EQ(FindStage(Entry.Prologue, IndirectRef), RHISyncStage::DrawIndirect);
+    EXPECT_EQ(FindStage(Entry.Prologue, FirstRef), RHISyncStage::VertexInput);
+    EXPECT_EQ(FindStage(Entry.Prologue, SecondRef), RHISyncStage::VertexInput);
+
+    ASSERT_TRUE(Entry.Pass->Record());
+    const auto Commands = Entry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 4u);
+    const auto* FirstBind  = std::get_if<RHIBindIndexBufferCmd>(&Commands[0]);
+    const auto* FirstDraw  = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
+    const auto* SecondBind = std::get_if<RHIBindIndexBufferCmd>(&Commands[2]);
+    const auto* SecondDraw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[3]);
+    ASSERT_NE(FirstBind, nullptr);
+    ASSERT_NE(FirstDraw, nullptr);
+    ASSERT_NE(SecondBind, nullptr);
+    ASSERT_NE(SecondDraw, nullptr);
+    EXPECT_EQ(FirstBind->IndexBuffer.TryGet(), FirstRef.TryGet());
+    EXPECT_EQ(SecondBind->IndexBuffer.TryGet(), SecondRef.TryGet());
+    EXPECT_EQ(FirstDraw->Offset, 0u);
+    EXPECT_EQ(SecondDraw->Offset, 20u);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.TryGet(), IndirectRef.TryGet());
+    EXPECT_EQ(SecondDraw->IndirectBuffer.TryGet(), IndirectRef.TryGet());
+}
+
+TEST(RenderGraphSyncPlan, VertexUsageRequestsVertexInputStage) {
+    auto VertexRef = MakeGeometryBuffer("Vertex", RHIBufferUsage::Vertex);
+    RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read> View{RGBuffer{.Index = 0}};
+    RGPassNode                                            Node;
+    Node.StageClass = RHIPassType::Graphics;
+    Node.Buffers    = {&View};
+    std::vector<RGResourceEntry> Resources;
+    Resources.emplace_back("Vertex", VertexRef);
+
+    const auto Prologue = BuildPassPrologue(Node, Resources);
+    ASSERT_EQ(Prologue.Buffers.size(), 1u);
+    EXPECT_EQ(Prologue.Buffers.front().Stage, RHISyncStage::VertexInput);
+}
+
 // Transfer passes
 
 TEST(RenderGraphTransfer, CopyPassBuildsWithoutAPipeline) {

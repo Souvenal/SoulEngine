@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-15). Revised 2026-09-24 (declaration-driven synchronization), 2026-09-27 (unified resource and view model), 2026-09-28 (view declarations; usage declared at creation), 2026-10-05 (RHI views carry Access; per-kind access lists replace direction-split vectors), 2026-10-11 (transitions are view + stage — layout derives from the view in the backend; imported resources join the prologue). This is the single ADR for the RenderGraph topic: decisions that were briefly split into ADR 12/13/14 are consolidated here, and future evolution of this design revises this document instead of opening new numbers. Partially supersedes [ADR 06](06-scene-snapshot-and-view-owned-rt.md) (view-owned render-target ownership; the Scene/SceneSnapshot layering stands). Mechanics and type-level details live in the code; this document keeps design and decisions only.
+Accepted (2026-09-15). Revised 2026-09-24 (declaration-driven synchronization), 2026-09-27 (unified resource and view model), 2026-09-28 (view declarations; usage declared at creation), 2026-10-05 (RHI views carry Access; per-kind access lists replace direction-split vectors), 2026-10-11 (transitions are view + stage — layout derives from the view in the backend; imported resources join the prologue), 2026-10-26 (dynamic view collections). This is the single ADR for the RenderGraph topic: decisions that were briefly split into ADR 12/13/14 are consolidated here, and future evolution of this design revises this document instead of opening new numbers. Partially supersedes [ADR 06](06-scene-snapshot-and-view-owned-rt.md) (view-owned render-target ownership; the Scene/SceneSnapshot layering stands). Mechanics and type-level details live in the code; this document keeps design and decisions only.
 
 ## Context
 
@@ -64,6 +64,10 @@ The resource layer beneath the graph had its own fragmentation: usage, lifetime,
 
 18. **TLAS is rebuilt per frame.** The renderer creates a fresh TLAS each frame sized to the instance count; there is no persistent TLAS backing and no refit/update path. Dynamic scenes repack instances every frame anyway, so persistence buys little and costs the whole update and capacity-management machinery.
 
+### Dynamic view collections (2026-10-26)
+
+19. **A Parameter may own dynamic view collections.** The number of resources a pass touches may be known only while building the frame graph. Each element of an owned dynamic view collection is a first-class declaration, equivalent to a view-typed field for ordering, usage validation, prologue generation, and resolution. The pass populates the collection before AddPass; once added, the Parameter and the size and storage of every collection are frozen because the graph retains the element declarations directly. This preserves "touch it ⇒ declare it" for variable-size resource sets instead of moving those accesses outside the graph.
+
 ## Considered alternatives
 
 - **Camera-owned targets with renderer-declared specs** — rejected: simulates usage decisions by hand without graph knowledge.
@@ -87,6 +91,8 @@ The resource layer beneath the graph had its own fragmentation: usage, lifetime,
 - **RHI-level present layout** — rejected (2026-10-11): presentation is the swapchain's private concern; the backend performs the move to the present layout natively and no graph node ever names it.
 - **Storage-write access widening** — rejected (2026-10-11; it had survived the vocabulary reduction as a backend-mapping rule): the declared direction translates faithfully, matching the attachment loadOp rule — a read-modify-writing shader declares `Read | Write`. Depth/stencil attachment coverage stays always-Read|Write as mechanism-inherent load/store semantics, not a guess about shader behavior.
 - **Reflection-derived stage precision at Compile** — rejected: the view-to-parameter association only exists inside Record(), and precision must not depend on pipeline readiness.
+- **Graph-invisible fixed-function geometry input** — rejected: vertex and index buffer reads must participate in the same declaration and synchronization contracts as every other resource access.
+- **Per-resource graphics passes** — rejected: resource-binding granularity does not imply separate render scopes or attachment transitions.
 
 ## Consequences
 
