@@ -41,20 +41,22 @@ export class GeometryPass final : public IRHIGraphicsPass {
     /// site assigns identities only. The remaining fields are passthrough (bindless table, samplers, draw
     /// count).
     struct Parameter {
-        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Albedo;
-        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Normal;
-        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> MaterialId;
-        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> EntityId;
-        RGTextureView<RHITextureUsage::DepthStencil, RHIAccess::Write> Depth;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         InstanceBuffer;
-        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>        IndirectBuffer;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         GeometryBuffer;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         MaterialBuffer;
-        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        FrameBuffer;
-        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        ViewBuffer;
-        RHIRef<RHISampler>                                             LinearSampler      = nullptr;
-        RHIRef<RHISampler>                                             AnisotropicSampler = nullptr;
-        Uint32                                                         DrawCount          = 0;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>       Albedo;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>       Normal;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>       MaterialId;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>       EntityId;
+        RGTextureView<RHITextureUsage::DepthStencil, RHIAccess::Write>       Depth;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               InstanceBuffer;
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> IndirectBuffers = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               GeometryBuffer;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               MaterialBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>              FrameBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>              ViewBuffer;
+        std::vector<RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>>  AttributeBuffers   = {};
+        std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>    IndexBuffers       = {};
+        RHIRef<RHISampler>                                                   LinearSampler      = nullptr;
+        RHIRef<RHISampler>                                                   AnisotropicSampler = nullptr;
+        Uint32                                                               DrawCount          = 0;
     };
 
     GeometryPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
@@ -71,10 +73,25 @@ export class GeometryPass final : public IRHIGraphicsPass {
         if (!m_Parameter->FrameBuffer.Resolved || !m_Parameter->ViewBuffer.Resolved)
             return std::unexpected(ErrorMessage("Geometry pass resources are not ready: frame/view constant buffer"));
         if (!m_Parameter->InstanceBuffer.Resolved || !m_Parameter->GeometryBuffer.Resolved ||
-            !m_Parameter->MaterialBuffer.Resolved || !m_Parameter->IndirectBuffer.Resolved)
+            !m_Parameter->MaterialBuffer.Resolved)
             return std::unexpected(ErrorMessage("Geometry pass resources are not ready: storage buffer"));
         if (m_Parameter->DrawCount == 0)
             return std::unexpected(ErrorMessage("Geometry pass resources are not ready: draw count"));
+        if (m_Parameter->IndirectBuffers.size() != m_Parameter->DrawCount ||
+            m_Parameter->IndexBuffers.size() != m_Parameter->DrawCount)
+            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: indirect/index buffer count"));
+        for (const auto& View : m_Parameter->AttributeBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Geometry pass resources are not ready: attribute buffer"));
+        }
+        for (const auto& View : m_Parameter->IndirectBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Geometry pass resources are not ready: indirect buffer"));
+        }
+        for (const auto& View : m_Parameter->IndexBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Geometry pass resources are not ready: index buffer"));
+        }
 
         m_Attachments = RHIGraphicsAttachments{
             .ColorAttachments =
@@ -116,7 +133,9 @@ export class GeometryPass final : public IRHIGraphicsPass {
             });
             !R)
             return std::unexpected(R.error());
-        DrawIndirect({}, m_Parameter->IndirectBuffer.ResolvedView(), m_Parameter->DrawCount);
+        for (Uint32 Slot = 0; Slot < m_Parameter->DrawCount; ++Slot)
+            DrawIndexedIndirect(
+                {}, m_Parameter->IndexBuffers[Slot].ResolvedView(), m_Parameter->IndirectBuffers[Slot].ResolvedView());
         return {};
     }
 
