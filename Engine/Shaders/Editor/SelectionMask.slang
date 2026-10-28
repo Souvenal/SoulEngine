@@ -30,7 +30,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, 
     VSOutput output;
     uint instanceIndex = instanceID + startInstance;
     InstanceRecord instanceData = g_selectionMaskDraw.instances[instanceIndex];
-    VertexInfo vtx = g_selectionMaskDraw.geometryTable.pullVertex(instanceData.geometryID, vertexID);
+    VertexInfo vtx = g_selectionMaskDraw.geometryTable.pullVertexAttributes(instanceData.geometryID, vertexID);
     float4 worldPosition = mul(float4(vtx.position, 1.0), instanceData.worldTransform);
     output.position = mul(worldPosition, g_selectionMaskFrameView.view.viewProjection);
     output.uv = vtx.uv;

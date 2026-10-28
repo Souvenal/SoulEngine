@@ -30,21 +30,17 @@ public struct BoundingSphere {
 public struct GeometryRecordTable {
     private StructuredBuffer<GeometryRecord> records;
 
+    /// @brief Pull vertex attributes using a local vertex index supplied by fixed-function index input.
+    public VertexInfo pullVertexAttributes(uint recordIndex, uint localVertexIndex) {
+        return loadVertexAttributes(records[recordIndex], localVertexIndex);
+    }
+
     /// @brief Pull one vertex. vertexIndex is a primitive-vertex index and is
     /// always resolved through the record's index buffer.
     public VertexInfo pullVertex(uint recordIndex, uint vertexIndex) {
         GeometryRecord geometry = records[recordIndex];
-        VertexInfo result;
         uint localVertexIndex = loadUint32(geometry.indexAddress + uint64_t(vertexIndex) * uint64_t(4));
-        result.position = loadFloat3(geometry.positionAddress + uint64_t(localVertexIndex) * uint64_t(12));
-        result.normal   = loadFloat3(geometry.normalAddress + uint64_t(localVertexIndex) * uint64_t(12));
-        result.tangent  = float4(1.0, 0.0, 0.0, 1.0);
-        if (geometry.tangentAddress != 0)
-            result.tangent = ((float4*)geometry.tangentAddress)[localVertexIndex];
-        result.uv = float2(0.0, 0.0);
-        if (geometry.texCoordAddress != 0)
-            result.uv = ((float2*)geometry.texCoordAddress)[localVertexIndex];
-        return result;
+        return loadVertexAttributes(geometry, localVertexIndex);
     }
 
     /// @brief Pull the local-space bounding sphere of one record.
@@ -53,6 +49,20 @@ public struct GeometryRecordTable {
         BoundingSphere result;
         result.center = bounds.xyz;
         result.radius = bounds.w;
+        return result;
+    }
+
+    /// @brief Decode vertex attributes from one record at a local vertex index.
+    private static VertexInfo loadVertexAttributes(GeometryRecord geometry, uint localVertexIndex) {
+        VertexInfo result;
+        result.position = loadFloat3(geometry.positionAddress + uint64_t(localVertexIndex) * uint64_t(12));
+        result.normal   = loadFloat3(geometry.normalAddress + uint64_t(localVertexIndex) * uint64_t(12));
+        result.tangent  = float4(1.0, 0.0, 0.0, 1.0);
+        if (geometry.tangentAddress != 0)
+            result.tangent = ((float4*)geometry.tangentAddress)[localVertexIndex];
+        result.uv = float2(0.0, 0.0);
+        if (geometry.texCoordAddress != 0)
+            result.uv = ((float2*)geometry.texCoordAddress)[localVertexIndex];
         return result;
     }
 

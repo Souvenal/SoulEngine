@@ -33,15 +33,17 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
     }
 
     struct Parameter {
-        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write> Mask;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         SelectedInstances;
-        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>        SelectedIndirect;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         GeometryTable;
-        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>         MaterialTable;
-        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        FrameBuffer;
-        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>        ViewBuffer;
-        RHIRef<RHISampler>                                             LinearSampler = nullptr;
-        Uint32                                                         DrawCount     = 0;
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>       Mask;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               SelectedInstances;
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> SelectedIndirectBuffers = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               GeometryTable;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               MaterialTable;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>              FrameBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>              ViewBuffer;
+        std::vector<RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>>  AttributeBuffers = {};
+        std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>    IndexBuffers     = {};
+        RHIRef<RHISampler>                                                   LinearSampler    = nullptr;
+        Uint32                                                               DrawCount        = 0;
     };
 
     SelectionMaskPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
@@ -52,9 +54,24 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
 
         if (!m_Parameter->Mask.Resolved || !m_Parameter->FrameBuffer.Resolved || !m_Parameter->ViewBuffer.Resolved ||
             !m_Parameter->LinearSampler || !m_Parameter->SelectedInstances.Resolved ||
-            !m_Parameter->GeometryTable.Resolved || !m_Parameter->MaterialTable.Resolved ||
-            !m_Parameter->SelectedIndirect.Resolved || m_Parameter->DrawCount == 0)
+            !m_Parameter->GeometryTable.Resolved || !m_Parameter->MaterialTable.Resolved || m_Parameter->DrawCount == 0)
             return std::unexpected(ErrorMessage("Selection mask pass resources are not ready"));
+        if (m_Parameter->SelectedIndirectBuffers.size() != m_Parameter->DrawCount ||
+            m_Parameter->IndexBuffers.size() != m_Parameter->DrawCount)
+            return std::unexpected(
+                ErrorMessage("Selection mask pass resources are not ready: indirect/index buffer count"));
+        for (const auto& View : m_Parameter->AttributeBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Selection mask pass resources are not ready: attribute buffer"));
+        }
+        for (const auto& View : m_Parameter->SelectedIndirectBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Selection mask pass resources are not ready: indirect buffer"));
+        }
+        for (const auto& View : m_Parameter->IndexBuffers) {
+            if (!View.Resolved)
+                return std::unexpected(ErrorMessage("Selection mask pass resources are not ready: index buffer"));
+        }
 
         m_Attachments = RHIGraphicsAttachments{
             .ColorAttachments =
@@ -85,7 +102,10 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
             });
             !R)
             return std::unexpected(R.error());
-        DrawIndirect({}, m_Parameter->SelectedIndirect.ResolvedView(), m_Parameter->DrawCount);
+        for (Uint32 Slot = 0; Slot < m_Parameter->DrawCount; ++Slot)
+            DrawIndexedIndirect({},
+                                m_Parameter->IndexBuffers[Slot].ResolvedView(),
+                                m_Parameter->SelectedIndirectBuffers[Slot].ResolvedView());
         return {};
     }
 
