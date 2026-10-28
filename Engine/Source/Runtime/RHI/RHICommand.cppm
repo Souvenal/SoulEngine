@@ -31,9 +31,7 @@ export struct RHISetScissorCmd {
     Uint32 Height = 0;
 };
 
-/// @brief Draw non-indexed primitives. All geometry reaches shaders through
-/// vertex pulling (BDA) or indirect draws; there is no vertex-buffer binding path. The fullscreen-triangle
-/// users emit the default 3.
+/// @brief Draw non-indexed primitives with the current graphics state.
 export struct RHIDrawCmd {
     Uint32 VertexCount = 3;
 };
@@ -44,6 +42,38 @@ export struct RHIDrawIndirectCmd {
     Uint64            Offset         = 0;
     Uint32            DrawCount      = 1;
     Uint32            Stride         = sizeof(Uint32) * 4;
+};
+
+/// @brief One vertex-buffer binding with a byte offset.
+export struct RHIVertexBufferBinding {
+    RHIRef<RHIBuffer> Buffer = nullptr;
+    Uint64            Offset = 0;
+};
+
+/// @brief Bind consecutive vertex-input slots starting at slot zero.
+export struct RHIBindVertexBuffersCmd {
+    std::array<RHIVertexBufferBinding, kMaxVertexBufferBindings> Bindings     = {};
+    Uint32                                                       BindingCount = 0;
+
+    /// @brief Validate binding count, buffer references, alignment, and offsets.
+    [[nodiscard]] auto Validate() const -> std::expected<void, ErrorMessage> {
+        if (BindingCount == 0 || BindingCount > kMaxVertexBufferBindings) {
+            return std::unexpected(ErrorMessage("Vertex binding count must be between one and four"));
+        }
+        for (Uint32 Index = 0; Index < BindingCount; ++Index) {
+            const auto& Binding = Bindings[Index];
+            if (!Binding.Buffer) {
+                return std::unexpected(ErrorMessage("Vertex binding requires ready buffers"));
+            }
+            if (Binding.Offset % sizeof(Uint32) != 0) {
+                return std::unexpected(ErrorMessage("Vertex binding offsets must be aligned to Uint32"));
+            }
+            if (Binding.Offset >= Binding.Buffer->GetSize()) {
+                return std::unexpected(ErrorMessage("Vertex binding offset exceeds the buffer"));
+            }
+        }
+        return {};
+    }
 };
 
 /// @brief Bind a Uint32 index buffer at a byte offset.
@@ -130,6 +160,7 @@ export using RHICommand = std::variant<RHISetViewportCmd,
                                        RHISetScissorCmd,
                                        RHIDrawCmd,
                                        RHIDrawIndirectCmd,
+                                       RHIBindVertexBuffersCmd,
                                        RHIBindIndexBufferCmd,
                                        RHIDrawIndexedIndirectCmd,
                                        RHIDispatchCmd,

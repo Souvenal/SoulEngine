@@ -39,6 +39,16 @@ export [[nodiscard]] auto BuildRasterIndirectCommands(std::span<const RasterDraw
 export [[nodiscard]] auto BuildRasterIndirectCommands(const SceneGpuData& DrawData)
     -> std::vector<RasterIndirectCommand>;
 
+/// @brief Geometry attribute submission mechanism selected for one Render frame.
+export enum class RasterGeometrySubmissionPath : Uint8 {
+    Unknown = 0,
+    VertexPulling,
+    VertexInput,
+};
+
+/// @brief Read and validate the Geometry submission path CVar once.
+export [[nodiscard]] auto GetRasterGeometrySubmissionPath() -> RasterGeometrySubmissionPath;
+
 /// @brief Single-material metallic-roughness forward renderer.
 export class RasterRenderer final : public IRenderer {
   public:
@@ -55,10 +65,12 @@ export class RasterRenderer final : public IRenderer {
   private:
     /// @brief Upload-gate the frame's instances: queue lazy uploads on first
     /// encounter, then keep only GPU-ready instances for this frame's tables.
-    [[nodiscard]] auto FilterInstances(std::span<const InstanceRecord> SourceInstances) -> std::vector<InstanceRecord>;
+    [[nodiscard]] auto FilterInstances(std::span<const InstanceRecord> SourceInstances,
+                                       RasterGeometrySubmissionPath    SubmissionPath) -> std::vector<InstanceRecord>;
 
     [[nodiscard]] auto RenderView(RenderPassList&                        CmdList,
                                   StringView                             ViewName,
+                                  RasterGeometrySubmissionPath           SubmissionPath,
                                   const SceneGpuData&                    DrawData,
                                   std::span<const RasterDrawGroup>       DrawGroups,
                                   std::span<const RasterIndirectCommand> IndirectCommands,

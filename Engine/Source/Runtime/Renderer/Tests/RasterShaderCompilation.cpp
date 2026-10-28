@@ -65,6 +65,29 @@ TEST_F(RasterShaderCompilationTest, CullingAndSelectionFilterEntriesCompileAndRe
     }
 }
 
+TEST_F(RasterShaderCompilationTest, VertexInputEntryReflectsFourAttributes) {
+    const auto& ShaderDir = EnginePaths::Get().EngineShadersDirPath();
+    auto Result = CompileGraphics(ShaderDir / "Raster" / "RasterGeometry.slang", "vertVertexInputMain", "fragMain");
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+    ASSERT_EQ(Result->Reflection.VertexInputs.size(), 4u);
+
+    const std::array<StringView, 4> ExpectedSemantics{"POSITION", "NORMAL", "TANGENT", "TEXCOORD"};
+    const std::array<Uint32, 4>     ExpectedColumns{3, 3, 4, 2};
+    for (std::size_t Index = 0; Index < ExpectedSemantics.size(); ++Index) {
+        const auto& Input = Result->Reflection.VertexInputs[Index];
+        EXPECT_EQ(Input.SemanticName, ExpectedSemantics[Index]);
+        EXPECT_EQ(Input.SemanticIndex, 0u);
+        ASSERT_TRUE(Input.Location.has_value());
+        EXPECT_EQ(*Input.Location, Index);
+        EXPECT_EQ(Input.ValueType.ScalarType, ShaderScalarType::Float32);
+        EXPECT_EQ(Input.ValueType.RowCount, 1u);
+        EXPECT_EQ(Input.ValueType.ColumnCount, ExpectedColumns[Index]);
+    }
+    for (const auto& Binding : Result->Reflection.Bindings) {
+        EXPECT_EQ(Binding.ParameterPath.find("g_rasterDraw.geometryTable"), StringView::npos);
+    }
+}
+
 TEST_F(RasterShaderCompilationTest, VertexPullingUsesFixedFunctionIndexAndPullsOnlyAttributes) {
     auto Consumer =
         CompileGraphics(m_TestSourceDir / "Slang" / "VertexPullingLocalIndexConsumer.slang", "vertMain", "fragMain");

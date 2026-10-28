@@ -193,6 +193,25 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndirectCmd& Cmd) -> void
     Buf.drawIndirect(Indirect.GetVkBuffer(), Prop->Allocation.Offset + Cmd.Offset, Cmd.DrawCount, Cmd.Stride);
 }
 
+auto VulkanGraphicsCmdVisitor::operator()(const RHIBindVertexBuffersCmd& Cmd) -> void {
+    if (auto Result = Cmd.Validate(); !Result) {
+        Error = Result.error();
+        return;
+    }
+    std::array<vk::Buffer, kMaxVertexBufferBindings>     Buffers = {};
+    std::array<vk::DeviceSize, kMaxVertexBufferBindings> Offsets = {};
+    for (Uint32 Index = 0; Index < Cmd.BindingCount; ++Index) {
+        const auto& Binding      = Cmd.Bindings[Index];
+        const auto& VertexBuffer = static_cast<const VulkanBuffer&>(*Binding.Buffer.TryGet());
+        const auto* Prop         = VertexBuffer.GetProp<TransientBufferProp>();
+        Buffers[Index]           = VertexBuffer.GetVkBuffer();
+        Offsets[Index]           = (Prop ? Prop->Allocation.Offset : 0) + Binding.Offset;
+    }
+    Buf.bindVertexBuffers(0,
+                          vk::ArrayProxy<vk::Buffer>(Cmd.BindingCount, Buffers.data()),
+                          vk::ArrayProxy<vk::DeviceSize>(Cmd.BindingCount, Offsets.data()));
+}
+
 auto VulkanGraphicsCmdVisitor::operator()(const RHIBindIndexBufferCmd& Cmd) -> void {
     if (auto Result = Cmd.Validate(); !Result) {
         Error = Result.error();

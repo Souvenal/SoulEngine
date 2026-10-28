@@ -96,6 +96,7 @@ export class IRHIGraphicsPass : public IRHIPass {
                       Uint64            Offset    = 0,
                       Uint32            DrawCount = 1,
                       Uint32            Stride    = sizeof(Uint32) * 4) -> void;
+    auto BindVertexBuffers(std::span<const RHIVertexBufferBinding> Bindings) -> void;
     auto BindIndexBuffer(RHIRef<RHIBuffer> IndexBuffer, Uint64 Offset = 0) -> void;
     auto DrawIndexedIndirect(RHIRef<RHIBuffer> IndirectBuffer,
                              Uint64            Offset    = 0,

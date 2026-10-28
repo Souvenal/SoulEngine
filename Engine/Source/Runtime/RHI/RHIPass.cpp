@@ -58,6 +58,18 @@ auto IRHIGraphicsPass::DrawIndirect(RHIRef<RHIBuffer> IndirectBuffer, Uint64 Off
     });
 }
 
+auto IRHIGraphicsPass::BindVertexBuffers(std::span<const RHIVertexBufferBinding> Bindings) -> void {
+    if (Bindings.empty() || Bindings.size() > kMaxVertexBufferBindings) {
+        return;
+    }
+    RHIBindVertexBuffersCmd Cmd{.BindingCount = static_cast<Uint32>(Bindings.size())};
+    std::ranges::copy(Bindings, Cmd.Bindings.begin());
+    if (!Cmd.Validate()) {
+        return;
+    }
+    m_Commands.emplace_back(std::move(Cmd));
+}
+
 auto IRHIGraphicsPass::BindIndexBuffer(RHIRef<RHIBuffer> IndexBuffer, Uint64 Offset) -> void {
     RHIBindIndexBufferCmd Cmd{.IndexBuffer = std::move(IndexBuffer), .Offset = Offset};
     if (!Cmd.Validate())

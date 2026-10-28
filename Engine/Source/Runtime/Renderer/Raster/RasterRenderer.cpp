@@ -24,10 +24,25 @@ import std;
 
 namespace SoulEngine {
 
-CVar<bool> CVarRenderRasterEnableStatsOverlay{"Render.Raster.EnableStatsOverlay",
-                                              false,
-                                              "Settings-panel test toggle; no rendering consumer yet.",
-                                              CVarTiming::Runtime};
+CVar<bool>   CVarRenderRasterEnableStatsOverlay{"Render.Raster.EnableStatsOverlay",
+                                                false,
+                                                "Settings-panel test toggle; no rendering consumer yet.",
+                                                CVarTiming::Runtime};
+CVar<String> CVarRenderRasterGeometrySubmissionPath{"Render.Raster.GeometrySubmissionPath",
+                                                    "VertexPulling",
+                                                    "Geometry submission path: VertexPulling or VertexInput",
+                                                    CVarTiming::Runtime};
+
+[[nodiscard]] auto GetRasterGeometrySubmissionPath() -> RasterGeometrySubmissionPath {
+    const auto Value = CVarRenderRasterGeometrySubmissionPath.Get();
+    if (Value == "VertexInput") {
+        return RasterGeometrySubmissionPath::VertexInput;
+    }
+    if (Value != "VertexPulling") {
+        LogWarning("Unknown Geometry submission path '{}'; using VertexPulling", Value);
+    }
+    return RasterGeometrySubmissionPath::VertexPulling;
+}
 
 [[nodiscard]] auto BuildRasterDrawGroups(const SceneGpuData& DrawData) -> std::vector<RasterDrawGroup> {
     std::vector<RasterDrawGroup> Result = {};
@@ -79,6 +94,7 @@ RasterRenderer::~RasterRenderer() {
     Registry.Register<CullingPass>();
     Registry.Register<SelectionFilterPass>();
     Registry.Register<GeometryPass>();
+    Registry.Register<VertexInputGeometryPass>();
     Registry.Register<DeferredLightingPass>();
     Registry.Register<SelectionMaskPass>();
     Registry.Register<SelectionOutlinePass>();
@@ -109,7 +125,8 @@ auto RasterRenderer::OnDetach() -> void {
     if (Scene.Views.empty() && Editor.Views.empty())
         return Result;
 
-    const auto Instances      = FilterInstances(Scene.Instances);
+    const auto SubmissionPath = GetRasterGeometrySubmissionPath();
+    const auto Instances      = FilterInstances(Scene.Instances, SubmissionPath);
     auto       TextureIndices = ResolveBindlessTextureIndices(Scene.Textures);
     if (!TextureIndices)
         return std::unexpected(TextureIndices.error().Append("Raster bindless texture resolution failed"));
@@ -121,6 +138,7 @@ auto RasterRenderer::OnDetach() -> void {
     for (const auto& View : Scene.Views) {
         if (auto R = RenderView(Result.CmdList,
                                 Format("View/Scene{}", ViewIndex++),
+                                SubmissionPath,
                                 DrawData,
                                 DrawGroups,
                                 IndirectCommands,
@@ -135,6 +153,7 @@ auto RasterRenderer::OnDetach() -> void {
         const auto View = EditorView.ToCameraViewRecord();
         if (auto R = RenderView(Result.CmdList,
                                 Format("View/Editor{}", ViewIndex++),
+                                SubmissionPath,
                                 DrawData,
                                 DrawGroups,
                                 IndirectCommands,
@@ -149,24 +168,28 @@ auto RasterRenderer::OnDetach() -> void {
     return Result;
 }
 
-[[nodiscard]] auto RasterRenderer::FilterInstances(std::span<const InstanceRecord> SourceInstances)
+[[nodiscard]] auto RasterRenderer::FilterInstances(std::span<const InstanceRecord> SourceInstances,
+                                                   RasterGeometrySubmissionPath    SubmissionPath)
     -> std::vector<InstanceRecord> {
     std::vector<InstanceRecord> Result = {};
     Result.reserve(SourceInstances.size());
+    const bool NeedVertexInput = SubmissionPath == RasterGeometrySubmissionPath::VertexInput;
     for (const auto& SourceInstance : SourceInstances) {
         if (!SourceInstance.Geometry)
             continue;
 
         // Lazy upload: queue buffer creation on first encounter, then gate on GPU readiness. Freshly
         // loaded geometry skips a frame or two while the RHI thread uploads it.
-        auto& Geometry = *SourceInstance.Geometry;
-        if (!Geometry.IsUploadRequested(false)) {
-            if (auto R = m_Uploader.Upload(Geometry, false); !R) {
+        auto&      Geometry = *SourceInstance.Geometry;
+        const bool NeedsUpload =
+            !Geometry.IsUploadRequested(false) || (NeedVertexInput && !Geometry.IsReadyOnGpu(false, true));
+        if (NeedsUpload) {
+            if (auto R = m_Uploader.Upload(Geometry, false, NeedVertexInput); !R) {
                 LogWarning("RasterRenderer: geometry upload failed: {}", R.error().ToString());
                 continue;
             }
         }
-        if (!Geometry.IsReadyOnGpu(false))
+        if (!Geometry.IsReadyOnGpu(false, NeedVertexInput))
             continue;
 
         Result.emplace_back(SourceInstance);
@@ -176,6 +199,7 @@ auto RasterRenderer::OnDetach() -> void {
 
 [[nodiscard]] auto RasterRenderer::RenderView(RenderPassList&                        CmdList,
                                               StringView                             ViewName,
+                                              RasterGeometrySubmissionPath           SubmissionPath,
                                               const SceneGpuData&                    DrawData,
                                               std::span<const RasterDrawGroup>       DrawGroups,
                                               std::span<const RasterIndirectCommand> IndirectCommands,
@@ -291,15 +315,21 @@ auto RasterRenderer::OnDetach() -> void {
     RGBuffer SelectedIndirect  = {};
 
     std::vector<RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>> AttributeBuffers;
+    std::vector<RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read>>  VertexBuffers;
     std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>   IndexBuffers;
     if (HasInstances) {
         AttributeBuffers.reserve(DrawGroups.size() * 4);
+        VertexBuffers.reserve(DrawGroups.size() * 4);
         IndexBuffers.reserve(DrawGroups.size());
         for (const auto& Group : DrawGroups) {
-            const auto& Buffers         = DrawData.GeometryBuffers[Group.GeometryID];
-            const auto  ImportAttribute = [&ViewGraph, &AttributeBuffers](const RHIRef<RHIBuffer>& Buffer) -> void {
-                if (Buffer)
-                    AttributeBuffers.emplace_back(ViewGraph.Import(Buffer));
+            const auto& Buffers = DrawData.GeometryBuffers[Group.GeometryID];
+            const auto  ImportAttribute =
+                [&ViewGraph, &AttributeBuffers, &VertexBuffers](const RHIRef<RHIBuffer>& Buffer) -> void {
+                if (Buffer) {
+                    const auto Handle = ViewGraph.Import(Buffer);
+                    AttributeBuffers.emplace_back(Handle);
+                    VertexBuffers.emplace_back(Handle);
+                }
             };
             ImportAttribute(Buffers.PositionBuffer);
             ImportAttribute(Buffers.NormalBuffer);
@@ -366,24 +396,44 @@ auto RasterRenderer::OnDetach() -> void {
             });
         }
 
-        ViewGraph.AddPass<GeometryPass>({
-            .Albedo             = Albedo,
-            .Normal             = Normal,
-            .MaterialId         = MaterialId,
-            .EntityId           = EntityId,
-            .Depth              = Depth,
-            .InstanceBuffer     = ViewInstances,
-            .IndirectBuffer     = ViewIndirect,
-            .GeometryBuffer     = GeometryTable,
-            .MaterialBuffer     = MaterialTable,
-            .FrameBuffer        = FrameCB,
-            .ViewBuffer         = ViewCB,
-            .AttributeBuffers   = AttributeBuffers,
-            .IndexBuffers       = IndexBuffers,
-            .LinearSampler      = SamplerLinearRef,
-            .AnisotropicSampler = SamplerAnisoRef,
-            .DrawCount          = static_cast<Uint32>(IndirectCommands.size()),
-        });
+        if (SubmissionPath == RasterGeometrySubmissionPath::VertexInput) {
+            ViewGraph.AddPass<VertexInputGeometryPass>({
+                .Albedo             = Albedo,
+                .Normal             = Normal,
+                .MaterialId         = MaterialId,
+                .EntityId           = EntityId,
+                .Depth              = Depth,
+                .InstanceBuffer     = ViewInstances,
+                .IndirectBuffer     = ViewIndirect,
+                .MaterialBuffer     = MaterialTable,
+                .FrameBuffer        = FrameCB,
+                .ViewBuffer         = ViewCB,
+                .VertexBuffers      = VertexBuffers,
+                .IndexBuffers       = IndexBuffers,
+                .LinearSampler      = SamplerLinearRef,
+                .AnisotropicSampler = SamplerAnisoRef,
+                .DrawCount          = static_cast<Uint32>(IndirectCommands.size()),
+            });
+        } else {
+            ViewGraph.AddPass<GeometryPass>({
+                .Albedo             = Albedo,
+                .Normal             = Normal,
+                .MaterialId         = MaterialId,
+                .EntityId           = EntityId,
+                .Depth              = Depth,
+                .InstanceBuffer     = ViewInstances,
+                .IndirectBuffer     = ViewIndirect,
+                .GeometryBuffer     = GeometryTable,
+                .MaterialBuffer     = MaterialTable,
+                .FrameBuffer        = FrameCB,
+                .ViewBuffer         = ViewCB,
+                .AttributeBuffers   = AttributeBuffers,
+                .IndexBuffers       = IndexBuffers,
+                .LinearSampler      = SamplerLinearRef,
+                .AnisotropicSampler = SamplerAnisoRef,
+                .DrawCount          = static_cast<Uint32>(IndirectCommands.size()),
+            });
+        }
     }
 
     if (Editor.IsHovering && Editor.ReadbackTarget) {
