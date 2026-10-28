@@ -83,12 +83,19 @@ export class GeometryUploader {
     /// Buffers are queued on the first call; the BLAS stage (descriptor creation + pending-build batch entry,
     /// one step) follows once the buffers are Ready and NeedBLAS is set. Each stage checks its own flag, so a
     /// fully-requested record is a silent no-op; failures leave the stage's flag unset for the next call to
-    /// retry.
-    auto Upload(GeometryRecord& Record, bool NeedBLAS) -> std::expected<void, ErrorMessage> {
+    /// retry. NeedVertexInput materializes missing tangent and texcoord streams with default attribute
+    /// values.
+    auto Upload(GeometryRecord& Record, bool NeedBLAS, bool NeedVertexInput = false)
+        -> std::expected<void, ErrorMessage> {
         if (!Record.BufferUploadRequested)
             if (auto R = UploadBuffers(Record); !R)
                 return R;
 
+        if (NeedVertexInput) {
+            if (auto R = UploadVertexInputDefaults(Record); !R) {
+                return R;
+            }
+        }
         if (NeedBLAS && !Record.BlasRequested && Record.IsReadyOnGpu(false))
             if (auto R = UploadBlas(Record); !R)
                 return R;
@@ -97,6 +104,28 @@ export class GeometryUploader {
     }
 
   private:
+    [[nodiscard]] static auto
+    CreateAttributeBuffer(StringView Base, StringView AttributeName, std::span<const std::byte> Data)
+        -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> {
+        auto& Device = RHIRenderDevice::Get();
+        auto  Result = Device.CreateBuffer(Format("{}/{}", Base, AttributeName),
+                                           RHIBufferDesc{
+                                               .SizeBytes   = static_cast<Uint64>(Data.size_bytes()),
+                                               .Usage       = RHIBufferUsage::Vertex | RHIBufferUsage::Storage,
+                                               .MemoryUsage = RHIMemoryUsage::GpuOnly,
+                                               .Lifetime    = RHILifetime::Persistent,
+                                           });
+        if (!Result) {
+            return std::unexpected(
+                Result.error().Append(Format("GeometryUploader: {} buffer creation failed", AttributeName)));
+        }
+        if (auto R = Device.UploadBuffer(*Result, Data); !R) {
+            return std::unexpected(
+                R.error().Append(Format("GeometryUploader: {} buffer upload failed", AttributeName)));
+        }
+        return std::move(*Result);
+    }
+
     /// Queue vertex/index buffer creation. Failures leave the flag unset so a later frame retries.
     [[nodiscard]] static auto UploadBuffers(GeometryRecord& Record) -> std::expected<void, ErrorMessage> {
         if (Record.Positions.empty() || Record.Indices.empty())
@@ -106,35 +135,16 @@ export class GeometryUploader {
         auto&      Device = RHIRenderDevice::Get();
         const auto Base   = Format("Geometry/{}", Record.Name.empty() ? String{"Unnamed"} : Record.Name);
 
-        const auto CreateAttributeBuffer =
-            [&Device, &Base](StringView                 AttributeName,
-                             std::span<const std::byte> Data) -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> {
-            auto Result = Device.CreateBuffer(Format("{}/{}", Base, AttributeName),
-                                              RHIBufferDesc{
-                                                  .SizeBytes   = static_cast<Uint64>(Data.size_bytes()),
-                                                  .Usage       = RHIBufferUsage::Vertex | RHIBufferUsage::Storage,
-                                                  .MemoryUsage = RHIMemoryUsage::GpuOnly,
-                                                  .Lifetime    = RHILifetime::Persistent,
-                                              });
-            if (!Result)
-                return std::unexpected(
-                    Result.error().Append(Format("GeometryUploader: {} buffer creation failed", AttributeName)));
-            if (auto R = Device.UploadBuffer(*Result, Data); !R)
-                return std::unexpected(
-                    R.error().Append(Format("GeometryUploader: {} buffer upload failed", AttributeName)));
-            return std::move(*Result);
-        };
-
-        auto Position = CreateAttributeBuffer("Position", std::as_bytes(std::span{Record.Positions}));
+        auto Position = CreateAttributeBuffer(Base, "Position", std::as_bytes(std::span{Record.Positions}));
         if (!Position)
             return std::unexpected(std::move(Position.error()));
-        auto Normal = CreateAttributeBuffer("Normal", std::as_bytes(std::span{Record.Normals}));
+        auto Normal = CreateAttributeBuffer(Base, "Normal", std::as_bytes(std::span{Record.Normals}));
         if (!Normal)
             return std::unexpected(std::move(Normal.error()));
 
         RHIRef<RHIBuffer> Tangent = nullptr;
         if (Record.HasTangents && !Record.Tangents.empty()) {
-            auto Result = CreateAttributeBuffer("Tangent", std::as_bytes(std::span{Record.Tangents}));
+            auto Result = CreateAttributeBuffer(Base, "Tangent", std::as_bytes(std::span{Record.Tangents}));
             if (!Result)
                 return std::unexpected(std::move(Result.error()));
             Tangent = std::move(*Result);
@@ -142,7 +152,7 @@ export class GeometryUploader {
 
         RHIRef<RHIBuffer> TexCoord = nullptr;
         if (Record.HasUV0 && !Record.UVs.empty()) {
-            auto Result = CreateAttributeBuffer("TexCoord", std::as_bytes(std::span{Record.UVs}));
+            auto Result = CreateAttributeBuffer(Base, "TexCoord", std::as_bytes(std::span{Record.UVs}));
             if (!Result)
                 return std::unexpected(std::move(Result.error()));
             TexCoord = std::move(*Result);
@@ -177,6 +187,35 @@ export class GeometryUploader {
         Record.Tangents  = {};
         Record.UVs       = {};
         Record.Indices   = {};
+        return {};
+    }
+
+    [[nodiscard]] static auto UploadVertexInputDefaults(GeometryRecord& Record) -> std::expected<void, ErrorMessage> {
+        const bool NeedsTangent  = !Record.HasTangents && !Record.TangentBuffer;
+        const bool NeedsTexCoord = !Record.HasUV0 && !Record.TexCoordBuffer;
+        if ((NeedsTangent || NeedsTexCoord) && Record.VertexCount == 0) {
+            return std::unexpected(ErrorMessage("GeometryUploader: default attributes require a vertex count"));
+        }
+
+        const auto Base = Format("Geometry/{}", Record.Name.empty() ? String{"Unnamed"} : Record.Name);
+        if (NeedsTangent) {
+            const std::vector<hlslpp::interop::float4> Defaults(
+                Record.VertexCount, hlslpp::interop::float4{hlslpp::float4{1.0f, 0.0f, 0.0f, 1.0f}});
+            auto Result = CreateAttributeBuffer(Base, "Tangent", std::as_bytes(std::span{Defaults}));
+            if (!Result) {
+                return std::unexpected(std::move(Result.error()));
+            }
+            Record.TangentBuffer = std::move(*Result);
+        }
+        if (NeedsTexCoord) {
+            const std::vector<hlslpp::interop::float2> Defaults(Record.VertexCount,
+                                                                hlslpp::interop::float2{hlslpp::float2{0.0f, 0.0f}});
+            auto Result = CreateAttributeBuffer(Base, "TexCoord", std::as_bytes(std::span{Defaults}));
+            if (!Result) {
+                return std::unexpected(std::move(Result.error()));
+            }
+            Record.TexCoordBuffer = std::move(*Result);
+        }
         return {};
     }
 
@@ -223,11 +262,10 @@ export class GeometryUploader {
 /// @brief Per-frame renderer-neutral GPU table bundle built from the
 /// renderer-filtered InstanceRecord values.
 ///
-/// Holds the shared GPU-ABI tables (instances, geometries, materials, lights) plus two per-geometry parallel
-/// columns: GeometryIndexCounts (sourced from the RHI index buffer, consumed by the raster indirect-command
-/// derivation) and GeometryBlas (the geometry-owned BLAS refs, consumed by the RT TLAS derivation; null on
-/// the raster path where BLAS is never requested). Lights take no filter or upload path: the full scene light
-/// list is baked once per frame and shared by every view.
+/// Holds shared GPU-ABI tables (instances, geometries, materials, lights) and three per-geometry columns:
+/// GeometryIndexCounts (from the RHI index buffer, used by raster command derivation), GeometryBuffers
+/// (attribute/index refs for raster graph construction), and GeometryBlas (geometry BLAS refs for RT TLAS;
+/// null on raster). Lights are baked once per frame and shared by every view.
 ///
 /// Create is pure table building — upload and readiness gating are the renderer's own filter step ahead of
 /// it. Instance order is canonical: sorted by GeometryID, so the raster draw grouping and the RT TLAS slot
@@ -235,11 +273,21 @@ export class GeometryUploader {
 /// deliberately unbound here: the material is resolved through the instance record, never through the
 /// geometry.
 export struct SceneGpuData {
+    /// @brief Render-thread geometry buffer references aligned with GeometryID.
+    struct GeometryBufferRefs {
+        RHIRef<RHIBuffer> PositionBuffer = nullptr;
+        RHIRef<RHIBuffer> NormalBuffer   = nullptr;
+        RHIRef<RHIBuffer> TangentBuffer  = nullptr;
+        RHIRef<RHIBuffer> TexCoordBuffer = nullptr;
+        RHIRef<RHIBuffer> IndexBuffer    = nullptr;
+    };
+
     std::vector<InstanceRecord::GpuData>                     InstanceRecords     = {};
     std::vector<GeometryRecord::GpuData>                     GeometryRecords     = {};
     std::vector<MaterialRecord::GpuData>                     MaterialRecords     = {};
     std::vector<LightRecord::GpuData>                        LightRecords        = {};
     std::vector<Uint32>                                      GeometryIndexCounts = {};
+    std::vector<GeometryBufferRefs>                          GeometryBuffers     = {};
     std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> GeometryBlas        = {};
 
     [[nodiscard]] static auto Create(std::span<const InstanceRecord>           Instances,
@@ -266,6 +314,13 @@ export struct SceneGpuData {
             if (Inserted) {
                 Result.GeometryRecords.emplace_back(Geometry.BuildGpuData());
                 Result.GeometryIndexCounts.emplace_back(static_cast<Uint32>(Geometry.IndexCount));
+                Result.GeometryBuffers.emplace_back(GeometryBufferRefs{
+                    .PositionBuffer = Geometry.PositionBuffer,
+                    .NormalBuffer   = Geometry.NormalBuffer,
+                    .TangentBuffer  = Geometry.TangentBuffer,
+                    .TexCoordBuffer = Geometry.TexCoordBuffer,
+                    .IndexBuffer    = Geometry.IndexBuffer,
+                });
                 Result.GeometryBlas.emplace_back(Geometry.Blas);
             }
             Uint32 MaterialID = 0;

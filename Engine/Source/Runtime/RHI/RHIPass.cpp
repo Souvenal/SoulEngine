@@ -58,6 +58,41 @@ auto IRHIGraphicsPass::DrawIndirect(RHIRef<RHIBuffer> IndirectBuffer, Uint64 Off
     });
 }
 
+auto IRHIGraphicsPass::BindVertexBuffers(std::span<const RHIVertexBufferBinding> Bindings) -> void {
+    if (Bindings.empty() || Bindings.size() > kMaxVertexBufferBindings) {
+        return;
+    }
+    RHIBindVertexBuffersCmd Cmd{.BindingCount = static_cast<Uint32>(Bindings.size())};
+    std::ranges::copy(Bindings, Cmd.Bindings.begin());
+    if (!Cmd.Validate()) {
+        return;
+    }
+    m_Commands.emplace_back(std::move(Cmd));
+}
+
+auto IRHIGraphicsPass::BindIndexBuffer(RHIRef<RHIBuffer> IndexBuffer, Uint64 Offset) -> void {
+    RHIBindIndexBufferCmd Cmd{.IndexBuffer = std::move(IndexBuffer), .Offset = Offset};
+    if (!Cmd.Validate())
+        return;
+    m_Commands.emplace_back(std::move(Cmd));
+}
+
+auto IRHIGraphicsPass::DrawIndexedIndirect(RHIRef<RHIBuffer> IndirectBuffer,
+                                           Uint64            Offset,
+                                           Uint32            DrawCount,
+                                           Uint32            Stride) -> void {
+    RHIDrawIndexedIndirectCmd Cmd{
+        .IndirectBuffer = std::move(IndirectBuffer),
+        .Offset         = Offset,
+        .DrawCount      = DrawCount,
+        .Stride         = Stride,
+    };
+    const auto* Buffer = Cmd.IndirectBuffer.TryGet();
+    if (!Buffer || !Cmd.Validate(Buffer->GetSize(), std::numeric_limits<Uint32>::max()))
+        return;
+    m_Commands.emplace_back(std::move(Cmd));
+}
+
 auto IRHIComputePass::Dispatch(Uint32 GroupCountX, Uint32 GroupCountY, Uint32 GroupCountZ) -> void {
     if (GroupCountX == 0)
         return;

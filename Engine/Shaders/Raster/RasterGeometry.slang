@@ -12,12 +12,17 @@ public struct RasterFrameViewResources {
 public ParameterBlock<RasterFrameViewResources> g_rasterFrameView;
 
 public struct RasterDrawResources {
-    public StructuredBuffer<InstanceRecord>   instances;
-    public GeometryRecordTable                geometryTable;
-    public StructuredBuffer<MaterialRecord>   materials;
+    public StructuredBuffer<InstanceRecord> instances;
+    public StructuredBuffer<MaterialRecord> materials;
 };
 
 public ParameterBlock<RasterDrawResources> g_rasterDraw;
+
+public struct RasterVertexPullingResources {
+    public GeometryRecordTable geometryTable;
+};
+
+public ParameterBlock<RasterVertexPullingResources> g_rasterPulling;
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -28,12 +33,9 @@ struct VSOutput {
     nointerpolation uint instanceIndex;
 };
 
-[shader("vertex")]
-VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint startInstance : SV_StartInstanceLocation) {
+VSOutput buildRasterVertexOutput(VertexInfo vtx, uint instanceIndex) {
     VSOutput output;
-    uint instanceIndex = instanceID + startInstance;
     InstanceRecord instanceData = g_rasterDraw.instances[instanceIndex];
-    VertexInfo vtx = g_rasterDraw.geometryTable.pullVertex(instanceData.geometryID, vertexID);
     float4 worldPosition = mul(float4(vtx.position, 1.0), instanceData.worldTransform);
     float3x3 worldTransform = (float3x3)instanceData.worldTransform;
     output.worldPosition = worldPosition.xyz;
@@ -45,6 +47,30 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, 
     output.instanceIndex = instanceIndex;
     output.position = mul(worldPosition, g_rasterFrameView.view.viewProjection);
     return output;
+}
+
+[shader("vertex")]
+VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint startInstance : SV_StartInstanceLocation) {
+    uint instanceIndex = instanceID + startInstance;
+    InstanceRecord instanceData = g_rasterDraw.instances[instanceIndex];
+    VertexInfo vtx = g_rasterPulling.geometryTable.pullVertexAttributes(instanceData.geometryID, vertexID);
+    return buildRasterVertexOutput(vtx, instanceIndex);
+}
+
+[shader("vertex")]
+VSOutput vertVertexInputMain(
+    float3 position : POSITION,
+    float3 normal : NORMAL,
+    float4 tangent : TANGENT,
+    float2 uv : TEXCOORD,
+    uint instanceID : SV_InstanceID,
+    uint startInstance : SV_StartInstanceLocation) {
+    VertexInfo vtx;
+    vtx.position = position;
+    vtx.normal = normal;
+    vtx.tangent = tangent;
+    vtx.uv = uv;
+    return buildRasterVertexOutput(vtx, instanceID + startInstance);
 }
 
 [shader("fragment")]

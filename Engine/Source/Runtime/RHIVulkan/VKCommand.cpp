@@ -193,6 +193,57 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndirectCmd& Cmd) -> void
     Buf.drawIndirect(Indirect.GetVkBuffer(), Prop->Allocation.Offset + Cmd.Offset, Cmd.DrawCount, Cmd.Stride);
 }
 
+auto VulkanGraphicsCmdVisitor::operator()(const RHIBindVertexBuffersCmd& Cmd) -> void {
+    if (auto Result = Cmd.Validate(); !Result) {
+        Error = Result.error();
+        return;
+    }
+    std::array<vk::Buffer, kMaxVertexBufferBindings>     Buffers = {};
+    std::array<vk::DeviceSize, kMaxVertexBufferBindings> Offsets = {};
+    for (Uint32 Index = 0; Index < Cmd.BindingCount; ++Index) {
+        const auto& Binding      = Cmd.Bindings[Index];
+        const auto& VertexBuffer = static_cast<const VulkanBuffer&>(*Binding.Buffer.TryGet());
+        const auto* Prop         = VertexBuffer.GetProp<TransientBufferProp>();
+        Buffers[Index]           = VertexBuffer.GetVkBuffer();
+        Offsets[Index]           = (Prop ? Prop->Allocation.Offset : 0) + Binding.Offset;
+    }
+    Buf.bindVertexBuffers(0,
+                          vk::ArrayProxy<vk::Buffer>(Cmd.BindingCount, Buffers.data()),
+                          vk::ArrayProxy<vk::DeviceSize>(Cmd.BindingCount, Offsets.data()));
+}
+
+auto VulkanGraphicsCmdVisitor::operator()(const RHIBindIndexBufferCmd& Cmd) -> void {
+    if (auto Result = Cmd.Validate(); !Result) {
+        Error = Result.error();
+        return;
+    }
+    const auto& IndexBuffer = static_cast<const VulkanBuffer&>(*Cmd.IndexBuffer.TryGet());
+    const auto* Prop        = IndexBuffer.GetProp<TransientBufferProp>();
+    Buf.bindIndexBuffer(
+        IndexBuffer.GetVkBuffer(), (Prop ? Prop->Allocation.Offset : 0) + Cmd.Offset, vk::IndexType::eUint32);
+}
+
+auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) -> void {
+    const auto* Buffer = Cmd.IndirectBuffer.TryGet();
+    if (!Buffer) {
+        Error = ErrorMessage("Indexed indirect draw requires a ready buffer");
+        return;
+    }
+    const auto& Indirect = static_cast<const VulkanBuffer&>(*Buffer);
+    if (auto Result =
+            Cmd.Validate(Indirect.GetSize(), VulkanCapability::Get().GetProperties().limits.maxDrawIndirectCount);
+        !Result) {
+        Error = Result.error();
+        return;
+    }
+    const auto* Prop = Indirect.GetProp<TransientBufferProp>();
+    if (!Prop) {
+        Error = ErrorMessage("Indexed indirect draw buffer has no transient state");
+        return;
+    }
+    Buf.drawIndexedIndirect(Indirect.GetVkBuffer(), Prop->Allocation.Offset + Cmd.Offset, Cmd.DrawCount, Cmd.Stride);
+}
+
 VulkanComputeCmdVisitor::VulkanComputeCmdVisitor(VulkanComputePipeline&   Pipeline,
                                                  vk::raii::CommandBuffer& InBuffer,
                                                  VulkanResourceContext&   InResourceContext)

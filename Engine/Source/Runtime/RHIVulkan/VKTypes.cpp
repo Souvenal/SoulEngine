@@ -64,12 +64,6 @@ auto ToVkBufferAccess(RHIBufferUsage Usage, RHIAccess Access) -> vk::AccessFlags
         Out |= vk::AccessFlagBits2::eTransferRead;
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::TransferDst))
         Out |= vk::AccessFlagBits2::eTransferWrite;
-    // Geometry inputs feed acceleration-structure builds (ToVkBufferUsage adds the matching usage bit
-    // unconditionally when ray tracing is available).
-    if ((magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
-         magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index)) &&
-        VulkanCapability::Get().IsRayTracingAvailable())
-        Out |= vk::AccessFlagBits2::eAccelerationStructureReadKHR;
     return Out;
 }
 
@@ -151,6 +145,8 @@ auto ToVkPipelineStages(RHISyncStage Stage) -> vk::PipelineStageFlags2 {
         Result |= vk::PipelineStageFlagBits2::eTransfer;
     if (magic_enum::enum_flags_test(Stage, RHISyncStage::Host))
         Result |= vk::PipelineStageFlagBits2::eHost;
+    if (magic_enum::enum_flags_test(Stage, RHISyncStage::VertexInput))
+        Result |= vk::PipelineStageFlagBits2::eVertexInput;
     return Result;
 }
 
