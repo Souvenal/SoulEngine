@@ -223,11 +223,10 @@ export class GeometryUploader {
 /// @brief Per-frame renderer-neutral GPU table bundle built from the
 /// renderer-filtered InstanceRecord values.
 ///
-/// Holds the shared GPU-ABI tables (instances, geometries, materials, lights) plus two per-geometry parallel
-/// columns: GeometryIndexCounts (sourced from the RHI index buffer, consumed by the raster indirect-command
-/// derivation) and GeometryBlas (the geometry-owned BLAS refs, consumed by the RT TLAS derivation; null on
-/// the raster path where BLAS is never requested). Lights take no filter or upload path: the full scene light
-/// list is baked once per frame and shared by every view.
+/// Holds shared GPU-ABI tables (instances, geometries, materials, lights) and three per-geometry columns:
+/// GeometryIndexCounts (from the RHI index buffer, used by raster command derivation), GeometryBuffers
+/// (attribute/index refs for raster graph construction), and GeometryBlas (geometry BLAS refs for RT TLAS;
+/// null on raster). Lights are baked once per frame and shared by every view.
 ///
 /// Create is pure table building — upload and readiness gating are the renderer's own filter step ahead of
 /// it. Instance order is canonical: sorted by GeometryID, so the raster draw grouping and the RT TLAS slot
@@ -235,11 +234,21 @@ export class GeometryUploader {
 /// deliberately unbound here: the material is resolved through the instance record, never through the
 /// geometry.
 export struct SceneGpuData {
+    /// @brief Render-thread geometry buffer references aligned with GeometryID.
+    struct GeometryBufferRefs {
+        RHIRef<RHIBuffer> PositionBuffer = nullptr;
+        RHIRef<RHIBuffer> NormalBuffer   = nullptr;
+        RHIRef<RHIBuffer> TangentBuffer  = nullptr;
+        RHIRef<RHIBuffer> TexCoordBuffer = nullptr;
+        RHIRef<RHIBuffer> IndexBuffer    = nullptr;
+    };
+
     std::vector<InstanceRecord::GpuData>                     InstanceRecords     = {};
     std::vector<GeometryRecord::GpuData>                     GeometryRecords     = {};
     std::vector<MaterialRecord::GpuData>                     MaterialRecords     = {};
     std::vector<LightRecord::GpuData>                        LightRecords        = {};
     std::vector<Uint32>                                      GeometryIndexCounts = {};
+    std::vector<GeometryBufferRefs>                          GeometryBuffers     = {};
     std::vector<RHIRef<RHIBottomLevelAccelerationStructure>> GeometryBlas        = {};
 
     [[nodiscard]] static auto Create(std::span<const InstanceRecord>           Instances,
@@ -266,6 +275,13 @@ export struct SceneGpuData {
             if (Inserted) {
                 Result.GeometryRecords.emplace_back(Geometry.BuildGpuData());
                 Result.GeometryIndexCounts.emplace_back(static_cast<Uint32>(Geometry.IndexCount));
+                Result.GeometryBuffers.emplace_back(GeometryBufferRefs{
+                    .PositionBuffer = Geometry.PositionBuffer,
+                    .NormalBuffer   = Geometry.NormalBuffer,
+                    .TangentBuffer  = Geometry.TangentBuffer,
+                    .TexCoordBuffer = Geometry.TexCoordBuffer,
+                    .IndexBuffer    = Geometry.IndexBuffer,
+                });
                 Result.GeometryBlas.emplace_back(Geometry.Blas);
             }
             Uint32 MaterialID = 0;

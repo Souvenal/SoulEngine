@@ -33,7 +33,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, 
     VSOutput output;
     uint instanceIndex = instanceID + startInstance;
     InstanceRecord instanceData = g_rasterDraw.instances[instanceIndex];
-    VertexInfo vtx = g_rasterDraw.geometryTable.pullVertex(instanceData.geometryID, vertexID);
+    VertexInfo vtx = g_rasterDraw.geometryTable.pullVertexAttributes(instanceData.geometryID, vertexID);
     float4 worldPosition = mul(float4(vtx.position, 1.0), instanceData.worldTransform);
     float3x3 worldTransform = (float3x3)instanceData.worldTransform;
     output.worldPosition = worldPosition.xyz;

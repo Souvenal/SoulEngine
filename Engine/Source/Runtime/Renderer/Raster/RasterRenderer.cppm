@@ -12,16 +12,30 @@ import std;
 
 namespace SoulEngine {
 
-export struct alignas(16) RasterIndirectCommand {
-    Uint32 VertexCount   = 0;
+/// @brief Strongly typed 20-byte indexed-indirect command.
+export struct RasterIndirectCommand {
+    Uint32 IndexCount    = 0;
     Uint32 InstanceCount = 1;
-    Uint32 FirstVertex   = 0;
+    Uint32 FirstIndex    = 0;
+    Int32  VertexOffset  = 0;
     Uint32 FirstInstance = 0;
 };
-static_assert(sizeof(RasterIndirectCommand) == sizeof(Uint32) * 4);
+static_assert(sizeof(RasterIndirectCommand) == sizeof(Uint32) * 5);
 
-/// @brief Group the canonically sorted instance table into one indirect draw
-/// per geometry. The instance table must already be sorted by GeometryID (SceneGpuData's canonical order).
+/// @brief CPU-side geometry identity and indexed-indirect command for one stable slot.
+export struct RasterDrawGroup {
+    Uint32                GeometryID = 0;
+    RasterIndirectCommand Command    = {};
+};
+
+/// @brief Group canonically sorted instances into stable geometry draw slots.
+export [[nodiscard]] auto BuildRasterDrawGroups(const SceneGpuData& DrawData) -> std::vector<RasterDrawGroup>;
+
+/// @brief Copy draw-group commands into their GPU-upload layout.
+export [[nodiscard]] auto BuildRasterIndirectCommands(std::span<const RasterDrawGroup> DrawGroups)
+    -> std::vector<RasterIndirectCommand>;
+
+/// @brief Build indexed draw groups and flatten their commands.
 export [[nodiscard]] auto BuildRasterIndirectCommands(const SceneGpuData& DrawData)
     -> std::vector<RasterIndirectCommand>;
 
@@ -46,6 +60,7 @@ export class RasterRenderer final : public IRenderer {
     [[nodiscard]] auto RenderView(RenderPassList&                        CmdList,
                                   StringView                             ViewName,
                                   const SceneGpuData&                    DrawData,
+                                  std::span<const RasterDrawGroup>       DrawGroups,
                                   std::span<const RasterIndirectCommand> IndirectCommands,
                                   const CameraViewRecord&                View,
                                   const GameSnapshot&                    Scene,
