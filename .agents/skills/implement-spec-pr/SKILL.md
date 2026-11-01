@@ -1,5 +1,5 @@
 ---
-name: implement-spec-pr-stack
+name: implement-spec-pr
 description: Implement ticket stacks through reviewed PRs with explicit unmerged-branch dependencies.
 disable-model-invocation: true
 ---
