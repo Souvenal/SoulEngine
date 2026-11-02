@@ -8,6 +8,7 @@ export module Editor;
 import Editor.EditorWorld;
 
 import Core;
+import EditorCommands;
 import EditorTypes;
 import RHI;
 import Scene;
@@ -46,7 +47,9 @@ export class Editor {
     auto operator=(Editor&&) -> Editor&      = delete;
 
     /// @brief Initialize the Editor subsystems.
-    auto Initialize() -> void;
+    auto               Initialize() -> void;
+    [[nodiscard]] auto BindCommands(CommandDispatcher& Commands) -> std::expected<void, ErrorMessage>;
+    auto               UnbindCommands() -> void;
 
     /// @brief Bind the active runtime Scene for read-only Editor inspection.
     /// The Editor observes this Scene and never owns it.
@@ -95,7 +98,9 @@ export class Editor {
     auto AttachPresentationOverlay(RenderPassList& CmdList, ImDrawDataSnapshot& Snapshot) -> void;
 
   private:
-    ImGuiContext*        m_ImGuiContext = nullptr;
+    CommandDispatcher*   m_Commands        = nullptr;
+    Uint64               m_SettingsCommand = 0;
+    ImGuiContext*        m_ImGuiContext    = nullptr;
     std::vector<UIPanel> m_Panels;
 
     ImTextureQueue m_TextureQueue;

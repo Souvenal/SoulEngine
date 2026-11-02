@@ -4,6 +4,7 @@ export module Editor.UIManager;
 
 import std;
 import Core;
+import EditorCommands;
 
 namespace SoulEngine {
 
@@ -18,8 +19,10 @@ export class UIManager final : public Singleton<UIManager> {
     friend class Singleton<UIManager>;
 
   public:
+    [[nodiscard]] auto SubmitSettingsToggle(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage>;
+    [[nodiscard]] auto RegisterSettingsCommand(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage>;
     /// @brief 注册一个 UI 项
-    auto Register(std::string name, std::function<void()> callback, bool defaultShow = false) -> void;
+    auto               Register(std::string name, std::function<void()> callback, bool defaultShow = false) -> void;
 
     /// @brief 打开指定 UI
     auto OpenUI(const std::string& name) -> void;

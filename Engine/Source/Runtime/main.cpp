@@ -3,6 +3,7 @@
 #include <entt/entt.hpp>
 
 import Core;
+import EditorCommands;
 import Launch;
 import std;
 

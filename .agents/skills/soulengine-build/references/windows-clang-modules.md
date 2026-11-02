@@ -40,6 +40,12 @@ After the repair, confirm that the original `clang-scan-deps` missing-header err
 | --- | --- | --- | --- |
 | `error: no matching function for call to '<helper>'` raised while a renderer module TU instantiates an exported template (the `note: in instantiation of function template specialization` points at the consumer TU), where the helper is defined in the producer partition's anonymous namespace. | Templates with internal linkage (anonymous namespace) are invisible at the point of instantiation in other module units; MSVC tolerated this, clang does not. | Export the whole helper template chain plus every non-dependent type it references (RenderGraph aggregate-walk machinery in `Graph.cppm` is the current instance). | Do not try to keep helpers internal via module linkage — visibility at a foreign PoI is exactly what failed; do not wrap helper blocks in `namespace {}` inside `export namespace` (ill-formed: `anonymous namespaces cannot be exported`). |
 
+## Command submission consumer integration
+
+Observed with Clang 23.1.3 and xmake 3.1.1: instantiating the JSON-backed positional submission template in the large Editor implementation caused a frontend signal crash. Adding the JSON textual header alone did not repair it. Keeping the Settings submission in its existing UIManager provider implementation, exposed through a non-template helper to the menu, compiled successfully. This local workaround preserves shared submission; it is not a general diagnosis of every Clang frontend crash.
+
+When main constructs EngineLoop whose layout owns CommandDispatcher, the compiler may report a missing EditorCommands module while importing Launch. Verbose compiler output omitted EditorCommands from the module map. An explicit `import EditorCommands;` at that construction site repaired it; adding only a target dependency and reconfiguring did not. Verify with `rtk err xmake -y` and `rtk err xmake test`. Preserve the original diagnostic before applying either narrow repair.
+
 ## Windows clang toolchain link and test quirks
 
 | Signature | Root cause | Smallest repair | Do not do |
