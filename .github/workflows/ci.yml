@@ -18,8 +18,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Select PR builds when at least one changed path is not Markdown. Other events and detection failures
+  # select full builds.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      non_markdown: ${{ steps.filter.outputs.non_markdown || steps.overflow.outputs.non_markdown }}
+    steps:
+      - name: Detect non-Markdown changes
+        id: filter
+        if: github.event.pull_request.changed_files < 3000
+        uses: dorny/paths-filter@v4
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            non_markdown:
+              - '**'
+              - '!**/*.md'
+
+      # The PR file API caps results at 3,000 paths, so the boundary selects a full build.
+      - name: Select full build at the API file limit
+        id: overflow
+        if: github.event.pull_request.changed_files >= 3000
+        shell: bash
+        run: echo "non_markdown=true" >> "$GITHUB_OUTPUT"
+
   build-macos:
     name: build-macos
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' ||
+      needs.changes.outputs.non_markdown == 'true') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -60,6 +91,8 @@ jobs:
           actions-cache-key: xmake-${{ runner.os }}-homebrew-llvm23-3.1.1
           package-cache: true
           package-cache-key: pkg-v2-${{ runner.os }}-homebrew-llvm23
+          build-cache: true
+          build-cache-key: build-v1-${{ runner.os }}-homebrew-llvm23-xmake3.1.1-release
 
       # Required on fresh checkouts: the project's souvenal-repo clone lives under .xmake/ and xmake does not
       # re-clone it automatically; omitting it yields a misleading "package not found in any repository" error.
@@ -76,6 +109,10 @@ jobs:
 
   build-windows:
     name: build-windows
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' ||
+      needs.changes.outputs.non_markdown == 'true') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -104,6 +141,8 @@ jobs:
           actions-cache-key: xmake-${{ runner.os }}-llvm23-3.1.1
           package-cache: true
           package-cache-key: pkg-v2-${{ runner.os }}-llvm23
+          build-cache: true
+          build-cache-key: build-v1-${{ runner.os }}-llvm23-xmake3.1.1-release
 
       - name: Sync package repositories
         run: xmake repo -u
@@ -113,3 +152,45 @@ jobs:
 
       - name: Build
         run: xmake -y
+
+  # Accept successful builds and expected Markdown-only skips; all other outcomes fail the stable repository gate.
+  ci-result:
+    name: ci-result
+    needs: [changes, build-macos, build-windows]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify build results
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          NON_MARKDOWN: ${{ needs.changes.outputs.non_markdown }}
+          MACOS_RESULT: ${{ needs['build-macos'].result }}
+          WINDOWS_RESULT: ${{ needs['build-windows'].result }}
+        run: |
+          set -euo pipefail
+          allowed_skip=false
+          if [[ "$EVENT_NAME" == "pull_request" &&
+                "$CHANGES_RESULT" == "success" &&
+                "$NON_MARKDOWN" == "false" ]]; then
+            allowed_skip=true
+          fi
+
+          check_result() {
+            local name="$1"
+            local result="$2"
+
+            if [[ "$result" == "success" ]]; then
+              return 0
+            fi
+            if [[ "$allowed_skip" == "true" && "$result" == "skipped" ]]; then
+              return 0
+            fi
+
+            printf '%s: unexpected result %s\n' "$name" "$result" >&2
+            return 1
+          }
+
+          check_result build-macos "$MACOS_RESULT"
+          check_result build-windows "$WINDOWS_RESULT"
