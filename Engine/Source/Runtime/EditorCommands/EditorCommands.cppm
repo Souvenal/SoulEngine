@@ -13,6 +13,10 @@ export struct CommandParameter {
     std::optional<long double> Minimum;
     std::optional<long double> Maximum;
     std::optional<CommandJson> Default;
+    bool                       IsUnsigned      = false;
+    Int64                      SignedMinimum   = std::numeric_limits<Int64>::min();
+    Int64                      SignedMaximum   = std::numeric_limits<Int64>::max();
+    Uint64                     UnsignedMaximum = std::numeric_limits<Uint64>::max();
 };
 export enum class CommandCategory { Unknown = 0, Observe, Input, Edit, Persist, Destructive };
 export struct CommandDescriptor {
@@ -52,7 +56,8 @@ export class CommandContext {
         m_Output = std::move(Output);
     }
     auto Fail(String Code, String Message, CommandJson Details = {}) -> void {
-        m_Failure = CommandFailure{std::move(Code), std::move(Message), std::move(Details)};
+        m_Failure =
+            CommandFailure{.Code = std::move(Code), .Message = std::move(Message), .Details = std::move(Details)};
     }
 
   private:
@@ -90,7 +95,7 @@ export class CommandDispatcher {
     auto               Cancel(Uint64 InvocationId) -> void;
     auto               Shutdown() -> void;
     auto               Retire(Uint64 RegistrationId) -> void;
-    auto               Register(String Name, std::function<void()> Handler) -> void;
+    [[nodiscard]] auto Register(String Name, std::function<void()> Handler) -> std::expected<Uint64, ErrorMessage>;
     template <class F>
     [[nodiscard]] auto Register(CommandDescriptor Desc, F Handler) -> std::expected<Uint64, ErrorMessage> {
         using Args = typename CommandFunctionTraits<decltype(&F::operator())>::Arguments;
@@ -112,7 +117,16 @@ export class CommandDispatcher {
     template <class V>
     static auto SetParameterType(CommandParameter& Parameter) -> void {
         Parameter.Type = DeducedCommandType<V>();
-        if constexpr (std::is_arithmetic_v<V> && !std::same_as<V, bool>) {
+        if constexpr (std::integral<V> && !std::same_as<V, bool>) {
+            Parameter.IsUnsigned = std::is_unsigned_v<V>;
+            if constexpr (std::is_unsigned_v<V>)
+                Parameter.UnsignedMaximum = std::numeric_limits<V>::max();
+            else {
+                Parameter.SignedMinimum = std::numeric_limits<V>::min();
+                Parameter.SignedMaximum = std::numeric_limits<V>::max();
+            }
+        }
+        if constexpr (std::floating_point<V>) {
             Parameter.Minimum = std::max(Parameter.Minimum.value_or(std::numeric_limits<long double>::lowest()),
                                          static_cast<long double>(std::numeric_limits<V>::lowest()));
             Parameter.Maximum = std::min(Parameter.Maximum.value_or(std::numeric_limits<long double>::max()),
@@ -157,6 +171,7 @@ export class CommandDispatcher {
         CommandCompletion  Completion;
         CommandOptions     Options;
     };
+    auto                                           Deliver(Invocation& Call, CommandResult Result) -> void;
     std::unordered_map<String, SPtr<Registration>> m_Registry;
     std::vector<Invocation>                        m_Queue;
     Uint64                                         m_NextId   = 1;

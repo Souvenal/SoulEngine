@@ -2,6 +2,93 @@ module;
 #include <nlohmann/json.hpp>
 module EditorCommands;
 namespace SoulEngine {
+[[nodiscard]] auto IsValidParameter(const CommandParameter& Parameter, const CommandJson& Value) -> bool {
+    const auto Type = Parameter.Type;
+    if (Type == CommandValueType::Integer) {
+        if (!Value.is_number_integer())
+            return false;
+        if (Value.is_number_unsigned()) {
+            const auto Number = Value.get<Uint64>();
+            if (Parameter.IsUnsigned) {
+                if (Number > Parameter.UnsignedMaximum)
+                    return false;
+            } else if (Number > static_cast<Uint64>(Parameter.SignedMaximum) ||
+                       (Parameter.SignedMinimum > 0 && Number < static_cast<Uint64>(Parameter.SignedMinimum)))
+                return false;
+            if (Parameter.Minimum && *Parameter.Minimum > 0) {
+                const auto Bound = std::ceil(*Parameter.Minimum);
+                if (Bound >= std::ldexp(1.0L, 64) || Number < static_cast<Uint64>(Bound))
+                    return false;
+            }
+            if (Parameter.Maximum) {
+                const auto Bound = std::floor(*Parameter.Maximum);
+                if (Bound < 0 || (Bound < std::ldexp(1.0L, 64) && Number > static_cast<Uint64>(Bound)))
+                    return false;
+            }
+        } else {
+            const auto Number = Value.get<Int64>();
+            if (Parameter.IsUnsigned) {
+                if (Number < 0 || static_cast<Uint64>(Number) > Parameter.UnsignedMaximum)
+                    return false;
+            } else if (Number < Parameter.SignedMinimum || Number > Parameter.SignedMaximum)
+                return false;
+            if (Parameter.Minimum) {
+                const auto Bound = std::ceil(*Parameter.Minimum);
+                if (Bound >= std::ldexp(1.0L, 63) ||
+                    (Bound >= -std::ldexp(1.0L, 63) && Number < static_cast<Int64>(Bound)))
+                    return false;
+            }
+            if (Parameter.Maximum) {
+                const auto Bound = std::floor(*Parameter.Maximum);
+                if (Bound < -std::ldexp(1.0L, 63) ||
+                    (Bound < std::ldexp(1.0L, 63) && Number > static_cast<Int64>(Bound)))
+                    return false;
+            }
+        }
+        return true;
+    }
+    if (Type == CommandValueType::Json)
+        return true;
+    if (Type == CommandValueType::String)
+        return Value.is_string();
+    if (Type == CommandValueType::Boolean)
+        return Value.is_boolean();
+    if (Type != CommandValueType::Number || !Value.is_number())
+        return false;
+    const auto Number = Value.get<long double>();
+    return std::isfinite(Number) && (!Parameter.Minimum || Number >= *Parameter.Minimum) &&
+           (!Parameter.Maximum || Number <= *Parameter.Maximum);
+}
+
+[[nodiscard]] auto TerminalSize(const CommandResult& R) -> std::size_t {
+    CommandJson Failure = nullptr;
+    if (R.Failure)
+        Failure =
+            CommandJson{{"code", R.Failure->Code}, {"message", R.Failure->Message}, {"details", R.Failure->Details}};
+    return CommandJson{{"command", R.Command},
+                       {"invocation", R.Invocation},
+                       {"frame", R.Frame ? CommandJson(*R.Frame) : CommandJson(nullptr)},
+                       {"status", static_cast<int>(R.Status)},
+                       {"output", R.Output},
+                       {"failure", std::move(Failure)}}
+        .dump(-1, ' ', false, CommandJson::error_handler_t::replace)
+        .size();
+}
+auto CommandDispatcher::Deliver(Invocation& Call, CommandResult Result) -> void {
+    if (TerminalSize(Result) > Call.Entry->Desc.MaxResultBytes) {
+        Result.Output  = nullptr;
+        Result.Status  = CommandStatus::Failed;
+        Result.Failure = CommandFailure{.Code = "result_budget", .Message = "Result budget exceeded"};
+    }
+    if (Call.Completion)
+        Call.Completion(std::move(Result));
+    else if (Result.Failure) {
+        std::scoped_lock Lock(m_Mutex);
+        if (m_Diagnostics.size() == 64)
+            m_Diagnostics.erase(m_Diagnostics.begin());
+        m_Diagnostics.push_back(std::move(Result));
+    }
+}
 auto CommandDispatcher::TakeDiagnostics() -> std::vector<CommandResult> {
     std::scoped_lock Lock(m_Mutex);
     auto             Result = std::move(m_Diagnostics);
@@ -38,11 +125,11 @@ auto CommandDispatcher::Shutdown() -> void {
     m_Registry.clear();
     Lock.unlock();
     for (auto& Call : Pending)
-        if (Call.Completion)
-            Call.Completion(CommandResult{.Command    = Call.Entry->Desc.Name,
-                                          .Invocation = Call.Id,
-                                          .Status     = CommandStatus::Cancelled,
-                                          .Failure    = CommandFailure{"shutdown", "Command dispatcher stopped", {}}});
+        Deliver(Call,
+                CommandResult{.Command    = Call.Entry->Desc.Name,
+                              .Invocation = Call.Id,
+                              .Status     = CommandStatus::Cancelled,
+                              .Failure = CommandFailure{.Code = "shutdown", .Message = "Command dispatcher stopped"}});
 }
 auto CommandDispatcher::Retire(Uint64 RegistrationId) -> void {
     std::unique_lock Lock(m_Mutex);
@@ -68,18 +155,16 @@ auto CommandDispatcher::Retire(Uint64 RegistrationId) -> void {
     }
     Lock.unlock();
     for (auto& Call : Retired)
-        if (Call.Completion)
-            Call.Completion(
+        Deliver(Call,
                 CommandResult{.Command    = Call.Entry->Desc.Name,
                               .Invocation = Call.Id,
                               .Status     = CommandStatus::Cancelled,
-                              .Failure    = CommandFailure{"provider_retired", "Command provider retired", {}}});
+                              .Failure =
+                                  CommandFailure{.Code = "provider_retired", .Message = "Command provider retired"}});
 }
-auto CommandDispatcher::Register(String Name, std::function<void()> Handler) -> void {
-    auto Result =
-        RegisterErased(CommandDescriptor{.Name = std::move(Name)},
-                       [Handler = std::move(Handler)](CommandContext&, const CommandJson&) -> void { Handler(); });
-    (void)Result;
+auto CommandDispatcher::Register(String Name, std::function<void()> Handler) -> std::expected<Uint64, ErrorMessage> {
+    return RegisterErased(CommandDescriptor{.Name = std::move(Name)},
+                          [Handler = std::move(Handler)](CommandContext&, const CommandJson&) -> void { Handler(); });
 }
 auto CommandDispatcher::RegisterErased(CommandDescriptor                                        Desc,
                                        std::function<void(CommandContext&, const CommandJson&)> Handler)
@@ -87,8 +172,19 @@ auto CommandDispatcher::RegisterErased(CommandDescriptor                        
     std::scoped_lock Lock(m_Mutex);
     if (m_IsClosed)
         return std::unexpected(ErrorMessage("Dispatcher closed"));
+    if (Desc.Phase != CommandPhase::Input && Desc.Phase != CommandPhase::Action &&
+        Desc.Phase != CommandPhase::PostUpdate)
+        return std::unexpected(ErrorMessage("Invalid command phase"));
     if (Desc.Name.empty() || m_Registry.contains(Desc.Name))
         return std::unexpected(ErrorMessage("Duplicate or empty command name"));
+    CommandResult MinimumResult{.Command    = Desc.Name,
+                                .Invocation = std::numeric_limits<Uint64>::max(),
+                                .Frame      = std::numeric_limits<Uint64>::max(),
+                                .Status     = CommandStatus::Failed,
+                                .Failure =
+                                    CommandFailure{.Code = "result_budget", .Message = "Result budget exceeded"}};
+    if (Desc.MaxResultBytes < TerminalSize(MinimumResult))
+        return std::unexpected(ErrorMessage("Result budget cannot hold terminal metadata"));
     Desc.Schema = CommandJson{{"type", "object"},
                               {"properties", CommandJson::object()},
                               {"required", CommandJson::array()},
@@ -97,22 +193,8 @@ auto CommandDispatcher::RegisterErased(CommandDescriptor                        
     for (const auto& Param : Desc.Parameters) {
         if (Param.Minimum && Param.Maximum && *Param.Minimum > *Param.Maximum)
             return std::unexpected(ErrorMessage("Invalid parameter bounds"));
-        if (Param.Default) {
-            const auto& Value = *Param.Default;
-            const bool  Valid = Param.Type == CommandValueType::Json ||
-                                (Param.Type == CommandValueType::String && Value.is_string()) ||
-                                (Param.Type == CommandValueType::Boolean && Value.is_boolean()) ||
-                                (Param.Type == CommandValueType::Integer && Value.is_number_integer()) ||
-                                (Param.Type == CommandValueType::Number && Value.is_number());
-            if (!Valid)
-                return std::unexpected(ErrorMessage("Default type mismatch"));
-            if (Value.is_number()) {
-                auto Number = Value.get<long double>();
-                if (!std::isfinite(Number) || (Param.Minimum && Number < *Param.Minimum) ||
-                    (Param.Maximum && Number > *Param.Maximum))
-                    return std::unexpected(ErrorMessage("Default out of range"));
-            }
-        }
+        if (Param.Default && !IsValidParameter(Param, *Param.Default))
+            return std::unexpected(ErrorMessage("Invalid parameter default"));
         if (Param.Name.empty() || !Names.insert(Param.Name).second)
             return std::unexpected(ErrorMessage("Duplicate or empty parameter name"));
         const auto Type   = Param.Type == CommandValueType::String    ? "string"
@@ -121,7 +203,7 @@ auto CommandDispatcher::RegisterErased(CommandDescriptor                        
                             : Param.Type == CommandValueType::Number  ? "number"
                                                                       : "object";
         auto&      Schema = Desc.Schema["properties"][Param.Name];
-        Schema            = CommandJson{{"type", Type}};
+        Schema            = Param.Type == CommandValueType::Json ? CommandJson::object() : CommandJson{{"type", Type}};
         if (Param.Minimum)
             Schema["minimum"] = static_cast<double>(*Param.Minimum);
         if (Param.Maximum)
@@ -131,7 +213,8 @@ auto CommandDispatcher::RegisterErased(CommandDescriptor                        
         else
             Desc.Schema["required"].push_back(Param.Name);
     }
-    auto Entry = std::make_shared<Registration>(Registration{std::move(Desc), std::move(Handler), m_NextId++});
+    auto Entry = std::make_shared<Registration>(
+        Registration{.Desc = std::move(Desc), .Handler = std::move(Handler), .Id = m_NextId++});
     m_Registry.emplace(Entry->Desc.Name, Entry);
     return Entry->Id;
 }
@@ -160,7 +243,7 @@ auto CommandDispatcher::Submit(StringView         Name,
                                CommandFailure*    Failure) -> std::expected<Uint64, ErrorMessage> {
     auto Reject = [&](String Code, String Message) -> std::expected<Uint64, ErrorMessage> {
         if (Failure)
-            *Failure = CommandFailure{std::move(Code), Message, {}};
+            *Failure = CommandFailure{.Code = std::move(Code), .Message = Message};
         return std::unexpected(ErrorMessage(std::move(Message)));
     };
     std::scoped_lock Lock(m_Mutex);
@@ -199,23 +282,9 @@ auto CommandDispatcher::Submit(StringView         Name,
     }
     if (Values.size() != Entry->Desc.Parameters.size())
         return Reject("invalid_arguments", "Argument count mismatch");
-    for (std::size_t I = 0; I < Values.size(); ++I) {
-        auto        Type  = Entry->Desc.Parameters[I].Type;
-        const auto& Value = Values[I];
-        bool        Valid = Type == CommandValueType::Json || (Type == CommandValueType::String && Value.is_string()) ||
-                            (Type == CommandValueType::Boolean && Value.is_boolean()) ||
-                            (Type == CommandValueType::Integer && Value.is_number_integer()) ||
-                            (Type == CommandValueType::Number && Value.is_number());
-        if (!Valid)
-            return Reject("invalid_arguments", "Argument type mismatch");
-        const auto& Parameter = Entry->Desc.Parameters[I];
-        if (Value.is_number()) {
-            const auto Number = Value.get<long double>();
-            if (!std::isfinite(Number) || (Parameter.Minimum && Number < *Parameter.Minimum) ||
-                (Parameter.Maximum && Number > *Parameter.Maximum))
-                return Reject("invalid_arguments", "Argument out of range");
-        }
-    }
+    for (std::size_t I = 0; I < Values.size(); ++I)
+        if (!IsValidParameter(Entry->Desc.Parameters[I], Values[I]))
+            return Reject("invalid_arguments", "Argument type or range mismatch");
     if (Values.dump(-1, ' ', false, CommandJson::error_handler_t::replace).size() > Entry->Desc.MaxArgumentBytes)
         return Reject("invalid_arguments", "Argument budget exceeded");
     if (m_Outstanding >= m_Capacity)
@@ -223,7 +292,11 @@ auto CommandDispatcher::Submit(StringView         Name,
     const auto Id = m_NextId++;
     ++m_Outstanding;
     m_PendingIds.insert(Id);
-    m_Queue.push_back(Invocation{Entry, std::move(Values), Id, std::move(Completion), Options});
+    m_Queue.push_back(Invocation{.Entry      = Entry,
+                                 .Arguments  = std::move(Values),
+                                 .Id         = Id,
+                                 .Completion = std::move(Completion),
+                                 .Options    = Options});
     return Id;
 }
 auto CommandDispatcher::ExecutePhase(CommandPhase Phase, Uint64 Frame, std::size_t Budget, Uint64 Now) -> void {
@@ -258,20 +331,15 @@ auto CommandDispatcher::ExecutePhase(CommandPhase Phase, Uint64 Frame, std::size
                 std::scoped_lock CountLock(m_Mutex);
                 --m_Outstanding;
             }
-            if (Call.Completion)
-                Call.Completion(CommandResult{.Command    = Call.Entry->Desc.Name,
-                                              .Invocation = Call.Id,
-                                              .Status     = CommandStatus::Cancelled,
-                                              .Failure    = CommandFailure{Reason, "Command did not start", {}}});
+            Deliver(Call,
+                    CommandResult{.Command    = Call.Entry->Desc.Name,
+                                  .Invocation = Call.Id,
+                                  .Status     = CommandStatus::Cancelled,
+                                  .Failure    = CommandFailure{.Code = Reason, .Message = "Command did not start"}});
             continue;
         }
         CommandContext Context;
         Call.Entry->Handler(Context, Call.Arguments);
-        if (Context.m_Output.dump(-1, ' ', false, CommandJson::error_handler_t::replace).size() >
-            Call.Entry->Desc.MaxResultBytes) {
-            Context.m_Output = nullptr;
-            Context.Fail("result_budget", "Command result exceeded its budget");
-        }
         CommandResult Result{.Command    = Call.Entry->Desc.Name,
                              .Invocation = Call.Id,
                              .Frame      = Frame,
@@ -282,14 +350,7 @@ auto CommandDispatcher::ExecutePhase(CommandPhase Phase, Uint64 Frame, std::size
             std::scoped_lock CountLock(m_Mutex);
             --m_Outstanding;
         }
-        if (Call.Completion)
-            Call.Completion(std::move(Result));
-        else if (Result.Failure) {
-            std::scoped_lock DiagnosticLock(m_Mutex);
-            if (m_Diagnostics.size() == 64)
-                m_Diagnostics.erase(m_Diagnostics.begin());
-            m_Diagnostics.push_back(std::move(Result));
-        }
+        Deliver(Call, std::move(Result));
     }
     Lock.lock();
     m_IsDispatching = false;

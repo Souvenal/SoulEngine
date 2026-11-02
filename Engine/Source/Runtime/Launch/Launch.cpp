@@ -87,7 +87,7 @@ auto EngineLoop::Init() -> std::expected<void, ErrorMessage> {
 
     m_Editor.Initialize();
     if (auto Bound = m_Editor.BindCommands(m_Commands); !Bound)
-        return std::unexpected(Bound.error());
+        return std::unexpected(Bound.error().Append("Engine initialization command binding failed"));
 
     auto WinResult = CreateWindowSystem();
     if (!WinResult)

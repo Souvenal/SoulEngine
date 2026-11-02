@@ -44,7 +44,7 @@ auto Editor::BindCommands(CommandDispatcher& Commands) -> std::expected<void, Er
         return std::unexpected(ErrorMessage("Editor commands already bound"));
     auto Registered = UIManager::Get().RegisterSettingsCommand(Commands);
     if (!Registered)
-        return std::unexpected(Registered.error());
+        return std::unexpected(Registered.error().Append("Failed to bind Editor commands"));
     m_Commands        = &Commands;
     m_SettingsCommand = *Registered;
     return {};
