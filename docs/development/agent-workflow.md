@@ -70,7 +70,7 @@ Before ending, read back published comments, provide their URLs, and distinguish
 
 ## Implementation And Handoff
 
-1. Implement only the agreed issue scope in the temporary feature branch. Before a stacked leaf handoff, merge the current capability integration tip into the leaf and rerun affected checks; report the tip incorporated. Coordinate local integration changes with the stack owner.
+1. Implement only the agreed issue scope in the temporary feature branch. Before a stacked leaf handoff, merge the current capability integration tip into the leaf and rerun affected checks; report the tip incorporated. This parent-to-leaf freshness merge is not integration; rerun review against the refreshed head before approval.
 2. Run the validation appropriate to the change and record the commands and results. Documentation-only changes should use document-contract and diff-scope checks; runtime or C++ tests are not required unless the issue changes runtime behavior.
 3. Finish with a review handoff containing:
    - issue and agreed scope;
@@ -85,15 +85,15 @@ Before ending, read back published comments, provide their URLs, and distinguish
 ## Review And Approval Gates
 
 1. The maintainer reviews the handoff and the branch diff in the preserved worktree.
-2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, use the recorded target: `main` for ordinary features and completed capabilities, or the approved capability integration branch for leaves. Include issue scope and validation results. Stacked delivery and local integration authorization do not waive this PR gate.
+2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, use the recorded target: `main` for ordinary features and completed capabilities, or the approved capability integration branch for leaves. Include issue scope and validation results. Stacked delivery does not waive this PR gate.
 3. The maintainer decides when the pull request is merged. Automated checks are validation evidence, not human review or merge authorization.
 4. Issue closure, remote branch deletion, branch protection changes, force pushes, releases, and other repository administration each require separate explicit maintainer authorization.
 
 ## Integration And Cleanup
 
-1. After explicit approval, verify the actual target baseline: the capability integration tip for a leaf, and fetched `origin/main` for ordinary or final capability integration. If it changed, update in the preserved worktree, rerun affected validation, and obtain review approval again. A local leaf/integration merge explicitly requested by the implementation workflow may proceed within that scope; remote PR/mainline merge and administration gates remain separate.
+1. After explicit approval, verify the actual target baseline: the capability integration tip for a leaf, and fetched `origin/main` for ordinary or final capability integration. If it changed, update in the preserved worktree, rerun affected validation, and obtain review approval again. Integrate a leaf only through its maintainer-approved PR into the capability branch. Agents do not self-merge leaf branches into the capability. Parent-to-leaf freshness merges require renewed validation and review; they do not advance delivery state.
 2. The maintainer merges the approved pull request to `main` with squash merge, producing one concentrated mainline commit for the reviewed development effort.
-3. Validate each combined capability after local/approved leaf integration. Before the final capability PR, incorporate fetched `origin/main`, validate the complete capability diff, and obtain maintainer review approval. Verify the final squash commit and required checks on `main` before cleanup; leaf integration alone does not establish mainline delivery.
+3. Validate each combined capability after an authorized leaf PR merge. Before the final capability PR, incorporate fetched `origin/main`, validate the complete capability diff, and obtain maintainer review approval. Verify the final squash commit and required checks on `main` before cleanup; leaf integration alone does not establish mainline delivery.
 4. Only after maintainer authorization and successful verification, remove the temporary worktree first, then delete its local and remote feature branch:
 
    ```text
