@@ -18,8 +18,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Select PR builds when at least one changed path is not Markdown. Other events and detection failures
+  # select full builds.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      non_markdown: ${{ steps.filter.outputs.non_markdown }}
+    steps:
+      - name: Detect non-Markdown changes
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            non_markdown:
+              - '**'
+              - '!**/*.md'
+
   build-macos:
     name: build-macos
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' ||
+      needs.changes.outputs.non_markdown == 'true') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -60,6 +83,8 @@ jobs:
           actions-cache-key: xmake-${{ runner.os }}-homebrew-llvm23-3.1.1
           package-cache: true
           package-cache-key: pkg-v2-${{ runner.os }}-homebrew-llvm23
+          build-cache: true
+          build-cache-key: build-v1-${{ runner.os }}-homebrew-llvm23-xmake3.1.1-release
 
       # Required on fresh checkouts: the project's souvenal-repo clone lives under .xmake/ and xmake does not
       # re-clone it automatically; omitting it yields a misleading "package not found in any repository" error.
@@ -76,6 +101,10 @@ jobs:
 
   build-windows:
     name: build-windows
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' ||
+      needs.changes.outputs.non_markdown == 'true') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -104,6 +133,8 @@ jobs:
           actions-cache-key: xmake-${{ runner.os }}-llvm23-3.1.1
           package-cache: true
           package-cache-key: pkg-v2-${{ runner.os }}-llvm23
+          build-cache: true
+          build-cache-key: build-v1-${{ runner.os }}-llvm23-xmake3.1.1-release
 
       - name: Sync package repositories
         run: xmake repo -u
