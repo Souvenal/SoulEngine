@@ -152,3 +152,45 @@ jobs:
 
       - name: Build
         run: xmake -y
+
+  # Accept successful builds and expected Markdown-only skips; all other outcomes fail the stable repository gate.
+  ci-result:
+    name: ci-result
+    needs: [changes, build-macos, build-windows]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify build results
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          NON_MARKDOWN: ${{ needs.changes.outputs.non_markdown }}
+          MACOS_RESULT: ${{ needs['build-macos'].result }}
+          WINDOWS_RESULT: ${{ needs['build-windows'].result }}
+        run: |
+          set -euo pipefail
+          allowed_skip=false
+          if [[ "$EVENT_NAME" == "pull_request" &&
+                "$CHANGES_RESULT" == "success" &&
+                "$NON_MARKDOWN" == "false" ]]; then
+            allowed_skip=true
+          fi
+
+          check_result() {
+            local name="$1"
+            local result="$2"
+
+            if [[ "$result" == "success" ]]; then
+              return 0
+            fi
+            if [[ "$allowed_skip" == "true" && "$result" == "skipped" ]]; then
+              return 0
+            fi
+
+            printf '%s: unexpected result %s\n' "$name" "$result" >&2
+            return 1
+          }
+
+          check_result build-macos "$MACOS_RESULT"
+          check_result build-windows "$WINDOWS_RESULT"
