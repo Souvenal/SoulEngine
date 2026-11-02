@@ -25,10 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     outputs:
-      non_markdown: ${{ steps.filter.outputs.non_markdown }}
+      non_markdown: ${{ steps.filter.outputs.non_markdown || steps.overflow.outputs.non_markdown }}
     steps:
       - name: Detect non-Markdown changes
         id: filter
+        if: github.event.pull_request.changed_files < 3000
         uses: dorny/paths-filter@v4
         with:
           predicate-quantifier: some-with-excludes
@@ -36,6 +37,13 @@ jobs:
             non_markdown:
               - '**'
               - '!**/*.md'
+
+      # The PR file API caps results at 3,000 paths, so the boundary selects a full build.
+      - name: Select full build at the API file limit
+        id: overflow
+        if: github.event.pull_request.changed_files >= 3000
+        shell: bash
+        run: echo "non_markdown=true" >> "$GITHUB_OUTPUT"
 
   build-macos:
     name: build-macos
