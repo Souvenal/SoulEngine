@@ -1,6 +1,6 @@
 # ADR Catalog
 
-ADRs record hard-to-reverse project and architecture decisions: system shape, cross-module boundaries, technology lock-in, non-obvious constraints, and rejected alternatives that a future maintainer would otherwise reopen. Coding rules and detailed implementation guidance belong in the standards hierarchy.
+ADRs record hard-to-reverse project and architecture decisions: system shape, cross-module boundaries, technology lock-in, non-obvious constraints, and rejected alternatives that a future maintainer would otherwise reopen. Coding rules belong in the standards hierarchy; versioned implementation contracts belong in development documentation.
 
 ## Before editing an ADR
 
