@@ -10,6 +10,7 @@ export module Launch;
 import Core;
 import WindowSystem;
 import Editor;
+import EditorCommands;
 import RHI;
 import Scene;
 import Renderer;
@@ -72,6 +73,8 @@ export class EngineLoop {
     auto RHILoop(std::stop_token Stop) -> void;
     // State
 
+    CommandDispatcher                     m_Commands;
+    Uint64                                m_CommandFrame = 0;
     Editor                                m_Editor;
     UPtr<IWindowSystem>                   m_WindowSystem;
     std::chrono::steady_clock::time_point m_LastTickTime;

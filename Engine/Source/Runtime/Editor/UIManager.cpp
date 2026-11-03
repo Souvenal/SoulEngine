@@ -6,6 +6,22 @@ import std;
 
 namespace SoulEngine {
 
+auto UIManager::SubmitSettingsToggle(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage> {
+    return Commands.SubmitByUser("editor.panel.toggle", String("Settings"));
+}
+auto UIManager::RegisterSettingsCommand(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage> {
+    return Commands.Register(CommandDescriptor{.Name           = "editor.panel.toggle",
+                                               .Parameters     = {{.Name = "panel"}},
+                                               .IsAgentExposed = true,
+                                               .Category       = CommandCategory::Input},
+                             [this](CommandContext& Context, String Panel) -> void {
+                                 if (Panel != "Settings" || !m_Entries.contains(Panel)) {
+                                     Context.Fail("stale_target", "Settings panel is unavailable");
+                                     return;
+                                 }
+                                 ToggleUI(Panel);
+                             });
+}
 auto UIManager::Register(std::string name, std::function<void()> callback, bool defaultShow) -> void {
     m_Entries[std::move(name)] = {std::move(callback), defaultShow};
 }

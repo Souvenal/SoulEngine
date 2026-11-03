@@ -11,6 +11,7 @@ includes("TaskGraph")
 includes("Application")
 includes("RenderGraph")
 includes("Renderer")
+includes("EditorCommands")
 includes("Editor")
 includes("Launch")
 

@@ -86,6 +86,8 @@ auto EngineLoop::Init() -> std::expected<void, ErrorMessage> {
     LogInfo("Soul Engine Initializing...");
 
     m_Editor.Initialize();
+    if (auto Bound = m_Editor.BindCommands(m_Commands); !Bound)
+        return std::unexpected(Bound.error().Append("Engine initialization command binding failed"));
 
     auto WinResult = CreateWindowSystem();
     if (!WinResult)
@@ -148,6 +150,8 @@ auto EngineLoop::Run() -> void {
 
 auto EngineLoop::Shutdown() -> void {
     LogInfo("Shutting down...");
+    m_Commands.Shutdown();
+    m_Editor.UnbindCommands();
 
     // Request stop BEFORE notifying CVs — otherwise threads wake, check stop_requested() == false, go
     // back to sleep, and never wake again because request_stop() does not notify condition variables.
@@ -231,6 +235,10 @@ auto EngineLoop::GameLoop() -> void {
             break;
 
         FrameMarkStart(kGameFrameName);
+        ++m_CommandFrame;
+        const auto CommandTime =
+            static_cast<Uint64>(std::chrono::duration_cast<std::chrono::milliseconds>(Now.time_since_epoch()).count());
+        m_Commands.ExecutePhase(CommandPhase::Input, m_CommandFrame, 64, CommandTime);
 
         // Each engine loop owns an independent ordinal. Render/RHI tasks carry the producer's ordinal and
         // execute when the consumer reaches the same pipeline position.
@@ -243,6 +251,7 @@ auto EngineLoop::GameLoop() -> void {
         // must render into a fresh one.
         Slot.ImGuiSnapshot = std::make_unique<ImDrawDataSnapshot>();
         m_Editor.Tick(Delta, *Slot.ImGuiSnapshot);
+        m_Commands.ExecutePhase(CommandPhase::Action, m_CommandFrame, 64, CommandTime);
 
         auto* CurrentApplication = GetCurrentApplication();
         if (!CurrentApplication) {
@@ -259,6 +268,9 @@ auto EngineLoop::GameLoop() -> void {
         auto& AppScene = CurrentApplication->GetScene();
         AppScene.UpdateTime();
         AppScene.Tick(Delta);
+        m_Commands.ExecutePhase(CommandPhase::PostUpdate, m_CommandFrame, 64, CommandTime);
+        for (const auto& Diagnostic : m_Commands.TakeDiagnostics())
+            LogError("Command {} failed: {}", Diagnostic.Command, Diagnostic.Failure->Message);
         Slot.GameData   = AppScene.BuildSnapshot();
         Slot.EditorData = m_Editor.BuildSnapshot();
 

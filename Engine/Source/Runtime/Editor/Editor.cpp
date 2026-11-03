@@ -39,6 +39,22 @@ auto Editor::Initialize() -> void {
     InitializeUI();
 }
 
+auto Editor::BindCommands(CommandDispatcher& Commands) -> std::expected<void, ErrorMessage> {
+    if (m_Commands)
+        return std::unexpected(ErrorMessage("Editor commands already bound"));
+    auto Registered = UIManager::Get().RegisterSettingsCommand(Commands);
+    if (!Registered)
+        return std::unexpected(Registered.error().Append("Failed to bind Editor commands"));
+    m_Commands        = &Commands;
+    m_SettingsCommand = *Registered;
+    return {};
+}
+auto Editor::UnbindCommands() -> void {
+    if (m_Commands)
+        m_Commands->Retire(m_SettingsCommand);
+    m_Commands        = nullptr;
+    m_SettingsCommand = 0;
+}
 auto Editor::BindScene(const Scene& SceneValue) -> void {
     m_Scene = &SceneValue;
 }
@@ -91,6 +107,7 @@ auto Editor::ReleaseRHIResources() -> void {
 }
 
 auto Editor::Shutdown() -> void {
+    UnbindCommands();
     if (m_BoundRenderDevice)
         ReleaseRHIResources();
     if (!m_ImGuiContext)
@@ -131,8 +148,10 @@ auto Editor::DrawMainMenu() -> void {
         return;
 
     if (ImGui::BeginMenu("Settings")) {
-        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")))
-            UIManager::Get().ToggleUI("Settings");
+        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")) && m_Commands) {
+            if (auto Submitted = UIManager::Get().SubmitSettingsToggle(*m_Commands); !Submitted)
+                LogError("Settings command failed: {}", Submitted.error().ToString());
+        }
         ImGui::EndMenu();
     }
 

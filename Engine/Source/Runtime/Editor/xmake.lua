@@ -6,12 +6,12 @@ soul_module("EditorTypes", {
 })
 
 soul_module("Editor", {
-    deps     = {"Application", "Core", "EditorTypes", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem"},
+    deps     = {"Application", "Core", "EditorCommands", "EditorTypes", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem"},
     -- public: consumers (Launch -> SoulEngine.exe) must link the imgui archive.
     packages = {"magic_enum", "entt", "hlslpp", "imgui", "imgui-club"},
     excludes = {"EditorTypes.cppm"},
     impl = {
-        deps     = {"Application", "Core", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem"},
+        deps     = {"Application", "Core", "EditorCommands", "Renderer", "RHI", "Scene", "TaskGraph", "WindowSystem"},
         packages = {"magic_enum", "entt", "hlslpp", "imgui", "imgui-club"},
     },
     tests = {additional_packages = {"imgui", "imgui-club"}},
