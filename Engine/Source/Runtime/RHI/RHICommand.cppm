@@ -44,11 +44,10 @@ export struct RHIDrawIndirectCmd {
 
 /// @brief Draw indexed primitives from GPU-written indexed indirect commands.
 export struct RHIDrawIndexedIndirectCmd {
-    std::array<RHIBufferView, kMaxVertexBufferBindings> VertexBuffers     = {};
-    Uint32                                              VertexBufferCount = 0;
-    RHIBufferView                                       IndexBuffer       = {};
-    RHIBufferView                                       IndirectBuffer    = {};
-    Uint32                                              DrawCount         = 1;
+    std::vector<RHIBufferView> VertexBuffers  = {};
+    RHIBufferView              IndexBuffer    = {};
+    RHIBufferView              IndirectBuffer = {};
+    Uint32                     DrawCount      = 1;
 };
 
 /// @brief Dispatch compute workgroups.

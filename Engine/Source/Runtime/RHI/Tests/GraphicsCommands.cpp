@@ -146,7 +146,7 @@ TEST_F(GraphicsCommandTest, RecordsIndexedInputsAndRetainsReferencedBuffers) {
     ASSERT_EQ(Commands.size(), 1u);
     const auto* Draw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands.front());
     ASSERT_NE(Draw, nullptr);
-    EXPECT_EQ(Draw->VertexBufferCount, 1u);
+    ASSERT_EQ(Draw->VertexBuffers.size(), 1u);
     EXPECT_EQ(Draw->VertexBuffers[0].Buffer.TryGet(), Vertex.TryGet());
     EXPECT_EQ(Draw->VertexBuffers[0].Offset, 16u);
     EXPECT_EQ(Draw->VertexBuffers[0].Range, 96u);
@@ -341,9 +341,9 @@ TEST_F(GraphicsCommandTest, AllowsEmptyVertexViewsAndRecordsFourStreams) {
     const auto* Four  = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
     ASSERT_NE(Empty, nullptr);
     ASSERT_NE(Four, nullptr);
-    EXPECT_EQ(Empty->VertexBufferCount, 0u);
-    EXPECT_EQ(Four->VertexBufferCount, 4u);
-    for (Uint32 I = 0; I < Four->VertexBufferCount; ++I)
+    EXPECT_TRUE(Empty->VertexBuffers.empty());
+    ASSERT_EQ(Four->VertexBuffers.size(), 4u);
+    for (std::size_t I = 0; I < Four->VertexBuffers.size(); ++I)
         EXPECT_EQ(Four->VertexBuffers[I].Buffer.TryGet(), Buffers[I].TryGet());
 }
 

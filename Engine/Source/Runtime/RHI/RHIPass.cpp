@@ -120,11 +120,11 @@ auto IRHIGraphicsPass::DrawIndexedIndirect(RHIBufferView                  Indire
             VertexRange % sizeof(Uint32) != 0)
             return std::unexpected(ErrorMessage("Indexed draw vertex buffer view range is invalid"));
     }
-    RHIDrawIndexedIndirectCmd Cmd{.VertexBufferCount = static_cast<Uint32>(VertexBuffers.size()),
-                                  .IndexBuffer       = std::move(IndexBuffer),
-                                  .IndirectBuffer    = std::move(IndirectBuffer),
-                                  .DrawCount         = DrawCount};
-    std::ranges::copy(VertexBuffers, Cmd.VertexBuffers.begin());
+    RHIDrawIndexedIndirectCmd Cmd{.VertexBuffers =
+                                      std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
+                                  .IndexBuffer    = std::move(IndexBuffer),
+                                  .IndirectBuffer = std::move(IndirectBuffer),
+                                  .DrawCount      = DrawCount};
     m_Commands.emplace_back(std::move(Cmd));
     return {};
 }

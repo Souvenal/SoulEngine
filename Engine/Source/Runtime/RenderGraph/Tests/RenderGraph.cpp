@@ -1112,8 +1112,8 @@ TEST(RenderGraphDynamicViews, IndexedElementsProduceVertexInputPrologueAndComman
     EXPECT_EQ(FirstDraw->IndexBuffer.Access, RHIAccess::Read);
     EXPECT_EQ(FirstDraw->IndirectBuffer.Usage, RHIBufferUsage::Indirect);
     EXPECT_EQ(FirstDraw->IndirectBuffer.Access, RHIAccess::Read);
-    EXPECT_EQ(FirstDraw->VertexBufferCount, 0u);
-    EXPECT_EQ(SecondDraw->VertexBufferCount, 0u);
+    EXPECT_TRUE(FirstDraw->VertexBuffers.empty());
+    EXPECT_TRUE(SecondDraw->VertexBuffers.empty());
 }
 
 TEST(RenderGraphSyncPlan, VertexUsageRequestsVertexInputStage) {

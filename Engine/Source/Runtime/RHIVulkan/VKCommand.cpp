@@ -206,13 +206,13 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndirectCmd& Cmd) -> void
 }
 
 auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) -> void {
-    if (Cmd.VertexBufferCount > kMaxVertexBufferBindings || Cmd.DrawCount == 0 ||
+    if (Cmd.VertexBuffers.size() > kMaxVertexBufferBindings || Cmd.DrawCount == 0 ||
         Cmd.DrawCount > VulkanCapability::Get().GetProperties().limits.maxDrawIndirectCount) {
         Error = ErrorMessage("Indexed indirect draw has invalid vertex-buffer or draw-count values");
         return;
     }
     for (const auto& Binding : m_Pipeline.GetVertexInputLayout().Bindings) {
-        if (Binding.Binding >= Cmd.VertexBufferCount) {
+        if (Binding.Binding >= Cmd.VertexBuffers.size()) {
             Error = ErrorMessage("Indexed draw is missing a pipeline vertex input binding");
             return;
         }
@@ -250,7 +250,7 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
     }
     std::array<vk::Buffer, kMaxVertexBufferBindings>     VertexHandles = {};
     std::array<vk::DeviceSize, kMaxVertexBufferBindings> VertexOffsets = {};
-    for (Uint32 I = 0; I < Cmd.VertexBufferCount; ++I) {
+    for (std::size_t I = 0; I < Cmd.VertexBuffers.size(); ++I) {
         const auto& View     = Cmd.VertexBuffers[I];
         const auto* Resource = View.Buffer.TryGet();
         if (!Resource || !magic_enum::enum_flags_test(Resource->GetUsage(), RHIBufferUsage::Vertex) ||
@@ -273,10 +273,10 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
     }
     const auto& Index     = static_cast<const VulkanBuffer&>(*IndexBufferPtr);
     const auto* IndexProp = Index.GetProp<TransientBufferProp>();
-    if (Cmd.VertexBufferCount != 0)
+    if (!Cmd.VertexBuffers.empty())
         Buf.bindVertexBuffers(0,
-                              std::span<const vk::Buffer>(VertexHandles.data(), Cmd.VertexBufferCount),
-                              std::span<const vk::DeviceSize>(VertexOffsets.data(), Cmd.VertexBufferCount));
+                              std::span<const vk::Buffer>(VertexHandles.data(), Cmd.VertexBuffers.size()),
+                              std::span<const vk::DeviceSize>(VertexOffsets.data(), Cmd.VertexBuffers.size()));
     Buf.bindIndexBuffer(Index.GetVkBuffer(),
                         (IndexProp ? IndexProp->Allocation.Offset : 0) + Cmd.IndexBuffer.Offset,
                         vk::IndexType::eUint32);
