@@ -96,9 +96,13 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
             return std::unexpected(R.error());
         if (auto R = BindResources(std::array{
                 RHIShaderBindingRequest{"g_selectionMaskDraw.instances", m_Parameter->SelectedInstances.ResolvedView()},
-                RHIShaderBindingRequest{"g_selectionMaskDraw.geometryTable.records",
-                                        m_Parameter->GeometryTable.ResolvedView()},
                 RHIShaderBindingRequest{"g_selectionMaskDraw.materials", m_Parameter->MaterialTable.ResolvedView()},
+            });
+            !R)
+            return std::unexpected(R.error());
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_selectionMaskPulling.geometryTable.records",
+                                        m_Parameter->GeometryTable.ResolvedView()},
             });
             !R)
             return std::unexpected(R.error());
@@ -111,6 +115,129 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
 
   private:
     UPtr<Parameter> m_Parameter;
+};
+
+export class VertexInputSelectionMaskPass final : public IRHIGraphicsPass {
+  public:
+    static constexpr StringView Name = "VertexInputSelectionMaskPass";
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
+
+    /// Static pipeline descriptor for PipelineRegistry::Register<VertexInputSelectionMaskPass>().
+    [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
+        const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionMask.slang";
+        return GraphicsPipelineRequest{
+            .VertEntry = {.SourcePath = ShaderPath, .EntryPoint = "vertVertexInputMain"},
+            .FragEntry = {.SourcePath = ShaderPath, .EntryPoint = "fragMain"},
+            .VertexInputLayout =
+                RHIVertexInputLayoutDesc{
+                    .Bindings   = {{.Binding = 0, .Stride = sizeof(Float32) * 3},
+                                   {.Binding = 1, .Stride = sizeof(Float32) * 2}},
+                    .Attributes = {{.Location = 0, .Binding = 0, .Format = RHIFormat::R32G32B32_SFLOAT, .Offset = 0},
+                                   {.Location = 1, .Binding = 1, .Format = RHIFormat::R32G32_SFLOAT, .Offset = 0}}},
+            .ColorAttachments = {{.Format = RHIFormat::R8_UNORM}},
+        };
+    }
+
+    /// @brief The pass's resource declaration.
+    struct Parameter {
+        RGTextureView<RHITextureUsage::RenderTarget, RHIAccess::Write>       Mask;
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               SelectedInstances;
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> SelectedIndirectBuffers = {};
+        RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>               MaterialTable;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>              FrameBuffer;
+        RGBufferView<RHIBufferUsage::Constant, RHIAccess::Read>              ViewBuffer;
+        std::vector<RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read>>   VertexBuffers = {};
+        std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>    IndexBuffers  = {};
+        RHIRef<RHISampler>                                                   LinearSampler = nullptr;
+        Uint32                                                               DrawCount     = 0;
+    };
+
+    VertexInputSelectionMaskPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
+
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        m_Commands.clear();
+        m_Attachments = {};
+
+        if (!m_Parameter->Mask.Resolved || !m_Parameter->FrameBuffer.Resolved || !m_Parameter->ViewBuffer.Resolved ||
+            !m_Parameter->LinearSampler || !m_Parameter->SelectedInstances.Resolved ||
+            !m_Parameter->MaterialTable.Resolved || m_Parameter->DrawCount == 0) {
+            return std::unexpected(ErrorMessage("VertexInput selection mask pass resources are not ready"));
+        }
+        if (m_Parameter->SelectedIndirectBuffers.size() != m_Parameter->DrawCount ||
+            m_Parameter->IndexBuffers.size() != m_Parameter->DrawCount) {
+            return std::unexpected(
+                ErrorMessage("VertexInput selection mask pass resources are not ready: indirect/index buffer count"));
+        }
+        if (m_Parameter->VertexBuffers.size() != m_Parameter->DrawCount * kVertexStreamCount) {
+            return std::unexpected(
+                ErrorMessage("VertexInput selection mask pass resources are not ready: vertex buffer count"));
+        }
+        for (const auto& View : m_Parameter->VertexBuffers) {
+            if (!View.Resolved) {
+                return std::unexpected(
+                    ErrorMessage("VertexInput selection mask pass resources are not ready: vertex buffer"));
+            }
+        }
+        for (const auto& View : m_Parameter->SelectedIndirectBuffers) {
+            if (!View.Resolved) {
+                return std::unexpected(
+                    ErrorMessage("VertexInput selection mask pass resources are not ready: indirect buffer"));
+            }
+        }
+        for (const auto& View : m_Parameter->IndexBuffers) {
+            if (!View.Resolved) {
+                return std::unexpected(
+                    ErrorMessage("VertexInput selection mask pass resources are not ready: index buffer"));
+            }
+        }
+
+        m_Attachments = RHIGraphicsAttachments{
+            .ColorAttachments =
+                {
+                    {.View       = m_Parameter->Mask.ResolvedView(),
+                     .ClearValue = std::array<Float32, 4>{0.0f, 0.0f, 0.0f, 0.0f}},
+                },
+        };
+        SetViewport(0.0f,
+                    0.0f,
+                    static_cast<Float32>(m_Parameter->Mask.Resolved->GetWidth()),
+                    static_cast<Float32>(m_Parameter->Mask.Resolved->GetHeight()));
+        SetScissorRect(0, 0, m_Parameter->Mask.Resolved->GetWidth(), m_Parameter->Mask.Resolved->GetHeight());
+
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_selectionMaskFrameView.frame", m_Parameter->FrameBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionMaskFrameView.view", m_Parameter->ViewBuffer.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionMaskFrameView.linearSampler",
+                                        RHISamplerView{.Sampler = m_Parameter->LinearSampler}},
+            });
+            !R) {
+            return std::unexpected(R.error());
+        }
+        if (auto R = BindResources(std::array{
+                RHIShaderBindingRequest{"g_selectionMaskDraw.instances", m_Parameter->SelectedInstances.ResolvedView()},
+                RHIShaderBindingRequest{"g_selectionMaskDraw.materials", m_Parameter->MaterialTable.ResolvedView()},
+            });
+            !R) {
+            return std::unexpected(R.error());
+        }
+        for (Uint32 Slot = 0; Slot < m_Parameter->DrawCount; ++Slot) {
+            const auto       First = Slot * kVertexStreamCount;
+            const std::array VertexBuffers{
+                m_Parameter->VertexBuffers[First].ResolvedView(),
+                m_Parameter->VertexBuffers[First + 1].ResolvedView(),
+            };
+            DrawIndexedIndirect(VertexBuffers,
+                                m_Parameter->IndexBuffers[Slot].ResolvedView(),
+                                m_Parameter->SelectedIndirectBuffers[Slot].ResolvedView());
+        }
+        return {};
+    }
+
+  private:
+    static constexpr Uint32 kVertexStreamCount = 2;
+    UPtr<Parameter>         m_Parameter;
 };
 
 } // namespace SoulEngine
