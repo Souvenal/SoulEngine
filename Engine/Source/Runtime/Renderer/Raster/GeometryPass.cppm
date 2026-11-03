@@ -116,8 +116,7 @@ export class GeometryPass final : public IRHIGraphicsPass {
             });
             !R)
             return std::unexpected(R.error());
-        DrawIndirect(m_Parameter->IndirectBuffer.Resolved, 0, m_Parameter->DrawCount);
-        return {};
+        return DrawIndirect(m_Parameter->IndirectBuffer.ResolvedView(), m_Parameter->DrawCount);
     }
 
   private:

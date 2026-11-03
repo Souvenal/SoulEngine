@@ -455,9 +455,12 @@ struct DynamicIndirectPass final : IRHIGraphicsPass {
     DynamicIndirectPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
-        DrawIndirect(m_Parameter->Ordinary.Resolved);
-        for (const auto& View : m_Parameter->Dynamic)
-            DrawIndirect(View.Resolved);
+        if (auto Result = DrawIndirect(m_Parameter->Ordinary.ResolvedView()); !Result)
+            return std::unexpected(Result.error());
+        for (const auto& View : m_Parameter->Dynamic) {
+            if (auto Result = DrawIndirect(View.ResolvedView()); !Result)
+                return std::unexpected(Result.error());
+        }
         return {};
     }
 
@@ -481,8 +484,11 @@ struct DynamicIndexedInputPass final : IRHIGraphicsPass {
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
         for (std::size_t I = 0; I < m_Parameter->IndexBuffers.size(); ++I) {
-            BindIndexBuffer(m_Parameter->IndexBuffers[I].Resolved);
-            DrawIndexedIndirect(m_Parameter->Indirect.Resolved, I * sizeof(Uint32) * 5);
+            auto Indirect   = m_Parameter->Indirect.ResolvedView();
+            Indirect.Offset = I * sizeof(RHIIndexedIndirectCommand);
+            Indirect.Range  = sizeof(RHIIndexedIndirectCommand);
+            if (auto Result = DrawIndexedIndirect(Indirect, m_Parameter->IndexBuffers[I].ResolvedView()); !Result)
+                return std::unexpected(Result.error());
         }
         return {};
     }
@@ -1004,9 +1010,9 @@ TEST(RenderGraphDynamicViews, ElementsDeclareResolveAndRecordAlongsideOrdinaryFi
     ASSERT_NE(OrdinaryCommand, nullptr);
     ASSERT_NE(FirstCommand, nullptr);
     ASSERT_NE(SecondCommand, nullptr);
-    EXPECT_EQ(OrdinaryCommand->IndirectBuffer.TryGet(), OrdinaryRef.TryGet());
-    EXPECT_EQ(FirstCommand->IndirectBuffer.TryGet(), FirstRef.TryGet());
-    EXPECT_EQ(SecondCommand->IndirectBuffer.TryGet(), SecondRef.TryGet());
+    EXPECT_EQ(OrdinaryCommand->IndirectBuffer.Buffer.TryGet(), OrdinaryRef.TryGet());
+    EXPECT_EQ(FirstCommand->IndirectBuffer.Buffer.TryGet(), FirstRef.TryGet());
+    EXPECT_EQ(SecondCommand->IndirectBuffer.Buffer.TryGet(), SecondRef.TryGet());
 }
 
 TEST(RenderGraphDynamicViews, EmptyCollectionLeavesTheOrdinaryDeclarationIntact) {
@@ -1076,7 +1082,7 @@ TEST(RenderGraphDynamicViews, IndexedElementsProduceVertexInputPrologueAndComman
     ASSERT_EQ(List->Entries.size(), 1u);
     auto& Entry = List->Entries.front();
     ASSERT_EQ(Entry.Prologue.Buffers.size(), 3u);
-    const auto FindStage = [](const RHIBarrierList& Prologue, const RHIRef<RHIBuffer>& Buffer) {
+    const auto FindStage = [](const RHIBarrierList& Prologue, const RHIRef<RHIBuffer>& Buffer) -> RHISyncStage {
         for (const auto& Transition : Prologue.Buffers) {
             if (Transition.View.Buffer.TryGet() == Buffer.TryGet())
                 return Transition.Stage;
@@ -1089,21 +1095,25 @@ TEST(RenderGraphDynamicViews, IndexedElementsProduceVertexInputPrologueAndComman
 
     ASSERT_TRUE(Entry.Pass->Record());
     const auto Commands = Entry.Pass->GetCommands();
-    ASSERT_EQ(Commands.size(), 4u);
-    const auto* FirstBind  = std::get_if<RHIBindIndexBufferCmd>(&Commands[0]);
-    const auto* FirstDraw  = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
-    const auto* SecondBind = std::get_if<RHIBindIndexBufferCmd>(&Commands[2]);
-    const auto* SecondDraw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[3]);
-    ASSERT_NE(FirstBind, nullptr);
+    ASSERT_EQ(Commands.size(), 2u);
+    const auto* FirstDraw  = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[0]);
+    const auto* SecondDraw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
     ASSERT_NE(FirstDraw, nullptr);
-    ASSERT_NE(SecondBind, nullptr);
     ASSERT_NE(SecondDraw, nullptr);
-    EXPECT_EQ(FirstBind->IndexBuffer.TryGet(), FirstRef.TryGet());
-    EXPECT_EQ(SecondBind->IndexBuffer.TryGet(), SecondRef.TryGet());
-    EXPECT_EQ(FirstDraw->Offset, 0u);
-    EXPECT_EQ(SecondDraw->Offset, 20u);
-    EXPECT_EQ(FirstDraw->IndirectBuffer.TryGet(), IndirectRef.TryGet());
-    EXPECT_EQ(SecondDraw->IndirectBuffer.TryGet(), IndirectRef.TryGet());
+    EXPECT_EQ(FirstDraw->IndexBuffer.Buffer.TryGet(), FirstRef.TryGet());
+    EXPECT_EQ(SecondDraw->IndexBuffer.Buffer.TryGet(), SecondRef.TryGet());
+    EXPECT_EQ(FirstDraw->IndirectBuffer.Offset, 0u);
+    EXPECT_EQ(SecondDraw->IndirectBuffer.Offset, 20u);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.Range, 20u);
+    EXPECT_EQ(SecondDraw->IndirectBuffer.Range, 20u);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.Buffer.TryGet(), IndirectRef.TryGet());
+    EXPECT_EQ(SecondDraw->IndirectBuffer.Buffer.TryGet(), IndirectRef.TryGet());
+    EXPECT_EQ(FirstDraw->IndexBuffer.Usage, RHIBufferUsage::Index);
+    EXPECT_EQ(FirstDraw->IndexBuffer.Access, RHIAccess::Read);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.Usage, RHIBufferUsage::Indirect);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.Access, RHIAccess::Read);
+    EXPECT_EQ(FirstDraw->VertexBufferCount, 0u);
+    EXPECT_EQ(SecondDraw->VertexBufferCount, 0u);
 }
 
 TEST(RenderGraphSyncPlan, VertexUsageRequestsVertexInputStage) {

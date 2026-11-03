@@ -68,6 +68,12 @@ The resource layer beneath the graph had its own fragmentation: usage, lifetime,
 
 19. **A Parameter may own dynamic view collections.** The number of resources a pass touches may be known only while building the frame graph. Each element of an owned dynamic view collection is a first-class declaration, equivalent to a view-typed field for ordering, usage validation, prologue generation, and resolution. The pass populates the collection before AddPass; once added, the Parameter and the size and storage of every collection are frozen because the graph retains the element declarations directly. This preserves "touch it ⇒ declare it" for variable-size resource sets instead of moving those accesses outside the graph.
 
+### Command resource operands (2026-11-03)
+
+20. **Commands retain resource views.** Every buffer and texture operand in an RHI command carries the existing value-semantic view, preserving resource identity, role, direction, and range through recording and backend execution. Recording checks that the view matches the operation; graph declarations remain the source of inter-pass synchronization. A buffer view owns its byte offset and range; a texture transfer selects one mip and interprets pixel coordinates within that mip.
+
+21. **Indexed draws own their geometry input.** Each indexed-indirect command retains its optional vertex streams, Uint32 index input, and indirect-command view together. Backends validate the complete packet before emitting the native bindings and draw. Fixed indirect strides derive from typed command layouts; the indexed GPU command remains 20 bytes. Command structs are data; recording boundaries report invalid inputs explicitly, and backends enforce device-specific requirements.
+
 ## Considered alternatives
 
 - **Camera-owned targets with renderer-declared specs** — rejected: simulates usage decisions by hand without graph knowledge.

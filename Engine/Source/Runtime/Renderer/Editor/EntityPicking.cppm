@@ -37,9 +37,8 @@ export class EntityPickingPass final : public IRHITransferPass {
         m_Commands.clear();
         if (!m_Parameter->EntityId.Resolved || !m_Parameter->Readback)
             return std::unexpected(ErrorMessage("Entity picking resources are not ready"));
-        ReadbackTexture(
-            m_Parameter->EntityId.Resolved, m_Parameter->Pixel.X, m_Parameter->Pixel.Y, m_Parameter->Readback);
-        return {};
+        return ReadbackTexture(
+            m_Parameter->EntityId.ResolvedView(), m_Parameter->Pixel.X, m_Parameter->Pixel.Y, m_Parameter->Readback);
     }
 
   private:

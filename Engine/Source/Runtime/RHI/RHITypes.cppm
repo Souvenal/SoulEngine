@@ -106,6 +106,26 @@ export struct RHIVertexInputBindingDesc {
     bool operator==(const RHIVertexInputBindingDesc&) const = default;
 };
 
+export struct RHIIndirectCommand {
+    Uint32 VertexCount   = 0;
+    Uint32 InstanceCount = 0;
+    Uint32 FirstVertex   = 0;
+    Uint32 FirstInstance = 0;
+};
+
+export struct RHIIndexedIndirectCommand {
+    Uint32 IndexCount    = 0;
+    Uint32 InstanceCount = 0;
+    Uint32 FirstIndex    = 0;
+    Int32  VertexOffset  = 0;
+    Uint32 FirstInstance = 0;
+};
+
+static_assert(sizeof(RHIIndirectCommand) == sizeof(Uint32) * 4);
+static_assert(alignof(RHIIndirectCommand) == alignof(Uint32));
+static_assert(sizeof(RHIIndexedIndirectCommand) == sizeof(Uint32) * 5);
+static_assert(alignof(RHIIndexedIndirectCommand) == alignof(Uint32));
+
 export inline constexpr Uint32 kMaxVertexBufferBindings = 4;
 
 export struct RHIVertexInputLayoutDesc {

@@ -69,7 +69,7 @@ A task-graph callback tagged with the producer thread's frame ordinal; the RHI q
 Copyable CPU-side values partitioned by reflected descriptor-set layout; the snapshot carries ref-backed textures, samplers, and buffers.
 
 **Present**:
-The explicit blit-to-swapchain command issued by a transfer pass, always blitting the complete source target into the destination viewport with a fixed nearest filter. There is no present flag on passes, views, or usage bits (ADR 05).
+The explicit blit-to-swapchain command issued by a transfer pass, blitting the selected source mip into the destination viewport with a fixed nearest filter. There is no present flag on passes, views, or usage bits (ADR 05).
 _Avoid_: implicit present, present pass flag, present layout at any layer above the backend.
 
 ### Synchronization and lifetime

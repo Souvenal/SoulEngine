@@ -31,61 +31,24 @@ export struct RHISetScissorCmd {
     Uint32 Height = 0;
 };
 
-/// @brief Draw non-indexed primitives. All geometry reaches shaders through
-/// vertex pulling (BDA) or indirect draws; there is no vertex-buffer binding path. The fullscreen-triangle
-/// users emit the default 3.
+/// @brief Draw non-indexed primitives. The fullscreen-triangle users emit the default 3.
 export struct RHIDrawCmd {
     Uint32 VertexCount = 3;
 };
 
 /// @brief Draw non-indexed primitives from GPU-written indirect commands.
 export struct RHIDrawIndirectCmd {
-    RHIRef<RHIBuffer> IndirectBuffer = nullptr;
-    Uint64            Offset         = 0;
-    Uint32            DrawCount      = 1;
-    Uint32            Stride         = sizeof(Uint32) * 4;
-};
-
-/// @brief Bind a Uint32 index buffer at a byte offset.
-export struct RHIBindIndexBufferCmd {
-    RHIRef<RHIBuffer> IndexBuffer = nullptr;
-    Uint64            Offset      = 0;
-
-    /// @brief Validate the buffer reference, Uint32 alignment, and binding range.
-    [[nodiscard]] auto Validate() const -> std::expected<void, ErrorMessage> {
-        if (!IndexBuffer)
-            return std::unexpected(ErrorMessage("Index binding requires a ready buffer"));
-        if (Offset % sizeof(Uint32) != 0)
-            return std::unexpected(ErrorMessage("Index binding offset must be aligned to Uint32"));
-        if (Offset >= IndexBuffer->GetSize())
-            return std::unexpected(ErrorMessage("Index binding offset exceeds the buffer"));
-        return {};
-    }
+    RHIBufferView IndirectBuffer = {};
+    Uint32        DrawCount      = 1;
 };
 
 /// @brief Draw indexed primitives from GPU-written indexed indirect commands.
 export struct RHIDrawIndexedIndirectCmd {
-    RHIRef<RHIBuffer> IndirectBuffer = nullptr;
-    Uint64            Offset         = 0;
-    Uint32            DrawCount      = 1;
-    Uint32            Stride         = sizeof(Uint32) * 5;
-
-    /// @brief Validate the buffer reference, arguments, native draw-count limit, and command range.
-    [[nodiscard]] auto Validate(Uint64 BufferSize, Uint32 MaxDrawCount) const -> std::expected<void, ErrorMessage> {
-        if (!IndirectBuffer)
-            return std::unexpected(ErrorMessage("Indexed indirect draw requires a ready buffer"));
-        if (Offset % sizeof(Uint32) != 0)
-            return std::unexpected(ErrorMessage("Indexed indirect draw offset must be aligned to Uint32"));
-        if (Stride != sizeof(Uint32) * 5)
-            return std::unexpected(ErrorMessage("Indexed indirect draw stride must be 20 bytes"));
-        if (DrawCount == 0)
-            return std::unexpected(ErrorMessage("Indexed indirect draw count must be greater than zero"));
-        if (DrawCount > MaxDrawCount)
-            return std::unexpected(ErrorMessage("Indexed indirect draw count exceeds maxDrawIndirectCount"));
-        if (Offset > BufferSize || DrawCount > (BufferSize - Offset) / Stride)
-            return std::unexpected(ErrorMessage("Indexed indirect draw range exceeds its buffer"));
-        return {};
-    }
+    std::array<RHIBufferView, kMaxVertexBufferBindings> VertexBuffers     = {};
+    Uint32                                              VertexBufferCount = 0;
+    RHIBufferView                                       IndexBuffer       = {};
+    RHIBufferView                                       IndirectBuffer    = {};
+    Uint32                                              DrawCount         = 1;
 };
 
 /// @brief Dispatch compute workgroups.
@@ -105,7 +68,7 @@ export struct RHITraceRaysCmd {
 /// @brief Read back a texel region from a render target into a readback. The backend picks an internal ring
 /// position and stamps it with the submission's timeline value.
 export struct RHIReadbackTextureCmd {
-    RHIRef<RHITexture>  Source    = nullptr;
+    RHITextureView      Source    = {};
     Uint32              SrcX      = 0;
     Uint32              SrcY      = 0;
     Uint32              SrcWidth  = 1;
@@ -113,16 +76,16 @@ export struct RHIReadbackTextureCmd {
     RHIRef<RHIReadback> Target    = nullptr;
 };
 
-/// @brief Blit the complete render target into the acquired swapchain image.
+/// @brief Blit one source mip into the acquired swapchain image.
 ///
 /// This is the only present path: the backend resolves the current swapchain image, which stays
 /// backend-private. Fixed nearest filtering.
 export struct RHIBlitToSwapchainCmd {
-    RHIRef<RHITexture> Source    = nullptr;
-    Uint32             DstX      = 0;
-    Uint32             DstY      = 0;
-    Uint32             DstWidth  = 1;
-    Uint32             DstHeight = 1;
+    RHITextureView Source    = {};
+    Uint32         DstX      = 0;
+    Uint32         DstY      = 0;
+    Uint32         DstWidth  = 1;
+    Uint32         DstHeight = 1;
 };
 
 /// @brief All command types dispatched via std::visit.
@@ -130,7 +93,6 @@ export using RHICommand = std::variant<RHISetViewportCmd,
                                        RHISetScissorCmd,
                                        RHIDrawCmd,
                                        RHIDrawIndirectCmd,
-                                       RHIBindIndexBufferCmd,
                                        RHIDrawIndexedIndirectCmd,
                                        RHIDispatchCmd,
                                        RHITraceRaysCmd,

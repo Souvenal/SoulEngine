@@ -463,18 +463,21 @@ auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, cons
             return std::unexpected(ErrorMessage("Execute: prologue references an invalid texture"));
         const auto& VulkanTarget = static_cast<const VulkanTexture&>(*Target);
         const auto  Aspect       = ToVkImageAspect(VulkanTarget.GetFormat());
+        const auto& ViewRange    = Transition.View.Range;
+        if (ViewRange.BaseMipLevel >= VulkanTarget.GetMipLevelCount() || ViewRange.MipLevelCount == 0 ||
+            (ViewRange.MipLevelCount != kRHIRemainingSubresources &&
+             ViewRange.MipLevelCount > VulkanTarget.GetMipLevelCount() - ViewRange.BaseMipLevel))
+            return std::unexpected(ErrorMessage("Execute: prologue texture mip range is invalid"));
         // Ranges are always concrete for the tracker: a whole-chain view resolves against the payload's
         // own mip count here.
-        const auto  Range =
-            vk::ImageSubresourceRange{.aspectMask     = Aspect,
-                                      .baseMipLevel   = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                                            ? 0
-                                                            : Transition.View.Range.BaseMipLevel,
-                                      .levelCount     = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                                            ? VulkanTarget.GetMipLevelCount()
-                                                            : Transition.View.Range.MipLevelCount,
-                                      .baseArrayLayer = 0,
-                                      .layerCount     = 1};
+        const auto Range = vk::ImageSubresourceRange{
+            .aspectMask     = Aspect,
+            .baseMipLevel   = Transition.View.Range.BaseMipLevel,
+            .levelCount     = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
+                                  ? VulkanTarget.GetMipLevelCount() - Transition.View.Range.BaseMipLevel
+                                  : Transition.View.Range.MipLevelCount,
+            .baseArrayLayer = 0,
+            .layerCount     = 1};
         m_ResourceContext->GetImageTracker().Transition(
             Primary,
             VulkanTarget.GetVkImage(),
