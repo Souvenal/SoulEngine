@@ -90,6 +90,7 @@ RasterRenderer::~RasterRenderer() {
     Registry.Register<VertexInputGeometryPass>();
     Registry.Register<DeferredLightingPass>();
     Registry.Register<SelectionMaskPass>();
+    Registry.Register<VertexInputSelectionMaskPass>();
     Registry.Register<SelectionOutlinePass>();
 
     auto SamplerLinear = RHIRenderDevice::Get().CreateSampler("Renderer/Raster/Sampler/Linear",
@@ -310,10 +311,12 @@ auto RasterRenderer::OnDetach() -> void {
 
     std::vector<RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>> AttributeBuffers;
     std::vector<RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read>>  VertexBuffers;
+    std::vector<RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read>>  SelectionVertexBuffers;
     std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>   IndexBuffers;
     if (HasInstances) {
         AttributeBuffers.reserve(DrawGroups.size() * 4);
         VertexBuffers.reserve(DrawGroups.size() * VertexInputGeometryPass::VertexStreamCount);
+        SelectionVertexBuffers.reserve(DrawGroups.size() * 2);
         IndexBuffers.reserve(DrawGroups.size());
         for (const auto& Group : DrawGroups) {
             const auto& Buffers = DrawData.GeometryBuffers[Group.GeometryID];
@@ -325,10 +328,15 @@ auto RasterRenderer::OnDetach() -> void {
                     VertexBuffers.emplace_back(Handle);
                 }
             };
+            const auto First = VertexBuffers.size();
             ImportAttribute(Buffers.PositionBuffer);
             ImportAttribute(Buffers.NormalBuffer);
             ImportAttribute(Buffers.TangentBuffer);
             ImportAttribute(Buffers.TexCoordBuffer);
+            if (SubmissionPath == RasterGeometrySubmissionPath::VertexInput) {
+                SelectionVertexBuffers.emplace_back(VertexBuffers[First]);
+                SelectionVertexBuffers.emplace_back(VertexBuffers[First + 3]);
+            }
             IndexBuffers.emplace_back(ViewGraph.Import(Buffers.IndexBuffer));
         }
 
@@ -477,19 +485,35 @@ auto RasterRenderer::OnDetach() -> void {
                                                    .Height = View.GetHeight(),
                                                    .Format = RHIFormat::R8_UNORM,
                                                    .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::Sampled});
-        ViewGraph.AddPass<SelectionMaskPass>({
-            .Mask                    = Mask,
-            .SelectedInstances       = SelectedInstances,
-            .SelectedIndirectBuffers = SelectedIndirectViews,
-            .GeometryTable           = GeometryTable,
-            .MaterialTable           = MaterialTable,
-            .FrameBuffer             = FrameCB,
-            .ViewBuffer              = ViewCB,
-            .AttributeBuffers        = AttributeBuffers,
-            .IndexBuffers            = IndexBuffers,
-            .LinearSampler           = SamplerLinearRef,
-            .DrawCount               = static_cast<Uint32>(IndirectCommands.size()),
-        });
+        if (SubmissionPath == RasterGeometrySubmissionPath::VertexInput) {
+            ViewGraph.AddPass<VertexInputSelectionMaskPass>({
+                .Mask                    = Mask,
+                .SelectedInstances       = SelectedInstances,
+                .SelectedIndirectBuffers = SelectedIndirectViews,
+                .MaterialTable           = MaterialTable,
+                .FrameBuffer             = FrameCB,
+                .ViewBuffer              = ViewCB,
+                .VertexBuffers           = SelectionVertexBuffers,
+                .IndexBuffers            = IndexBuffers,
+                .LinearSampler           = SamplerLinearRef,
+                .DrawCount               = static_cast<Uint32>(IndirectCommands.size()),
+            });
+        } else {
+            ViewGraph.AddPass<SelectionMaskPass>({
+                .Mask                    = Mask,
+                .SelectedInstances       = SelectedInstances,
+                .SelectedIndirectBuffers = SelectedIndirectViews,
+                .GeometryTable           = GeometryTable,
+                .MaterialTable           = MaterialTable,
+                .FrameBuffer             = FrameCB,
+                .ViewBuffer              = ViewCB,
+                .AttributeBuffers        = AttributeBuffers,
+                .IndexBuffers            = IndexBuffers,
+                .LinearSampler           = SamplerLinearRef,
+                .DrawCount               = static_cast<Uint32>(IndirectCommands.size()),
+            });
+        }
+
         ViewGraph.AddPass<SelectionOutlinePass>({
             .SceneColor     = SceneColor,
             .Mask           = Mask,

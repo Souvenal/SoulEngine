@@ -3,10 +3,13 @@
 #include <hlsl++.h>
 
 import Core;
+import EditorTypes;
 import RHI;
 import RenderGraph;
 import Renderer.Common;
-import Renderer.EditorPasses.SelectionMaskPass;
+import Renderer.EditorPasses;
+import Renderer.Raster.CullingPass;
+import Renderer.Raster.DeferredLightingPass;
 import Renderer.Raster.GeometryPass;
 import Renderer.Raster.RasterRenderer;
 import Scene;
@@ -75,6 +78,12 @@ class MockRasterTestPipeline final : public RHIGraphicsPipeline {
         : RHIGraphicsPipeline(String(Name), std::move(BindingSet)) {}
 };
 
+class MockRasterTestComputePipeline final : public RHIComputePipeline {
+  public:
+    MockRasterTestComputePipeline(StringView Name, RHIRef<RHIShaderBindingSet> BindingSet)
+        : RHIComputePipeline(String(Name), std::move(BindingSet)) {}
+};
+
 class MockRasterTestDevice final : public RHIRenderDevice {
   public:
     [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override {
@@ -95,7 +104,8 @@ class MockRasterTestDevice final : public RHIRenderDevice {
     [[nodiscard]] auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
         -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> override {
         auto Result = RHIRef<RHIBuffer>::Create();
-        auto Buffer = std::make_unique<MockRasterTestBuffer>(Name, Desc.SizeBytes, Desc.Usage, m_NextDeviceAddress);
+        auto Buffer =
+            UPtr<MockRasterTestBuffer>(new MockRasterTestBuffer(Name, Desc.SizeBytes, Desc.Usage, m_NextDeviceAddress));
         m_NextDeviceAddress += 0x1000;
         if (auto Published = Result.Publish(std::move(Buffer), RHIRefState::Ready); !Published) {
             return std::unexpected(Published.error());
@@ -113,6 +123,35 @@ class MockRasterTestDevice final : public RHIRenderDevice {
         }
         Mock.Write(Data);
         return {};
+    }
+
+    [[nodiscard]] auto CreateTexture(StringView Name, const RHITextureDesc& Desc)
+        -> std::expected<RHIRef<RHITexture>, ErrorMessage> override {
+        auto Result = RHIRef<RHITexture>::Create();
+        if (auto Published =
+                Result.Publish(UPtr<MockRasterTestTexture>(new MockRasterTestTexture(Name, Desc)), RHIRefState::Ready);
+            !Published)
+            return std::unexpected(Published.error());
+        return Result;
+    }
+    [[nodiscard]] auto CreateSampler(StringView Name, const RHISamplerDesc&)
+        -> std::expected<RHIRef<RHISampler>, ErrorMessage> override {
+        auto Result = RHIRef<RHISampler>::Create();
+        if (auto Published =
+                Result.Publish(UPtr<MockRasterTestSampler>(new MockRasterTestSampler(Name)), RHIRefState::Ready);
+            !Published)
+            return std::unexpected(Published.error());
+        return Result;
+    }
+    [[nodiscard]] auto CreateComputePipeline(StringView Name, const RHIComputePipelineDesc& Desc)
+        -> std::expected<RHIRef<RHIComputePipeline>, ErrorMessage> override {
+        auto Result = RHIRef<RHIComputePipeline>::Create();
+        if (auto Published = Result.Publish(
+                UPtr<MockRasterTestComputePipeline>(new MockRasterTestComputePipeline(Name, Desc.BindingSet)),
+                RHIRefState::Ready);
+            !Published)
+            return std::unexpected(Published.error());
+        return Result;
     }
 
     [[nodiscard]] auto CreateGraphicsPipeline(StringView Name, const RHIGraphicsPipelineDesc& Desc)
@@ -202,12 +241,12 @@ class RasterIndexedPassTest : public testing::Test {
     auto SetUp() -> void override {
         GDeferredDeletionQueue = &m_DeletionQueue;
         TaskGraph::Get().Shutdown();
-        PipelineRegistry::Get().Init();
+        RenderGraph::Get().Init();
         TaskGraph::Get().Init(1);
     }
 
     auto TearDown() -> void override {
-        PipelineRegistry::Get().Clear();
+        RenderGraph::Get().Shutdown();
         TaskGraph::Get().Shutdown();
         m_DeletionQueue.Drain();
         GDeferredDeletionQueue = nullptr;
@@ -598,6 +637,171 @@ TEST_F(RasterIndexedPassTest, VertexInputGeometryRecordsFourStreamsWithoutBindin
     }
 }
 
+TEST_F(RasterIndexedPassTest, VertexInputSelectionAlignsWithGeometryAndRecordsPositionUv) {
+    const auto Request = VertexInputSelectionMaskPass::BuildPipelineRequest();
+    EXPECT_EQ(Request.VertEntry.EntryPoint, "vertVertexInputMain");
+    ASSERT_EQ(Request.VertexInputLayout.Bindings.size(), 2u);
+    ASSERT_EQ(Request.VertexInputLayout.Attributes.size(), 2u);
+    const std::array<Uint32, 2>    ExpectedStrides{12, 8};
+    const std::array<RHIFormat, 2> ExpectedFormats{RHIFormat::R32G32B32_SFLOAT, RHIFormat::R32G32_SFLOAT};
+    for (std::size_t Index = 0; Index < ExpectedStrides.size(); ++Index) {
+        const auto& Binding = Request.VertexInputLayout.Bindings[Index];
+        EXPECT_EQ(Binding.Binding, Index);
+        EXPECT_EQ(Binding.Stride, ExpectedStrides[Index]);
+        const auto& Attribute = Request.VertexInputLayout.Attributes[Index];
+        EXPECT_EQ(Attribute.Location, Index);
+        EXPECT_EQ(Attribute.Binding, Index);
+        EXPECT_EQ(Attribute.Format, ExpectedFormats[Index]);
+        EXPECT_EQ(Attribute.Offset, 0u);
+    }
+
+    const auto Resources = MakeResources();
+    ASSERT_TRUE(PreparePipeline<VertexInputGeometryPass>());
+    ASSERT_TRUE(PreparePipeline<VertexInputSelectionMaskPass>());
+    RenderGraphBuilder Graph;
+
+    const auto Albedo     = Graph.Import(Resources.Albedo);
+    const auto Normal     = Graph.Import(Resources.Normal);
+    const auto MaterialId = Graph.Import(Resources.MaterialId);
+    const auto EntityId   = Graph.Import(Resources.EntityId);
+    const auto Depth      = Graph.Import(Resources.Depth);
+    const auto Instances  = Graph.Import(Resources.Instances);
+    const auto Indirect   = Graph.Import(Resources.Indirect);
+    const auto Materials  = Graph.Import(Resources.Materials);
+    const auto Frame      = Graph.Import(Resources.Frame);
+    const auto View       = Graph.Import(Resources.View);
+    const auto Mask       = Graph.Import(Resources.Mask);
+
+    const std::array AttributeBuffers{
+        Resources.Position0,
+        Resources.Normal0,
+        Resources.Tangent0,
+        Resources.TexCoord0,
+        Resources.Position1,
+        Resources.Normal1,
+        Resources.Tangent1,
+        Resources.TexCoord1,
+    };
+    std::vector<RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read>> MainVertexViews;
+    for (const auto& Buffer : AttributeBuffers) {
+        MainVertexViews.emplace_back(Graph.Import(Buffer));
+    }
+    std::vector<RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read>> SelectionVertexViews{
+        MainVertexViews[0],
+        MainVertexViews[3],
+        MainVertexViews[4],
+        MainVertexViews[7],
+    };
+    std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>> IndexViews{
+        Graph.Import(Resources.Index0),
+        Graph.Import(Resources.Index1),
+    };
+
+    Graph.AddPass<VertexInputGeometryPass>({
+        .Albedo             = Albedo,
+        .Normal             = Normal,
+        .MaterialId         = MaterialId,
+        .EntityId           = EntityId,
+        .Depth              = Depth,
+        .InstanceBuffer     = Instances,
+        .IndirectBuffers    = MakeIndirectViews(Indirect),
+        .MaterialBuffer     = Materials,
+        .FrameBuffer        = Frame,
+        .ViewBuffer         = View,
+        .VertexBuffers      = MainVertexViews,
+        .IndexBuffers       = IndexViews,
+        .LinearSampler      = Resources.Sampler,
+        .AnisotropicSampler = Resources.Sampler,
+        .DrawCount          = 2,
+    });
+    Graph.AddPass<VertexInputSelectionMaskPass>({
+        .Mask                    = Mask,
+        .SelectedInstances       = Instances,
+        .SelectedIndirectBuffers = MakeIndirectViews(Indirect),
+        .MaterialTable           = Materials,
+        .FrameBuffer             = Frame,
+        .ViewBuffer              = View,
+        .VertexBuffers           = SelectionVertexViews,
+        .IndexBuffers            = IndexViews,
+        .LinearSampler           = Resources.Sampler,
+        .DrawCount               = 2,
+    });
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List.has_value()) << List.error().ToString();
+    ASSERT_EQ(List->Entries.size(), 2u);
+    auto& GeometryEntry  = List->Entries[0];
+    auto& SelectionEntry = List->Entries[1];
+    EXPECT_EQ(GeometryEntry.Pass->GetName(), VertexInputGeometryPass::Name);
+    EXPECT_EQ(SelectionEntry.Pass->GetName(), VertexInputSelectionMaskPass::Name);
+
+    const std::array SelectionBuffers{
+        Resources.Position0, Resources.TexCoord0, Resources.Position1, Resources.TexCoord1};
+    for (const auto& Buffer : SelectionBuffers) {
+        const auto* Transition = FindTransition(SelectionEntry.Prologue, Buffer);
+        ASSERT_NE(Transition, nullptr) << Buffer->GetName();
+        EXPECT_EQ(Transition->Usage, RHIBufferUsage::Vertex);
+        EXPECT_EQ(Transition->Access, RHIAccess::Read);
+        EXPECT_EQ(Transition->Stage, RHISyncStage::VertexInput);
+    }
+    EXPECT_EQ(FindTransition(SelectionEntry.Prologue, Resources.Normal0), nullptr);
+    EXPECT_EQ(FindTransition(SelectionEntry.Prologue, Resources.Tangent0), nullptr);
+
+    ASSERT_TRUE(GeometryEntry.Pass->Record().has_value());
+    const auto SelectionRecorded = SelectionEntry.Pass->Record();
+    ASSERT_TRUE(SelectionRecorded.has_value()) << SelectionRecorded.error().ToString();
+
+    const auto BindingSet = SelectionEntry.Pass->GetPipeline()->GetShaderBindingSet();
+    ASSERT_TRUE(BindingSet);
+    bool HasInstances     = false;
+    bool HasMaterials     = false;
+    bool HasLinearSampler = false;
+    for (const auto& Set : BindingSet->GetBindingsBySet()) {
+        for (const auto& Slot : Set) {
+            if (Slot.Info.ParameterPath.find("geometryTable") != StringView::npos) {
+                EXPECT_TRUE(std::holds_alternative<std::monostate>(Slot.Bound)) << Slot.Info.ParameterPath;
+            }
+            if (Slot.Info.ParameterPath == "g_selectionMaskDraw.instances") {
+                const auto* Bound = std::get_if<RHIBufferView>(&Slot.Bound);
+                ASSERT_NE(Bound, nullptr);
+                EXPECT_EQ(Bound->GetBuffer().TryGet(), Resources.Instances.TryGet());
+                HasInstances = true;
+            }
+            if (Slot.Info.ParameterPath == "g_selectionMaskDraw.materials") {
+                const auto* Bound = std::get_if<RHIBufferView>(&Slot.Bound);
+                ASSERT_NE(Bound, nullptr);
+                EXPECT_EQ(Bound->GetBuffer().TryGet(), Resources.Materials.TryGet());
+                HasMaterials = true;
+            }
+            HasLinearSampler |= Slot.Info.ParameterPath == "g_selectionMaskFrameView.linearSampler" &&
+                                std::holds_alternative<RHISamplerView>(Slot.Bound);
+        }
+    }
+    EXPECT_TRUE(HasInstances);
+    EXPECT_TRUE(HasMaterials);
+    EXPECT_TRUE(HasLinearSampler);
+
+    const auto Commands = SelectionEntry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 4u);
+    for (std::size_t Slot = 0; Slot < 2; ++Slot) {
+        const auto* Draw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[Slot + 2]);
+        ASSERT_NE(Draw, nullptr);
+        ASSERT_EQ(Draw->VertexBuffers.size(), 2u);
+        EXPECT_EQ(Draw->VertexBuffers[0].GetBuffer().TryGet(), SelectionBuffers[Slot * 2].TryGet());
+        EXPECT_EQ(Draw->VertexBuffers[1].GetBuffer().TryGet(), SelectionBuffers[Slot * 2 + 1].TryGet());
+        for (std::size_t Stream = 0; Stream < 2; ++Stream) {
+            EXPECT_EQ(Draw->VertexBuffers[Stream].GetOffset(), 0u);
+            EXPECT_EQ(Draw->VertexBuffers[Stream].GetUsage(), RHIBufferUsage::Vertex);
+            EXPECT_EQ(Draw->VertexBuffers[Stream].GetAccess(), RHIAccess::Read);
+        }
+        EXPECT_EQ(Draw->IndexBuffer.GetBuffer().TryGet(),
+                  Slot == 0 ? Resources.Index0.TryGet() : Resources.Index1.TryGet());
+        EXPECT_EQ(Draw->IndirectBuffer.GetOffset(), Slot * 20);
+        EXPECT_EQ(Draw->IndirectBuffer.GetRange(), 20u);
+        EXPECT_EQ(Draw->DrawCount, 1u);
+    }
+}
+
 TEST_F(RasterIndexedPassTest, VertexInputPipelineUsesFourStreamLayout) {
     const auto Request = VertexInputGeometryPass::BuildPipelineRequest();
     EXPECT_EQ(Request.VertEntry.EntryPoint, "vertVertexInputMain");
@@ -621,6 +825,76 @@ TEST_F(RasterIndexedPassTest, VertexInputPipelineUsesFourStreamLayout) {
         EXPECT_EQ(Attribute.Format, ExpectedFormats[Index]);
         EXPECT_EQ(Attribute.Offset, 0u);
     }
+}
+
+TEST_F(RasterIndexedPassTest, RenderSelectsMatchingGeometryAndSelectionPaths) {
+    auto Geometry                   = SPtr<GeometryRecord>(new GeometryRecord);
+    Geometry->Name                  = "RenderPathGeometry";
+    Geometry->BufferUploadRequested = true;
+    Geometry->VertexCount           = 3;
+    Geometry->PositionStride        = sizeof(Float32) * 3;
+    Geometry->IndexCount            = 3;
+    Geometry->PositionBuffer = MakeBuffer("RenderPathPosition", 64, RHIBufferUsage::Vertex | RHIBufferUsage::Storage);
+    Geometry->NormalBuffer   = MakeBuffer("RenderPathNormal", 64, RHIBufferUsage::Vertex | RHIBufferUsage::Storage);
+    Geometry->TangentBuffer  = MakeBuffer("RenderPathTangent", 64, RHIBufferUsage::Vertex | RHIBufferUsage::Storage);
+    Geometry->TexCoordBuffer = MakeBuffer("RenderPathTexCoord", 64, RHIBufferUsage::Vertex | RHIBufferUsage::Storage);
+    Geometry->IndexBuffer    = MakeBuffer("RenderPathIndex", 64, RHIBufferUsage::Index | RHIBufferUsage::Storage);
+    ASSERT_TRUE(Geometry->IsReadyOnGpu(false, true));
+
+    GameSnapshot Scene;
+    Scene.Instances   = {InstanceRecord{.EntityId = 42, .Geometry = GeometryHandle{Geometry}}};
+    const auto Camera = CameraViewRecord{.Viewport = CameraViewport{.Width = 8, .Height = 8}};
+    Scene.Views       = {Camera};
+    EditorSnapshot Editor;
+    Editor.Views          = {EditorViewRecord{.Camera = Camera}};
+    Editor.SelectedEntity = static_cast<entt::entity>(42);
+
+    ASSERT_TRUE(PreparePipeline<CullingPass>());
+    ASSERT_TRUE(PreparePipeline<SelectionFilterPass>());
+    ASSERT_TRUE(PreparePipeline<GeometryPass>());
+    ASSERT_TRUE(PreparePipeline<VertexInputGeometryPass>());
+    ASSERT_TRUE(PreparePipeline<DeferredLightingPass>());
+    ASSERT_TRUE(PreparePipeline<SelectionMaskPass>());
+    ASSERT_TRUE(PreparePipeline<VertexInputSelectionMaskPass>());
+    ASSERT_TRUE(PreparePipeline<SelectionOutlinePass>());
+
+    RasterRenderer Renderer;
+    ASSERT_TRUE(Renderer.OnAttach().has_value());
+    constexpr StringView CVarName{"Render.Raster.GeometrySubmissionPath"};
+    const auto           Original = CVarManager::Get().Find<RasterGeometrySubmissionPath>(CVarName);
+    ASSERT_TRUE(Original.has_value());
+    struct RestoreSubmissionPath {
+        RasterGeometrySubmissionPath Value;
+        ~RestoreSubmissionPath() {
+            CVarManager::Get().SetByName<RasterGeometrySubmissionPath>("Render.Raster.GeometrySubmissionPath", Value);
+        }
+    } Restore{*Original};
+
+    const auto CountPass = [](const RenderResult& Result, StringView Name) -> Uint32 {
+        Uint32 Count = 0;
+        for (const auto& Entry : Result.CmdList.Entries) {
+            Count += Entry.Pass->GetName() == Name;
+        }
+        return Count;
+    };
+
+    ASSERT_TRUE(CVarManager::Get().SetByName<RasterGeometrySubmissionPath>(CVarName,
+                                                                           RasterGeometrySubmissionPath::VertexInput));
+    auto VertexInputResult = Renderer.Render(Scene, Editor);
+    ASSERT_TRUE(VertexInputResult.has_value()) << VertexInputResult.error().ToString();
+    EXPECT_EQ(CountPass(*VertexInputResult, VertexInputGeometryPass::Name), 2u);
+    EXPECT_EQ(CountPass(*VertexInputResult, VertexInputSelectionMaskPass::Name), 1u);
+    EXPECT_EQ(CountPass(*VertexInputResult, GeometryPass::Name), 0u);
+    EXPECT_EQ(CountPass(*VertexInputResult, SelectionMaskPass::Name), 0u);
+
+    ASSERT_TRUE(CVarManager::Get().SetByName<RasterGeometrySubmissionPath>(
+        CVarName, RasterGeometrySubmissionPath::VertexPulling));
+    auto VertexPullingResult = Renderer.Render(Scene, Editor);
+    ASSERT_TRUE(VertexPullingResult.has_value()) << VertexPullingResult.error().ToString();
+    EXPECT_EQ(CountPass(*VertexPullingResult, GeometryPass::Name), 2u);
+    EXPECT_EQ(CountPass(*VertexPullingResult, SelectionMaskPass::Name), 1u);
+    EXPECT_EQ(CountPass(*VertexPullingResult, VertexInputGeometryPass::Name), 0u);
+    EXPECT_EQ(CountPass(*VertexPullingResult, VertexInputSelectionMaskPass::Name), 0u);
 }
 
 TEST_F(RasterIndexedPassTest, GeometryUploaderPreservesExistingAttributeStreams) {

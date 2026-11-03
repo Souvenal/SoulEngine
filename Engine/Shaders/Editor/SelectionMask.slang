@@ -12,12 +12,17 @@ public struct SelectionMaskFrameViewResources {
 public ParameterBlock<SelectionMaskFrameViewResources> g_selectionMaskFrameView;
 
 public struct SelectionMaskDrawResources {
-    public StructuredBuffer<InstanceRecord>   instances;
-    public GeometryRecordTable                geometryTable;
-    public StructuredBuffer<MaterialRecord>   materials;
+    public StructuredBuffer<InstanceRecord> instances;
+    public StructuredBuffer<MaterialRecord> materials;
 };
 
 public ParameterBlock<SelectionMaskDrawResources> g_selectionMaskDraw;
+
+public struct SelectionMaskVertexPullingResources {
+    public GeometryRecordTable geometryTable;
+};
+
+public ParameterBlock<SelectionMaskVertexPullingResources> g_selectionMaskPulling;
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -25,17 +30,31 @@ struct VSOutput {
     nointerpolation uint instanceIndex;
 };
 
-[shader("vertex")]
-VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint startInstance : SV_StartInstanceLocation) {
+VSOutput buildSelectionVertexOutput(float3 position, float2 uv, uint instanceIndex) {
     VSOutput output;
-    uint instanceIndex = instanceID + startInstance;
     InstanceRecord instanceData = g_selectionMaskDraw.instances[instanceIndex];
-    VertexInfo vtx = g_selectionMaskDraw.geometryTable.pullVertexAttributes(instanceData.geometryID, vertexID);
-    float4 worldPosition = mul(float4(vtx.position, 1.0), instanceData.worldTransform);
+    float4 worldPosition = mul(float4(position, 1.0), instanceData.worldTransform);
     output.position = mul(worldPosition, g_selectionMaskFrameView.view.viewProjection);
-    output.uv = vtx.uv;
+    output.uv = uv;
     output.instanceIndex = instanceIndex;
     return output;
+}
+
+[shader("vertex")]
+VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint startInstance : SV_StartInstanceLocation) {
+    uint instanceIndex = instanceID + startInstance;
+    InstanceRecord instanceData = g_selectionMaskDraw.instances[instanceIndex];
+    VertexInfo vtx = g_selectionMaskPulling.geometryTable.pullVertexAttributes(instanceData.geometryID, vertexID);
+    return buildSelectionVertexOutput(vtx.position, vtx.uv, instanceIndex);
+}
+
+[shader("vertex")]
+VSOutput vertVertexInputMain(
+    float3 position : POSITION,
+    float2 uv : TEXCOORD,
+    uint instanceID : SV_InstanceID,
+    uint startInstance : SV_StartInstanceLocation) {
+    return buildSelectionVertexOutput(position, uv, instanceID + startInstance);
 }
 
 [shader("fragment")]
