@@ -20,4 +20,5 @@ soul_module("RHIVulkan", {
         -- VMA.cpp belongs solely to target VMA; compiling it here would duplicate VMA_IMPLEMENTATION.
         excludes = {"VMA.cpp"},
     },
+    tests = {additional_deps = {"ShaderCompiler", "WindowSystem"}},
 })

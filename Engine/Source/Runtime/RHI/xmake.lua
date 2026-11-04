@@ -6,7 +6,7 @@ soul_module("RHI", {
         packages = {"magic_enum", "imgui", "imgui-club", "hlslpp"},
     },
     tests = {
-        additional_deps     = {"RHIVulkan", "ShaderCompiler", "WindowSystem"},
-        additional_packages = {"glfw", "vulkan-headers", "imgui", "imgui-club", "hlslpp"},
+        additional_deps     = {"WindowSystem"},
+        additional_packages = {"glfw", "imgui", "imgui-club", "hlslpp"},
     },
 })

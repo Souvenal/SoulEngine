@@ -4,10 +4,6 @@
 #include <gtest/gtest.h>
 
 import RHI;
-import RHIVulkan.Capability;
-import RHIVulkan.Staging;
-import RHIVulkan.Types;
-import vulkan;
 import std;
 import Core;
 
@@ -112,16 +108,6 @@ class GraphicsCommandTest : public testing::Test {
         return Result;
     }
 
-    [[nodiscard]] auto MakeBuffer(StringView Name, Uint64 Size, RHIBufferUsage Usage, RHIMemoryUsage MemoryUsage)
-        -> RHIRef<RHIBuffer> {
-        auto Result = RHIRef<RHIBuffer>::Create();
-        auto Published =
-            Result.Publish(UPtr<MockCommandBuffer>(std::make_unique<MockCommandBuffer>(Name, Size, Usage, MemoryUsage)),
-                           RHIRefState::Ready);
-        EXPECT_TRUE(Published.has_value());
-        return Result;
-    }
-
     RHIDeferredDeletionQueue m_DeletionQueue;
 };
 
@@ -198,26 +184,6 @@ TEST_F(GraphicsCommandTest, RecordsIndirectDrawUsingViewExtentAndRetainsReferenc
     EXPECT_EQ(Destructions, 1u);
 }
 
-TEST_F(GraphicsCommandTest, RecordsInvalidPacketsForBackendValidation) {
-    TestGraphicsPass                   Graphics;
-    const std::array<RHIBufferView, 5> TooManyVertices{};
-    Graphics.DrawIndexedIndirect({}, {}, TooManyVertices, 0);
-    Graphics.DrawIndirect({}, 0);
-    ASSERT_EQ(Graphics.GetCommands().size(), 2u);
-    const auto* Indexed = std::get_if<RHIDrawIndexedIndirectCmd>(&Graphics.GetCommands()[0]);
-    ASSERT_NE(Indexed, nullptr);
-    EXPECT_EQ(Indexed->VertexBuffers.size(), 5u);
-    EXPECT_EQ(Indexed->DrawCount, 0u);
-    EXPECT_TRUE(std::holds_alternative<RHIDrawIndirectCmd>(Graphics.GetCommands()[1]));
-
-    TestTransferPass Transfer;
-    Transfer.BlitToSwapchain({}, 0, 0, 0, 0);
-    Transfer.ReadbackTexture({}, std::numeric_limits<Uint32>::max(), 0, nullptr, 0, 0);
-    ASSERT_EQ(Transfer.GetCommands().size(), 2u);
-    EXPECT_TRUE(std::holds_alternative<RHIBlitToSwapchainCmd>(Transfer.GetCommands()[0]));
-    EXPECT_TRUE(std::holds_alternative<RHIReadbackTextureCmd>(Transfer.GetCommands()[1]));
-}
-
 TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
     auto                             Indirect = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect);
     auto                             Index    = MakeBuffer("Index", 64, RHIBufferUsage::Index);
@@ -248,7 +214,7 @@ TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
         EXPECT_EQ(Four->VertexBuffers[I].Buffer.TryGet(), Buffers[I].TryGet());
 }
 
-TEST_F(GraphicsCommandTest, RecordsReadbackFromSelectedTextureMip) {
+TEST_F(GraphicsCommandTest, RecordsTransferCommands) {
     auto                 Texture  = MakeTexture("Texture");
     auto                 Readback = MakeReadback();
     const RHITextureView MipView{.Texture = Texture,
@@ -257,8 +223,11 @@ TEST_F(GraphicsCommandTest, RecordsReadbackFromSelectedTextureMip) {
                                  .Range   = RHISubresourceRange{.BaseMipLevel = 2, .MipLevelCount = 1}};
     TestTransferPass     Pass;
     Pass.ReadbackTexture(MipView, 1, 0, Readback, 3, 2);
-    ASSERT_EQ(Pass.GetCommands().size(), 1u);
-    const auto* Copy = std::get_if<RHIReadbackTextureCmd>(&Pass.GetCommands().front());
+    Pass.BlitToSwapchain(MipView, 2, 3, 8, 4);
+
+    const auto Commands = Pass.GetCommands();
+    ASSERT_EQ(Commands.size(), 2u);
+    const auto* Copy = std::get_if<RHIReadbackTextureCmd>(&Commands[0]);
     ASSERT_NE(Copy, nullptr);
     EXPECT_EQ(Copy->Source.Texture.TryGet(), Texture.TryGet());
     EXPECT_EQ(Copy->Source.Range.BaseMipLevel, 2u);
@@ -267,18 +236,8 @@ TEST_F(GraphicsCommandTest, RecordsReadbackFromSelectedTextureMip) {
     EXPECT_EQ(Copy->SrcWidth, 3u);
     EXPECT_EQ(Copy->SrcHeight, 2u);
     EXPECT_EQ(Copy->Target.TryGet(), Readback.TryGet());
-}
 
-TEST_F(GraphicsCommandTest, RecordsBlitToSwapchain) {
-    auto                 Texture = MakeTexture("Texture");
-    const RHITextureView MipView{.Texture = Texture,
-                                 .Access  = RHIAccess::Read,
-                                 .Usage   = RHITextureUsage::TransferSrc,
-                                 .Range   = RHISubresourceRange{.BaseMipLevel = 2, .MipLevelCount = 1}};
-    TestTransferPass     Pass;
-    Pass.BlitToSwapchain(MipView, 2, 3, 8, 4);
-    ASSERT_EQ(Pass.GetCommands().size(), 1u);
-    const auto* Blit = std::get_if<RHIBlitToSwapchainCmd>(&Pass.GetCommands().front());
+    const auto* Blit = std::get_if<RHIBlitToSwapchainCmd>(&Commands[1]);
     ASSERT_NE(Blit, nullptr);
     EXPECT_EQ(Blit->Source.Texture.TryGet(), Texture.TryGet());
     EXPECT_EQ(Blit->Source.Range.BaseMipLevel, 2u);
@@ -286,28 +245,4 @@ TEST_F(GraphicsCommandTest, RecordsBlitToSwapchain) {
     EXPECT_EQ(Blit->DstY, 3u);
     EXPECT_EQ(Blit->DstWidth, 8u);
     EXPECT_EQ(Blit->DstHeight, 4u);
-}
-
-TEST(GraphicsCommandSync, VertexInputMapsToNativeStageAndAccess) {
-    const auto Stage = ToVkPipelineStages(RHISyncStage::VertexInput);
-    EXPECT_EQ(Stage, vk::PipelineStageFlags2{vk::PipelineStageFlagBits2::eVertexInput});
-
-    const auto VertexAccess = ToVkBufferAccess(RHIBufferUsage::Vertex, RHIAccess::Read);
-    EXPECT_EQ(VertexAccess, vk::AccessFlags2{vk::AccessFlagBits2::eVertexAttributeRead});
-    const auto IndexAccess = ToVkBufferAccess(RHIBufferUsage::Index, RHIAccess::Read);
-    EXPECT_EQ(IndexAccess, vk::AccessFlags2{vk::AccessFlagBits2::eIndexRead});
-}
-
-TEST(GraphicsCommandSync, UploadAccessKeepsAccelerationStructureReadForGeometry) {
-    const bool RtAvailable         = VulkanCapability::Get().IsRayTracingAvailable();
-    const auto CheckGeometryUpload = [&](RHIBufferUsage Usage, vk::AccessFlagBits2 DirectAccess) -> void {
-        const auto Access = ToVkBufferUploadAccess(Usage);
-        EXPECT_TRUE(static_cast<bool>(Access & DirectAccess));
-        EXPECT_EQ(static_cast<bool>(Access & vk::AccessFlagBits2::eAccelerationStructureReadKHR), RtAvailable);
-    };
-    CheckGeometryUpload(RHIBufferUsage::Vertex, vk::AccessFlagBits2::eVertexAttributeRead);
-    CheckGeometryUpload(RHIBufferUsage::Index, vk::AccessFlagBits2::eIndexRead);
-
-    const auto StorageAccess = ToVkBufferUploadAccess(RHIBufferUsage::Storage);
-    EXPECT_FALSE(static_cast<bool>(StorageAccess & vk::AccessFlagBits2::eAccelerationStructureReadKHR));
 }
