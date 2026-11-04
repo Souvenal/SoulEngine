@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-15). Revised 2026-09-24 (declaration-driven synchronization), 2026-09-27 (unified resource and view model), 2026-09-28 (view declarations; usage declared at creation), 2026-10-05 (RHI views carry Access; per-kind access lists replace direction-split vectors), 2026-10-11 (transitions are view + stage — layout derives from the view in the backend; imported resources join the prologue), 2026-10-26 (dynamic view collections). This is the single ADR for the RenderGraph topic: decisions that were briefly split into ADR 12/13/14 are consolidated here, and future evolution of this design revises this document instead of opening new numbers. Partially supersedes [ADR 06](06-scene-snapshot-and-view-owned-rt.md) (view-owned render-target ownership; the Scene/SceneSnapshot layering stands). Mechanics and type-level details live in the code; this document keeps design and decisions only.
+Accepted (2026-09-15). Revised 2026-09-24 (declaration-driven synchronization), 2026-09-27 (unified resource and view model), 2026-09-28 (view declarations; usage declared at creation), 2026-10-05 (RHI views carry Access; per-kind access lists replace direction-split vectors), 2026-10-11 (transitions are view + stage — layout derives from the view in the backend; imported resources join the prologue), 2026-10-26 (dynamic view collections), 2026-11-03 (view-backed commands), 2026-11-04 (append-only command recording). This is the single ADR for the RenderGraph topic: decisions that were briefly split into ADR 12/13/14 are consolidated here, and future evolution of this design revises this document instead of opening new numbers. Partially supersedes [ADR 06](06-scene-snapshot-and-view-owned-rt.md) (view-owned render-target ownership; the Scene/SceneSnapshot layering stands). Mechanics and type-level details live in the code; this document keeps design and decisions only.
 
 ## Context
 
@@ -70,9 +70,9 @@ The resource layer beneath the graph had its own fragmentation: usage, lifetime,
 
 ### Command resource operands (2026-11-03)
 
-20. **Commands retain resource views.** Every buffer and texture operand in an RHI command carries the existing value-semantic view, preserving resource identity, role, direction, and range through recording and backend execution. Recording checks that the view matches the operation; graph declarations remain the source of inter-pass synchronization. A buffer view owns its byte offset and range; a texture transfer selects one mip and interprets pixel coordinates within that mip.
+20. **Commands retain resource views.** Every buffer and texture operand in an RHI command carries the existing value-semantic view, preserving resource identity, role, direction, and range through recording and backend execution. Recording only appends the packet; it does not validate resources or return per-command errors. Backend translation validates readiness, role, direction, and ranges before native calls. Graph declarations remain the source of inter-pass synchronization. A buffer view owns its byte offset and range; a texture transfer selects one mip and interprets pixel coordinates within that mip.
 
-21. **Indexed draws own their geometry input.** Each indexed-indirect command retains its optional vertex streams, Uint32 index input, and indirect-command view together. Backends validate the complete packet before emitting the native bindings and draw. Fixed indirect strides derive from typed command layouts; the indexed GPU command remains 20 bytes. Command structs are data; recording boundaries report invalid inputs explicitly, and backends enforce device-specific requirements.
+21. **Indexed draws own their geometry input.** Each indexed-indirect command retains its optional vertex streams, Uint32 index input, and indirect-command view together. Backends validate the complete packet before emitting the native bindings and draw, including resource contracts, counts, ranges, and device-specific requirements. Fixed indirect strides derive from typed command layouts; the indexed GPU command remains 20 bytes. Command structs and recording functions contain no validation policy.
 
 ## Considered alternatives
 
@@ -98,6 +98,7 @@ The resource layer beneath the graph had its own fragmentation: usage, lifetime,
 - **Storage-write access widening** — rejected (2026-10-11; it had survived the vocabulary reduction as a backend-mapping rule): the declared direction translates faithfully, matching the attachment loadOp rule — a read-modify-writing shader declares `Read | Write`. Depth/stencil attachment coverage stays always-Read|Write as mechanism-inherent load/store semantics, not a guess about shader behavior.
 - **Reflection-derived stage precision at Compile** — rejected: the view-to-parameter association only exists inside Record(), and precision must not depend on pipeline readiness.
 - **Graph-invisible fixed-function geometry input** — rejected: vertex and index buffer reads must participate in the same declaration and synchronization contracts as every other resource access.
+- **Recording-time command validation with per-command error returns** — rejected (2026-11-04): it duplicates backend checks and turns simple packet append operations into error-propagation chains. Invalid packets remain in the command stream; backend translation rejects them through its execution error channel before native resource commands.
 - **Per-resource graphics passes** — rejected: resource-binding granularity does not imply separate render scopes or attachment transitions.
 
 ## Consequences

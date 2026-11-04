@@ -92,12 +92,11 @@ export class IRHIGraphicsPass : public IRHIPass {
 
     auto Draw() -> void;
 
-    [[nodiscard]] auto DrawIndirect(RHIBufferView IndirectBuffer, Uint32 DrawCount = 1)
-        -> std::expected<void, ErrorMessage>;
-    [[nodiscard]] auto DrawIndexedIndirect(RHIBufferView                  IndirectBuffer,
-                                           RHIBufferView                  IndexBuffer,
-                                           std::span<const RHIBufferView> VertexBuffers = {},
-                                           Uint32 DrawCount = 1) -> std::expected<void, ErrorMessage>;
+    auto DrawIndirect(RHIBufferView IndirectBuffer, Uint32 DrawCount = 1) -> void;
+    auto DrawIndexedIndirect(RHIBufferView                  IndirectBuffer,
+                             RHIBufferView                  IndexBuffer,
+                             std::span<const RHIBufferView> VertexBuffers = {},
+                             Uint32                         DrawCount     = 1) -> void;
 
     RHIGraphicsAttachments m_Attachments = {};
 
@@ -152,17 +151,15 @@ export class IRHITransferPass : public IRHIPass {
     /// @brief Blit the selected source mip into the acquired swapchain image at the destination rect.
     ///
     /// This is the only present path.
-    [[nodiscard]] auto
-    BlitToSwapchain(RHITextureView Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight)
-        -> std::expected<void, ErrorMessage>;
+    auto BlitToSwapchain(RHITextureView Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight) -> void;
 
     /// @brief Read back a texel region of a render target into a readback's backend ring.
-    [[nodiscard]] auto ReadbackTexture(RHITextureView      Source,
-                                       Uint32              SrcX,
-                                       Uint32              SrcY,
-                                       RHIRef<RHIReadback> Target,
-                                       Uint32              SrcWidth  = 1,
-                                       Uint32              SrcHeight = 1) -> std::expected<void, ErrorMessage>;
+    auto ReadbackTexture(RHITextureView      Source,
+                         Uint32              SrcX,
+                         Uint32              SrcY,
+                         RHIRef<RHIReadback> Target,
+                         Uint32              SrcWidth  = 1,
+                         Uint32              SrcHeight = 1) -> void;
 };
 
 export class IRHIRayTracingPass : public IRHIPass {

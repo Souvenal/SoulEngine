@@ -255,9 +255,13 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
         const auto* Resource = View.Buffer.TryGet();
         if (!Resource || !magic_enum::enum_flags_test(Resource->GetUsage(), RHIBufferUsage::Vertex) ||
             View.Usage != RHIBufferUsage::Vertex || View.Access != RHIAccess::Read ||
-            View.Offset % sizeof(Uint32) != 0 || View.Offset >= Resource->GetSize() || View.Range == 0 ||
-            (View.Range != kRHIWholeBuffer && View.Range > Resource->GetSize() - View.Offset)) {
+            View.Offset % sizeof(Uint32) != 0 || View.Offset >= Resource->GetSize()) {
             Error = ErrorMessage("Indexed draw has an invalid vertex buffer view");
+            return;
+        }
+        const Uint64 VertexRange = View.Range == kRHIWholeBuffer ? Resource->GetSize() - View.Offset : View.Range;
+        if (VertexRange == 0 || VertexRange > Resource->GetSize() - View.Offset || VertexRange % sizeof(Uint32) != 0) {
+            Error = ErrorMessage("Indexed draw vertex buffer view range is invalid");
             return;
         }
         const auto& Vertex     = static_cast<const VulkanBuffer&>(*Resource);
@@ -342,8 +346,8 @@ auto VulkanTransferCmdVisitor::operator()(const RHIBlitToSwapchainCmd& Cmd) -> v
         Error = ErrorMessage("Blit-to-swapchain requires a color source target");
         return;
     }
-    if (Cmd.DstX > m_Swapchain.GetExtent().width || Cmd.DstY > m_Swapchain.GetExtent().height ||
-        Cmd.DstWidth > m_Swapchain.GetExtent().width - Cmd.DstX ||
+    if (Cmd.DstWidth == 0 || Cmd.DstHeight == 0 || Cmd.DstX > m_Swapchain.GetExtent().width ||
+        Cmd.DstY > m_Swapchain.GetExtent().height || Cmd.DstWidth > m_Swapchain.GetExtent().width - Cmd.DstX ||
         Cmd.DstHeight > m_Swapchain.GetExtent().height - Cmd.DstY) {
         Error = ErrorMessage("Blit-to-swapchain destination region exceeds the acquired image");
         return;

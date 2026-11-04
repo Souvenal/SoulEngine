@@ -85,7 +85,8 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
             });
             !R)
             return std::unexpected(R.error());
-        return DrawIndirect(m_Parameter->SelectedIndirect.ResolvedView(), m_Parameter->DrawCount);
+        DrawIndirect(m_Parameter->SelectedIndirect.ResolvedView(), m_Parameter->DrawCount);
+        return {};
     }
 
   private:
