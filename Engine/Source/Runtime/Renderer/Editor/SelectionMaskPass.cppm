@@ -53,7 +53,7 @@ export class SelectionMaskPass final : public IRHIGraphicsPass {
         if (!m_Parameter->Mask.Resolved || !m_Parameter->FrameBuffer.Resolved || !m_Parameter->ViewBuffer.Resolved ||
             !m_Parameter->LinearSampler || !m_Parameter->SelectedInstances.Resolved ||
             !m_Parameter->GeometryTable.Resolved || !m_Parameter->MaterialTable.Resolved ||
-            !m_Parameter->SelectedIndirect.Resolved)
+            !m_Parameter->SelectedIndirect.Resolved || m_Parameter->DrawCount == 0)
             return std::unexpected(ErrorMessage("Selection mask pass resources are not ready"));
 
         m_Attachments = RHIGraphicsAttachments{
