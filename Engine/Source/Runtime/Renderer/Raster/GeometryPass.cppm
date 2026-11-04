@@ -73,8 +73,6 @@ export class GeometryPass final : public IRHIGraphicsPass {
         if (!m_Parameter->InstanceBuffer.Resolved || !m_Parameter->GeometryBuffer.Resolved ||
             !m_Parameter->MaterialBuffer.Resolved || !m_Parameter->IndirectBuffer.Resolved)
             return std::unexpected(ErrorMessage("Geometry pass resources are not ready: storage buffer"));
-        if (m_Parameter->DrawCount == 0)
-            return std::unexpected(ErrorMessage("Geometry pass resources are not ready: draw count"));
 
         m_Attachments = RHIGraphicsAttachments{
             .ColorAttachments =
