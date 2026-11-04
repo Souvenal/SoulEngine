@@ -56,7 +56,7 @@ Tests are a `tests` sub-table on the same `soul_module` call; a module with a `T
 
 Supported keys: `deps`/`additional_deps`, `packages`/`additional_packages`, `exclude_tests` (basename patterns), `rpath_packages`.
 
-Registration is deferred: the `tests` sub-table is queued during the module's script and targets materialize after all `includes()` (via `soul_finalize_tests()`), because a module's tests may link modules declared later (RHI tests link RHIVulkan.Impl).
+Registration is deferred: the `tests` sub-table is queued during the module's script and targets materialize after all `includes()` (via `soul_finalize_tests()`), because a module's tests may link modules declared later (RHIVulkan tests link ShaderCompiler.Impl).
 
 ## Final binary
 
