@@ -539,7 +539,7 @@ export class RenderGraphBuilder {
         std::vector<bool> Live(m_Resources.size(), false);
         // Kind is statically typed per vector — no unwrapping. The creation usage a view is checked against
         // comes from the registered desc for graph-created resources and from the realized RHI object for
-        // imported ones. Resolve validates the final view; an import whose ref is not Ready fails there.
+        // imported ones. Final view validation happens here when possible, otherwise in the entry resolver.
         const auto CheckBufferUsage = [&](Uint32 I, const RGBufferViewData* V) -> std::expected<void, ErrorMessage> {
             auto&       Resource = m_Resources[V->Buffer.Index];
             const auto* Prop     = std::get_if<RGBufferProp>(&Resource.Prop);
@@ -638,9 +638,8 @@ export class RenderGraphBuilder {
             }
         }
 
-        // Step 5: resolve every surviving pass's views against the realized table. The pointers lead into the
-        // passes' Parameters, whose addresses have been final since AddPass; this is the single write to a
-        // view after registration.
+        // Step 5: resolve resource identities. Ready resources also materialize their validated views here;
+        // pending Vulkan transients finish in the entry resolver after frame tasks publish Ready.
         for (Uint32 I = 0; I < PassCount; ++I) {
             if (!Required[I] || Pruned[I])
                 continue;
@@ -651,24 +650,28 @@ export class RenderGraphBuilder {
                 if (!Prop)
                     return std::unexpected(ErrorMessage(
                         Format("RenderGraph: pass '{}' views a buffer handle over a texture entry", m_Passes[I].Name)));
-                auto View = RHIBufferView::Create(Prop->Resolved, V->Usage, V->Access, V->Offset, V->Range);
-                if (!View)
-                    return std::unexpected(View.error().Append(
-                        Format("RenderGraph: failed to resolve buffer view for pass '{}'", m_Passes[I].Name)));
-                V->Resolved      = Prop->Resolved;
-                V->ResolvedValue = std::move(*View);
+                V->Resolved = Prop->Resolved;
+                if (V->Resolved.TryGet()) {
+                    auto View = RHIBufferView::Create(Prop->Resolved, V->Usage, V->Access, V->Offset, V->Range);
+                    if (!View)
+                        return std::unexpected(View.error().Append(
+                            Format("RenderGraph: failed to resolve buffer view for pass '{}'", m_Passes[I].Name)));
+                    V->ResolvedValue = std::move(*View);
+                }
             }
             for (auto* V : m_Passes[I].Textures) {
                 const auto* Prop = std::get_if<RGTextureProp>(&m_Resources[V->Texture.Index].Prop);
                 if (!Prop)
                     return std::unexpected(ErrorMessage(
                         Format("RenderGraph: pass '{}' views a texture handle over a buffer entry", m_Passes[I].Name)));
-                auto View = RHITextureView::Create(Prop->Resolved, V->Usage, V->Access, V->Range);
-                if (!View)
-                    return std::unexpected(View.error().Append(
-                        Format("RenderGraph: failed to resolve texture view for pass '{}'", m_Passes[I].Name)));
-                V->Resolved      = Prop->Resolved;
-                V->ResolvedValue = std::move(*View);
+                V->Resolved = Prop->Resolved;
+                if (V->Resolved.TryGet()) {
+                    auto View = RHITextureView::Create(Prop->Resolved, V->Usage, V->Access, V->Range);
+                    if (!View)
+                        return std::unexpected(View.error().Append(
+                            Format("RenderGraph: failed to resolve texture view for pass '{}'", m_Passes[I].Name)));
+                    V->ResolvedValue = std::move(*View);
+                }
             }
         }
 
@@ -713,7 +716,31 @@ export class RenderGraphBuilder {
                 if (!Bound)
                     return std::unexpected(std::move(Bound.error()));
             }
-            Result.Entries.push_back({.Pass = std::move(Node.Pass), .Prologue = BuildPassPrologue(Node, m_Resources)});
+            Result.Entries.push_back(
+                {.Pass         = std::move(Node.Pass),
+                 .Prologue     = BuildPassPrologue(Node, m_Resources),
+                 .ResolveViews = [Buffers = Node.Buffers, Textures = Node.Textures, Name = Node.Name]() mutable
+                     -> std::expected<void, ErrorMessage> {
+                     for (auto* V : Buffers) {
+                         if (V->ResolvedValue)
+                             continue;
+                         auto View = RHIBufferView::Create(V->Resolved, V->Usage, V->Access, V->Offset, V->Range);
+                         if (!View)
+                             return std::unexpected(View.error().Append(
+                                 Format("RenderGraph: failed to resolve buffer view for pass '{}'", Name)));
+                         V->ResolvedValue = std::move(*View);
+                     }
+                     for (auto* V : Textures) {
+                         if (V->ResolvedValue)
+                             continue;
+                         auto View = RHITextureView::Create(V->Resolved, V->Usage, V->Access, V->Range);
+                         if (!View)
+                             return std::unexpected(View.error().Append(
+                                 Format("RenderGraph: failed to resolve texture view for pass '{}'", Name)));
+                         V->ResolvedValue = std::move(*View);
+                     }
+                     return {};
+                 }});
         }
         return Result;
     }

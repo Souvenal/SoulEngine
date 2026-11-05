@@ -1146,6 +1146,29 @@ TEST(RenderGraphDynamicViews, IndexedElementsProduceVertexInputPrologueAndComman
     EXPECT_TRUE(SecondDraw->VertexBuffers.empty());
 }
 
+TEST(RenderGraphDynamicViews, PendingResourceResolvesAtEntryRecord) {
+    ResetMockCounters();
+    auto Pending = RHIRef<RHIBuffer>::Create();
+
+    RenderGraphBuilder Graph;
+    const auto         Indirect = Graph.Import(Pending);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Indirect});
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    auto& Entry = List->Entries.front();
+    ASSERT_TRUE(Entry.ResolveViews);
+
+    const auto Published =
+        Pending.Publish(std::make_unique<MockGeometryBuffer>("Pending", RHIBufferUsage::Indirect), RHIRefState::Ready);
+    ASSERT_TRUE(Published);
+    ASSERT_TRUE(Entry.Record());
+    const auto Commands = Entry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 1u);
+    const auto* Draw = std::get_if<RHIDrawIndirectCmd>(&Commands.front());
+    ASSERT_NE(Draw, nullptr);
+    EXPECT_EQ(Draw->IndirectBuffer.GetBuffer().TryGet(), Pending.TryGet());
+}
+
 TEST(RenderGraphSyncPlan, VertexUsageRequestsVertexInputStage) {
     auto VertexRef = MakeGeometryBuffer("Vertex", RHIBufferUsage::Vertex);
     RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read> View{RGBuffer{.Index = 0}};

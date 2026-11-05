@@ -195,6 +195,18 @@ export class IRHIRayTracingPass : public IRHIPass {
 export struct RHIPassEntry {
     UPtr<IRHIPass> Pass     = nullptr;
     RHIBarrierList Prologue = {};
+
+    /// @brief Materialize views left pending by graph Compile. Frame tasks complete before the backend calls
+    /// Record(), so validation and recording share one error boundary.
+    std::function<std::expected<void, ErrorMessage>()> ResolveViews = {};
+
+    [[nodiscard]] auto Record() const -> std::expected<void, ErrorMessage> {
+        if (ResolveViews) {
+            if (auto Result = ResolveViews(); !Result)
+                return Result;
+        }
+        return Pass->Record();
+    }
 };
 
 /// @brief Complete frame packet transferred from RenderLoop to the RHI thread.

@@ -577,7 +577,7 @@ auto VulkanRenderDevice::Execute(RenderResult& Result) -> std::expected<void, Er
         // Transfer passes have no pipeline; all other passes must have one.
         if (Pass->GetType() != RHIPassType::Transfer && !Pipeline)
             return std::unexpected(ErrorMessage(Format("Execute: pass {} has no pipeline", Pass->GetName())));
-        if (auto R = Pass->Record(); !R)
+        if (auto R = Entry.Record(); !R)
             return std::unexpected(R.error().Append(Format("Execute: pass {} recording failed", Pass->GetName())));
 
         // The graph-declared prologue is materialized ahead of the pass's commands inside the shared

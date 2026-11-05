@@ -209,7 +209,7 @@ TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
     std::vector<RHIBufferView>       Vertices;
     std::array<RHIRef<RHIBuffer>, 4> Buffers;
     Vertices.reserve(4);
-    for (Uint32 I = 0; I < Vertices.capacity(); ++I) {
+    for (Uint32 I = 0; I < Buffers.size(); ++I) {
         Buffers[I] = MakeBuffer("Vertex", 32, RHIBufferUsage::Vertex);
         Vertices.push_back(MakeBufferView(Buffers[I], RHIBufferUsage::Vertex, RHIAccess::Read, 0, 32));
     }
