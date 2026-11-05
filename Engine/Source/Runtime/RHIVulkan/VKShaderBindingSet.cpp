@@ -329,7 +329,7 @@ auto VulkanShaderBindingSet::CaptureBindingState() -> std::expected<PipelineBind
             if (Slot.Info.Type == ShaderResourceType::ConstantBuffer ||
                 Slot.Info.Type == ShaderResourceType::StorageBuffer) {
                 const auto* View   = std::get_if<RHIBufferView>(&Slot.Bound);
-                const auto* Buffer = View ? static_cast<const VulkanBuffer*>(View->Buffer.TryGet()) : nullptr;
+                const auto* Buffer = View ? static_cast<const VulkanBuffer*>(View->GetBuffer().TryGet()) : nullptr;
                 const auto* Prop   = Buffer ? Buffer->GetProp<TransientBufferProp>() : nullptr;
                 if (!Prop)
                     return std::unexpected(ErrorMessage(
@@ -366,13 +366,13 @@ auto VulkanShaderBindingSet::OnResourcesBound(Uint32 SetIndex) -> std::expected<
         // The cache key captures the full view identity: resource id plus role and range, so a re-view of the
         // same resource refreshes.
         if (const auto* View = std::get_if<RHITextureView>(&Slot.Bound)) {
-            Key.ResourceIds.push_back(View->Texture ? View->Texture->GetId() : 0);
-            Key.ResourceIds.push_back(static_cast<Uint32>(View->Usage));
-            Key.ResourceIds.push_back(View->Range.BaseMipLevel);
-            Key.ResourceIds.push_back(View->Range.MipLevelCount);
+            Key.ResourceIds.push_back(View->GetTexture() ? View->GetTexture()->GetId() : 0);
+            Key.ResourceIds.push_back(static_cast<Uint32>(View->GetUsage()));
+            Key.ResourceIds.push_back(View->GetRange().BaseMipLevel);
+            Key.ResourceIds.push_back(View->GetRange().MipLevelCount);
         } else if (const auto* View = std::get_if<RHIBufferView>(&Slot.Bound)) {
-            Key.ResourceIds.push_back(View->Buffer ? View->Buffer->GetId() : 0);
-            Key.ResourceIds.push_back(static_cast<Uint32>(View->Usage));
+            Key.ResourceIds.push_back(View->GetBuffer() ? View->GetBuffer()->GetId() : 0);
+            Key.ResourceIds.push_back(static_cast<Uint32>(View->GetUsage()));
         } else if (const auto* View = std::get_if<RHISamplerView>(&Slot.Bound)) {
             Key.ResourceIds.push_back(View->Sampler ? View->Sampler->GetId() : 0);
         } else if (const auto* View = std::get_if<RHITlasView>(&Slot.Bound)) {
@@ -384,10 +384,10 @@ auto VulkanShaderBindingSet::OnResourcesBound(Uint32 SetIndex) -> std::expected<
         // the variable count.
         for (const auto& Element : Slot.ArrayElements) {
             Key.ResourceIds.push_back(Element.ArrayIndex);
-            Key.ResourceIds.push_back(Element.View.Texture ? Element.View.Texture->GetId() : 0);
-            Key.ResourceIds.push_back(static_cast<Uint32>(Element.View.Usage));
-            Key.ResourceIds.push_back(Element.View.Range.BaseMipLevel);
-            Key.ResourceIds.push_back(Element.View.Range.MipLevelCount);
+            Key.ResourceIds.push_back(Element.View.GetTexture() ? Element.View.GetTexture()->GetId() : 0);
+            Key.ResourceIds.push_back(static_cast<Uint32>(Element.View.GetUsage()));
+            Key.ResourceIds.push_back(Element.View.GetRange().BaseMipLevel);
+            Key.ResourceIds.push_back(Element.View.GetRange().MipLevelCount);
         }
     }
     m_SetKeys[SetIndex] = std::move(Key);

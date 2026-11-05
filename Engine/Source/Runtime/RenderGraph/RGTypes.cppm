@@ -42,15 +42,16 @@ export struct RGBuffer {
 /// The graph's erased machinery manipulates views through this one non-template type. Pass Parameter fields
 /// use the RGTextureView template below; every specialization derives from this record.
 export struct RGTextureViewData {
-    RGTexture           Texture  = {};
-    RHITextureUsage     Usage    = RHITextureUsage::None;
-    RHISubresourceRange Range    = {};
-    RHIAccess           Access   = {};
-    RHIRef<RHITexture>  Resolved = {}; ///< Graph-resolved resource; valid from pass execution time on.
+    RGTexture                     Texture       = {};
+    RHITextureUsage               Usage         = RHITextureUsage::None;
+    RHISubresourceRange           Range         = {};
+    RHIAccess                     Access        = {};
+    RHIRef<RHITexture>            Resolved      = {}; ///< Graph-resolved resource; valid from pass execution on.
+    std::optional<RHITextureView> ResolvedValue = std::nullopt; ///< Validated at Compile.
 
-    /// @brief The ready RHI view over Resolved, built from the declared usage, range, and access.
+    /// @brief The validated RHI view, identical to this declaration's identity, role, range, and access.
     [[nodiscard]] auto ResolvedView() const -> RHITextureView {
-        return {.Texture = Resolved, .Access = Access, .Usage = Usage, .Range = Range};
+        return *ResolvedValue;
     }
 };
 
@@ -60,8 +61,8 @@ export struct RGTextureViewData {
 /// The pass alone knows how it consumes the resource. With role and access in the field type, the Parameter
 /// stays an aggregate and the wiring site initializes each field by name with the identity alone (`{.Output =
 /// Target}`); assigning a whole record to a field is ill-formed, so the declared role cannot be reset. At
-/// Compile the graph fills `.Resolved` with the realized (or imported) resource; pass execution builds the
-/// ready RHI view from the declared usage, range, and access on demand via ResolvedView().
+/// At Compile, the graph resolves the resource and validates the complete RHI view once; pass execution reads
+/// that identical view via ResolvedView().
 export template <RHITextureUsage U, RHIAccess A>
 struct RGTextureView : RGTextureViewData {
     // Base members take no declaration-site defaults from here, so the declared role lands in the ctor body.
@@ -79,14 +80,17 @@ struct RGTextureView : RGTextureViewData {
 /// Same contract as RGTextureViewData. Pass Parameter fields use the RGBufferView template below; every
 /// specialization derives from this record.
 export struct RGBufferViewData {
-    RGBuffer          Buffer   = {};
-    RHIBufferUsage    Usage    = RHIBufferUsage::Unknown;
-    RHIAccess         Access   = {};
-    RHIRef<RHIBuffer> Resolved = {}; ///< Graph-resolved resource; valid from pass execution time on.
+    RGBuffer                     Buffer        = {};
+    RHIBufferUsage               Usage         = RHIBufferUsage::Unknown;
+    RHIAccess                    Access        = {};
+    Uint64                       Offset        = 0;
+    Uint64                       Range         = kRHIWholeBuffer;
+    RHIRef<RHIBuffer>            Resolved      = {}; ///< Graph-resolved resource; valid from pass execution on.
+    std::optional<RHIBufferView> ResolvedValue = std::nullopt; ///< Validated at Compile.
 
-    /// @brief The ready RHI view over Resolved, built from the declared usage and access.
+    /// @brief The validated RHI view, identical to this declaration's identity, role, extent, and access.
     [[nodiscard]] auto ResolvedView() const -> RHIBufferView {
-        return {.Buffer = Resolved, .Access = Access, .Usage = Usage};
+        return *ResolvedValue;
     }
 };
 

@@ -1,5 +1,5 @@
 /// @file   GraphicsCommands.cpp
-/// @brief  Public graphics-command recording and lifetime coverage.
+/// @brief  Public graphics-command recording, view invariants, and lifetime coverage.
 
 #include <gtest/gtest.h>
 
@@ -8,6 +8,9 @@ import std;
 import Core;
 
 using namespace SoulEngine;
+
+static_assert(!std::is_default_constructible_v<RHIBufferView>);
+static_assert(!std::is_default_constructible_v<RHITextureView>);
 
 class MockCommandBuffer final : public RHIBuffer {
   public:
@@ -72,6 +75,25 @@ struct TestTransferPass final : IRHITransferPass {
     }
 };
 
+[[nodiscard]] auto MakeBufferView(RHIRef<RHIBuffer> Buffer,
+                                  RHIBufferUsage    Usage,
+                                  RHIAccess         Access = RHIAccess::Read,
+                                  Uint64            Offset = 0,
+                                  Uint64            Range  = kRHIWholeBuffer) -> RHIBufferView {
+    auto View = RHIBufferView::Create(std::move(Buffer), Usage, Access, Offset, Range);
+    EXPECT_TRUE(View.has_value());
+    return std::move(*View);
+}
+
+[[nodiscard]] auto MakeTextureView(RHIRef<RHITexture>  Texture,
+                                   RHITextureUsage     Usage,
+                                   RHIAccess           Access = RHIAccess::Read,
+                                   RHISubresourceRange Range  = {}) -> RHITextureView {
+    auto View = RHITextureView::Create(std::move(Texture), Usage, Access, Range);
+    EXPECT_TRUE(View.has_value());
+    return std::move(*View);
+}
+
 class GraphicsCommandTest : public testing::Test {
   protected:
     auto SetUp() -> void override {
@@ -112,42 +134,40 @@ class GraphicsCommandTest : public testing::Test {
 };
 
 TEST_F(GraphicsCommandTest, RecordsIndexedInputsAndRetainsReferencedBuffers) {
-    Uint32        VertexDestructions   = 0;
-    Uint32        IndexDestructions    = 0;
-    Uint32        IndirectDestructions = 0;
-    auto          Vertex               = MakeBuffer("Vertex", 128, RHIBufferUsage::Vertex, &VertexDestructions);
-    auto          Index                = MakeBuffer("Index", 64, RHIBufferUsage::Index, &IndexDestructions);
-    auto          Indirect             = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect, &IndirectDestructions);
-    RHIBufferView VertexView{
-        .Buffer = Vertex, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Vertex, .Offset = 16, .Range = 96};
-    RHIBufferView IndexView{
-        .Buffer = Index, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Index, .Offset = 4, .Range = 60};
-    RHIBufferView IndirectView{
-        .Buffer = Indirect, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Indirect, .Offset = 20, .Range = 40};
-    std::array VertexViews{VertexView};
+    Uint32 VertexDestructions   = 0;
+    Uint32 IndexDestructions    = 0;
+    Uint32 IndirectDestructions = 0;
+    auto   Vertex               = MakeBuffer("Vertex", 128, RHIBufferUsage::Vertex, &VertexDestructions);
+    auto   Index                = MakeBuffer("Index", 64, RHIBufferUsage::Index, &IndexDestructions);
+    auto   Indirect             = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect, &IndirectDestructions);
+    std::optional<RHIBufferView> VertexView = MakeBufferView(Vertex, RHIBufferUsage::Vertex, RHIAccess::Read, 16, 96);
+    std::optional<RHIBufferView> IndexView  = MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 4, 60);
+    std::optional<RHIBufferView> IndirectView =
+        MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 20, 40);
+    std::vector<RHIBufferView> VertexViews{*VertexView};
 
     TestGraphicsPass Pass;
-    Pass.DrawIndexedIndirect(IndirectView, IndexView, VertexViews, 2);
+    Pass.DrawIndexedIndirect(*IndirectView, *IndexView, VertexViews, 2);
     const auto Commands = Pass.GetCommands();
     ASSERT_EQ(Commands.size(), 1u);
     const auto* Draw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands.front());
     ASSERT_NE(Draw, nullptr);
     ASSERT_EQ(Draw->VertexBuffers.size(), 1u);
-    EXPECT_EQ(Draw->VertexBuffers[0].Buffer.TryGet(), Vertex.TryGet());
-    EXPECT_EQ(Draw->VertexBuffers[0].Offset, 16u);
-    EXPECT_EQ(Draw->VertexBuffers[0].Range, 96u);
-    EXPECT_EQ(Draw->IndexBuffer.Buffer.TryGet(), Index.TryGet());
-    EXPECT_EQ(Draw->IndexBuffer.Offset, 4u);
-    EXPECT_EQ(Draw->IndirectBuffer.Buffer.TryGet(), Indirect.TryGet());
-    EXPECT_EQ(Draw->IndirectBuffer.Offset, 20u);
+    EXPECT_EQ(Draw->VertexBuffers[0].GetBuffer().TryGet(), Vertex.TryGet());
+    EXPECT_EQ(Draw->VertexBuffers[0].GetOffset(), 16u);
+    EXPECT_EQ(Draw->VertexBuffers[0].GetRange(), 96u);
+    EXPECT_EQ(Draw->IndexBuffer.GetBuffer().TryGet(), Index.TryGet());
+    EXPECT_EQ(Draw->IndexBuffer.GetOffset(), 4u);
+    EXPECT_EQ(Draw->IndirectBuffer.GetBuffer().TryGet(), Indirect.TryGet());
+    EXPECT_EQ(Draw->IndirectBuffer.GetOffset(), 20u);
     EXPECT_EQ(Draw->DrawCount, 2u);
 
-    VertexView   = {};
-    IndexView    = {};
-    IndirectView = {};
-    VertexViews  = {};
-    EXPECT_EQ(Draw->VertexBuffers[0].Offset, 16u);
-    EXPECT_EQ(Draw->VertexBuffers[0].Range, 96u);
+    VertexView.reset();
+    IndexView.reset();
+    IndirectView.reset();
+    VertexViews.clear();
+    EXPECT_EQ(Draw->VertexBuffers[0].GetOffset(), 16u);
+    EXPECT_EQ(Draw->VertexBuffers[0].GetRange(), 96u);
     Vertex   = nullptr;
     Index    = nullptr;
     Indirect = nullptr;
@@ -163,19 +183,18 @@ TEST_F(GraphicsCommandTest, RecordsIndexedInputsAndRetainsReferencedBuffers) {
 }
 
 TEST_F(GraphicsCommandTest, RecordsIndirectDrawUsingViewExtentAndRetainsReference) {
-    Uint32        Destructions = 0;
-    auto          Buffer       = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect, &Destructions);
-    RHIBufferView View{
-        .Buffer = Buffer, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Indirect, .Offset = 20, .Range = 40};
-    TestGraphicsPass Pass;
-    Pass.DrawIndirect(View, 2);
+    Uint32                       Destructions = 0;
+    auto                         Buffer       = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect, &Destructions);
+    std::optional<RHIBufferView> View = MakeBufferView(Buffer, RHIBufferUsage::Indirect, RHIAccess::Read, 20, 40);
+    TestGraphicsPass             Pass;
+    Pass.DrawIndirect(*View, 2);
     ASSERT_EQ(Pass.GetCommands().size(), 1u);
     const auto* Draw = std::get_if<RHIDrawIndirectCmd>(&Pass.GetCommands().front());
     ASSERT_NE(Draw, nullptr);
-    EXPECT_EQ(Draw->IndirectBuffer.Buffer.TryGet(), Buffer.TryGet());
-    EXPECT_EQ(Draw->IndirectBuffer.Offset, 20u);
+    EXPECT_EQ(Draw->IndirectBuffer.GetBuffer().TryGet(), Buffer.TryGet());
+    EXPECT_EQ(Draw->IndirectBuffer.GetOffset(), 20u);
     EXPECT_EQ(Draw->DrawCount, 2u);
-    View   = {};
+    View.reset();
     Buffer = nullptr;
     m_DeletionQueue.Drain();
     EXPECT_EQ(Destructions, 0u);
@@ -187,21 +206,19 @@ TEST_F(GraphicsCommandTest, RecordsIndirectDrawUsingViewExtentAndRetainsReferenc
 TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
     auto                             Indirect = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect);
     auto                             Index    = MakeBuffer("Index", 64, RHIBufferUsage::Index);
-    std::array<RHIBufferView, 4>     Vertices{};
+    std::vector<RHIBufferView>       Vertices;
     std::array<RHIRef<RHIBuffer>, 4> Buffers;
-    for (Uint32 I = 0; I < Vertices.size(); ++I) {
-        Buffers[I]  = MakeBuffer("Vertex", 32, RHIBufferUsage::Vertex);
-        Vertices[I] = RHIBufferView{
-            .Buffer = Buffers[I], .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Vertex, .Range = 32};
+    Vertices.reserve(4);
+    for (Uint32 I = 0; I < Vertices.capacity(); ++I) {
+        Buffers[I] = MakeBuffer("Vertex", 32, RHIBufferUsage::Vertex);
+        Vertices.push_back(MakeBufferView(Buffers[I], RHIBufferUsage::Vertex, RHIAccess::Read, 0, 32));
     }
     TestGraphicsPass Pass;
-    Pass.DrawIndexedIndirect(
-        RHIBufferView{.Buffer = Indirect, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Indirect, .Range = 20},
-        RHIBufferView{.Buffer = Index, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Index, .Range = 64});
-    Pass.DrawIndexedIndirect(
-        RHIBufferView{.Buffer = Indirect, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Indirect, .Range = 20},
-        RHIBufferView{.Buffer = Index, .Access = RHIAccess::Read, .Usage = RHIBufferUsage::Index, .Range = 64},
-        Vertices);
+    Pass.DrawIndexedIndirect(MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20),
+                             MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 0, 64));
+    Pass.DrawIndexedIndirect(MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20),
+                             MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 0, 64),
+                             Vertices);
     const auto Commands = Pass.GetCommands();
     ASSERT_EQ(Commands.size(), 2u);
     const auto* Empty = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[0]);
@@ -211,17 +228,17 @@ TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
     EXPECT_TRUE(Empty->VertexBuffers.empty());
     ASSERT_EQ(Four->VertexBuffers.size(), 4u);
     for (std::size_t I = 0; I < Four->VertexBuffers.size(); ++I)
-        EXPECT_EQ(Four->VertexBuffers[I].Buffer.TryGet(), Buffers[I].TryGet());
+        EXPECT_EQ(Four->VertexBuffers[I].GetBuffer().TryGet(), Buffers[I].TryGet());
 }
 
 TEST_F(GraphicsCommandTest, RecordsTransferCommands) {
-    auto                 Texture  = MakeTexture("Texture");
-    auto                 Readback = MakeReadback();
-    const RHITextureView MipView{.Texture = Texture,
-                                 .Access  = RHIAccess::Read,
-                                 .Usage   = RHITextureUsage::TransferSrc,
-                                 .Range   = RHISubresourceRange{.BaseMipLevel = 2, .MipLevelCount = 1}};
-    TestTransferPass     Pass;
+    auto             Texture  = MakeTexture("Texture");
+    auto             Readback = MakeReadback();
+    const auto       MipView  = MakeTextureView(Texture,
+                                                RHITextureUsage::TransferSrc,
+                                                RHIAccess::Read,
+                                                RHISubresourceRange{.BaseMipLevel = 2, .MipLevelCount = 1});
+    TestTransferPass Pass;
     Pass.ReadbackTexture(MipView, 1, 0, Readback, 3, 2);
     Pass.BlitToSwapchain(MipView, 2, 3, 8, 4);
 
@@ -229,8 +246,8 @@ TEST_F(GraphicsCommandTest, RecordsTransferCommands) {
     ASSERT_EQ(Commands.size(), 2u);
     const auto* Copy = std::get_if<RHIReadbackTextureCmd>(&Commands[0]);
     ASSERT_NE(Copy, nullptr);
-    EXPECT_EQ(Copy->Source.Texture.TryGet(), Texture.TryGet());
-    EXPECT_EQ(Copy->Source.Range.BaseMipLevel, 2u);
+    EXPECT_EQ(Copy->Source.GetTexture().TryGet(), Texture.TryGet());
+    EXPECT_EQ(Copy->Source.GetRange().BaseMipLevel, 2u);
     EXPECT_EQ(Copy->SrcX, 1u);
     EXPECT_EQ(Copy->SrcY, 0u);
     EXPECT_EQ(Copy->SrcWidth, 3u);
@@ -239,10 +256,36 @@ TEST_F(GraphicsCommandTest, RecordsTransferCommands) {
 
     const auto* Blit = std::get_if<RHIBlitToSwapchainCmd>(&Commands[1]);
     ASSERT_NE(Blit, nullptr);
-    EXPECT_EQ(Blit->Source.Texture.TryGet(), Texture.TryGet());
-    EXPECT_EQ(Blit->Source.Range.BaseMipLevel, 2u);
+    EXPECT_EQ(Blit->Source.GetTexture().TryGet(), Texture.TryGet());
+    EXPECT_EQ(Blit->Source.GetRange().BaseMipLevel, 2u);
     EXPECT_EQ(Blit->DstX, 2u);
     EXPECT_EQ(Blit->DstY, 3u);
     EXPECT_EQ(Blit->DstWidth, 8u);
     EXPECT_EQ(Blit->DstHeight, 4u);
+}
+
+TEST_F(GraphicsCommandTest, ViewCreationValidatesResourceContracts) {
+    auto Indirect = MakeBuffer("Indirect", 100, RHIBufferUsage::Storage | RHIBufferUsage::Indirect);
+    EXPECT_TRUE(RHIBufferView::Create(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read));
+    EXPECT_FALSE(RHIBufferView::Create(Indirect, RHIBufferUsage::Index, RHIAccess::Read));
+    EXPECT_FALSE(RHIBufferView::Create(Indirect, RHIBufferUsage::Storage | RHIBufferUsage::Indirect, RHIAccess::Read));
+    EXPECT_FALSE(RHIBufferView::Create(Indirect, RHIBufferUsage::Indirect, RHIAccess::None));
+    EXPECT_FALSE(RHIBufferView::Create(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 101));
+    EXPECT_FALSE(RHIBufferView::Create(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 80, 40));
+    EXPECT_FALSE(RHIBufferView::Create(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 100));
+    EXPECT_FALSE(RHIBufferView::Create({}, RHIBufferUsage::Indirect, RHIAccess::Read));
+
+    auto Texture = MakeTexture("Texture");
+    EXPECT_FALSE(RHITextureView::Create(Texture, RHITextureUsage::Sampled, RHIAccess::Read));
+    EXPECT_FALSE(
+        RHITextureView::Create(Texture, RHITextureUsage::Sampled | RHITextureUsage::TransferSrc, RHIAccess::Read));
+    EXPECT_FALSE(RHITextureView::Create(Texture, RHITextureUsage::TransferSrc, RHIAccess::None));
+    EXPECT_FALSE(RHITextureView::Create(Texture,
+                                        RHITextureUsage::TransferSrc,
+                                        RHIAccess::Read,
+                                        RHISubresourceRange{.BaseMipLevel = 4, .MipLevelCount = 1}));
+    EXPECT_FALSE(RHITextureView::Create(Texture,
+                                        RHITextureUsage::TransferSrc,
+                                        RHIAccess::Read,
+                                        RHISubresourceRange{.BaseMipLevel = 2, .MipLevelCount = 3}));
 }

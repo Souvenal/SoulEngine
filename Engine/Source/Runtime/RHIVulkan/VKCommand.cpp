@@ -91,7 +91,7 @@ auto VulkanGraphicsCmdVisitor::BeginRendering(const RHIGraphicsAttachments& Atta
     Uint32 RenderHeight  = 0;
 
     for (const auto& AttachmentDesc : Attachments.ColorAttachments) {
-        auto* ColorTarget = AttachmentDesc.View.Texture.TryGet();
+        auto* ColorTarget = AttachmentDesc.View.GetTexture().TryGet();
         if (!ColorTarget) {
             Error = ErrorMessage("Rendering pass color attachment is not ready");
             return;
@@ -102,9 +102,9 @@ auto VulkanGraphicsCmdVisitor::BeginRendering(const RHIGraphicsAttachments& Atta
             return;
         }
         ColorAttachments.push_back(vk::RenderingAttachmentInfo{
-            .imageView   = AttachmentDesc.View.Range.MipLevelCount == kRHIRemainingSubresources
+            .imageView   = AttachmentDesc.View.GetRange().MipLevelCount == kRHIRemainingSubresources
                                ? ColorRT.GetVkImageView()
-                               : ColorRT.GetVkImageView(AttachmentDesc.View.Range.BaseMipLevel),
+                               : ColorRT.GetVkImageView(AttachmentDesc.View.GetRange().BaseMipLevel),
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .loadOp      = AttachmentDesc.Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
             .storeOp     = vk::AttachmentStoreOp::eStore,
@@ -118,7 +118,7 @@ auto VulkanGraphicsCmdVisitor::BeginRendering(const RHIGraphicsAttachments& Atta
 
     std::optional<vk::RenderingAttachmentInfo> DepthAttachment = std::nullopt;
     if (Attachments.DepthAttachment.has_value()) {
-        auto* DepthTarget = Attachments.DepthAttachment->View.Texture.TryGet();
+        auto* DepthTarget = Attachments.DepthAttachment->View.GetTexture().TryGet();
         if (!DepthTarget) {
             Error = ErrorMessage("Rendering pass depth attachment is not ready");
             return;
@@ -126,9 +126,9 @@ auto VulkanGraphicsCmdVisitor::BeginRendering(const RHIGraphicsAttachments& Atta
         auto& VkDepthRT      = static_cast<const VulkanTexture&>(*DepthTarget);
         m_CurrentDepthFormat = VkDepthRT.GetFormat();
         DepthAttachment      = vk::RenderingAttachmentInfo{
-            .imageView   = Attachments.DepthAttachment->View.Range.MipLevelCount == kRHIRemainingSubresources
+            .imageView   = Attachments.DepthAttachment->View.GetRange().MipLevelCount == kRHIRemainingSubresources
                                ? VkDepthRT.GetVkImageView()
-                               : VkDepthRT.GetVkImageView(Attachments.DepthAttachment->View.Range.BaseMipLevel),
+                               : VkDepthRT.GetVkImageView(Attachments.DepthAttachment->View.GetRange().BaseMipLevel),
             .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
             .loadOp  = Attachments.DepthAttachment->Clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
             .storeOp = vk::AttachmentStoreOp::eStore,
@@ -172,9 +172,9 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawCmd& Cmd) -> void {
 }
 
 auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndirectCmd& Cmd) -> void {
-    const auto* Buffer = Cmd.IndirectBuffer.Buffer.TryGet();
-    if (!Buffer || !magic_enum::enum_flags_test(Buffer->GetUsage(), RHIBufferUsage::Indirect) ||
-        Cmd.IndirectBuffer.Usage != RHIBufferUsage::Indirect || Cmd.IndirectBuffer.Access != RHIAccess::Read) {
+    const auto* Buffer = Cmd.IndirectBuffer.GetBuffer().TryGet();
+    if (!Buffer || Cmd.IndirectBuffer.GetUsage() != RHIBufferUsage::Indirect ||
+        Cmd.IndirectBuffer.GetAccess() != RHIAccess::Read) {
         Error = ErrorMessage("Indirect draw requires a ready readable indirect buffer view");
         return;
     }
@@ -182,13 +182,15 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndirectCmd& Cmd) -> void
         Error = ErrorMessage("Indirect draw count is outside the Vulkan supported range");
         return;
     }
-    if (Cmd.IndirectBuffer.Offset % alignof(RHIIndirectCommand) != 0 || Cmd.IndirectBuffer.Offset > Buffer->GetSize()) {
+    if (Cmd.IndirectBuffer.GetOffset() % alignof(RHIIndirectCommand) != 0 ||
+        Cmd.IndirectBuffer.GetOffset() > Buffer->GetSize()) {
         Error = ErrorMessage("Indirect draw view offset exceeds its buffer");
         return;
     }
-    const Uint64 ViewRange = Cmd.IndirectBuffer.Range == kRHIWholeBuffer ? Buffer->GetSize() - Cmd.IndirectBuffer.Offset
-                                                                         : Cmd.IndirectBuffer.Range;
-    if (ViewRange > Buffer->GetSize() - Cmd.IndirectBuffer.Offset ||
+    const Uint64 ViewRange = Cmd.IndirectBuffer.GetRange() == kRHIWholeBuffer
+                                 ? Buffer->GetSize() - Cmd.IndirectBuffer.GetOffset()
+                                 : Cmd.IndirectBuffer.GetRange();
+    if (ViewRange > Buffer->GetSize() - Cmd.IndirectBuffer.GetOffset() ||
         Cmd.DrawCount > ViewRange / sizeof(RHIIndirectCommand)) {
         Error = ErrorMessage("Indirect draw range exceeds its buffer view");
         return;
@@ -200,7 +202,7 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndirectCmd& Cmd) -> void
         return;
     }
     Buf.drawIndirect(Indirect.GetVkBuffer(),
-                     Prop->Allocation.Offset + Cmd.IndirectBuffer.Offset,
+                     Prop->Allocation.Offset + Cmd.IndirectBuffer.GetOffset(),
                      Cmd.DrawCount,
                      sizeof(RHIIndirectCommand));
 }
@@ -217,34 +219,33 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
             return;
         }
     }
-    const auto* IndirectBufferPtr = Cmd.IndirectBuffer.Buffer.TryGet();
-    const auto* IndexBufferPtr    = Cmd.IndexBuffer.Buffer.TryGet();
-    if (!IndirectBufferPtr || !IndexBufferPtr ||
-        !magic_enum::enum_flags_test(IndirectBufferPtr->GetUsage(), RHIBufferUsage::Indirect) ||
-        !magic_enum::enum_flags_test(IndexBufferPtr->GetUsage(), RHIBufferUsage::Index) ||
-        Cmd.IndirectBuffer.Usage != RHIBufferUsage::Indirect || Cmd.IndexBuffer.Usage != RHIBufferUsage::Index ||
-        Cmd.IndirectBuffer.Access != RHIAccess::Read || Cmd.IndexBuffer.Access != RHIAccess::Read) {
+    const auto* IndirectBufferPtr = Cmd.IndirectBuffer.GetBuffer().TryGet();
+    const auto* IndexBufferPtr    = Cmd.IndexBuffer.GetBuffer().TryGet();
+    if (!IndirectBufferPtr || !IndexBufferPtr || Cmd.IndirectBuffer.GetUsage() != RHIBufferUsage::Indirect ||
+        Cmd.IndexBuffer.GetUsage() != RHIBufferUsage::Index || Cmd.IndirectBuffer.GetAccess() != RHIAccess::Read ||
+        Cmd.IndexBuffer.GetAccess() != RHIAccess::Read) {
         Error = ErrorMessage("Indexed draw requires ready readable indirect and index buffer views");
         return;
     }
-    if (Cmd.IndirectBuffer.Offset % alignof(RHIIndexedIndirectCommand) != 0 ||
-        Cmd.IndexBuffer.Offset % sizeof(Uint32) != 0 || Cmd.IndirectBuffer.Offset > IndirectBufferPtr->GetSize() ||
-        Cmd.IndexBuffer.Offset > IndexBufferPtr->GetSize()) {
+    if (Cmd.IndirectBuffer.GetOffset() % alignof(RHIIndexedIndirectCommand) != 0 ||
+        Cmd.IndexBuffer.GetOffset() % sizeof(Uint32) != 0 ||
+        Cmd.IndirectBuffer.GetOffset() > IndirectBufferPtr->GetSize() ||
+        Cmd.IndexBuffer.GetOffset() > IndexBufferPtr->GetSize()) {
         Error = ErrorMessage("Indexed draw buffer view offset is invalid");
         return;
     }
-    const Uint64 IndirectRange = Cmd.IndirectBuffer.Range == kRHIWholeBuffer
-                                     ? IndirectBufferPtr->GetSize() - Cmd.IndirectBuffer.Offset
-                                     : Cmd.IndirectBuffer.Range;
-    if (IndirectRange > IndirectBufferPtr->GetSize() - Cmd.IndirectBuffer.Offset ||
+    const Uint64 IndirectRange = Cmd.IndirectBuffer.GetRange() == kRHIWholeBuffer
+                                     ? IndirectBufferPtr->GetSize() - Cmd.IndirectBuffer.GetOffset()
+                                     : Cmd.IndirectBuffer.GetRange();
+    if (IndirectRange > IndirectBufferPtr->GetSize() - Cmd.IndirectBuffer.GetOffset() ||
         Cmd.DrawCount > IndirectRange / sizeof(RHIIndexedIndirectCommand)) {
         Error = ErrorMessage("Indexed indirect draw range exceeds its buffer view");
         return;
     }
-    const Uint64 IndexRange = Cmd.IndexBuffer.Range == kRHIWholeBuffer
-                                  ? IndexBufferPtr->GetSize() - Cmd.IndexBuffer.Offset
-                                  : Cmd.IndexBuffer.Range;
-    if (IndexRange > IndexBufferPtr->GetSize() - Cmd.IndexBuffer.Offset || IndexRange < sizeof(Uint32)) {
+    const Uint64 IndexRange = Cmd.IndexBuffer.GetRange() == kRHIWholeBuffer
+                                  ? IndexBufferPtr->GetSize() - Cmd.IndexBuffer.GetOffset()
+                                  : Cmd.IndexBuffer.GetRange();
+    if (IndexRange > IndexBufferPtr->GetSize() - Cmd.IndexBuffer.GetOffset() || IndexRange < sizeof(Uint32)) {
         Error = ErrorMessage("Indexed draw index range is invalid");
         return;
     }
@@ -252,22 +253,23 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
     std::array<vk::DeviceSize, kMaxVertexBufferBindings> VertexOffsets = {};
     for (std::size_t I = 0; I < Cmd.VertexBuffers.size(); ++I) {
         const auto& View     = Cmd.VertexBuffers[I];
-        const auto* Resource = View.Buffer.TryGet();
-        if (!Resource || !magic_enum::enum_flags_test(Resource->GetUsage(), RHIBufferUsage::Vertex) ||
-            View.Usage != RHIBufferUsage::Vertex || View.Access != RHIAccess::Read ||
-            View.Offset % sizeof(Uint32) != 0 || View.Offset >= Resource->GetSize()) {
+        const auto* Resource = View.GetBuffer().TryGet();
+        if (!Resource || View.GetUsage() != RHIBufferUsage::Vertex || View.GetAccess() != RHIAccess::Read ||
+            View.GetOffset() % sizeof(Uint32) != 0 || View.GetOffset() >= Resource->GetSize()) {
             Error = ErrorMessage("Indexed draw has an invalid vertex buffer view");
             return;
         }
-        const Uint64 VertexRange = View.Range == kRHIWholeBuffer ? Resource->GetSize() - View.Offset : View.Range;
-        if (VertexRange == 0 || VertexRange > Resource->GetSize() - View.Offset || VertexRange % sizeof(Uint32) != 0) {
+        const Uint64 VertexRange =
+            View.GetRange() == kRHIWholeBuffer ? Resource->GetSize() - View.GetOffset() : View.GetRange();
+        if (VertexRange == 0 || VertexRange > Resource->GetSize() - View.GetOffset() ||
+            VertexRange % sizeof(Uint32) != 0) {
             Error = ErrorMessage("Indexed draw vertex buffer view range is invalid");
             return;
         }
         const auto& Vertex     = static_cast<const VulkanBuffer&>(*Resource);
         const auto* VertexProp = Vertex.GetProp<TransientBufferProp>();
         VertexHandles[I]       = Vertex.GetVkBuffer();
-        VertexOffsets[I]       = (VertexProp ? VertexProp->Allocation.Offset : 0) + View.Offset;
+        VertexOffsets[I]       = (VertexProp ? VertexProp->Allocation.Offset : 0) + View.GetOffset();
     }
     const auto& Indirect     = static_cast<const VulkanBuffer&>(*IndirectBufferPtr);
     const auto* IndirectProp = Indirect.GetProp<TransientBufferProp>();
@@ -282,10 +284,10 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
                               std::span<const vk::Buffer>(VertexHandles.data(), Cmd.VertexBuffers.size()),
                               std::span<const vk::DeviceSize>(VertexOffsets.data(), Cmd.VertexBuffers.size()));
     Buf.bindIndexBuffer(Index.GetVkBuffer(),
-                        (IndexProp ? IndexProp->Allocation.Offset : 0) + Cmd.IndexBuffer.Offset,
+                        (IndexProp ? IndexProp->Allocation.Offset : 0) + Cmd.IndexBuffer.GetOffset(),
                         vk::IndexType::eUint32);
     Buf.drawIndexedIndirect(Indirect.GetVkBuffer(),
-                            IndirectProp->Allocation.Offset + Cmd.IndirectBuffer.Offset,
+                            IndirectProp->Allocation.Offset + Cmd.IndirectBuffer.GetOffset(),
                             Cmd.DrawCount,
                             sizeof(RHIIndexedIndirectCommand));
 }
@@ -335,9 +337,9 @@ auto VulkanRayTracingCmdVisitor::operator()(const RHITraceRaysCmd& Cmd) -> void 
 }
 
 auto VulkanTransferCmdVisitor::operator()(const RHIBlitToSwapchainCmd& Cmd) -> void {
-    const auto* SourcePtr = Cmd.Source.Texture.TryGet();
-    if (!SourcePtr || !magic_enum::enum_flags_test(SourcePtr->GetUsage(), RHITextureUsage::TransferSrc) ||
-        Cmd.Source.Usage != RHITextureUsage::TransferSrc || Cmd.Source.Access != RHIAccess::Read) {
+    const auto* SourcePtr = Cmd.Source.GetTexture().TryGet();
+    if (!SourcePtr || Cmd.Source.GetUsage() != RHITextureUsage::TransferSrc ||
+        Cmd.Source.GetAccess() != RHIAccess::Read) {
         Error = ErrorMessage("Blit-to-swapchain requires a ready readable transfer-source view");
         return;
     }
@@ -352,10 +354,10 @@ auto VulkanTransferCmdVisitor::operator()(const RHIBlitToSwapchainCmd& Cmd) -> v
         Error = ErrorMessage("Blit-to-swapchain destination region exceeds the acquired image");
         return;
     }
-    const Uint32 Mip = Cmd.Source.Range.BaseMipLevel;
+    const Uint32 Mip = Cmd.Source.GetRange().BaseMipLevel;
     if (Mip >= 32 || Mip >= Src.GetMipLevelCount() ||
-        (Cmd.Source.Range.MipLevelCount != 1 &&
-         (Cmd.Source.Range.MipLevelCount != kRHIRemainingSubresources || Mip + 1 != Src.GetMipLevelCount()))) {
+        (Cmd.Source.GetRange().MipLevelCount != 1 &&
+         (Cmd.Source.GetRange().MipLevelCount != kRHIRemainingSubresources || Mip + 1 != Src.GetMipLevelCount()))) {
         Error = ErrorMessage("Blit-to-swapchain source view must select one valid mip");
         return;
     }
@@ -409,10 +411,10 @@ auto VulkanTransferCmdVisitor::operator()(const RHIBlitToSwapchainCmd& Cmd) -> v
 }
 
 auto VulkanTransferCmdVisitor::operator()(const RHIReadbackTextureCmd& Cmd) -> void {
-    const auto* SourcePtr = Cmd.Source.Texture.TryGet();
+    const auto* SourcePtr = Cmd.Source.GetTexture().TryGet();
     auto*       TargetPtr = Cmd.Target.TryGet();
-    if (!SourcePtr || !TargetPtr || !magic_enum::enum_flags_test(SourcePtr->GetUsage(), RHITextureUsage::TransferSrc) ||
-        Cmd.Source.Usage != RHITextureUsage::TransferSrc || Cmd.Source.Access != RHIAccess::Read) {
+    if (!SourcePtr || !TargetPtr || Cmd.Source.GetUsage() != RHITextureUsage::TransferSrc ||
+        Cmd.Source.GetAccess() != RHIAccess::Read) {
         Error = ErrorMessage("Texture-readback requires ready resources and a readable transfer-source view");
         return;
     }
@@ -424,10 +426,10 @@ auto VulkanTransferCmdVisitor::operator()(const RHIReadbackTextureCmd& Cmd) -> v
         Error = ErrorMessage("Texture readback requires a 32-bit color texel format");
         return;
     }
-    const Uint32 Mip = Cmd.Source.Range.BaseMipLevel;
+    const Uint32 Mip = Cmd.Source.GetRange().BaseMipLevel;
     if (Mip >= 32 || Mip >= Src.GetMipLevelCount() ||
-        (Cmd.Source.Range.MipLevelCount != 1 &&
-         (Cmd.Source.Range.MipLevelCount != kRHIRemainingSubresources || Mip + 1 != Src.GetMipLevelCount()))) {
+        (Cmd.Source.GetRange().MipLevelCount != 1 &&
+         (Cmd.Source.GetRange().MipLevelCount != kRHIRemainingSubresources || Mip + 1 != Src.GetMipLevelCount()))) {
         Error = ErrorMessage("Texture-readback view must select one valid mip");
         return;
     }

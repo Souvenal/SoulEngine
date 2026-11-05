@@ -439,7 +439,7 @@ auto VulkanRenderDevice::RecordImGuiPresentationOverlay(vk::raii::CommandBuffer&
 auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, const RHIBarrierList& Prologue)
     -> std::expected<void, ErrorMessage> {
     for (const auto& Transition : Prologue.Buffers) {
-        const auto* Buffer = Transition.View.Buffer.TryGet();
+        const auto* Buffer = Transition.Buffer.TryGet();
         if (!Buffer)
             return std::unexpected(ErrorMessage("Execute: prologue references an invalid buffer"));
         const auto&  VulkanBuf = static_cast<const VulkanBuffer&>(*Buffer);
@@ -453,17 +453,17 @@ auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, cons
             VulkanBuf.GetSize(),
             VulkanBufferState{
                 .stage   = ToVkPipelineStages(Transition.Stage),
-                .access  = ToVkBufferAccess(Transition.View.Usage, Transition.View.Access),
-                .isWrite = magic_enum::enum_flags_test(Transition.View.Access, RHIAccess::Write),
+                .access  = ToVkBufferAccess(Transition.Usage, Transition.Access),
+                .isWrite = magic_enum::enum_flags_test(Transition.Access, RHIAccess::Write),
             });
     }
     for (const auto& Transition : Prologue.Textures) {
-        const auto* Target = Transition.View.Texture.TryGet();
+        const auto* Target = Transition.Texture.TryGet();
         if (!Target)
             return std::unexpected(ErrorMessage("Execute: prologue references an invalid texture"));
         const auto& VulkanTarget = static_cast<const VulkanTexture&>(*Target);
         const auto  Aspect       = ToVkImageAspect(VulkanTarget.GetFormat());
-        const auto& ViewRange    = Transition.View.Range;
+        const auto& ViewRange    = Transition.Range;
         if (ViewRange.BaseMipLevel >= VulkanTarget.GetMipLevelCount() || ViewRange.MipLevelCount == 0 ||
             (ViewRange.MipLevelCount != kRHIRemainingSubresources &&
              ViewRange.MipLevelCount > VulkanTarget.GetMipLevelCount() - ViewRange.BaseMipLevel))
@@ -472,10 +472,10 @@ auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, cons
         // own mip count here.
         const auto Range = vk::ImageSubresourceRange{
             .aspectMask     = Aspect,
-            .baseMipLevel   = Transition.View.Range.BaseMipLevel,
-            .levelCount     = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                  ? VulkanTarget.GetMipLevelCount() - Transition.View.Range.BaseMipLevel
-                                  : Transition.View.Range.MipLevelCount,
+            .baseMipLevel   = Transition.Range.BaseMipLevel,
+            .levelCount     = Transition.Range.MipLevelCount == kRHIRemainingSubresources
+                                  ? VulkanTarget.GetMipLevelCount() - Transition.Range.BaseMipLevel
+                                  : Transition.Range.MipLevelCount,
             .baseArrayLayer = 0,
             .layerCount     = 1};
         m_ResourceContext->GetImageTracker().Transition(
@@ -484,9 +484,9 @@ auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, cons
             Range,
             VulkanImageState{
                 .stage   = ToVkPipelineStages(Transition.Stage),
-                .access  = ToVkTextureAccess(Transition.View.Usage, Transition.View.Access),
-                .layout  = ToVkImageLayout(Transition.View.Usage, Transition.View.Access),
-                .isWrite = magic_enum::enum_flags_test(Transition.View.Access, RHIAccess::Write),
+                .access  = ToVkTextureAccess(Transition.Usage, Transition.Access),
+                .layout  = ToVkImageLayout(Transition.Usage, Transition.Access),
+                .isWrite = magic_enum::enum_flags_test(Transition.Access, RHIAccess::Write),
             });
     }
     return {};

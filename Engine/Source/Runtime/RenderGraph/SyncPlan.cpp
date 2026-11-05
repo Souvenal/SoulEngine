@@ -78,15 +78,15 @@ namespace SoulEngine {
                     // visibility barrier; copy-dst targets are readback buffers
         const auto Stage = BufferStageFor(Decl->Usage, Node.StageClass);
         for (auto& T : Prologue.Buffers) {
-            if (T.View.Buffer == Prop->Resolved) {
-                T.View.Usage  = T.View.Usage | Decl->Usage;
-                T.View.Access = T.View.Access | Decl->Access;
-                T.Stage       = T.Stage | Stage;
+            if (T.Buffer == Prop->Resolved) {
+                T.Usage  = T.Usage | Decl->Usage;
+                T.Access = T.Access | Decl->Access;
+                T.Stage  = T.Stage | Stage;
                 return;
             }
         }
         Prologue.Buffers.push_back(
-            {.View = {.Buffer = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage}, .Stage = Stage});
+            {.Buffer = Prop->Resolved, .Usage = Decl->Usage, .Access = Decl->Access, .Stage = Stage});
     };
     const auto AddTexture = [&](const RGTextureViewData* Decl) {
         const auto& Resource = Resources[Decl->Texture.Index];
@@ -95,17 +95,19 @@ namespace SoulEngine {
             return;
         const auto Stage = TextureStageFor(Decl->Usage, Node.StageClass);
         for (auto& T : Prologue.Textures) {
-            if (T.View.Texture == Prop->Resolved && T.View.Range.BaseMipLevel == Decl->Range.BaseMipLevel &&
-                T.View.Range.MipLevelCount == Decl->Range.MipLevelCount) {
-                T.View.Usage  = T.View.Usage | Decl->Usage;
-                T.View.Access = T.View.Access | Decl->Access;
-                T.Stage       = T.Stage | Stage;
+            if (T.Texture == Prop->Resolved && T.Range.BaseMipLevel == Decl->Range.BaseMipLevel &&
+                T.Range.MipLevelCount == Decl->Range.MipLevelCount) {
+                T.Usage  = T.Usage | Decl->Usage;
+                T.Access = T.Access | Decl->Access;
+                T.Stage  = T.Stage | Stage;
                 return;
             }
         }
-        Prologue.Textures.push_back(
-            {.View  = {.Texture = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage, .Range = Decl->Range},
-             .Stage = Stage});
+        Prologue.Textures.push_back({.Texture = Prop->Resolved,
+                                     .Usage   = Decl->Usage,
+                                     .Access  = Decl->Access,
+                                     .Range   = Decl->Range,
+                                     .Stage   = Stage});
     };
 
     for (const auto* Decl : Node.Buffers)

@@ -38,16 +38,16 @@ export struct RHIDrawCmd {
 
 /// @brief Draw non-indexed primitives from GPU-written indirect commands.
 export struct RHIDrawIndirectCmd {
-    RHIBufferView IndirectBuffer = {};
-    Uint32        DrawCount      = 1;
+    RHIBufferView IndirectBuffer;
+    Uint32        DrawCount = 1;
 };
 
 /// @brief Draw indexed primitives from GPU-written indexed indirect commands.
 export struct RHIDrawIndexedIndirectCmd {
-    std::vector<RHIBufferView> VertexBuffers  = {};
-    RHIBufferView              IndexBuffer    = {};
-    RHIBufferView              IndirectBuffer = {};
-    Uint32                     DrawCount      = 1;
+    std::vector<RHIBufferView> VertexBuffers = {};
+    RHIBufferView              IndexBuffer;
+    RHIBufferView              IndirectBuffer;
+    Uint32                     DrawCount = 1;
 };
 
 /// @brief Dispatch compute workgroups.
@@ -67,7 +67,7 @@ export struct RHITraceRaysCmd {
 /// @brief Read back a texel region from a render target into a readback. The backend picks an internal ring
 /// position and stamps it with the submission's timeline value.
 export struct RHIReadbackTextureCmd {
-    RHITextureView      Source    = {};
+    RHITextureView      Source;
     Uint32              SrcX      = 0;
     Uint32              SrcY      = 0;
     Uint32              SrcWidth  = 1;
@@ -80,7 +80,7 @@ export struct RHIReadbackTextureCmd {
 /// This is the only present path: the backend resolves the current swapchain image, which stays
 /// backend-private. Fixed nearest filtering.
 export struct RHIBlitToSwapchainCmd {
-    RHITextureView Source    = {};
+    RHITextureView Source;
     Uint32         DstX      = 0;
     Uint32         DstY      = 0;
     Uint32         DstWidth  = 1;
