@@ -631,8 +631,8 @@ export struct RHIGraphicsAttachments {
 // Synchronization vocabulary
 // The RenderGraph produces dst-only prologue transitions from declared pass accesses; the backend's
 // emission-side diff tracker materializes a native barrier only when tracked state differs. A transition is
-// view + stage: the native access mask and the image layout are pure functions of the view's (Usage, Access),
-// and that derivation lives in the backend's native mapping at emission, so this vocabulary carries no
+// resource usage/access/stage state: native access and layout derive from that declaration in the backend's
+// mapping at emission, so this vocabulary carries no
 // access-widening or layout axis. The stage schema is a fine-grained bit mask (D3D12 barrier-state shape) so
 // precision upgrades are mapping-table data changes, not schema changes.
 
