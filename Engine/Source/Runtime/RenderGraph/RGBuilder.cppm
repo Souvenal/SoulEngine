@@ -719,7 +719,7 @@ export class RenderGraphBuilder {
             Result.Entries.push_back(
                 {.Pass         = std::move(Node.Pass),
                  .Prologue     = BuildPassPrologue(Node, m_Resources),
-                 .ResolveViews = [Buffers = Node.Buffers, Textures = Node.Textures, Name = Node.Name]() mutable
+                 .ResolveViews = [Buffers = Node.Buffers, Textures = Node.Textures, Name = String(Node.Name)]() mutable
                      -> std::expected<void, ErrorMessage> {
                      for (auto* V : Buffers) {
                          if (V->ResolvedValue)
