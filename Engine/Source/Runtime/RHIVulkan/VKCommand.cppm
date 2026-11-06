@@ -72,11 +72,13 @@ export class VulkanGraphicsCmdVisitor final : public VulkanCmdVisitor {
     auto operator()(const RHISetScissorCmd& Cmd) -> void;
 
     auto operator()(const RHIDrawCmd& Cmd) -> void;
-
+    auto operator()(const RHIDrawIndexedCmd& Cmd) -> void;
     auto operator()(const RHIDrawIndirectCmd& Cmd) -> void;
     auto operator()(const RHIDrawIndexedIndirectCmd& Cmd) -> void;
 
   private:
+    auto BindVertexBuffers(std::span<const RHIBufferView> VertexBuffers) -> void;
+
     VulkanGraphicsPipeline& m_Pipeline;
     bool                    m_IsRendering         = false;
     vk::Extent2D            m_CurrentRenderExtent = {1, 1};

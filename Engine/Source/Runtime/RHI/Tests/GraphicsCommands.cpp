@@ -50,6 +50,8 @@ class MockCommandReadback final : public RHIReadback {
 };
 
 struct TestGraphicsPass final : IRHIGraphicsPass {
+    using IRHIGraphicsPass::Draw;
+    using IRHIGraphicsPass::DrawIndexed;
     using IRHIGraphicsPass::DrawIndexedIndirect;
     using IRHIGraphicsPass::DrawIndirect;
 
@@ -262,6 +264,46 @@ TEST_F(GraphicsCommandTest, RecordsTransferCommands) {
     EXPECT_EQ(Blit->DstY, 3u);
     EXPECT_EQ(Blit->DstWidth, 8u);
     EXPECT_EQ(Blit->DstHeight, 4u);
+}
+
+TEST_F(GraphicsCommandTest, RecordsCompleteDirectAndIndirectDrawInputs) {
+    auto             Vertex   = MakeBuffer("Vertex", 128, RHIBufferUsage::Vertex);
+    auto             Index    = MakeBuffer("Index", 64, RHIBufferUsage::Index);
+    auto             Indirect = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect);
+    const std::array VertexViews{MakeBufferView(Vertex, RHIBufferUsage::Vertex, RHIAccess::Read, 16, 96)};
+
+    TestGraphicsPass Pass;
+    Pass.Draw(3, 2, 4, 1, VertexViews);
+    Pass.DrawIndexed(6, MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 4, 60), VertexViews, 2, 1, -4, 2);
+    Pass.DrawIndirect(MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 20, 40), 2, VertexViews);
+
+    const auto Commands = Pass.GetCommands();
+    ASSERT_EQ(Commands.size(), 3u);
+    const auto* Draw = std::get_if<RHIDrawCmd>(&Commands[0]);
+    ASSERT_NE(Draw, nullptr);
+    ASSERT_EQ(Draw->VertexBuffers.size(), 1u);
+    EXPECT_EQ(Draw->VertexBuffers[0].GetBuffer().TryGet(), Vertex.TryGet());
+    EXPECT_EQ(Draw->VertexCount, 3u);
+    EXPECT_EQ(Draw->InstanceCount, 2u);
+    EXPECT_EQ(Draw->FirstVertex, 4u);
+    EXPECT_EQ(Draw->FirstInstance, 1u);
+
+    const auto* Indexed = std::get_if<RHIDrawIndexedCmd>(&Commands[1]);
+    ASSERT_NE(Indexed, nullptr);
+    ASSERT_EQ(Indexed->VertexBuffers.size(), 1u);
+    EXPECT_EQ(Indexed->IndexBuffer.GetBuffer().TryGet(), Index.TryGet());
+    EXPECT_EQ(Indexed->IndexCount, 6u);
+    EXPECT_EQ(Indexed->InstanceCount, 2u);
+    EXPECT_EQ(Indexed->FirstIndex, 1u);
+    EXPECT_EQ(Indexed->VertexOffset, -4);
+    EXPECT_EQ(Indexed->FirstInstance, 2u);
+
+    const auto* IndirectDraw = std::get_if<RHIDrawIndirectCmd>(&Commands[2]);
+    ASSERT_NE(IndirectDraw, nullptr);
+    ASSERT_EQ(IndirectDraw->VertexBuffers.size(), 1u);
+    EXPECT_EQ(IndirectDraw->VertexBuffers[0].GetBuffer().TryGet(), Vertex.TryGet());
+    EXPECT_EQ(IndirectDraw->IndirectBuffer.GetBuffer().TryGet(), Indirect.TryGet());
+    EXPECT_EQ(IndirectDraw->DrawCount, 2u);
 }
 
 TEST_F(GraphicsCommandTest, ViewCreationValidatesResourceContracts) {

@@ -31,15 +31,31 @@ export struct RHISetScissorCmd {
     Uint32 Height = 0;
 };
 
-/// @brief Draw non-indexed primitives. The fullscreen-triangle users emit the default 3.
+/// @brief Draw non-indexed primitives with complete vertex, instance, and stream inputs.
 export struct RHIDrawCmd {
-    Uint32 VertexCount = 3;
+    std::vector<RHIBufferView> VertexBuffers = {};
+    Uint32                     VertexCount   = 0;
+    Uint32                     InstanceCount = 1;
+    Uint32                     FirstVertex   = 0;
+    Uint32                     FirstInstance = 0;
 };
 
 /// @brief Draw non-indexed primitives from GPU-written indirect commands.
 export struct RHIDrawIndirectCmd {
-    RHIBufferView IndirectBuffer;
-    Uint32        DrawCount = 1;
+    std::vector<RHIBufferView> VertexBuffers = {};
+    RHIBufferView              IndirectBuffer;
+    Uint32                     DrawCount = 1;
+};
+
+/// @brief Draw indexed primitives with complete index, vertex, and instance inputs.
+export struct RHIDrawIndexedCmd {
+    std::vector<RHIBufferView> VertexBuffers = {};
+    RHIBufferView              IndexBuffer;
+    Uint32                     IndexCount    = 0;
+    Uint32                     InstanceCount = 1;
+    Uint32                     FirstIndex    = 0;
+    Int32                      VertexOffset  = 0;
+    Uint32                     FirstInstance = 0;
 };
 
 /// @brief Draw indexed primitives from GPU-written indexed indirect commands.
@@ -91,6 +107,7 @@ export struct RHIBlitToSwapchainCmd {
 export using RHICommand = std::variant<RHISetViewportCmd,
                                        RHISetScissorCmd,
                                        RHIDrawCmd,
+                                       RHIDrawIndexedCmd,
                                        RHIDrawIndirectCmd,
                                        RHIDrawIndexedIndirectCmd,
                                        RHIDispatchCmd,
