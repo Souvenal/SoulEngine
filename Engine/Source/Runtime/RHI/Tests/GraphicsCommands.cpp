@@ -205,12 +205,12 @@ TEST_F(GraphicsCommandTest, RecordsIndirectDrawUsingViewExtentAndRetainsReferenc
     EXPECT_EQ(Destructions, 1u);
 }
 
-TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
+TEST_F(GraphicsCommandTest, RecordsEmptyAndRuntimeSizedVertexStreams) {
     auto                             Indirect = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect);
     auto                             Index    = MakeBuffer("Index", 64, RHIBufferUsage::Index);
     std::vector<RHIBufferView>       Vertices;
-    std::array<RHIRef<RHIBuffer>, 4> Buffers;
-    Vertices.reserve(4);
+    std::array<RHIRef<RHIBuffer>, 5> Buffers;
+    Vertices.reserve(Buffers.size());
     for (Uint32 I = 0; I < Buffers.size(); ++I) {
         Buffers[I] = MakeBuffer("Vertex", 32, RHIBufferUsage::Vertex);
         Vertices.push_back(MakeBufferView(Buffers[I], RHIBufferUsage::Vertex, RHIAccess::Read, 0, 32));
@@ -224,14 +224,14 @@ TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
                              MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20));
     const auto Commands = Pass.GetCommands();
     ASSERT_EQ(Commands.size(), 2u);
-    const auto* Empty = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[0]);
-    const auto* Four  = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
+    const auto* Empty    = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[0]);
+    const auto* Recorded = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
     ASSERT_NE(Empty, nullptr);
-    ASSERT_NE(Four, nullptr);
+    ASSERT_NE(Recorded, nullptr);
     EXPECT_TRUE(Empty->VertexBuffers.empty());
-    ASSERT_EQ(Four->VertexBuffers.size(), 4u);
-    for (std::size_t I = 0; I < Four->VertexBuffers.size(); ++I)
-        EXPECT_EQ(Four->VertexBuffers[I].GetBuffer().TryGet(), Buffers[I].TryGet());
+    ASSERT_EQ(Recorded->VertexBuffers.size(), Buffers.size());
+    for (std::size_t I = 0; I < Recorded->VertexBuffers.size(); ++I)
+        EXPECT_EQ(Recorded->VertexBuffers[I].GetBuffer().TryGet(), Buffers[I].TryGet());
 }
 
 TEST_F(GraphicsCommandTest, RecordsTransferCommands) {

@@ -168,8 +168,10 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHISetScissorCmd& Cmd) -> void {
 }
 
 auto VulkanGraphicsCmdVisitor::BindVertexBuffers(std::span<const RHIBufferView> VertexBuffers) -> void {
-    if (VertexBuffers.size() > kMaxVertexBufferBindings) {
-        Error = ErrorMessage("Draw exceeds the vertex buffer binding limit");
+    const Uint32 MaxVertexInputBindings = VulkanCapability::Get().GetProperties().limits.maxVertexInputBindings;
+    if (VertexBuffers.size() > MaxVertexInputBindings) {
+        Error = ErrorMessage(Format(
+            "Draw has {} vertex buffers, exceeding the device limit {}", VertexBuffers.size(), MaxVertexInputBindings));
         return;
     }
     for (const auto& Binding : m_Pipeline.GetVertexInputLayout().Bindings) {
@@ -181,8 +183,8 @@ auto VulkanGraphicsCmdVisitor::BindVertexBuffers(std::span<const RHIBufferView> 
     if (VertexBuffers.empty())
         return;
 
-    std::array<vk::Buffer, kMaxVertexBufferBindings>     Handles = {};
-    std::array<vk::DeviceSize, kMaxVertexBufferBindings> Offsets = {};
+    std::vector<vk::Buffer>     Handles(VertexBuffers.size());
+    std::vector<vk::DeviceSize> Offsets(VertexBuffers.size());
     for (std::size_t I = 0; I < VertexBuffers.size(); ++I) {
         const auto& View     = VertexBuffers[I];
         const auto* Resource = View.GetBuffer().TryGet();
@@ -203,9 +205,7 @@ auto VulkanGraphicsCmdVisitor::BindVertexBuffers(std::span<const RHIBufferView> 
         Handles[I]         = Vertex.GetVkBuffer();
         Offsets[I]         = (Prop ? Prop->Allocation.Offset : 0) + View.GetOffset();
     }
-    Buf.bindVertexBuffers(0,
-                          std::span<const vk::Buffer>(Handles.data(), VertexBuffers.size()),
-                          std::span<const vk::DeviceSize>(Offsets.data(), VertexBuffers.size()));
+    Buf.bindVertexBuffers(0, Handles, Offsets);
 }
 
 auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawCmd& Cmd) -> void {

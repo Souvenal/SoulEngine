@@ -127,8 +127,6 @@ static_assert(alignof(RHIIndirectCommand) == alignof(Uint32));
 static_assert(sizeof(RHIIndexedIndirectCommand) == sizeof(Uint32) * 5);
 static_assert(alignof(RHIIndexedIndirectCommand) == alignof(Uint32));
 
-export inline constexpr Uint32 kMaxVertexBufferBindings = 4;
-
 export struct RHIVertexInputLayoutDesc {
     std::vector<RHIVertexInputBindingDesc>   Bindings   = {};
     std::vector<RHIVertexInputAttributeDesc> Attributes = {};
