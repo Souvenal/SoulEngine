@@ -13,6 +13,7 @@ import TaskGraph;
 
 import RHIVulkan.Capability;
 import RHIVulkan.Debug;
+import RHIVulkan.Types;
 import RHIVulkan.AccelerationStructure;
 import RHIVulkan.Buffer;
 import RHIVulkan.Sampler;
@@ -67,13 +68,12 @@ auto VulkanDescriptorWriteBatch::AppendTextureWrite(vk::DescriptorSet     Set,
                                                     const VulkanTexture&  Texture,
                                                     const RHITextureView& View,
                                                     vk::DescriptorType    Type) -> void {
-    const bool IsStorage = View.GetUsage() == RHITextureUsage::Storage;
-    auto&      Info      = ImageInfos.emplace_back(vk::DescriptorImageInfo{
+    auto& Info = ImageInfos.emplace_back(vk::DescriptorImageInfo{
         .sampler     = nullptr,
         .imageView   = View.GetRange().MipLevelCount == kRHIRemainingSubresources
                            ? Texture.GetVkImageView()
                            : Texture.GetVkImageView(View.GetRange().BaseMipLevel),
-        .imageLayout = IsStorage ? vk::ImageLayout::eGeneral : vk::ImageLayout::eShaderReadOnlyOptimal,
+        .imageLayout = ToVkImageLayout(View.GetUsage(), View.GetAccess()),
     });
     Writes.push_back(vk::WriteDescriptorSet{.dstSet          = Set,
                                             .dstBinding      = BindingIndex,
