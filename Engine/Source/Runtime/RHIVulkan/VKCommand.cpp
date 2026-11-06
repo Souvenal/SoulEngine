@@ -324,9 +324,6 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
         Error = ErrorMessage("Indexed draw index range is invalid");
         return;
     }
-    BindVertexBuffers(Cmd.VertexBuffers);
-    if (Error)
-        return;
     const auto& Indirect     = static_cast<const VulkanBuffer&>(*IndirectBufferPtr);
     const auto* IndirectProp = Indirect.GetProp<TransientBufferProp>();
     if (!IndirectProp) {
@@ -335,6 +332,9 @@ auto VulkanGraphicsCmdVisitor::operator()(const RHIDrawIndexedIndirectCmd& Cmd) 
     }
     const auto& Index     = static_cast<const VulkanBuffer&>(*IndexBufferPtr);
     const auto* IndexProp = Index.GetProp<TransientBufferProp>();
+    BindVertexBuffers(Cmd.VertexBuffers);
+    if (Error)
+        return;
     Buf.bindIndexBuffer(Index.GetVkBuffer(),
                         (IndexProp ? IndexProp->Allocation.Offset : 0) + Cmd.IndexBuffer.GetOffset(),
                         vk::IndexType::eUint32);
