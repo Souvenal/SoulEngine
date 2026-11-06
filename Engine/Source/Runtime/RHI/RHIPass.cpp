@@ -42,11 +42,11 @@ auto IRHIGraphicsPass::SetScissorRect(Int32 X, Int32 Y, Uint32 W, Uint32 H) -> v
     m_Commands.emplace_back(RHISetScissorCmd{X, Y, W, H});
 }
 
-auto IRHIGraphicsPass::Draw(Uint32                         VertexCount,
+auto IRHIGraphicsPass::Draw(std::span<const RHIBufferView> VertexBuffers,
+                            Uint32                         VertexCount,
                             Uint32                         InstanceCount,
                             Uint32                         FirstVertex,
-                            Uint32                         FirstInstance,
-                            std::span<const RHIBufferView> VertexBuffers) -> void {
+                            Uint32                         FirstInstance) -> void {
     m_Commands.emplace_back(
         RHIDrawCmd{.VertexBuffers = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
                    .VertexCount   = VertexCount,
@@ -55,9 +55,9 @@ auto IRHIGraphicsPass::Draw(Uint32                         VertexCount,
                    .FirstInstance = FirstInstance});
 }
 
-auto IRHIGraphicsPass::DrawIndexed(Uint32                         IndexCount,
+auto IRHIGraphicsPass::DrawIndexed(std::span<const RHIBufferView> VertexBuffers,
                                    RHIBufferView                  IndexBuffer,
-                                   std::span<const RHIBufferView> VertexBuffers,
+                                   Uint32                         IndexCount,
                                    Uint32                         InstanceCount,
                                    Uint32                         FirstIndex,
                                    Int32                          VertexOffset,
@@ -72,18 +72,18 @@ auto IRHIGraphicsPass::DrawIndexed(Uint32                         IndexCount,
                           .FirstInstance = FirstInstance});
 }
 
-auto IRHIGraphicsPass::DrawIndirect(RHIBufferView                  IndirectBuffer,
-                                    Uint32                         DrawCount,
-                                    std::span<const RHIBufferView> VertexBuffers) -> void {
+auto IRHIGraphicsPass::DrawIndirect(std::span<const RHIBufferView> VertexBuffers,
+                                    RHIBufferView                  IndirectBuffer,
+                                    Uint32                         DrawCount) -> void {
     m_Commands.emplace_back(
         RHIDrawIndirectCmd{.VertexBuffers  = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
                            .IndirectBuffer = std::move(IndirectBuffer),
                            .DrawCount      = DrawCount});
 }
 
-auto IRHIGraphicsPass::DrawIndexedIndirect(RHIBufferView                  IndirectBuffer,
+auto IRHIGraphicsPass::DrawIndexedIndirect(std::span<const RHIBufferView> VertexBuffers,
                                            RHIBufferView                  IndexBuffer,
-                                           std::span<const RHIBufferView> VertexBuffers,
+                                           RHIBufferView                  IndirectBuffer,
                                            Uint32                         DrawCount) -> void {
     m_Commands.emplace_back(RHIDrawIndexedIndirectCmd{
         .VertexBuffers  = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),

@@ -90,27 +90,26 @@ export class IRHIGraphicsPass : public IRHIPass {
 
     auto SetScissorRect(Int32 X, Int32 Y, Uint32 W, Uint32 H) -> void;
 
-    auto Draw(Uint32                         VertexCount,
+    auto Draw(std::span<const RHIBufferView> VertexBuffers,
+              Uint32                         VertexCount,
               Uint32                         InstanceCount = 1,
               Uint32                         FirstVertex   = 0,
-              Uint32                         FirstInstance = 0,
-              std::span<const RHIBufferView> VertexBuffers = {}) -> void;
+              Uint32                         FirstInstance = 0) -> void;
 
-    auto DrawIndexed(Uint32                         IndexCount,
+    auto DrawIndexed(std::span<const RHIBufferView> VertexBuffers,
                      RHIBufferView                  IndexBuffer,
-                     std::span<const RHIBufferView> VertexBuffers = {},
+                     Uint32                         IndexCount,
                      Uint32                         InstanceCount = 1,
                      Uint32                         FirstIndex    = 0,
                      Int32                          VertexOffset  = 0,
                      Uint32                         FirstInstance = 0) -> void;
 
-    auto DrawIndirect(RHIBufferView                  IndirectBuffer,
-                      Uint32                         DrawCount     = 1,
-                      std::span<const RHIBufferView> VertexBuffers = {}) -> void;
-    auto DrawIndexedIndirect(RHIBufferView                  IndirectBuffer,
+    auto DrawIndirect(std::span<const RHIBufferView> VertexBuffers, RHIBufferView IndirectBuffer, Uint32 DrawCount = 1)
+        -> void;
+    auto DrawIndexedIndirect(std::span<const RHIBufferView> VertexBuffers,
                              RHIBufferView                  IndexBuffer,
-                             std::span<const RHIBufferView> VertexBuffers = {},
-                             Uint32                         DrawCount     = 1) -> void;
+                             RHIBufferView                  IndirectBuffer,
+                             Uint32                         DrawCount = 1) -> void;
 
     RHIGraphicsAttachments m_Attachments = {};
 

@@ -92,7 +92,7 @@ export class DeferredLightingPass final : public IRHIGraphicsPass {
             });
             !R)
             return std::unexpected(R.error());
-        Draw(3);
+        Draw({}, 3);
         return {};
     }
 

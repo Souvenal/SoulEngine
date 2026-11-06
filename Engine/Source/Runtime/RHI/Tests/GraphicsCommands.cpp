@@ -149,7 +149,7 @@ TEST_F(GraphicsCommandTest, RecordsIndexedInputsAndRetainsReferencedBuffers) {
     std::vector<RHIBufferView> VertexViews{*VertexView};
 
     TestGraphicsPass Pass;
-    Pass.DrawIndexedIndirect(*IndirectView, *IndexView, VertexViews, 2);
+    Pass.DrawIndexedIndirect(VertexViews, *IndexView, *IndirectView, 2);
     const auto Commands = Pass.GetCommands();
     ASSERT_EQ(Commands.size(), 1u);
     const auto* Draw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands.front());
@@ -189,7 +189,7 @@ TEST_F(GraphicsCommandTest, RecordsIndirectDrawUsingViewExtentAndRetainsReferenc
     auto                         Buffer       = MakeBuffer("Indirect", 100, RHIBufferUsage::Indirect, &Destructions);
     std::optional<RHIBufferView> View = MakeBufferView(Buffer, RHIBufferUsage::Indirect, RHIAccess::Read, 20, 40);
     TestGraphicsPass             Pass;
-    Pass.DrawIndirect(*View, 2);
+    Pass.DrawIndirect({}, *View, 2);
     ASSERT_EQ(Pass.GetCommands().size(), 1u);
     const auto* Draw = std::get_if<RHIDrawIndirectCmd>(&Pass.GetCommands().front());
     ASSERT_NE(Draw, nullptr);
@@ -216,11 +216,12 @@ TEST_F(GraphicsCommandTest, RecordsEmptyAndFourOwnedVertexStreams) {
         Vertices.push_back(MakeBufferView(Buffers[I], RHIBufferUsage::Vertex, RHIAccess::Read, 0, 32));
     }
     TestGraphicsPass Pass;
-    Pass.DrawIndexedIndirect(MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20),
-                             MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 0, 64));
-    Pass.DrawIndexedIndirect(MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20),
+    Pass.DrawIndexedIndirect({},
                              MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 0, 64),
-                             Vertices);
+                             MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20));
+    Pass.DrawIndexedIndirect(Vertices,
+                             MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 0, 64),
+                             MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 0, 20));
     const auto Commands = Pass.GetCommands();
     ASSERT_EQ(Commands.size(), 2u);
     const auto* Empty = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[0]);
@@ -273,9 +274,9 @@ TEST_F(GraphicsCommandTest, RecordsCompleteDirectAndIndirectDrawInputs) {
     const std::array VertexViews{MakeBufferView(Vertex, RHIBufferUsage::Vertex, RHIAccess::Read, 16, 96)};
 
     TestGraphicsPass Pass;
-    Pass.Draw(3, 2, 4, 1, VertexViews);
-    Pass.DrawIndexed(6, MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 4, 60), VertexViews, 2, 1, -4, 2);
-    Pass.DrawIndirect(MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 20, 40), 2, VertexViews);
+    Pass.Draw(VertexViews, 3, 2, 4, 1);
+    Pass.DrawIndexed(VertexViews, MakeBufferView(Index, RHIBufferUsage::Index, RHIAccess::Read, 4, 60), 6, 2, 1, -4, 2);
+    Pass.DrawIndirect(VertexViews, MakeBufferView(Indirect, RHIBufferUsage::Indirect, RHIAccess::Read, 20, 40), 2);
 
     const auto Commands = Pass.GetCommands();
     ASSERT_EQ(Commands.size(), 3u);

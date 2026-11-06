@@ -484,9 +484,9 @@ struct DynamicIndirectPass final : IRHIGraphicsPass {
     DynamicIndirectPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
-        DrawIndirect(m_Parameter->Ordinary.ResolvedView());
+        DrawIndirect({}, m_Parameter->Ordinary.ResolvedView());
         for (const auto& View : m_Parameter->Dynamic)
-            DrawIndirect(View.ResolvedView());
+            DrawIndirect({}, View.ResolvedView());
         return {};
     }
 
@@ -510,8 +510,8 @@ struct DynamicIndexedInputPass final : IRHIGraphicsPass {
     [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
         m_Commands.clear();
         for (std::size_t I = 0; I < m_Parameter->IndexBuffers.size(); ++I)
-            DrawIndexedIndirect(m_Parameter->IndirectBuffers[I].ResolvedView(),
-                                m_Parameter->IndexBuffers[I].ResolvedView());
+            DrawIndexedIndirect(
+                {}, m_Parameter->IndexBuffers[I].ResolvedView(), m_Parameter->IndirectBuffers[I].ResolvedView());
         return {};
     }
 
