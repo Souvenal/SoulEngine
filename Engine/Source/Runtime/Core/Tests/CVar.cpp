@@ -280,7 +280,7 @@ TEST(CVarTest, NumericOptionsRejectInvalidValuesOnEveryWritePath) {
     ASSERT_TRUE(CVarManager::Get().SetByName<Int32>(CVarTestIntOptions.Name(), 1));
 }
 
-TEST(CVarTest, EnumCVarReflectsOrderedNamesAndRoundTripsTypedValues) {
+TEST(CVarTest, EnumValuedCVarReflectsOrderedNamesAndRoundTripsTypedValues) {
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
 
     const auto* Record = FindEntry<String>(CVarTestEnum.Name());
