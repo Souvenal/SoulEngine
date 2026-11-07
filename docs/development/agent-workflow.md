@@ -57,16 +57,17 @@ Before ending, read back published comments, provide their URLs, and distinguish
 ## Before Implementation
 
 1. **Discuss the change in the issue tracker.** Complete issue-context recovery, then use a GitHub issue to record the purpose, expected scope, acceptance criteria, and relevant constraints. Do not begin implementation until the scope is agreed with the maintainer.
-2. **Fetch current remote state.** From the primary worktree, run `git fetch origin` and inspect the current `origin/main` tip. The implementation base is `origin/main`, not an arbitrary local branch.
-3. **Create isolated implementation state.** Create a dedicated worktree and temporary branch from `origin/main`, for example:
+2. **Fetch current remote state.** From the primary worktree, run `git fetch origin`. For an independent change, inspect and use the current `origin/main` tip. For a dependent leaf, verify the exact recorded parent or base-assembly heads under the stack contract. Never infer the implementation base from an arbitrary local branch.
+3. **Create isolated implementation state.** Create a dedicated worktree and temporary branch from the selected base. For an independent change, for example:
 
    ```text
    git fetch origin
    git worktree add -b dev/<ticket> ../<repository>-<ticket> origin/main
    ```
 
-   Confirm that the temporary branch starts at the fetched `origin/main` commit before editing.
+   Confirm that the temporary branch starts at fetched `origin/main` for an independent change, or at the exact recorded parent/base assembly for a dependent leaf, before editing.
 4. **Keep the primary worktree clean for shared operations.** The primary worktree is reserved for inspection, fetching, and user-directed operations. Agent implementation, generated files, and commits belong in the dedicated worktree.
+5. **Use the stack contract for dependent leaves.** When a maintainer-approved capability is split into tickets that require unmerged parent code, follow [dependent capability stacks](branch-model.md#dependent-capability-stacks) for direct-parent PR bases, linear restacking, publication leases, and topology validation. Separate issues or disjoint files alone do not make changes independent.
 
 ## Implementation And Handoff
 
@@ -85,15 +86,15 @@ Before ending, read back published comments, provide their URLs, and distinguish
 ## Review And Approval Gates
 
 1. The maintainer reviews the handoff and the branch diff in the preserved worktree.
-2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, create the pull request against `main` and include the issue and validation results.
+2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, create an independent change's pull request against `main`, or a dependent leaf's pull request against its approved stack target, and include the issue and validation results.
 3. The maintainer decides when the pull request is merged. Automated checks are validation evidence, not human review or merge authorization.
 4. Issue closure, remote branch deletion, branch protection changes, force pushes, releases, and other repository administration each require separate explicit maintainer authorization.
 
 ## Integration And Cleanup
 
-1. After explicit approval, verify that `origin/main` has not moved unexpectedly. If the baseline changed, update the feature branch in the preserved worktree, rerun validation, and obtain review approval again.
-2. The maintainer merges the approved pull request to `main` with squash merge, producing one concentrated mainline commit for the reviewed development effort.
-3. Verify the merged commit and required checks on `main` before cleanup.
+1. After explicit approval for an independent change targeting `main`, verify that `origin/main` has not moved unexpectedly. If the baseline changed, update the feature branch in the preserved worktree, rerun validation, and obtain review approval again. For a dependent leaf, verify the recorded stack base and follow the stack restack and review contract instead.
+2. The maintainer merges an approved independent pull request to `main` with squash merge, producing one concentrated mainline commit for the reviewed development effort. Dependent leaf pull requests integrate into their approved stack targets under the same maintainer merge gate.
+3. Verify the resulting integration commit and required checks on the actual pull request target before cleanup. For an independent change or final capability delivery, that target is `main`.
 4. Only after maintainer authorization and successful verification, remove the temporary worktree first, then delete its local and remote feature branch:
 
    ```text
@@ -110,10 +111,10 @@ Before ending, read back published comments, provide their URLs, and distinguish
 The workflow is satisfied only when an external check can confirm all of the following from the document and repository state:
 
 - issue discussion and agreed scope precede implementation;
-- the implementation base is fetched `origin/main`;
+- the implementation base is fetched `origin/main` for an independent change or the exact recorded parent/base assembly for a dependent leaf;
 - implementation is isolated from the primary worktree;
 - the handoff identifies branch, worktree, commit, and validation;
 - implementation completion is distinct from maintainer approval and integration;
 - pull-request creation, merge, issue closure, and cleanup require the appropriate explicit maintainer authorization;
-- integration uses squash merge and produces one concentrated mainline commit;
+- independent integration uses squash merge and produces one concentrated mainline commit, while dependent leaves integrate into their approved stack targets;
 - the change remains within the agreed issue scope.
