@@ -21,6 +21,12 @@ EnumCVar<TestCVarMode> CVarTestEnum{
     "Test.Enum.Mode", TestCVarMode::Safe, "test enum options", {TestCVarMode::Safe, TestCVarMode::Fast}};
 CVar<String> CVarTestInvalidOptionDefault{
     "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", std::vector<String>{"Safe", "Fast"}};
+EnumCVar<TestCVarMode> CVarTestEmptyEnumOptions{
+    "Test.Enum.EmptyOptions", TestCVarMode::Unknown, "test empty options", {}};
+EnumCVar<TestCVarMode> CVarTestUnnamedEnumOptions{
+    "Test.Enum.UnnamedOptions", TestCVarMode::Safe, "test unnamed options", {static_cast<TestCVarMode>(99)}};
+EnumCVar<TestCVarMode> CVarTestUnnamedEnumDefault{
+    "Test.Enum.UnnamedDefault", static_cast<TestCVarMode>(99), "test unnamed default", {TestCVarMode::Safe}};
 
 // Dedicated to the LoadConfig sweep test so other tests never observe swept values.
 CVar<Int32> CVarTestSweepInt{"Test.Sweep.Int", 1, "sweep target"};
@@ -47,7 +53,7 @@ TEST(CVarTest, CollectOwnsDeclaredOptionsInRegistrationOrder) {
     EXPECT_EQ(FreshRecord->Options, std::vector<String>({"Safe", "Fast"}));
 }
 
-TEST(CVarTest, OptionRegistrationNormalizesAnInvalidDefault) {
+TEST(CVarTest, OptionRegistrationUsesFirstOptionForInvalidDefault) {
     EXPECT_EQ(CVarTestInvalidOptionDefault.Get(), "Safe");
 
     const auto Records = CVarManager::Get().Collect<String>();
@@ -55,6 +61,29 @@ TEST(CVarTest, OptionRegistrationNormalizesAnInvalidDefault) {
     ASSERT_NE(Record, Records.end());
     EXPECT_EQ(Record->Value, "Safe");
     EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
+}
+
+TEST(CVarTest, EnumRegistrationsWithoutLegalOptionsRejectEveryWrite) {
+    const std::array Names = {
+        CVarTestEmptyEnumOptions.Name(), CVarTestUnnamedEnumOptions.Name(), CVarTestUnnamedEnumDefault.Name()};
+    for (const auto Name : Names) {
+        EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Unknown"));
+        EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Fast"));
+        EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Arbitrary"));
+    }
+    EXPECT_EQ(CVarTestEmptyEnumOptions.Get(), TestCVarMode::Unknown);
+    EXPECT_EQ(CVarTestUnnamedEnumOptions.Get(), TestCVarMode::Safe);
+    EXPECT_EQ(CVarTestUnnamedEnumDefault.Get(), static_cast<TestCVarMode>(99));
+    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestEmptyEnumOptions.Name()), std::optional{String{"Unknown"}});
+    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestUnnamedEnumOptions.Name()), std::optional{String{"Safe"}});
+    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestUnnamedEnumDefault.Name()), std::optional{String{}});
+
+    const auto Records = CVarManager::Get().Collect<String>();
+    for (const auto Name : Names) {
+        const auto Record = std::ranges::find(Records, Name, &CVarSnapshot<String>::Name);
+        ASSERT_NE(Record, Records.end());
+        EXPECT_TRUE(Record->Options.empty());
+    }
 }
 
 TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {

@@ -66,10 +66,10 @@ auto CVarManager::LoadConfig(const Path& FilePath) -> std::expected<void, ErrorM
 }
 
 auto CVarManager::FlushPendingDiagnostics() -> void {
-    std::vector<String> Diagnostics;
+    std::vector<CVarDiagnostic> Diagnostics;
     Diagnostics.swap(m_PendingDiagnostics);
     for (const auto& Diagnostic : Diagnostics)
-        LogError("{}", Diagnostic);
+        LogManager::Get().Log(Diagnostic.Level, Diagnostic.Message);
 }
 
 auto CVarManager::ApplyTable(const toml::table& Table, const String& Prefix) -> void {

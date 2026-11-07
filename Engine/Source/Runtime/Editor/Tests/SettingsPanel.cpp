@@ -9,9 +9,25 @@ import std;
 
 using namespace SoulEngine;
 
-namespace {
-
 CVar<String> CVarTestSettingsOption{"AATest.Mode", "Safe", "settings option test", std::vector<String>{"Safe", "Fast"}};
+
+[[nodiscard]] auto FindSettingsOptionsWindow() -> ImGuiWindow* {
+    for (auto* Window : ImGui::GetCurrentContext()->Windows) {
+        if (StringView{Window->Name}.starts_with("Settings/Options_"))
+            return Window;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] auto GetComboPosition(const ImGuiWindow& OptionsWindow) -> ImVec2 {
+    return ImVec2{OptionsWindow.DC.CursorStartPos.x + 4.0F,
+                  OptionsWindow.DC.CursorPosPrevLine.y + ImGui::GetFrameHeight() * 0.5F};
+}
+
+[[nodiscard]] auto FindOpenComboPopup() -> ImGuiWindow* {
+    auto& OpenPopups = ImGui::GetCurrentContext()->OpenPopupStack;
+    return OpenPopups.empty() ? nullptr : OpenPopups.back().Window;
+}
 
 class SettingsPanelTest : public testing::Test {
   protected:
@@ -24,7 +40,7 @@ class SettingsPanelTest : public testing::Test {
         IO.DeltaTime   = 1.0F / 60.0F;
         IO.IniFilename = nullptr;
         IO.Fonts->Build();
-        IO.AddMousePosEvent(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+        IO.AddMousePosEvent(-std::numeric_limits<Float32>::max(), -std::numeric_limits<Float32>::max());
 
         RegisterSettingsPanel();
         UIManager::Get().OpenUI("Settings");
@@ -58,25 +74,14 @@ TEST_F(SettingsPanelTest, SelectsAnOptionThroughTheGenericCombo) {
     RunFrame();
     RunFrame();
     ASSERT_TRUE(ImGui::GetDrawData()->Valid);
-    ImGuiWindow* OptionsWindow = nullptr;
-    for (auto* Window : ImGui::GetCurrentContext()->Windows) {
-        if (StringView{Window->Name}.starts_with("Settings/Options_")) {
-            OptionsWindow = Window;
-            break;
-        }
-    }
+    const auto* OptionsWindow = FindSettingsOptionsWindow();
     ASSERT_NE(OptionsWindow, nullptr);
-    const ImVec2 ComboPosition{OptionsWindow->DC.CursorStartPos.x + 4.0F,
-                               OptionsWindow->DC.CursorPosPrevLine.y + ImGui::GetFrameHeight() * 0.5F};
-
-    Click(ComboPosition);
+    Click(GetComboPosition(*OptionsWindow));
     RunFrame();
     ASSERT_TRUE(ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel));
     EXPECT_EQ(CVarTestSettingsOption.Get(), "Safe");
 
-    auto* Context = ImGui::GetCurrentContext();
-    ASSERT_FALSE(Context->OpenPopupStack.empty());
-    auto* Popup = Context->OpenPopupStack.back().Window;
+    auto* Popup = FindOpenComboPopup();
     ASSERT_NE(Popup, nullptr);
     ImGui::ActivateItemByID(Popup->GetID("Fast"));
     RunFrame();
@@ -84,5 +89,3 @@ TEST_F(SettingsPanelTest, SelectsAnOptionThroughTheGenericCombo) {
     EXPECT_EQ(CVarTestSettingsOption.Get(), "Fast");
     EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestSettingsOption.Name()), std::optional{String{"Fast"}});
 }
-
-} // namespace
