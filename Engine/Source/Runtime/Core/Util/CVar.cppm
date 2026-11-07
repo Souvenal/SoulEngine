@@ -51,8 +51,8 @@ import magic_enum;
 ///
 ///  5. **Static-init diagnostics are deferred.**
 ///     Registration runs before LogManager::Init, so registration
-///     reports are queued and flushed (LogError) by LoadConfig() /
-///     FlushPendingDiagnostics() once logging is live.
+///     reports are queued and replayed with their recorded severity by
+///     LoadConfig() / FlushPendingDiagnostics() once logging is live.
 ///
 ///  @warning Linkage: registration objects in module interface units must
 ///     have MODULE linkage (a plain non-exported namespace-scope
@@ -94,6 +94,8 @@ struct CVarSnapshot {
 
 template <>
 struct CVarSnapshot<String> {
+    /// @brief Owned copy of a String CVar record, usable on any thread after collection.  Option-bearing
+    ///        records carry their ordered legal values; Options is empty for free-form String CVars.
     String              Name;
     String              Description;
     String              Value;
@@ -221,6 +223,11 @@ export class CVarManager final : public Singleton<CVarManager> {
         return RegisterImpl<T>(Name, Description, DefaultValue, Timing, {}, false);
     }
 
+    /// @brief Register an option-bearing String CVar and return its registry entry.  The default is
+    ///        rejected when it lies outside Options; the first option becomes the initial value and a
+    ///        warning is queued.  An empty Options list queues an error and rejects every write.
+    /// @return Reference to the registry entry (stable for the process
+    ///         lifetime — unordered_map nodes never relocate).
     template <CVarValue T>
         requires std::same_as<T, String>
     [[nodiscard]] auto Register(StringView          Name,
