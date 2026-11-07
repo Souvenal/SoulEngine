@@ -40,9 +40,9 @@ import magic_enum;
 ///     The constructor's default value is the one-and-only default; the
 ///     TOML config file overrides it at startup via
 ///     CVarManager::LoadConfig().  Consumers never spell a fallback.
-///     Option-bearing CVars also declare an ordered allowlist. Every write
-///     path enforces it; an invalid registration default uses the first
-///     option and queues a registration diagnostic.
+///     Option-bearing CVars also declare ordered options. Every write
+///     path enforces it. An invalid registration default uses the first
+///     option with a deferred warning; an empty option set rejects all writes.
 ///
 ///  4. **Every CVar is runtime-mutable.**
 ///     Consumption timing declares when readers use a value: Runtime readers poll continuously; Startup
@@ -86,11 +86,19 @@ export enum class CVarTiming : Uint8 {
 /// @brief Owned copy of one CVar record, usable on any thread after collection.
 export template <CVarValue T>
 struct CVarSnapshot {
-    String         Name;
-    String         Description;
-    T              Value;
-    CVarTiming     Timing  = CVarTiming::Runtime;
-    std::vector<T> Options = {}; ///< Ordered legal values; empty accepts every value.
+    String     Name;
+    String     Description;
+    T          Value;
+    CVarTiming Timing = CVarTiming::Runtime;
+};
+
+template <>
+struct CVarSnapshot<String> {
+    String              Name;
+    String              Description;
+    String              Value;
+    CVarTiming          Timing  = CVarTiming::Runtime;
+    std::vector<String> Options = {}; ///< Ordered legal values.
 };
 
 /// @brief One registry entry: description, option metadata, and the value itself.
@@ -102,10 +110,9 @@ template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
 
-    String         Description;
-    ValueStorage   Value;
-    CVarTiming     Timing  = CVarTiming::Runtime;
-    std::vector<T> Options = {};
+    String       Description;
+    ValueStorage Value;
+    CVarTiming   Timing = CVarTiming::Runtime;
 };
 template <>
 struct CVarEntry<String> {
@@ -113,8 +120,9 @@ struct CVarEntry<String> {
 
     String                    Description;
     ValueStorage              Value;
-    CVarTiming                Timing  = CVarTiming::Runtime;
-    std::vector<String>       Options = {};
+    CVarTiming                Timing          = CVarTiming::Runtime;
+    std::vector<String>       Options         = {};
+    bool                      IsOptionBearing = false;
     mutable std::shared_mutex Mutex; ///< Guards this entry's String value.
 };
 
@@ -157,12 +165,20 @@ export class CVarManager final : public Singleton<CVarManager> {
         std::vector<CVarSnapshot<T>> Records;
         const auto&                  Registry = Entries<T>();
         Records.reserve(Registry.size());
-        for (const auto& [Name, Entry] : Registry)
-            Records.push_back({.Name        = Name,
-                               .Description = Entry.Description,
-                               .Value       = LoadEntry(Entry),
-                               .Timing      = Entry.Timing,
-                               .Options     = Entry.Options});
+        for (const auto& [Name, Entry] : Registry) {
+            if constexpr (std::same_as<T, String>) {
+                Records.push_back({.Name        = Name,
+                                   .Description = Entry.Description,
+                                   .Value       = LoadEntry(Entry),
+                                   .Timing      = Entry.Timing,
+                                   .Options     = Entry.Options});
+            } else {
+                Records.push_back({.Name        = Name,
+                                   .Description = Entry.Description,
+                                   .Value       = LoadEntry(Entry),
+                                   .Timing      = Entry.Timing});
+            }
+        }
         std::ranges::sort(Records, {}, &CVarSnapshot<T>::Name);
         return Records;
     }
@@ -199,25 +215,20 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
     template <CVarValue T>
-    auto Register(StringView     Name,
-                  StringView     Description,
-                  const T&       DefaultValue,
-                  CVarTiming     Timing  = CVarTiming::Runtime,
-                  std::vector<T> Options = {}) -> CVarEntry<T>& {
-        auto&        Registry = Entries<T>();
-        const String NameStr{Name};
-        T            NormalizedDefault = DefaultValue;
-        if (!Options.empty() && std::ranges::find(Options, DefaultValue) == Options.end()) {
-            NormalizedDefault = Options.front();
-            m_PendingDiagnostics.push_back(
-                Format("CVar '{}' default is outside its declared options; using '{}'", NameStr, NormalizedDefault));
-        }
-        const auto [It, Inserted] =
-            Registry.try_emplace(NameStr, String{Description}, NormalizedDefault, Timing, std::move(Options));
-        if (!Inserted)
-            m_PendingDiagnostics.push_back(
-                Format("Duplicate CVar registration '{}' ignored (first registration wins)", NameStr));
-        return It->second;
+    [[nodiscard]] auto
+    Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
+        -> CVarEntry<T>& {
+        return RegisterImpl<T>(Name, Description, DefaultValue, Timing, {}, false);
+    }
+
+    template <CVarValue T>
+        requires std::same_as<T, String>
+    [[nodiscard]] auto Register(StringView          Name,
+                                StringView          Description,
+                                const String&       DefaultValue,
+                                CVarTiming          Timing,
+                                std::vector<String> Options) -> CVarEntry<String>& {
+        return RegisterImpl<T>(Name, Description, DefaultValue, Timing, std::move(Options), true);
     }
 
     /// @brief The single read path for all CVar values.
@@ -235,9 +246,9 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @return true when the value satisfies the declared options and is stored.
     template <CVarValue T>
     [[nodiscard]] auto StoreEntry(CVarEntry<T>& Entry, const T& Value) -> bool {
-        if (!Entry.Options.empty() && std::ranges::find(Entry.Options, Value) == Entry.Options.end())
-            return false;
         if constexpr (std::same_as<T, String>) {
+            if (Entry.IsOptionBearing && !IsAllowedByOptions(Entry.Options, Value))
+                return false;
             std::unique_lock Lock{Entry.Mutex};
             Entry.Value = Value;
         } else {
@@ -247,6 +258,55 @@ export class CVarManager final : public Singleton<CVarManager> {
     }
 
   private:
+    struct CVarDiagnostic {
+        String   Message;
+        LogLevel Level = LogLevel::Info;
+    };
+
+    template <CVarValue T>
+    [[nodiscard]] static auto IsAllowedByOptions(const std::vector<T>& Options, const T& Value) -> bool {
+        return std::ranges::find(Options, Value) != Options.end();
+    }
+
+    template <CVarValue T>
+    [[nodiscard]] auto RegisterImpl(StringView     Name,
+                                    StringView     Description,
+                                    const T&       DefaultValue,
+                                    CVarTiming     Timing,
+                                    std::vector<T> Options,
+                                    bool           IsOptionBearing) -> CVarEntry<T>& {
+        auto&        Registry = Entries<T>();
+        const String NameStr{Name};
+        auto         It       = Registry.end();
+        bool         Inserted = false;
+        if constexpr (std::same_as<T, String>) {
+            T InitialValue = DefaultValue;
+            if (IsOptionBearing) {
+                if (Options.empty()) {
+                    m_PendingDiagnostics.push_back(
+                        {.Message = Format("CVar '{}' has no legal options; all writes rejected", NameStr),
+                         .Level   = LogLevel::Error});
+                } else if (!IsAllowedByOptions(Options, DefaultValue)) {
+                    InitialValue = Options.front();
+                    m_PendingDiagnostics.push_back(
+                        {.Message = Format(
+                             "CVar '{}' default is outside its declared options; using '{}'", NameStr, InitialValue),
+                         .Level = LogLevel::Warning});
+                }
+            }
+            std::tie(It, Inserted) = Registry.try_emplace(
+                NameStr, String{Description}, InitialValue, Timing, std::move(Options), IsOptionBearing);
+        } else {
+            std::tie(It, Inserted) = Registry.try_emplace(NameStr, String{Description}, DefaultValue, Timing);
+        }
+        if (!Inserted) {
+            m_PendingDiagnostics.push_back(
+                {.Message = Format("Duplicate CVar registration '{}' ignored (first registration wins)", NameStr),
+                 .Level   = LogLevel::Error});
+        }
+        return It->second;
+    }
+
     template <CVarValue T>
     auto Entries() -> CVarRegistry<T>& {
         return std::get<CVarRegistry<T>>(m_Registries);
@@ -259,7 +319,7 @@ export class CVarManager final : public Singleton<CVarManager> {
     auto ApplyValue(const String& Name, const toml::node& Node) -> void;
 
     std::tuple<CVarRegistry<bool>, CVarRegistry<Int32>, CVarRegistry<Float32>, CVarRegistry<String>> m_Registries;
-    std::vector<String> m_PendingDiagnostics;
+    std::vector<CVarDiagnostic> m_PendingDiagnostics;
 };
 
 /// @brief A console variable: namespace-scope registration object and
@@ -284,7 +344,7 @@ class CVar {
     /// @param Description  Human-readable explanation for future UI and logs.
     /// @param Timing       When readers consume the stored value.
     CVar(StringView Name, const T& DefaultValue, StringView Description, CVarTiming Timing = CVarTiming::Runtime)
-        : CVar(Name, DefaultValue, Description, std::vector<T>{}, Timing) {}
+        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Timing)), m_Name(Name) {}
 
     /// @brief Construct and self-register with an ordered set of legal values.
     CVar(StringView     Name,
@@ -292,6 +352,7 @@ class CVar {
          StringView     Description,
          std::vector<T> Options,
          CVarTiming     Timing = CVarTiming::Runtime)
+        requires std::same_as<T, String>
         : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Timing, std::move(Options))),
           m_Name(Name) {}
 
@@ -317,7 +378,10 @@ class CVar {
     StringView    m_Name;
 };
 
-/// @brief Typed enum CVar backed by reflected names and an ordered allowlist.
+/// @brief Strongly typed enum setting with discrete CVar options.
+///
+/// Construct at namespace scope with a default and explicit ordered options, then use Get to poll the current
+/// value and Set to write a named enumerator. Get and Set are safe to call from any thread.
 export template <typename E>
     requires std::is_enum_v<E>
 class EnumCVar {
@@ -358,14 +422,14 @@ class EnumCVar {
   private:
     [[nodiscard]] static auto OptionNames(E DefaultValue, std::initializer_list<E> Options) -> std::vector<String> {
         std::vector<String> Result = {};
+        if (Options.size() == 0 || magic_enum::enum_name(DefaultValue).empty())
+            return Result;
         Result.reserve(Options.size());
         for (const E Option : Options) {
-            if (const auto Name = magic_enum::enum_name(Option); !Name.empty())
-                Result.emplace_back(Name);
-        }
-        if (Result.empty()) {
-            if (const auto Name = magic_enum::enum_name(DefaultValue); !Name.empty())
-                Result.emplace_back(Name);
+            const auto Name = magic_enum::enum_name(Option);
+            if (Name.empty())
+                return {};
+            Result.emplace_back(Name);
         }
         return Result;
     }
