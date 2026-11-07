@@ -15,18 +15,21 @@ CVar<Int32>   CVarTestInt{"Test.Int", 42, "test int"};
 CVar<Float32> CVarTestFloat{"Test.Float", 1.5F, "test float"};
 CVar<String>  CVarTestString{"Test.String", "hello", "test string"};
 CVar<String>  CVarTestOptions{"Test.Options.Mode", "Safe", "test ordered options", std::vector<String>{"Safe", "Fast"}};
+CVar<Int32>   CVarTestIntOptions{"Test.Options.Level", 1, "test int options", std::vector<Int32>{1, 2, 3}};
 
 enum class TestCVarMode : Uint8 { Unknown = 0, Safe, Fast };
-EnumCVar<TestCVarMode> CVarTestEnum{
+CVar<TestCVarMode> CVarTestEnum{
     "Test.Enum.Mode", TestCVarMode::Safe, "test enum options", {TestCVarMode::Safe, TestCVarMode::Fast}};
+CVar<TestCVarMode> CVarTestEmptyEnumOptions{
+    "Test.Enum.EmptyOptions", TestCVarMode::Unknown, "test empty enum options", std::vector<TestCVarMode>{}};
+CVar<TestCVarMode> CVarTestUnnamedEnumOptions{"Test.Enum.UnnamedOptions",
+                                              TestCVarMode::Safe,
+                                              "test unnamed options",
+                                              std::vector<TestCVarMode>{static_cast<TestCVarMode>(99)}};
+CVar<TestCVarMode> CVarTestUnnamedEnumDefault{
+    "Test.Enum.UnnamedDefault", static_cast<TestCVarMode>(99), "test unnamed default", {TestCVarMode::Safe}};
 CVar<String> CVarTestInvalidOptionDefault{
     "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", std::vector<String>{"Safe", "Fast"}};
-EnumCVar<TestCVarMode> CVarTestEmptyEnumOptions{
-    "Test.Enum.EmptyOptions", TestCVarMode::Unknown, "test empty options", {}};
-EnumCVar<TestCVarMode> CVarTestUnnamedEnumOptions{
-    "Test.Enum.UnnamedOptions", TestCVarMode::Safe, "test unnamed options", {static_cast<TestCVarMode>(99)}};
-EnumCVar<TestCVarMode> CVarTestUnnamedEnumDefault{
-    "Test.Enum.UnnamedDefault", static_cast<TestCVarMode>(99), "test unnamed default", {TestCVarMode::Safe}};
 
 // Dedicated to the LoadConfig sweep test so other tests never observe swept values.
 CVar<Int32> CVarTestSweepInt{"Test.Sweep.Int", 1, "sweep target"};
@@ -39,51 +42,82 @@ CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"
 CVar<String> CVarTestConcurrentStringA{"Test.Concurrent.StringA", "initial", "concurrent string A"};
 CVar<String> CVarTestConcurrentStringB{"Test.Concurrent.StringB", "initial", "concurrent string B"};
 
-TEST(CVarTest, CollectOwnsDeclaredOptionsInRegistrationOrder) {
-    auto       Records = CVarManager::Get().Collect<String>();
-    const auto Record  = std::ranges::find(Records, CVarTestOptions.Name(), &CVarSnapshot<String>::Name);
-    ASSERT_NE(Record, Records.end());
-    EXPECT_EQ(Record->Value, "Safe");
-    EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
+/// @brief Find one entry of type T by dotted name through the ForEach traversal.
+template <CVarStorage T>
+[[nodiscard]] auto FindEntry(StringView Name) -> const CVarEntry<T>* {
+    const CVarEntry<T>* Found = nullptr;
+    CVarManager::Get().ForEach<T>([&](const StringView EntryName, const CVarEntry<T>& Entry) -> void {
+        if (EntryName == Name)
+            Found = &Entry;
+    });
+    return Found;
+}
 
-    Record->Options[0]      = "Detached";
-    const auto FreshRecords = CVarManager::Get().Collect<String>();
-    const auto FreshRecord  = std::ranges::find(FreshRecords, CVarTestOptions.Name(), &CVarSnapshot<String>::Name);
-    ASSERT_NE(FreshRecord, FreshRecords.end());
-    EXPECT_EQ(FreshRecord->Options, std::vector<String>({"Safe", "Fast"}));
+TEST(CVarTest, ForEachVisitsEveryRegisteredEntryOfAStorageType) {
+    std::set<String> Names = {};
+    CVarManager::Get().ForEach<Int32>(
+        [&](const StringView Name, const CVarEntry<Int32>&) -> void { Names.emplace(String{Name}); });
+    EXPECT_TRUE(Names.contains("Test.Int"));
+    EXPECT_TRUE(Names.contains("Test.Options.Level"));
+    EXPECT_FALSE(Names.contains("Test.Checkbox"));
+
+    const auto* Entry = FindEntry<Int32>("Test.Int");
+    ASSERT_NE(Entry, nullptr);
+    EXPECT_EQ(Entry->Description, "test int");
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*Entry), 42);
+    EXPECT_EQ(Entry->Timing, CVarTiming::Runtime);
+    EXPECT_TRUE(Entry->Options.empty());
+    EXPECT_FALSE(Entry->IsOptionBearing);
+}
+
+TEST(CVarTest, EntriesCarryDeclaredOptionsInRegistrationOrder) {
+    const auto* StringEntry = FindEntry<String>(CVarTestOptions.Name());
+    ASSERT_NE(StringEntry, nullptr);
+    EXPECT_TRUE(StringEntry->IsOptionBearing);
+    EXPECT_EQ(StringEntry->Options, std::vector<String>({"Safe", "Fast"}));
+
+    const auto* IntEntry = FindEntry<Int32>(CVarTestIntOptions.Name());
+    ASSERT_NE(IntEntry, nullptr);
+    EXPECT_TRUE(IntEntry->IsOptionBearing);
+    EXPECT_EQ(IntEntry->Options, std::vector<Int32>({1, 2, 3}));
 }
 
 TEST(CVarTest, OptionRegistrationUsesFirstOptionForInvalidDefault) {
     EXPECT_EQ(CVarTestInvalidOptionDefault.Get(), "Safe");
 
-    const auto Records = CVarManager::Get().Collect<String>();
-    const auto Record  = std::ranges::find(Records, CVarTestInvalidOptionDefault.Name(), &CVarSnapshot<String>::Name);
-    ASSERT_NE(Record, Records.end());
-    EXPECT_EQ(Record->Value, "Safe");
+    const auto* Record = FindEntry<String>(CVarTestInvalidOptionDefault.Name());
+    ASSERT_NE(Record, nullptr);
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
     EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
 }
 
+TEST(CVarTest, OptionRegistrationNormalizesAnUnnamedEnumDefaultToTheFirstOption) {
+    // The default (unnamed enumerator 99) is outside the declared options, so the first option becomes the
+    // initial value; the unnamed original is never stored.
+    EXPECT_EQ(CVarTestUnnamedEnumDefault.Get(), TestCVarMode::Safe);
+
+    const auto* Record = FindEntry<String>(CVarTestUnnamedEnumDefault.Name());
+    ASSERT_NE(Record, nullptr);
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
+    EXPECT_EQ(Record->Options, std::vector<String>({"Safe"}));
+}
+
 TEST(CVarTest, EnumRegistrationsWithoutLegalOptionsRejectEveryWrite) {
-    const std::array Names = {
-        CVarTestEmptyEnumOptions.Name(), CVarTestUnnamedEnumOptions.Name(), CVarTestUnnamedEnumDefault.Name()};
+    const std::array Names = {CVarTestEmptyEnumOptions.Name(), CVarTestUnnamedEnumOptions.Name()};
     for (const auto Name : Names) {
         EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Unknown"));
         EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Fast"));
         EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Arbitrary"));
     }
-    EXPECT_EQ(CVarTestEmptyEnumOptions.Get(), TestCVarMode::Unknown);
-    EXPECT_EQ(CVarTestUnnamedEnumOptions.Get(), TestCVarMode::Safe);
-    EXPECT_EQ(CVarTestUnnamedEnumDefault.Get(), static_cast<TestCVarMode>(99));
-    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestEmptyEnumOptions.Name()), std::optional{String{"Unknown"}});
-    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestUnnamedEnumOptions.Name()), std::optional{String{"Safe"}});
-    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestUnnamedEnumDefault.Name()), std::optional{String{}});
+    const auto* EmptyRecord = FindEntry<String>(CVarTestEmptyEnumOptions.Name());
+    ASSERT_NE(EmptyRecord, nullptr);
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*EmptyRecord), "Unknown");
+    EXPECT_TRUE(EmptyRecord->Options.empty());
 
-    const auto Records = CVarManager::Get().Collect<String>();
-    for (const auto Name : Names) {
-        const auto Record = std::ranges::find(Records, Name, &CVarSnapshot<String>::Name);
-        ASSERT_NE(Record, Records.end());
-        EXPECT_TRUE(Record->Options.empty());
-    }
+    const auto* UnnamedRecord = FindEntry<String>(CVarTestUnnamedEnumOptions.Name());
+    ASSERT_NE(UnnamedRecord, nullptr);
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*UnnamedRecord), "Safe");
+    EXPECT_TRUE(UnnamedRecord->Options.empty());
 }
 
 TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {
@@ -124,84 +158,16 @@ TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {
             if ((HandleValue != First && HandleValue != Second) || !FoundValue ||
                 (*FoundValue != First && *FoundValue != Second))
                 IsValid.store(false);
-            for (const auto& Record : CVarManager::Get().Collect<String>())
-                if ((Record.Name == CVarTestConcurrentStringA.Name() ||
-                     Record.Name == CVarTestConcurrentStringB.Name()) &&
-                    Record.Value != First && Record.Value != Second)
+            CVarManager::Get().ForEach<String>([&](const StringView Name, const CVarEntry<String>& Entry) -> void {
+                if (Name != CVarTestConcurrentStringA.Name() && Name != CVarTestConcurrentStringB.Name())
+                    return;
+                if (const auto Value = CVarManager::Get().LoadEntry(Entry); Value != First && Value != Second)
                     IsValid.store(false);
+            });
         }
         IsFinished.store(true);
     }
     EXPECT_TRUE(IsValid.load());
-}
-
-TEST(CVarTest, CollectReturnsSortedRecordsWithCurrentValuesAndMetadata) {
-    CVar<Int32> Zebra{"Test.Collect.Zebra", 10, "last record"};
-    CVar<Int32> Alpha{"Test.Collect.Alpha", 20, "first record"};
-    Zebra.Set(30);
-
-    const auto Records = CVarManager::Get().Collect<Int32>();
-    const auto First   = std::ranges::find(Records, "Test.Collect.Alpha", &CVarSnapshot<Int32>::Name);
-    const auto Last    = std::ranges::find(Records, "Test.Collect.Zebra", &CVarSnapshot<Int32>::Name);
-    ASSERT_NE(First, Records.end());
-    ASSERT_NE(Last, Records.end());
-    EXPECT_LT(First, Last);
-    EXPECT_EQ(First->Description, "first record");
-    EXPECT_EQ(First->Value, 20);
-    EXPECT_EQ(First->Timing, CVarTiming::Runtime);
-    EXPECT_EQ(Last->Description, "last record");
-    EXPECT_EQ(Last->Value, 30);
-    EXPECT_EQ(Last->Timing, CVarTiming::Runtime);
-    EXPECT_TRUE(std::ranges::is_sorted(Records, {}, &CVarSnapshot<Int32>::Name));
-    EXPECT_EQ(std::ranges::find(Records, "Test.Checkbox", &CVarSnapshot<Int32>::Name), Records.end());
-}
-
-template <CVarValue T>
-auto CheckOwnedCVarSnapshot(const T& InitialValue, const T& ChangedValue) -> void {
-    CVar<T> Runtime{"Test.CollectOwned.Runtime", InitialValue, "runtime record"};
-    CVar<T> Startup{"Test.CollectOwned.Startup", InitialValue, "startup record", CVarTiming::Startup};
-    Runtime.Set(ChangedValue);
-    ASSERT_TRUE(CVarManager::Get().SetByName<T>(Startup.Name(), ChangedValue));
-
-    auto       Records       = CVarManager::Get().Collect<T>();
-    const auto RuntimeRecord = std::ranges::find(Records, Runtime.Name(), &CVarSnapshot<T>::Name);
-    const auto StartupRecord = std::ranges::find(Records, Startup.Name(), &CVarSnapshot<T>::Name);
-    ASSERT_NE(RuntimeRecord, Records.end());
-    ASSERT_NE(StartupRecord, Records.end());
-    EXPECT_EQ(RuntimeRecord->Description, "runtime record");
-    EXPECT_EQ(RuntimeRecord->Value, ChangedValue);
-    EXPECT_EQ(RuntimeRecord->Timing, CVarTiming::Runtime);
-    EXPECT_EQ(StartupRecord->Description, "startup record");
-    EXPECT_EQ(StartupRecord->Value, ChangedValue);
-    EXPECT_EQ(StartupRecord->Timing, CVarTiming::Startup);
-    EXPECT_TRUE(std::ranges::is_sorted(Records, {}, &CVarSnapshot<T>::Name));
-
-    Runtime.Set(InitialValue);
-    Startup.Set(InitialValue);
-    EXPECT_EQ(RuntimeRecord->Value, ChangedValue);
-    EXPECT_EQ(StartupRecord->Value, ChangedValue);
-
-    RuntimeRecord->Value       = ChangedValue;
-    StartupRecord->Value       = ChangedValue;
-    RuntimeRecord->Name        = "detached name";
-    StartupRecord->Description = "detached description";
-    EXPECT_EQ(Runtime.Get(), InitialValue);
-    EXPECT_EQ(Startup.Get(), InitialValue);
-    const auto FreshRecords = CVarManager::Get().Collect<T>();
-    const auto FreshRuntime = std::ranges::find(FreshRecords, Runtime.Name(), &CVarSnapshot<T>::Name);
-    const auto FreshStartup = std::ranges::find(FreshRecords, Startup.Name(), &CVarSnapshot<T>::Name);
-    ASSERT_NE(FreshRuntime, FreshRecords.end());
-    ASSERT_NE(FreshStartup, FreshRecords.end());
-    EXPECT_EQ(FreshRuntime->Value, InitialValue);
-    EXPECT_EQ(FreshStartup->Value, InitialValue);
-    EXPECT_EQ(FreshStartup->Description, "startup record");
-}
-
-TEST(CVarTest, CollectOwnsCurrentValuesAndConsumptionTiming) {
-    CheckOwnedCVarSnapshot<bool>(false, true);
-    CheckOwnedCVarSnapshot<Int32>(12, -34);
-    CheckOwnedCVarSnapshot<Float32>(1.5F, -2.25F);
-    CheckOwnedCVarSnapshot<String>("initial text", "updated text");
 }
 
 TEST(CVarTest, HandleReturnsRegisteredDefault) {
@@ -289,18 +255,43 @@ TEST(CVarTest, OptionsRejectInvalidValuesOnEveryWritePath) {
     std::filesystem::remove_all(TempDir);
 }
 
+TEST(CVarTest, NumericOptionsRejectInvalidValuesOnEveryWritePath) {
+    ASSERT_TRUE(CVarManager::Get().SetByName<Int32>(CVarTestIntOptions.Name(), 2));
+    EXPECT_EQ(CVarTestIntOptions.Get(), 2);
+
+    EXPECT_FALSE(CVarManager::Get().SetByName<Int32>(CVarTestIntOptions.Name(), 5));
+    EXPECT_EQ(CVarTestIntOptions.Get(), 2);
+
+    CVarTestIntOptions.Set(9);
+    EXPECT_EQ(CVarTestIntOptions.Get(), 2);
+
+    const auto TempDir = std::filesystem::temp_directory_path() / "SoulEngineCVarIntOptionsTest";
+    std::filesystem::create_directories(TempDir);
+    const auto ConfigPath = TempDir / "cvar_int_options_test.toml";
+    {
+        std::ofstream Out{ConfigPath};
+        Out << "[Test.Options]\nLevel = 9\n";
+    }
+    ASSERT_TRUE(CVarManager::Get().LoadConfig(ConfigPath).has_value());
+    EXPECT_EQ(CVarTestIntOptions.Get(), 2);
+    std::filesystem::remove_all(TempDir);
+
+    // Restore the first option so test order cannot leak state.
+    ASSERT_TRUE(CVarManager::Get().SetByName<Int32>(CVarTestIntOptions.Name(), 1));
+}
+
 TEST(CVarTest, EnumCVarReflectsOrderedNamesAndRoundTripsTypedValues) {
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
 
-    const auto Records = CVarManager::Get().Collect<String>();
-    const auto Record  = std::ranges::find(Records, CVarTestEnum.Name(), &CVarSnapshot<String>::Name);
-    ASSERT_NE(Record, Records.end());
-    EXPECT_EQ(Record->Value, "Safe");
+    const auto* Record = FindEntry<String>(CVarTestEnum.Name());
+    ASSERT_NE(Record, nullptr);
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
     EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
 
     CVarTestEnum.Set(TestCVarMode::Fast);
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Fast);
     EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestEnum.Name()), std::optional{String{"Fast"}});
+    EXPECT_EQ(CVarManager::Get().Find<TestCVarMode>(CVarTestEnum.Name()), std::optional{TestCVarMode::Fast});
 
     ASSERT_TRUE(CVarManager::Get().SetByName<String>(CVarTestEnum.Name(), "Safe"));
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);

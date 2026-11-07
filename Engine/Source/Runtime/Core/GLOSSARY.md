@@ -47,7 +47,7 @@ _Avoid_: TAutoCVar, AutoCVar, central registration function
 An ordered set of legal values declared at CVar registration, providing one value contract for validation and selection UI.
 
 **Enum CVar**:
-A strongly typed enum CVar whose configuration values use stable reflected enumerator names and whose legal values are declared as CVar options.
+An enum-typed CVar: it stores its reflected enumerator names in the String registry and its legal values are declared as CVar options, so enum and String CVars share one registry, one write-validation path, and one Settings selector.
 
 **CVarManager**:
 Singleton registry behind all CVars and the only reader of the TOML config file: the file's nested tables flatten into dotted names applied to matching CVars, and unknown keys are warned about and skipped. CVars are runtime-mutable from any thread; readers poll — there are no change callbacks.
