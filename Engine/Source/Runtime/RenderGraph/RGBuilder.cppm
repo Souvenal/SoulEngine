@@ -25,10 +25,8 @@ namespace SoulEngine {
 
 // Aggregate walk
 
-// Hand-rolled aggregate field enumeration (no reflection): probe the aggregate's brace-acceptance arity at
-// compile time, then bind that many names with a structured binding. Fields not deriving from one of the two
-// view records (samplers, bindless arrays, CPU scalars) are passthrough — only views declare access. Cap: 16
-// fields per Parameter.
+// Aggregate field enumeration uses structured bindings. Direct views and vector view elements declare access;
+// other fields are passthrough. Cap: 16 fields per Parameter.
 
 export struct FieldProbe {
     template <typename T>
@@ -62,11 +60,18 @@ consteval auto CountFields() -> std::size_t {
 
 export template <typename FieldT, typename FnT>
 auto VisitField(FieldT& Field, FnT& On) -> void {
-    // The detectable set is anything deriving from the two view records — passthrough fields (samplers,
-    // bindless arrays, CPU scalars) are everything else.
     if constexpr (std::derived_from<std::remove_cvref_t<FieldT>, RGTextureViewData> ||
                   std::derived_from<std::remove_cvref_t<FieldT>, RGBufferViewData>)
         On(Field);
+}
+
+/// @brief Visit every view element in an owned dynamic view collection.
+export template <typename ViewT, typename FnT>
+auto VisitField(std::vector<ViewT>& Views, FnT& On) -> void {
+    if constexpr (std::derived_from<ViewT, RGTextureViewData> || std::derived_from<ViewT, RGBufferViewData>) {
+        for (auto& View : Views)
+            On(View);
+    }
 }
 
 // Boilerplate generator for the structured-binding arities of ForEachView. Macros cannot be exported from a
@@ -308,12 +313,11 @@ export class RenderGraphBuilder {
 
     /// @brief Register a typed pass.
     ///
-    /// The Parameter IS the resource declaration: every view-typed field contributes one access to the
-    /// ordering chain; non-view fields pass through to the constructor untouched. The pass is constructed
-    /// here and lives on its node from then on; a pipeline pass's pipeline is bound at Compile, when
-    /// readiness is known. Rvalue-only: registration takes ownership of the Parameter. After AddPass the
-    /// Parameter is frozen — wiring ran before the call, and the graph's collected view pointers assume
-    /// nothing mutates it.
+    /// The Parameter IS the resource declaration: every direct view and every element of an owned vector view
+    /// collection contributes one access to the ordering chain; other fields pass through untouched. The pass
+    /// is constructed here and lives on its node; a pipeline pass's pipeline is bound at Compile,
+    /// when readiness is known. Rvalue-only: registration takes ownership of the Parameter. After AddPass the
+    /// Parameter and its vector view collections are frozen after wiring; their size and storage stay fixed.
     template <typename TPass>
     auto AddPass(typename TPass::Parameter&& In) -> void {
         constexpr StringView PassName = TPass::Name;
@@ -535,8 +539,7 @@ export class RenderGraphBuilder {
         std::vector<bool> Live(m_Resources.size(), false);
         // Kind is statically typed per vector — no unwrapping. The creation usage a view is checked against
         // comes from the registered desc for graph-created resources and from the realized RHI object for
-        // imported ones; an import whose ref is not Ready yet skips the check (the owner validated its own
-        // creation, and the prologue reports the not-ready ref at emission).
+        // imported ones. Final view validation happens here when possible, otherwise in the entry resolver.
         const auto CheckBufferUsage = [&](Uint32 I, const RGBufferViewData* V) -> std::expected<void, ErrorMessage> {
             auto&       Resource = m_Resources[V->Buffer.Index];
             const auto* Prop     = std::get_if<RGBufferProp>(&Resource.Prop);
@@ -635,9 +638,8 @@ export class RenderGraphBuilder {
             }
         }
 
-        // Step 5: resolve every surviving pass's views against the realized table. The pointers lead into the
-        // passes' Parameters, whose addresses have been final since AddPass; this is the single write to a
-        // view after registration.
+        // Step 5: resolve resource identities. Ready resources also materialize their validated views here;
+        // pending Vulkan transients finish in the entry resolver after frame tasks publish Ready.
         for (Uint32 I = 0; I < PassCount; ++I) {
             if (!Required[I] || Pruned[I])
                 continue;
@@ -649,6 +651,13 @@ export class RenderGraphBuilder {
                     return std::unexpected(ErrorMessage(
                         Format("RenderGraph: pass '{}' views a buffer handle over a texture entry", m_Passes[I].Name)));
                 V->Resolved = Prop->Resolved;
+                if (V->Resolved.TryGet()) {
+                    auto View = RHIBufferView::Create(Prop->Resolved, V->Usage, V->Access, V->Offset, V->Range);
+                    if (!View)
+                        return std::unexpected(View.error().Append(
+                            Format("RenderGraph: failed to resolve buffer view for pass '{}'", m_Passes[I].Name)));
+                    V->ResolvedValue = std::move(*View);
+                }
             }
             for (auto* V : m_Passes[I].Textures) {
                 const auto* Prop = std::get_if<RGTextureProp>(&m_Resources[V->Texture.Index].Prop);
@@ -656,6 +665,13 @@ export class RenderGraphBuilder {
                     return std::unexpected(ErrorMessage(
                         Format("RenderGraph: pass '{}' views a texture handle over a buffer entry", m_Passes[I].Name)));
                 V->Resolved = Prop->Resolved;
+                if (V->Resolved.TryGet()) {
+                    auto View = RHITextureView::Create(Prop->Resolved, V->Usage, V->Access, V->Range);
+                    if (!View)
+                        return std::unexpected(View.error().Append(
+                            Format("RenderGraph: failed to resolve texture view for pass '{}'", m_Passes[I].Name)));
+                    V->ResolvedValue = std::move(*View);
+                }
             }
         }
 
@@ -700,7 +716,31 @@ export class RenderGraphBuilder {
                 if (!Bound)
                     return std::unexpected(std::move(Bound.error()));
             }
-            Result.Entries.push_back({.Pass = std::move(Node.Pass), .Prologue = BuildPassPrologue(Node, m_Resources)});
+            Result.Entries.push_back(
+                {.Pass         = std::move(Node.Pass),
+                 .Prologue     = BuildPassPrologue(Node, m_Resources),
+                 .ResolveViews = [Buffers = Node.Buffers, Textures = Node.Textures, Name = String(Node.Name)]() mutable
+                     -> std::expected<void, ErrorMessage> {
+                     for (auto* V : Buffers) {
+                         if (V->ResolvedValue)
+                             continue;
+                         auto View = RHIBufferView::Create(V->Resolved, V->Usage, V->Access, V->Offset, V->Range);
+                         if (!View)
+                             return std::unexpected(View.error().Append(
+                                 Format("RenderGraph: failed to resolve buffer view for pass '{}'", Name)));
+                         V->ResolvedValue = std::move(*View);
+                     }
+                     for (auto* V : Textures) {
+                         if (V->ResolvedValue)
+                             continue;
+                         auto View = RHITextureView::Create(V->Resolved, V->Usage, V->Access, V->Range);
+                         if (!View)
+                             return std::unexpected(View.error().Append(
+                                 Format("RenderGraph: failed to resolve texture view for pass '{}'", Name)));
+                         V->ResolvedValue = std::move(*View);
+                     }
+                     return {};
+                 }});
         }
         return Result;
     }

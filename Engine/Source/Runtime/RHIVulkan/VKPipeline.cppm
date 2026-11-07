@@ -41,7 +41,7 @@ export [[nodiscard]] auto BuildReflectedBindings(const ShaderReflection& Reflect
 export class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
   public:
     explicit VulkanGraphicsPipeline(String Name, const RHIGraphicsPipelineDesc& Desc)
-        : RHIGraphicsPipeline(std::move(Name), Desc.BindingSet) {}
+        : RHIGraphicsPipeline(std::move(Name), Desc.BindingSet), m_VertexInputLayout(Desc.VertexInputLayout) {}
 
     ~VulkanGraphicsPipeline() override = default;
 
@@ -64,6 +64,10 @@ export class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
         return m_Bindings;
     }
 
+    [[nodiscard]] auto GetVertexInputLayout() const -> const RHIVertexInputLayoutDesc& {
+        return m_VertexInputLayout;
+    }
+
     [[nodiscard]] auto GetDynamicOffsetCount() const -> Uint32 {
         return m_DynamicOffsetCount;
     }
@@ -73,6 +77,7 @@ export class VulkanGraphicsPipeline final : public RHIGraphicsPipeline {
     }
 
   private:
+    RHIVertexInputLayoutDesc                      m_VertexInputLayout  = {};
     SPtr<vk::raii::Pipeline>                      m_VkPipeline         = nullptr;
     std::vector<VulkanReflectedDescriptorBinding> m_Bindings           = {};
     Uint32                                        m_DynamicOffsetCount = 0;

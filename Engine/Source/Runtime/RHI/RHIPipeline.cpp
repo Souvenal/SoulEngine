@@ -22,7 +22,7 @@ namespace SoulEngine {
     if (const auto* View = std::get_if<RHITextureView>(&Bound))
         return ShaderResourceType::Texture;
     if (const auto* View = std::get_if<RHIBufferView>(&Bound)) {
-        if (magic_enum::enum_flags_test(View->Usage, RHIBufferUsage::Constant))
+        if (magic_enum::enum_flags_test(View->GetUsage(), RHIBufferUsage::Constant))
             return ShaderResourceType::ConstantBuffer;
         return ShaderResourceType::StorageBuffer;
     }
@@ -39,7 +39,8 @@ namespace SoulEngine {
 /// Unknown, and access validation skips Unknown on either side.
 [[nodiscard]] auto ResolveBindingAccess(const RHIBoundResource& Bound) -> ShaderBindingAccess {
     if (const auto* View = std::get_if<RHITextureView>(&Bound))
-        return View->Usage == RHITextureUsage::Storage ? ShaderBindingAccess::ReadWrite : ShaderBindingAccess::Read;
+        return View->GetUsage() == RHITextureUsage::Storage ? ShaderBindingAccess::ReadWrite
+                                                            : ShaderBindingAccess::Read;
     return ShaderBindingAccess::Unknown;
 }
 
@@ -48,9 +49,9 @@ namespace SoulEngine {
 /// Returns nullptr when the alternative is absent or its payload is not Ready.
 [[nodiscard]] auto ResolveBindingObject(const RHIBoundResource& Bound) -> RHIObject* {
     if (const auto* View = std::get_if<RHITextureView>(&Bound))
-        return View->Texture.TryGet();
+        return View->GetTexture().TryGet();
     if (const auto* View = std::get_if<RHIBufferView>(&Bound))
-        return View->Buffer.TryGet();
+        return View->GetBuffer().TryGet();
     if (const auto* View = std::get_if<RHISamplerView>(&Bound))
         return View->Sampler.TryGet();
     if (const auto* View = std::get_if<RHITlasView>(&Bound))
@@ -208,7 +209,7 @@ auto RHIShaderBindingSet::BindArrayResources(std::span<const RHIShaderArrayBindi
         std::vector<Uint32> SeenIndices;
         SeenIndices.reserve(Request.Elements.size());
         for (const auto& Element : Request.Elements) {
-            if (!Element.View.Texture.TryGet())
+            if (!Element.View.GetTexture().TryGet())
                 return std::unexpected(ErrorMessage(Format(
                     "Shader array parameter '{}' has an element with no ready resource", Request.ParameterPath)));
             if (std::ranges::find(SeenIndices, Element.ArrayIndex) != SeenIndices.end())

@@ -1,6 +1,7 @@
 module;
 
 #include <hlsl++.h>
+#include <magic_enum/magic_enum_flags.hpp>
 
 export module RHI.Types;
 
@@ -106,7 +107,25 @@ export struct RHIVertexInputBindingDesc {
     bool operator==(const RHIVertexInputBindingDesc&) const = default;
 };
 
-export inline constexpr Uint32 kMaxVertexBufferBindings = 4;
+export struct RHIIndirectCommand {
+    Uint32 VertexCount   = 0;
+    Uint32 InstanceCount = 0;
+    Uint32 FirstVertex   = 0;
+    Uint32 FirstInstance = 0;
+};
+
+export struct RHIIndexedIndirectCommand {
+    Uint32 IndexCount    = 0;
+    Uint32 InstanceCount = 0;
+    Uint32 FirstIndex    = 0;
+    Int32  VertexOffset  = 0;
+    Uint32 FirstInstance = 0;
+};
+
+static_assert(sizeof(RHIIndirectCommand) == sizeof(Uint32) * 4);
+static_assert(alignof(RHIIndirectCommand) == alignof(Uint32));
+static_assert(sizeof(RHIIndexedIndirectCommand) == sizeof(Uint32) * 5);
+static_assert(alignof(RHIIndexedIndirectCommand) == alignof(Uint32));
 
 export struct RHIVertexInputLayoutDesc {
     std::vector<RHIVertexInputBindingDesc>   Bindings   = {};
@@ -458,20 +477,73 @@ export struct RHISubresourceRange {
 /// @brief Value-semantic texture view: identity, role, extent, direction.
 /// Plain data, not an RHIObject — lifetime comes from the embedded ref and the backend resolves/caches native
 /// views at record time. One view, one role: Usage is a single-role selector, never the creation union.
-export struct RHITextureView {
-    RHIRef<RHITexture>  Texture = nullptr;
-    RHIAccess           Access  = RHIAccess::Read;
-    RHITextureUsage     Usage   = RHITextureUsage::None;
-    RHISubresourceRange Range   = {};
+export class RHITextureView {
+  public:
+    RHITextureView() = delete;
+
+    [[nodiscard]] static auto
+    Create(RHIRef<RHITexture> Texture, RHITextureUsage Usage, RHIAccess Access, RHISubresourceRange Range = {})
+        -> std::expected<RHITextureView, ErrorMessage>;
+
+    [[nodiscard]] auto GetTexture() const -> const RHIRef<RHITexture>& {
+        return m_Texture;
+    }
+    [[nodiscard]] auto GetUsage() const -> RHITextureUsage {
+        return m_Usage;
+    }
+    [[nodiscard]] auto GetAccess() const -> RHIAccess {
+        return m_Access;
+    }
+    [[nodiscard]] auto GetRange() const -> const RHISubresourceRange& {
+        return m_Range;
+    }
+
+  private:
+    RHITextureView(RHIRef<RHITexture> Texture, RHITextureUsage Usage, RHIAccess Access, RHISubresourceRange Range)
+        : m_Texture(std::move(Texture)), m_Usage(Usage), m_Access(Access), m_Range(Range) {}
+
+    RHIRef<RHITexture>  m_Texture;
+    RHITextureUsage     m_Usage;
+    RHIAccess           m_Access;
+    RHISubresourceRange m_Range;
 };
 
 /// @brief Buffer counterpart: (buffer, usage, offset, range, access).
-export struct RHIBufferView {
-    RHIRef<RHIBuffer> Buffer = nullptr;
-    RHIAccess         Access = RHIAccess::Read;
-    RHIBufferUsage    Usage  = RHIBufferUsage::Unknown;
-    Uint64            Offset = 0;
-    Uint64            Range  = kRHIWholeBuffer;
+export class RHIBufferView {
+  public:
+    RHIBufferView() = delete;
+
+    [[nodiscard]] static auto Create(RHIRef<RHIBuffer> Buffer,
+                                     RHIBufferUsage    Usage,
+                                     RHIAccess         Access,
+                                     Uint64            Offset = 0,
+                                     Uint64 Range = kRHIWholeBuffer) -> std::expected<RHIBufferView, ErrorMessage>;
+
+    [[nodiscard]] auto GetBuffer() const -> const RHIRef<RHIBuffer>& {
+        return m_Buffer;
+    }
+    [[nodiscard]] auto GetUsage() const -> RHIBufferUsage {
+        return m_Usage;
+    }
+    [[nodiscard]] auto GetAccess() const -> RHIAccess {
+        return m_Access;
+    }
+    [[nodiscard]] auto GetOffset() const -> Uint64 {
+        return m_Offset;
+    }
+    [[nodiscard]] auto GetRange() const -> Uint64 {
+        return m_Range;
+    }
+
+  private:
+    RHIBufferView(RHIRef<RHIBuffer> Buffer, RHIBufferUsage Usage, RHIAccess Access, Uint64 Offset, Uint64 Range)
+        : m_Buffer(std::move(Buffer)), m_Usage(Usage), m_Access(Access), m_Offset(Offset), m_Range(Range) {}
+
+    RHIRef<RHIBuffer> m_Buffer;
+    RHIBufferUsage    m_Usage;
+    RHIAccess         m_Access;
+    Uint64            m_Offset;
+    Uint64            m_Range;
 };
 
 /// @brief Degenerate sampler view: identity only.
@@ -500,14 +572,14 @@ export struct RHIClearDepthStencilValue {
 
 /// @brief One color attachment: the RenderTarget view plus its clear policy.
 export struct RHIColorAttachmentDesc {
-    RHITextureView     View       = {}; ///< Range selects the rendered mip(s)
+    RHITextureView     View; ///< Range selects the rendered mip(s)
     RHIClearColorValue ClearValue = {};
     bool               Clear      = true;
 };
 
 /// @brief Depth/stencil counterpart of RHIColorAttachmentDesc.
 export struct RHIDepthAttachmentDesc {
-    RHITextureView            View       = {};
+    RHITextureView            View;
     RHIClearDepthStencilValue ClearValue = {};
     bool                      Clear      = true;
 };
@@ -522,8 +594,8 @@ export struct RHIGraphicsAttachments {
 // Synchronization vocabulary
 // The RenderGraph produces dst-only prologue transitions from declared pass accesses; the backend's
 // emission-side diff tracker materializes a native barrier only when tracked state differs. A transition is
-// view + stage: the native access mask and the image layout are pure functions of the view's (Usage, Access),
-// and that derivation lives in the backend's native mapping at emission, so this vocabulary carries no
+// resource usage/access/stage state: native access and layout derive from that declaration in the backend's
+// mapping at emission, so this vocabulary carries no
 // access-widening or layout axis. The stage schema is a fine-grained bit mask (D3D12 barrier-state shape) so
 // precision upgrades are mapping-table data changes, not schema changes.
 
@@ -543,25 +615,28 @@ export enum class RHISyncStage : Uint32 {
     LateFragmentTests     = 1 << 7,
     Transfer              = 1 << 8,
     Host                  = 1 << 9,
+    VertexInput           = 1 << 10,
     AllGraphics           = VertexShader | FragmentShader | DrawIndirect | ColorAttachmentOutput | EarlyFragmentTests |
-        LateFragmentTests,
+        LateFragmentTests | VertexInput,
 };
 
-/// @brief A dst-only state requirement for one buffer: "the pass needs this
-/// buffer accessed as View at Stage before its commands run". A transition is a declaration, not a barrier —
-/// it carries no src/dst pair; the backend's diff tracker decides whether a barrier materializes. The View
-/// travels by value: a pass declaring several views of one buffer merges them into one transition whose View
-/// accumulates the usage and access union.
+/// @brief Buffer destination state required before pass commands. Transitions are synchronization state, not
+/// command views or barriers. Multiple declarations of one buffer merge their usage and access unions here.
 export struct RHIBufferTransition {
-    RHIBufferView View  = {};
-    RHISyncStage  Stage = RHISyncStage::None;
+    RHIRef<RHIBuffer> Buffer = nullptr;
+    RHIBufferUsage    Usage  = RHIBufferUsage::Unknown;
+    RHIAccess         Access = RHIAccess::None;
+    RHISyncStage      Stage  = RHISyncStage::None;
 };
 
-/// @brief Texture counterpart of RHIBufferTransition. The view's
-/// subresource range defaults to the whole chain; the backend tracker resolves per-subresource state from it.
+/// @brief Texture counterpart of RHIBufferTransition. The subresource range defaults to the whole chain; the
+/// backend tracker resolves per-subresource state from it.
 export struct RHITextureTransition {
-    RHITextureView View  = {};
-    RHISyncStage   Stage = RHISyncStage::None;
+    RHIRef<RHITexture>  Texture = nullptr;
+    RHITextureUsage     Usage   = RHITextureUsage::None;
+    RHIAccess           Access  = RHIAccess::None;
+    RHISubresourceRange Range   = {};
+    RHISyncStage        Stage   = RHISyncStage::None;
 };
 
 /// @brief One pass's prologue: the complete set of state requirements its

@@ -13,6 +13,7 @@ import TaskGraph;
 
 import RHIVulkan.Capability;
 import RHIVulkan.Debug;
+import RHIVulkan.Types;
 import RHIVulkan.AccelerationStructure;
 import RHIVulkan.Buffer;
 import RHIVulkan.Sampler;
@@ -67,13 +68,12 @@ auto VulkanDescriptorWriteBatch::AppendTextureWrite(vk::DescriptorSet     Set,
                                                     const VulkanTexture&  Texture,
                                                     const RHITextureView& View,
                                                     vk::DescriptorType    Type) -> void {
-    const bool IsStorage = View.Usage == RHITextureUsage::Storage;
-    auto&      Info      = ImageInfos.emplace_back(vk::DescriptorImageInfo{
+    auto& Info = ImageInfos.emplace_back(vk::DescriptorImageInfo{
         .sampler     = nullptr,
-        .imageView   = View.Range.MipLevelCount == kRHIRemainingSubresources
+        .imageView   = View.GetRange().MipLevelCount == kRHIRemainingSubresources
                            ? Texture.GetVkImageView()
-                           : Texture.GetVkImageView(View.Range.BaseMipLevel),
-        .imageLayout = IsStorage ? vk::ImageLayout::eGeneral : vk::ImageLayout::eShaderReadOnlyOptimal,
+                           : Texture.GetVkImageView(View.GetRange().BaseMipLevel),
+        .imageLayout = ToVkImageLayout(View.GetUsage(), View.GetAccess()),
     });
     Writes.push_back(vk::WriteDescriptorSet{.dstSet          = Set,
                                             .dstBinding      = BindingIndex,
@@ -306,12 +306,16 @@ auto VulkanDescriptorManager::RegisterBindlessTexturesOnRhiThread(std::span<cons
             }
             const Uint32 Index = m_NextBindlessTexture++;
             m_BindlessPendingIds.insert(Id);
-            RHITextureView View{.Texture = Texture, .Usage = RHITextureUsage::Sampled};
+            auto View = RHITextureView::Create(Texture, RHITextureUsage::Sampled, RHIAccess::Read);
+            if (!View) {
+                LogError("VulkanDescriptorManager: failed to create bindless texture view");
+                continue;
+            }
             Batch.AppendTextureWrite(GetBindlessDescriptorSet(),
                                      BindlessTextureBinding,
                                      Index,
                                      static_cast<const VulkanTexture&>(*Payload),
-                                     View,
+                                     *View,
                                      vk::DescriptorType::eSampledImage);
             m_BindlessTextures.emplace(Id, Texture);
             Published.emplace_back(Id, Index);
@@ -417,7 +421,7 @@ auto VulkanDescriptorManager::AcquireDescriptorSet(const DescriptorSetCacheKey& 
             for (const auto& Element : Binding.ArrayElements) {
                 switch (Binding.Info.Type) {
                 case ShaderResourceType::Texture:
-                    if (const auto* Texture = static_cast<const VulkanTexture*>(Element.View.Texture.TryGet()))
+                    if (const auto* Texture = static_cast<const VulkanTexture*>(Element.View.GetTexture().TryGet()))
                         Batch.AppendTextureWrite(
                             Handle, Binding.Info.BindingIndex, Element.ArrayIndex, *Texture, Element.View, Type);
                     break;
@@ -432,12 +436,12 @@ auto VulkanDescriptorManager::AcquireDescriptorSet(const DescriptorSetCacheKey& 
         case ShaderResourceType::ConstantBuffer:
         case ShaderResourceType::StorageBuffer:
             if (const auto* View = std::get_if<RHIBufferView>(&Binding.Bound))
-                if (const auto* Buffer = static_cast<const VulkanBuffer*>(View->Buffer.TryGet()))
+                if (const auto* Buffer = static_cast<const VulkanBuffer*>(View->GetBuffer().TryGet()))
                     Batch.AppendBufferWrite(Handle, Binding.Info.BindingIndex, *Buffer, Type);
             break;
         case ShaderResourceType::Texture:
             if (const auto* View = std::get_if<RHITextureView>(&Binding.Bound))
-                if (const auto* Texture = static_cast<const VulkanTexture*>(View->Texture.TryGet()))
+                if (const auto* Texture = static_cast<const VulkanTexture*>(View->GetTexture().TryGet()))
                     Batch.AppendTextureWrite(Handle, Binding.Info.BindingIndex, 0, *Texture, *View, Type);
             break;
         case ShaderResourceType::Sampler:

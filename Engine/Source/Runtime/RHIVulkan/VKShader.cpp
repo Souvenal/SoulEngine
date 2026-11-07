@@ -8,6 +8,7 @@ import Shader;
 import RHI;
 import std;
 import RHIVulkan.Debug;
+import RHIVulkan.Capability;
 
 namespace SoulEngine {
 
@@ -98,13 +99,13 @@ auto FindReflectedVertexInputByLocation(const std::vector<ShaderVertexInputAttri
 }
 
 auto ValidateVertexInputLayout(const RHIGraphicsPipelineDesc& Desc) -> std::expected<void, ErrorMessage> {
-    const auto&                                ExplicitLayout   = Desc.VertexInputLayout;
-    std::array<bool, kMaxVertexBufferBindings> DeclaredBindings = {};
+    const auto&       ExplicitLayout         = Desc.VertexInputLayout;
+    const Uint32      MaxVertexInputBindings = VulkanCapability::Get().GetProperties().limits.maxVertexInputBindings;
+    std::vector<bool> DeclaredBindings(MaxVertexInputBindings, false);
     for (const auto& Binding : ExplicitLayout.Bindings) {
-        if (Binding.Binding >= kMaxVertexBufferBindings) {
-            return std::unexpected(ErrorMessage(Format("Vertex input binding {} exceeds supported binding count {}",
-                                                       Binding.Binding,
-                                                       kMaxVertexBufferBindings)));
+        if (Binding.Binding >= MaxVertexInputBindings) {
+            return std::unexpected(ErrorMessage(Format(
+                "Vertex input binding {} exceeds the device limit {}", Binding.Binding, MaxVertexInputBindings)));
         }
         if (Binding.Stride == 0)
             return std::unexpected(ErrorMessage(Format("Vertex input binding {} has zero stride", Binding.Binding)));
@@ -114,7 +115,7 @@ auto ValidateVertexInputLayout(const RHIGraphicsPipelineDesc& Desc) -> std::expe
     }
 
     for (const auto& Attr : ExplicitLayout.Attributes) {
-        if (Attr.Binding >= kMaxVertexBufferBindings || !DeclaredBindings[Attr.Binding]) {
+        if (Attr.Binding >= MaxVertexInputBindings || !DeclaredBindings[Attr.Binding]) {
             return std::unexpected(ErrorMessage(Format(
                 "Vertex input attribute location {} references undeclared binding {}", Attr.Location, Attr.Binding)));
         }

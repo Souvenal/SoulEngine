@@ -40,7 +40,7 @@ export class BlitToSwapchainPass final : public IRHITransferPass {
         if (!m_Parameter->Source.Resolved)
             return std::unexpected(ErrorMessage("Blit-to-swapchain source is not ready"));
         // step 1: blit the whole source target into the destination rectangle
-        BlitToSwapchain(m_Parameter->Source.Resolved,
+        BlitToSwapchain(m_Parameter->Source.ResolvedView(),
                         m_Parameter->DstX,
                         m_Parameter->DstY,
                         m_Parameter->DstWidth,

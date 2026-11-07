@@ -5,7 +5,7 @@ Per-frame render graph: passes declare their resource accesses up front, and a s
 ## Language
 
 **Parameter**:
-A pass's nested aggregate struct — it IS the pass's resource declaration. View-typed fields declare accesses; every other field is passthrough. The Parameter is frozen once the pass is added.
+A pass's nested aggregate struct — it IS the pass's resource declaration. View-typed fields and elements of owned dynamic view collections declare accesses; every other field is passthrough. The Parameter and the size and storage of its dynamic view collections are frozen once the pass is added.
 _Avoid_: separate declare/record callback pairs, per-pass hand-written field lists
 
 **View (graph)**:
