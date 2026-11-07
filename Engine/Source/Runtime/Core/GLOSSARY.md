@@ -43,6 +43,12 @@ _Avoid_: global instance, static instance
 Console variable — a namespace-scope object that self-registers at static-init time and doubles as a zero-lookup access handle. The default lives at the registration site and is the single source of truth.
 _Avoid_: TAutoCVar, AutoCVar, central registration function
 
+**CVar options**:
+An ordered set of legal values declared at CVar registration, providing one value contract for validation and selection UI.
+
+**Enum CVar**:
+A strongly typed enum CVar whose configuration values use stable reflected enumerator names and whose legal values are declared as CVar options.
+
 **CVarManager**:
 Singleton registry behind all CVars and the only reader of the TOML config file: the file's nested tables flatten into dotted names applied to matching CVars, and unknown keys are warned about and skipped. CVars are runtime-mutable from any thread; readers poll — there are no change callbacks.
 _Avoid_: CVarSystem, ConsoleVariableManager
