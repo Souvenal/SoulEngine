@@ -30,12 +30,12 @@ Use a stack when a leaf requires unmerged parent code or an earlier leaf's contr
 
 ### Restack After A Parent Changes
 
-1. Before rewriting anything, confirm every affected worktree is clean and record the immutable old parent tip, old leaf tip, expected new parent, expected ticket commit set, and current remote leaf tip.
+1. Before rewriting anything, confirm every affected worktree is clean and record the immutable old parent tip, old leaf tip, expected new parent, expected ticket commit set, and current remote leaf tip. For a multi-parent leaf, also record the old base-assembly head.
 2. After a parent advances or is squash-merged, restack children in dependency order. In each child worktree, replay only that child's commits with:
    ```text
-   git rebase --onto <new-parent> <recorded-old-parent-sha>
+   git rebase --onto <new-parent-or-base> <recorded-old-base-sha>
    ```
-   For a leaf with multiple unmerged parents, first rebuild its recorded disposable base assembly from the exact parent heads, then replay the leaf commits onto that assembly.
+   For a single-parent leaf, the old base is the old parent tip. For a multi-parent leaf, the old base is the old base-assembly head, not one parent's tip; first rebuild the new disposable base assembly from the exact new parent heads, then replay the leaf commits onto it.
 3. Resolve only conflicts belonging to the leaf's existing scope. Verify parent ancestry, the expected ticket commit set, the absence of unexpected merge commits, and the ticket-only diff; rerun validation and review at the new head. Code tests alone do not validate topology.
 4. Rewriting a published branch requires the existing explicit maintainer authorization. After approval, publish each rewritten leaf with an exact lease, for example:
    ```text

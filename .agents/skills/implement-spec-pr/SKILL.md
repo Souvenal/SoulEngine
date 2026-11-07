@@ -42,8 +42,8 @@ Keep these boundaries throughout:
 
 ## 4. Restack a leaf without integrating it
 
-1. When a parent advances or is squash-merged, confirm the affected worktrees are clean and record the immutable old parent tip, old leaf tip, expected new parent, expected ticket commit set, and current remote leaf tip. Restack children in dependency order.
-2. In each leaf worktree, run `git rebase --onto <new-parent> <recorded-old-parent-sha>` to replay only that leaf's commits. For multiple unmerged parents, rebuild the recorded disposable base assembly from exact parent heads first. Do not routinely merge a parent tip into a leaf for freshness; a local merge in either direction is not integration.
+1. When a parent advances or is squash-merged, confirm the affected worktrees are clean and record the immutable old parent tip, old leaf tip, expected new parent, expected ticket commit set, and current remote leaf tip. For a multi-parent leaf, also record the old base-assembly head. Restack children in dependency order.
+2. In each leaf worktree, run `git rebase --onto <new-parent-or-base> <recorded-old-base-sha>` to replay only that leaf's commits. For a single-parent leaf, the old base is the old parent tip. For a multi-parent leaf, the old base is the old base-assembly head, not one parent's tip; rebuild the new disposable base assembly from exact new parent heads first. Do not routinely merge a parent tip into a leaf for freshness; a local merge in either direction is not integration.
 3. Resolve only conflicts within the leaf's existing scope. Verify parent ancestry, the expected ticket commit set, no unexpected merge commits, and the ticket-only diff. Rerun validation and `/code-review`, then record the new parent tip and leaf head.
 4. Rewriting a published leaf requires the existing explicit maintainer authorization. After approval, use an exact lease such as `git push --force-with-lease=refs/heads/<leaf>:<old-remote-sha> origin HEAD:refs/heads/<leaf>`. After a parent PR merges, retarget its direct child PR to the parent's former base and restack descendants before continuing review. A squash result is a new integrated commit; the old parent head need not become an ancestor of the base.
 
@@ -73,6 +73,6 @@ Use these exact labels in ledgers and handoffs. Apply the PR states to each leaf
 | `agent-reviewed` | Agent review is complete at the recorded head and findings are addressed; subagent review is not maintainer approval. |
 | `PR-open` | An authorized PR exists at the recorded base and head with validation evidence; approval and merge remain separate. |
 | `maintainer-approved` | The required maintainer approval is explicit for the current change; the PR is not thereby merged. |
-| `PR-merged` | The named PR is actually merged into its recorded target; record the merge commit. |
+| `PR-merged` | The named PR is actually merged into its recorded target; record the resulting integration commit. |
 | `capability-validated` | The capability tip contains every required leaf PR's resulting integration commit, and final capability review and combined acceptance pass at that exact tip; main delivery has not necessarily occurred. |
 | `main-delivered` | The capability PR is merged to `main` and the resulting mainline commit and required checks are verified; closure and cleanup remain separate. |
