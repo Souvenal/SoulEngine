@@ -60,7 +60,7 @@ export struct RHIShaderBindingRequest {
 ///
 /// Texture views only today; buffers/samplers extend here when arrays of them arrive.
 export struct RHIArrayBindingElement {
-    RHITextureView View       = {};
+    RHITextureView View;
     Uint32         ArrayIndex = 0;
 };
 

@@ -18,8 +18,8 @@ namespace SoulEngine {
 // The prologue derives only the stage; the backend derives the native access mask and the image layout from
 // the view's (Usage, Access) at emission. The declared direction translates faithfully: a shader that
 // read-modify-writes (atomic append, counters) declares Read|Write on the view. Initial mapping is coarse:
-// shader accesses in graphics passes map to AllGraphics; Transfer/Compute/Indirect/Attachment kinds map
-// precisely. Refining precision is a table-data change, never a schema change.
+// shader accesses map to AllGraphics in graphics passes; other kinds map precisely. Precision upgrades are
+// table-data changes, never schema changes.
 
 [[nodiscard]] auto ShaderStageFor(RHIPassType Class) -> RHISyncStage {
     switch (Class) {
@@ -37,6 +37,9 @@ namespace SoulEngine {
 }
 
 [[nodiscard]] auto BufferStageFor(RHIBufferUsage Usage, RHIPassType Class) -> RHISyncStage {
+    if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
+        magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index))
+        return RHISyncStage::VertexInput;
     if (magic_enum::enum_flags_test(Usage, RHIBufferUsage::Indirect))
         // The indirect buffer may be produced by an earlier compute pass (e.g. GPU culling); the DrawIndirect
         // stage is exact here.
@@ -75,15 +78,15 @@ namespace SoulEngine {
                     // visibility barrier; copy-dst targets are readback buffers
         const auto Stage = BufferStageFor(Decl->Usage, Node.StageClass);
         for (auto& T : Prologue.Buffers) {
-            if (T.View.Buffer == Prop->Resolved) {
-                T.View.Usage  = T.View.Usage | Decl->Usage;
-                T.View.Access = T.View.Access | Decl->Access;
-                T.Stage       = T.Stage | Stage;
+            if (T.Buffer == Prop->Resolved) {
+                T.Usage  = T.Usage | Decl->Usage;
+                T.Access = T.Access | Decl->Access;
+                T.Stage  = T.Stage | Stage;
                 return;
             }
         }
         Prologue.Buffers.push_back(
-            {.View = {.Buffer = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage}, .Stage = Stage});
+            {.Buffer = Prop->Resolved, .Usage = Decl->Usage, .Access = Decl->Access, .Stage = Stage});
     };
     const auto AddTexture = [&](const RGTextureViewData* Decl) {
         const auto& Resource = Resources[Decl->Texture.Index];
@@ -92,17 +95,19 @@ namespace SoulEngine {
             return;
         const auto Stage = TextureStageFor(Decl->Usage, Node.StageClass);
         for (auto& T : Prologue.Textures) {
-            if (T.View.Texture == Prop->Resolved && T.View.Range.BaseMipLevel == Decl->Range.BaseMipLevel &&
-                T.View.Range.MipLevelCount == Decl->Range.MipLevelCount) {
-                T.View.Usage  = T.View.Usage | Decl->Usage;
-                T.View.Access = T.View.Access | Decl->Access;
-                T.Stage       = T.Stage | Stage;
+            if (T.Texture == Prop->Resolved && T.Range.BaseMipLevel == Decl->Range.BaseMipLevel &&
+                T.Range.MipLevelCount == Decl->Range.MipLevelCount) {
+                T.Usage  = T.Usage | Decl->Usage;
+                T.Access = T.Access | Decl->Access;
+                T.Stage  = T.Stage | Stage;
                 return;
             }
         }
-        Prologue.Textures.push_back(
-            {.View  = {.Texture = Prop->Resolved, .Access = Decl->Access, .Usage = Decl->Usage, .Range = Decl->Range},
-             .Stage = Stage});
+        Prologue.Textures.push_back({.Texture = Prop->Resolved,
+                                     .Usage   = Decl->Usage,
+                                     .Access  = Decl->Access,
+                                     .Range   = Decl->Range,
+                                     .Stage   = Stage});
     };
 
     for (const auto* Decl : Node.Buffers)

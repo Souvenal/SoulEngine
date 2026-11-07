@@ -17,8 +17,8 @@ Exactly three — buffer, texture, and acceleration structure. Vertex / index / 
 _Avoid_: type-per-usage resource classes.
 
 **View**:
-Value-semantic (resource, usage, extent, access) tuple — not an object; commands and bindings hold views and lifetime comes from the embedded resource ref. One view, one role; stage is a pass property and image layout is derived, never declared (ADR 05).
-_Avoid_: view objects, layout-carrying views.
+Validated value object carrying resource, usage, extent, and access — not an RHIObject; commands and bindings hold views and lifetime comes from the embedded resource ref. A view has no empty state, its role is contained by the resource's creation usage, and its fields cannot be changed after creation. One view, one role; stage is a pass property and image layout is derived, never declared (ADR 05).
+_Avoid_: default/empty views, mutable post-resolution views, layout-carrying views.
 
 **Buffer lifetime**:
 Persistent buffers are individually owned and outlive frames; transient buffers are per-frame belt slices valid only for the frame in which they were created. Lifetime is chosen on the creation descriptor; a transient ref retained past its creation frame is a contract violation.
@@ -57,7 +57,7 @@ Move-only frame packet of ordered pass entries (graphics, compute, transfer, ray
 A graphics, compute, transfer, or ray-tracing scope containing declarative command work. Attachments, pipelines, draw buffers, shader-parameter resources, and the presentation source are ref-backed; color and depth attachments may explicitly load instead of clear when a post-process overlays an existing target.
 
 **Pass entry / Prologue**:
-The frame packet's unit: a pass plus its destination-only transition set, produced by the RenderGraph from the pass's declared accesses (ADR 05). A transition is a view plus a stage mask — a state requirement, not a barrier.
+The frame packet's unit: a pass plus its destination-only transition set, produced by the RenderGraph from the pass's declared accesses (ADR 05). A transition is resource usage/access/stage synchronization state, not a barrier or a mutable command view.
 
 **Frame completion**:
 Backend-independent token returned at end-of-frame; the owning frame slot retains its render result until the token confirms GPU completion (ADR 03).
@@ -69,7 +69,7 @@ A task-graph callback tagged with the producer thread's frame ordinal; the RHI q
 Copyable CPU-side values partitioned by reflected descriptor-set layout; the snapshot carries ref-backed textures, samplers, and buffers.
 
 **Present**:
-The explicit blit-to-swapchain command issued by a transfer pass, always blitting the complete source target into the destination viewport with a fixed nearest filter. There is no present flag on passes, views, or usage bits (ADR 05).
+The explicit blit-to-swapchain command issued by a transfer pass, blitting the selected source mip into the destination viewport with a fixed nearest filter. There is no present flag on passes, views, or usage bits (ADR 05).
 _Avoid_: implicit present, present pass flag, present layout at any layer above the backend.
 
 ### Synchronization and lifetime

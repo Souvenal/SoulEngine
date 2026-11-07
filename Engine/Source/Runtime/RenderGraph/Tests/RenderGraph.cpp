@@ -13,6 +13,7 @@
 #include <magic_enum/magic_enum_flags.hpp>
 
 import RenderGraph;
+import RenderGraph.SyncPlan;
 import RHI;
 import WindowSystem;
 import std;
@@ -22,9 +23,32 @@ using namespace SoulEngine;
 
 // Test device
 // Inherits the base RHIRenderDevice defaults (every other method logs "not implemented" and fails) except the
-// three transient-create calls the graph's realize step makes — those succeed with an empty RHIRef, so
-// Compile can walk a graph full of transients without a GPU. Each call is counted so tests can assert what
-// was and was not realized.
+// three transient-create calls the graph's realize step makes — those publish lightweight RHI payloads, so
+// Compile can validate and resolve views without a GPU. Each call is counted so tests can assert what was and
+// was not realized.
+
+class MockGraphTexture final : public RHITexture {
+  public:
+    explicit MockGraphTexture(StringView Name, const RHITextureDesc& Desc) : RHITexture(String(Name), Desc) {}
+};
+
+class MockGraphBuffer final : public RHIBuffer {
+  public:
+    explicit MockGraphBuffer(StringView Name, const RHIBufferDesc& Desc)
+        : RHIBuffer(String(Name), Desc.SizeBytes, Desc.Usage, Desc.MemoryUsage, Desc.Lifetime) {}
+};
+
+[[nodiscard]] auto MakeTextureResource(StringView Name, RHITextureUsage Usage) -> RHIRef<RHITexture> {
+    auto Result    = RHIRef<RHITexture>::Create();
+    auto Published = Result.Publish(
+        std::make_unique<MockGraphTexture>(
+            Name,
+            RHITextureDesc{
+                .Width = 16, .Height = 8, .MipLevels = 4, .Usage = Usage, .MemoryUsage = RHIMemoryUsage::GpuOnly}),
+        RHIRefState::Ready);
+    EXPECT_TRUE(Published.has_value());
+    return Result;
+}
 
 class MockRenderDevice final : public RHIRenderDevice {
   public:
@@ -41,20 +65,26 @@ class MockRenderDevice final : public RHIRenderDevice {
     [[nodiscard]] auto Initialize(IWindowSystem*) -> std::expected<void, ErrorMessage> override {
         return {};
     }
-    [[nodiscard]] auto CreateTexture(StringView, const RHITextureDesc& Desc)
+    [[nodiscard]] auto CreateTexture(StringView Name, const RHITextureDesc& Desc)
         -> std::expected<RHIRef<RHITexture>, ErrorMessage> override {
         ++CreatedTargets;
         LastTargetUsage = Desc.Usage;
-        return RHIRef<RHITexture>{};
+        auto Result     = RHIRef<RHITexture>::Create();
+        auto Published  = Result.Publish(std::make_unique<MockGraphTexture>(Name, Desc), RHIRefState::Ready);
+        EXPECT_TRUE(Published.has_value());
+        return Result;
     }
-    [[nodiscard]] auto CreateBuffer(StringView, const RHIBufferDesc& Desc)
+    [[nodiscard]] auto CreateBuffer(StringView Name, const RHIBufferDesc& Desc)
         -> std::expected<RHIRef<RHIBuffer>, ErrorMessage> override {
         if (Desc.Usage == RHIBufferUsage::Constant) {
             ++CreatedConstantBuffers;
         } else {
             ++CreatedStorageBuffers;
         }
-        return RHIRef<RHIBuffer>{};
+        auto Result    = RHIRef<RHIBuffer>::Create();
+        auto Published = Result.Publish(std::make_unique<MockGraphBuffer>(Name, Desc), RHIRefState::Ready);
+        EXPECT_TRUE(Published.has_value());
+        return Result;
     }
     [[nodiscard]] auto UploadBuffer(RHIRef<RHIBuffer>, std::span<const std::byte> Data)
         -> std::expected<void, ErrorMessage> override {
@@ -416,6 +446,79 @@ struct AnchorPass final : IRHITransferPass {
     UPtr<Parameter> m_Parameter;
 };
 
+class MockGeometryBuffer final : public RHIBuffer {
+  public:
+    MockGeometryBuffer(StringView Name, RHIBufferUsage Usage, Uint32* Destructions = nullptr)
+        : RHIBuffer(String(Name), 64, Usage, RHIMemoryUsage::CpuToGpu, RHILifetime::Transient),
+          m_Destructions(Destructions) {}
+    ~MockGeometryBuffer() override {
+        if (m_Destructions)
+            ++*m_Destructions;
+    }
+
+  private:
+    Uint32* m_Destructions = nullptr;
+};
+
+[[nodiscard]] auto MakeGeometryBuffer(StringView Name, RHIBufferUsage Usage, Uint32* Destructions = nullptr)
+    -> RHIRef<RHIBuffer> {
+    auto Result = RHIRef<RHIBuffer>::Create();
+    auto Published =
+        Result.Publish(UPtr<MockGeometryBuffer>(new MockGeometryBuffer(Name, Usage, Destructions)), RHIRefState::Ready);
+    EXPECT_TRUE(Published.has_value());
+    return Result;
+}
+
+struct DynamicIndirectPass final : IRHIGraphicsPass {
+    static constexpr StringView Name       = "DynamicIndirect";
+    static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
+
+    struct Parameter {
+        RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>              Ordinary;
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> Dynamic = {};
+    };
+
+    DynamicIndirectPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        m_Commands.clear();
+        DrawIndirect({}, m_Parameter->Ordinary.ResolvedView());
+        for (const auto& View : m_Parameter->Dynamic)
+            DrawIndirect({}, View.ResolvedView());
+        return {};
+    }
+
+  private:
+    UPtr<Parameter> m_Parameter;
+};
+
+struct DynamicIndexedInputPass final : IRHIGraphicsPass {
+    static constexpr StringView Name       = "DynamicIndexedInput";
+    static constexpr bool       NeverPrune = true;
+    [[nodiscard]] auto          GetName() const noexcept -> StringView override {
+        return Name;
+    }
+
+    struct Parameter {
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> IndirectBuffers = {};
+        std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>    IndexBuffers    = {};
+    };
+
+    DynamicIndexedInputPass(UPtr<Parameter> In) : m_Parameter(std::move(In)) {}
+    [[nodiscard]] auto Record() -> std::expected<void, ErrorMessage> override {
+        m_Commands.clear();
+        for (std::size_t I = 0; I < m_Parameter->IndexBuffers.size(); ++I)
+            DrawIndexedIndirect(
+                {}, m_Parameter->IndexBuffers[I].ResolvedView(), m_Parameter->IndirectBuffers[I].ResolvedView());
+        return {};
+    }
+
+  private:
+    UPtr<Parameter> m_Parameter;
+};
+
 auto ResetMockCounters() -> void {
     WriteColorPass::Constructed                  = 0;
     WriteDepthPass::Constructed                  = 0;
@@ -522,7 +625,8 @@ TEST(RenderGraphPrune, PruneIsTransitiveOverTheDependencyChain) {
     Graph.AddPass<FilterPass>({.Input = X, .Output = Y});
     Graph.AddPass<ReadStoragePass>({.Input = Y}); // no side effect
     // Independent side-effect pass keeps the frame non-empty.
-    const auto Imported = Graph.Import(RHIRef<RHITexture>{});
+    const auto Imported =
+        Graph.Import(MakeTextureResource("Imported", RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc));
     Graph.AddPass<WriteColorPass>({.Output = Imported});
 
     auto List = Graph.Compile();
@@ -535,8 +639,9 @@ TEST(RenderGraphPrune, PruneIsTransitiveOverTheDependencyChain) {
 TEST(RenderGraphPrune, ImportedWriteKeepsItsProducerChainAlive) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
-    const auto         X        = MakeStorage(Graph, "X");
-    const auto         Imported = Graph.Import(RHIRef<RHITexture>{});
+    const auto         X = MakeStorage(Graph, "X");
+    const auto         Imported =
+        Graph.Import(MakeTextureResource("Imported", RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc));
     Graph.AddPass<WriteStoragePass>({.Output = X});
     Graph.AddPass<FilterPass>({.Input = X, .Output = X});
     // Reads X and writes an imported target: the write is visible outside the graph, so the whole chain
@@ -576,7 +681,8 @@ struct NeverPruneTransferPass final : IRHITransferPass {
 TEST(RenderGraphTransfer, NeverPruneSurvivesWithoutConsumers) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
-    const auto         Target = Graph.Import(RHIRef<RHITexture>{});
+    const auto         Target =
+        Graph.Import(MakeTextureResource("Imported", RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc));
     Graph.AddPass<NeverPruneTransferPass>({.Source = Target});
 
     auto List = Graph.Compile();
@@ -901,13 +1007,190 @@ TEST(RenderGraphParameter, PassthroughFieldsSurviveTheAggregateWalkUntouched) {
     EXPECT_EQ(FilterPass::LastTag, 42u);
     EXPECT_EQ(FilterPass::Constructed, 1u);
 }
+TEST(RenderGraphDynamicViews, ElementsDeclareResolveAndRecordAlongsideOrdinaryFields) {
+    ResetMockCounters();
+    auto OrdinaryRef = MakeGeometryBuffer("Ordinary", RHIBufferUsage::Indirect);
+    auto FirstRef    = MakeGeometryBuffer("Dynamic0", RHIBufferUsage::Indirect);
+    auto SecondRef   = MakeGeometryBuffer("Dynamic1", RHIBufferUsage::Indirect);
+
+    RenderGraphBuilder Graph;
+    const auto         Ordinary = Graph.Import(OrdinaryRef);
+    const auto         First    = Graph.Import(FirstRef);
+    const auto         Second   = Graph.Import(SecondRef);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Ordinary, .Dynamic = {First, Second}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(List->Entries.size(), 1u);
+    auto& Entry = List->Entries.front();
+    EXPECT_EQ(Entry.Prologue.Buffers.size(), 3u);
+
+    auto Recorded = Entry.Pass->Record();
+    ASSERT_TRUE(Recorded);
+    const auto Commands = Entry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 3u);
+    const auto* OrdinaryCommand = std::get_if<RHIDrawIndirectCmd>(&Commands[0]);
+    const auto* FirstCommand    = std::get_if<RHIDrawIndirectCmd>(&Commands[1]);
+    const auto* SecondCommand   = std::get_if<RHIDrawIndirectCmd>(&Commands[2]);
+    ASSERT_NE(OrdinaryCommand, nullptr);
+    ASSERT_NE(FirstCommand, nullptr);
+    ASSERT_NE(SecondCommand, nullptr);
+    EXPECT_EQ(OrdinaryCommand->IndirectBuffer.GetBuffer().TryGet(), OrdinaryRef.TryGet());
+    EXPECT_EQ(FirstCommand->IndirectBuffer.GetBuffer().TryGet(), FirstRef.TryGet());
+    EXPECT_EQ(SecondCommand->IndirectBuffer.GetBuffer().TryGet(), SecondRef.TryGet());
+}
+
+TEST(RenderGraphDynamicViews, EmptyCollectionLeavesTheOrdinaryDeclarationIntact) {
+    ResetMockCounters();
+    auto OrdinaryRef = MakeGeometryBuffer("Ordinary", RHIBufferUsage::Indirect);
+
+    RenderGraphBuilder Graph;
+    const auto         Ordinary = Graph.Import(OrdinaryRef);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Ordinary, .Dynamic = {}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(List->Entries.size(), 1u);
+    auto& Entry = List->Entries.front();
+    EXPECT_EQ(Entry.Prologue.Buffers.size(), 1u);
+    ASSERT_TRUE(Entry.Pass->Record());
+    EXPECT_EQ(Entry.Pass->GetCommands().size(), 1u);
+}
+
+TEST(RenderGraphDynamicViews, ElementsParticipateInDependencyPlanning) {
+    ResetMockCounters();
+    auto OrdinaryRef = MakeGeometryBuffer("Ordinary", RHIBufferUsage::Indirect);
+
+    RenderGraphBuilder Graph;
+    const auto         Ordinary = Graph.Import(OrdinaryRef);
+    const auto Input = Graph.CreateBuffer("Input",
+                                          RHIBufferDesc{.SizeBytes = 64,
+                                                        .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
+                                                        .Lifetime  = RHILifetime::Transient});
+    Graph.AddPass<WriteStoragePass>({.Output = Input});
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Ordinary, .Dynamic = {Input}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    EXPECT_EQ(PassNames(*List), (std::vector<StringView>{"WriteStorage", "DynamicIndirect"}));
+}
+
+TEST(RenderGraphDynamicViews, SurvivingElementOutsideCreationUsageIsAFrameError) {
+    ResetMockCounters();
+    auto OrdinaryRef = MakeGeometryBuffer("Ordinary", RHIBufferUsage::Indirect);
+    auto DynamicRef  = MakeGeometryBuffer("Dynamic", RHIBufferUsage::Storage);
+
+    RenderGraphBuilder Graph;
+    const auto         Ordinary = Graph.Import(OrdinaryRef);
+    const auto         Dynamic  = Graph.Import(DynamicRef);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Ordinary, .Dynamic = {Dynamic}});
+
+    auto List = Graph.Compile();
+    ASSERT_FALSE(List);
+    EXPECT_NE(List.error().ToString().find("creation usage"), String::npos);
+}
+
+TEST(RenderGraphDynamicViews, IndexedElementsProduceVertexInputPrologueAndCommandPacket) {
+    ResetMockCounters();
+    auto IndirectRef = MakeGeometryBuffer("Indirect", RHIBufferUsage::Indirect);
+    auto FirstRef    = MakeGeometryBuffer("Index0", RHIBufferUsage::Index);
+    auto SecondRef   = MakeGeometryBuffer("Index1", RHIBufferUsage::Index);
+
+    RenderGraphBuilder Graph;
+    const auto         Indirect      = Graph.Import(IndirectRef);
+    const auto         First         = Graph.Import(FirstRef);
+    const auto         Second        = Graph.Import(SecondRef);
+    auto               FirstIndirect = RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>{Indirect};
+    FirstIndirect.Range              = sizeof(RHIIndexedIndirectCommand);
+    auto SecondIndirect              = FirstIndirect;
+    SecondIndirect.Offset            = sizeof(RHIIndexedIndirectCommand);
+    Graph.AddPass<DynamicIndexedInputPass>(
+        {.IndirectBuffers = {FirstIndirect, SecondIndirect}, .IndexBuffers = {First, Second}});
+
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    ASSERT_EQ(List->Entries.size(), 1u);
+    auto& Entry = List->Entries.front();
+    ASSERT_EQ(Entry.Prologue.Buffers.size(), 3u);
+    const auto FindStage = [](const RHIBarrierList& Prologue, const RHIRef<RHIBuffer>& Buffer) -> RHISyncStage {
+        for (const auto& Transition : Prologue.Buffers) {
+            if (Transition.Buffer.TryGet() == Buffer.TryGet())
+                return Transition.Stage;
+        }
+        return RHISyncStage::None;
+    };
+    EXPECT_EQ(FindStage(Entry.Prologue, IndirectRef), RHISyncStage::DrawIndirect);
+    EXPECT_EQ(FindStage(Entry.Prologue, FirstRef), RHISyncStage::VertexInput);
+    EXPECT_EQ(FindStage(Entry.Prologue, SecondRef), RHISyncStage::VertexInput);
+
+    ASSERT_TRUE(Entry.Pass->Record());
+    const auto Commands = Entry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 2u);
+    const auto* FirstDraw  = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[0]);
+    const auto* SecondDraw = std::get_if<RHIDrawIndexedIndirectCmd>(&Commands[1]);
+    ASSERT_NE(FirstDraw, nullptr);
+    ASSERT_NE(SecondDraw, nullptr);
+    EXPECT_EQ(FirstDraw->IndexBuffer.GetBuffer().TryGet(), FirstRef.TryGet());
+    EXPECT_EQ(SecondDraw->IndexBuffer.GetBuffer().TryGet(), SecondRef.TryGet());
+    EXPECT_EQ(FirstDraw->IndirectBuffer.GetOffset(), 0u);
+    EXPECT_EQ(SecondDraw->IndirectBuffer.GetOffset(), 20u);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.GetRange(), 20u);
+    EXPECT_EQ(SecondDraw->IndirectBuffer.GetRange(), 20u);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.GetBuffer().TryGet(), IndirectRef.TryGet());
+    EXPECT_EQ(SecondDraw->IndirectBuffer.GetBuffer().TryGet(), IndirectRef.TryGet());
+    EXPECT_EQ(FirstDraw->IndexBuffer.GetUsage(), RHIBufferUsage::Index);
+    EXPECT_EQ(FirstDraw->IndexBuffer.GetAccess(), RHIAccess::Read);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.GetUsage(), RHIBufferUsage::Indirect);
+    EXPECT_EQ(FirstDraw->IndirectBuffer.GetAccess(), RHIAccess::Read);
+    EXPECT_TRUE(FirstDraw->VertexBuffers.empty());
+    EXPECT_TRUE(SecondDraw->VertexBuffers.empty());
+}
+
+TEST(RenderGraphDynamicViews, PendingResourceResolvesAtEntryRecord) {
+    ResetMockCounters();
+    auto Pending = RHIRef<RHIBuffer>::Create();
+
+    RenderGraphBuilder Graph;
+    const auto         Indirect = Graph.Import(Pending);
+    Graph.AddPass<DynamicIndirectPass>({.Ordinary = Indirect});
+    auto List = Graph.Compile();
+    ASSERT_TRUE(List);
+    auto& Entry = List->Entries.front();
+    ASSERT_TRUE(Entry.ResolveViews);
+
+    const auto Published =
+        Pending.Publish(std::make_unique<MockGeometryBuffer>("Pending", RHIBufferUsage::Indirect), RHIRefState::Ready);
+    ASSERT_TRUE(Published);
+    ASSERT_TRUE(Entry.Record());
+    const auto Commands = Entry.Pass->GetCommands();
+    ASSERT_EQ(Commands.size(), 1u);
+    const auto* Draw = std::get_if<RHIDrawIndirectCmd>(&Commands.front());
+    ASSERT_NE(Draw, nullptr);
+    EXPECT_EQ(Draw->IndirectBuffer.GetBuffer().TryGet(), Pending.TryGet());
+}
+
+TEST(RenderGraphSyncPlan, VertexUsageRequestsVertexInputStage) {
+    auto VertexRef = MakeGeometryBuffer("Vertex", RHIBufferUsage::Vertex);
+    RGBufferView<RHIBufferUsage::Vertex, RHIAccess::Read> View{RGBuffer{.Index = 0}};
+    RGPassNode                                            Node;
+    Node.StageClass = RHIPassType::Graphics;
+    Node.Buffers    = {&View};
+    std::vector<RGResourceEntry> Resources;
+    Resources.emplace_back("Vertex", VertexRef);
+
+    const auto Prologue = BuildPassPrologue(Node, Resources);
+    ASSERT_EQ(Prologue.Buffers.size(), 1u);
+    EXPECT_EQ(Prologue.Buffers.front().Stage, RHISyncStage::VertexInput);
+}
+
 // Transfer passes
 
 TEST(RenderGraphTransfer, CopyPassBuildsWithoutAPipeline) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
-    const auto         EntityId = Graph.Import(RHIRef<RHITexture>{});
-    const auto         Readback = Graph.Import(RHIRef<RHIBuffer>{});
+    const auto         EntityId =
+        Graph.Import(MakeTextureResource("Imported", RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc));
+    const auto Readback = Graph.Import(MakeGeometryBuffer("Readback", RHIBufferUsage::TransferDst));
     Graph.AddPass<WriteColorPass>({.Output = EntityId});
     Graph.AddPass<CopyPass>({.Source = EntityId, .Target = Readback});
 
@@ -921,7 +1204,8 @@ TEST(RenderGraphTransfer, CopyPassBuildsWithoutAPipeline) {
 TEST(RenderGraphContract, CompileIsSingleUse) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
-    const auto         Imported = Graph.Import(RHIRef<RHITexture>{});
+    const auto         Imported =
+        Graph.Import(MakeTextureResource("Imported", RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc));
     Graph.AddPass<WriteColorPass>({.Output = Imported});
 
     auto First = Graph.Compile();
@@ -943,7 +1227,8 @@ TEST(RenderGraphContract, InvalidHandleIsRejectedAtCompile) {
 TEST(RenderGraphContract, AddPassAfterCompileIsIgnored) {
     ResetMockCounters();
     RenderGraphBuilder Graph;
-    const auto         Imported = Graph.Import(RHIRef<RHITexture>{});
+    const auto         Imported =
+        Graph.Import(MakeTextureResource("Imported", RHITextureUsage::RenderTarget | RHITextureUsage::TransferSrc));
     Graph.AddPass<WriteColorPass>({.Output = Imported});
 
     auto List = Graph.Compile();

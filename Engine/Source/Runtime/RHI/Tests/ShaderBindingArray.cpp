@@ -22,7 +22,7 @@ class MockRenderTarget final : public RHITexture {
                                     .Height      = 4,
                                     .MipLevels   = 3,
                                     .Format      = RHIFormat::R8G8B8A8_UNORM,
-                                    .Usage       = RHITextureUsage::Sampled,
+                                    .Usage       = RHITextureUsage::Sampled | RHITextureUsage::Storage,
                                     .MemoryUsage = RHIMemoryUsage::GpuOnly}) {}
 };
 
@@ -35,17 +35,19 @@ class MockTransientConstantBuffer final : public RHIBuffer {
 
 /// One sampled view of a single mip at one array index.
 [[nodiscard]] auto MakeTexElement(const RHIRef<RHITexture>& Tex, Uint32 Mip, Uint32 Index) -> RHIArrayBindingElement {
-    return {
-        .View = {.Texture = Tex, .Usage = RHITextureUsage::Sampled, .Range = {.BaseMipLevel = Mip, .MipLevelCount = 1}},
-        .ArrayIndex = Index};
+    auto View = RHITextureView::Create(
+        Tex, RHITextureUsage::Sampled, RHIAccess::Read, {.BaseMipLevel = Mip, .MipLevelCount = 1});
+    EXPECT_TRUE(View.has_value());
+    return {.View = std::move(*View), .ArrayIndex = Index};
 }
 
 /// One storage view of a single mip at one array index.
 [[nodiscard]] auto MakeStorageTexElement(const RHIRef<RHITexture>& Tex, Uint32 Mip, Uint32 Index)
     -> RHIArrayBindingElement {
-    return {
-        .View = {.Texture = Tex, .Usage = RHITextureUsage::Storage, .Range = {.BaseMipLevel = Mip, .MipLevelCount = 1}},
-        .ArrayIndex = Index};
+    auto View = RHITextureView::Create(
+        Tex, RHITextureUsage::Storage, RHIAccess::Read, {.BaseMipLevel = Mip, .MipLevelCount = 1});
+    EXPECT_TRUE(View.has_value());
+    return {.View = std::move(*View), .ArrayIndex = Index};
 }
 
 class MockBindingSet final : public RHIShaderBindingSet {
@@ -163,7 +165,8 @@ TEST_F(ShaderBindingArrayTest, BindsElementsAtExplicitIndices) {
     auto Tex          = MakeRenderTarget();
     auto Frame        = MakeConstantBuffer();
     auto ScalarResult = Set->BindResources(std::array{
-        RHIShaderBindingRequest{"g_params.frame", RHIBufferView{.Buffer = Frame, .Usage = RHIBufferUsage::Constant}},
+        RHIShaderBindingRequest{"g_params.frame",
+                                *RHIBufferView::Create(Frame, RHIBufferUsage::Constant, RHIAccess::Read)},
     });
     ASSERT_TRUE(ScalarResult.has_value()) << ScalarResult.error().ToString();
     // Gap at index 1 stays unbound (partially bound is legal).
@@ -183,7 +186,7 @@ TEST_F(ShaderBindingArrayTest, BindsElementsAtExplicitIndices) {
     ASSERT_NE(Slot, nullptr);
     ASSERT_EQ(Slot->ArrayElements.size(), 2U);
     EXPECT_EQ(Slot->ArrayElements[0].ArrayIndex, 2U);
-    EXPECT_EQ(Slot->ArrayElements[0].View.Usage, RHITextureUsage::Sampled);
+    EXPECT_EQ(Slot->ArrayElements[0].View.GetUsage(), RHITextureUsage::Sampled);
     EXPECT_FALSE(Set->HasUnboundBindings());
 }
 
@@ -240,21 +243,6 @@ TEST_F(ShaderBindingArrayTest, RejectsUnknownPathAndScalarPath) {
                      .has_value());
 }
 
-TEST_F(ShaderBindingArrayTest, RejectsElementWithoutReadyResource) {
-    auto Set      = MakeArraySet();
-    auto Elements = std::array{
-        RHIArrayBindingElement{},
-    };
-    Elements[0].ArrayIndex = 0;
-    auto Result            = Set->BindArrayResources(std::array{
-        RHIShaderArrayBindingRequest{
-            .ParameterPath = "g_params.texArray",
-            .Elements      = Elements,
-        },
-    });
-    EXPECT_FALSE(Result.has_value());
-}
-
 TEST_F(ShaderBindingArrayTest, RejectsBatchSpanningMultipleSets) {
     auto Set      = MakeTwoSetArrayBindingSet();
     auto Tex      = MakeRenderTarget();
@@ -307,7 +295,8 @@ TEST_F(ShaderBindingArrayTest, ScalarBatchCoexistsWithArraySlots) {
     // The scalar batch covers only the scalar slot even though the set has two bindings (the array slot
     // completes via BindArrayResources).
     auto ScalarResult = Set->BindResources(std::array{
-        RHIShaderBindingRequest{"g_params.frame", RHIBufferView{.Buffer = Frame, .Usage = RHIBufferUsage::Constant}},
+        RHIShaderBindingRequest{"g_params.frame",
+                                *RHIBufferView::Create(Frame, RHIBufferUsage::Constant, RHIAccess::Read)},
     });
     ASSERT_TRUE(ScalarResult.has_value()) << ScalarResult.error().ToString();
     EXPECT_TRUE(Set->HasUnboundBindings());
@@ -327,7 +316,8 @@ TEST_F(ShaderBindingArrayTest, ScalarBatchRejectsArraySlot) {
     auto Tex    = MakeRenderTarget();
     // Scalar API must refuse array slots and point callers at BindArrayResources.
     auto Result = Set->BindResources(std::array{
-        RHIShaderBindingRequest{"g_params.texArray", RHITextureView{.Texture = Tex, .Usage = RHITextureUsage::Sampled}},
+        RHIShaderBindingRequest{"g_params.texArray",
+                                *RHITextureView::Create(Tex, RHITextureUsage::Sampled, RHIAccess::Read)},
     });
     EXPECT_FALSE(Result.has_value());
 }

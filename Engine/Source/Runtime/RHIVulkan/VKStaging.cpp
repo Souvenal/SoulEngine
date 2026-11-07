@@ -1,3 +1,7 @@
+module;
+// magic_enum::enum_flags_test is not exported by the v0.9.8 module.
+#include <magic_enum/magic_enum_flags.hpp>
+
 module RHIVulkan.Staging;
 
 import Core;
@@ -7,6 +11,7 @@ import std;
 
 import RHIVulkan.RingBuffer;
 import RHIVulkan.Types;
+import RHIVulkan.Capability;
 import RHIVulkan.Context;
 import RHIVulkan.Debug;
 import RHIVulkan.Profiling;
@@ -25,6 +30,15 @@ auto VulkanStagingBelt::Create(const VulkanResourceContext& Context, Uint64 Init
     return Belt;
 }
 
+auto ToVkBufferUploadAccess(RHIBufferUsage Usage) -> vk::AccessFlags2 {
+    auto Out = ToVkBufferAccess(Usage, RHIAccess::Read);
+    if ((magic_enum::enum_flags_test(Usage, RHIBufferUsage::Vertex) ||
+         magic_enum::enum_flags_test(Usage, RHIBufferUsage::Index)) &&
+        VulkanCapability::Get().IsRayTracingAvailable())
+        Out |= vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+    return Out;
+}
+
 auto VulkanStagingBelt::EnqueueBufferUpload(StringView                 Name,
                                             vk::Buffer                 DstBuffer,
                                             RHIBufferUsage             Usage,
@@ -32,7 +46,7 @@ auto VulkanStagingBelt::EnqueueBufferUpload(StringView                 Name,
     // The batch cannot know the first consumer's direction, so Access is pinned to Read: the upload contract
     // is that uploaded bytes are read first. A write-first consumer's WAW hazard rides the pass prologue, not
     // this barrier.
-    EnqueueBufferUpload(Name, DstBuffer, ToVkBufferAccess(Usage, RHIAccess::Read), Data);
+    EnqueueBufferUpload(Name, DstBuffer, ToVkBufferUploadAccess(Usage), Data);
 }
 
 auto VulkanStagingBelt::EnqueueBufferUpload(StringView                 Name,

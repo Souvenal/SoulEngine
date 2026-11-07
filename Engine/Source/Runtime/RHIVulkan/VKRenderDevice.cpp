@@ -439,7 +439,7 @@ auto VulkanRenderDevice::RecordImGuiPresentationOverlay(vk::raii::CommandBuffer&
 auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, const RHIBarrierList& Prologue)
     -> std::expected<void, ErrorMessage> {
     for (const auto& Transition : Prologue.Buffers) {
-        const auto* Buffer = Transition.View.Buffer.TryGet();
+        const auto* Buffer = Transition.Buffer.TryGet();
         if (!Buffer)
             return std::unexpected(ErrorMessage("Execute: prologue references an invalid buffer"));
         const auto&  VulkanBuf = static_cast<const VulkanBuffer&>(*Buffer);
@@ -453,37 +453,40 @@ auto VulkanRenderDevice::EmitPassPrologue(vk::raii::CommandBuffer& Primary, cons
             VulkanBuf.GetSize(),
             VulkanBufferState{
                 .stage   = ToVkPipelineStages(Transition.Stage),
-                .access  = ToVkBufferAccess(Transition.View.Usage, Transition.View.Access),
-                .isWrite = magic_enum::enum_flags_test(Transition.View.Access, RHIAccess::Write),
+                .access  = ToVkBufferAccess(Transition.Usage, Transition.Access),
+                .isWrite = magic_enum::enum_flags_test(Transition.Access, RHIAccess::Write),
             });
     }
     for (const auto& Transition : Prologue.Textures) {
-        const auto* Target = Transition.View.Texture.TryGet();
+        const auto* Target = Transition.Texture.TryGet();
         if (!Target)
             return std::unexpected(ErrorMessage("Execute: prologue references an invalid texture"));
         const auto& VulkanTarget = static_cast<const VulkanTexture&>(*Target);
         const auto  Aspect       = ToVkImageAspect(VulkanTarget.GetFormat());
+        const auto& ViewRange    = Transition.Range;
+        if (ViewRange.BaseMipLevel >= VulkanTarget.GetMipLevelCount() || ViewRange.MipLevelCount == 0 ||
+            (ViewRange.MipLevelCount != kRHIRemainingSubresources &&
+             ViewRange.MipLevelCount > VulkanTarget.GetMipLevelCount() - ViewRange.BaseMipLevel))
+            return std::unexpected(ErrorMessage("Execute: prologue texture mip range is invalid"));
         // Ranges are always concrete for the tracker: a whole-chain view resolves against the payload's
         // own mip count here.
-        const auto  Range =
-            vk::ImageSubresourceRange{.aspectMask     = Aspect,
-                                      .baseMipLevel   = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                                            ? 0
-                                                            : Transition.View.Range.BaseMipLevel,
-                                      .levelCount     = Transition.View.Range.MipLevelCount == kRHIRemainingSubresources
-                                                            ? VulkanTarget.GetMipLevelCount()
-                                                            : Transition.View.Range.MipLevelCount,
-                                      .baseArrayLayer = 0,
-                                      .layerCount     = 1};
+        const auto Range = vk::ImageSubresourceRange{
+            .aspectMask     = Aspect,
+            .baseMipLevel   = Transition.Range.BaseMipLevel,
+            .levelCount     = Transition.Range.MipLevelCount == kRHIRemainingSubresources
+                                  ? VulkanTarget.GetMipLevelCount() - Transition.Range.BaseMipLevel
+                                  : Transition.Range.MipLevelCount,
+            .baseArrayLayer = 0,
+            .layerCount     = 1};
         m_ResourceContext->GetImageTracker().Transition(
             Primary,
             VulkanTarget.GetVkImage(),
             Range,
             VulkanImageState{
                 .stage   = ToVkPipelineStages(Transition.Stage),
-                .access  = ToVkTextureAccess(Transition.View.Usage, Transition.View.Access),
-                .layout  = ToVkImageLayout(Transition.View.Usage, Transition.View.Access),
-                .isWrite = magic_enum::enum_flags_test(Transition.View.Access, RHIAccess::Write),
+                .access  = ToVkTextureAccess(Transition.Usage, Transition.Access),
+                .layout  = ToVkImageLayout(Transition.Usage, Transition.Access),
+                .isWrite = magic_enum::enum_flags_test(Transition.Access, RHIAccess::Write),
             });
     }
     return {};
@@ -574,7 +577,7 @@ auto VulkanRenderDevice::Execute(RenderResult& Result) -> std::expected<void, Er
         // Transfer passes have no pipeline; all other passes must have one.
         if (Pass->GetType() != RHIPassType::Transfer && !Pipeline)
             return std::unexpected(ErrorMessage(Format("Execute: pass {} has no pipeline", Pass->GetName())));
-        if (auto R = Pass->Record(); !R)
+        if (auto R = Entry.Record(); !R)
             return std::unexpected(R.error().Append(Format("Execute: pass {} recording failed", Pass->GetName())));
 
         // The graph-declared prologue is materialized ahead of the pass's commands inside the shared

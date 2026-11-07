@@ -56,7 +56,7 @@ Tests are a `tests` sub-table on the same `soul_module` call; a module with a `T
 
 Supported keys: `deps`/`additional_deps`, `packages`/`additional_packages`, `exclude_tests` (basename patterns), `rpath_packages`.
 
-Registration is deferred: the `tests` sub-table is queued during the module's script and targets materialize after all `includes()` (via `soul_finalize_tests()`), because a module's tests may link modules declared later (RHI tests link RHIVulkan.Impl).
+Registration is deferred: the `tests` sub-table is queued during the module's script and targets materialize after all `includes()` (via `soul_finalize_tests()`), because a module's tests may link modules declared later (RHIVulkan tests link ShaderCompiler.Impl).
 
 ## Final binary
 
@@ -65,4 +65,26 @@ The `SoulEngine` target takes its implementation-target deps from the module reg
 ## Gotchas
 
 - The module scanner's local cache lives in `.xmake/<plat>/<arch>/cache/` (not `build/`). After changing target dependency structure, delete that directory **and** re-run `xmake f -c`; a stale cache otherwise crashes the module scanner with `attempt to index a nil value (local 'cxx_sourcebatch')`, and deleting it without reconfiguring loses package include paths (`fatal error: 'entt/entt.hpp' file not found`).
+### Incremental-build recovery
+
+Stale module objects can survive import removal or public-type layout changes and surface as old-symbol link errors or target crashes. Recover from the smallest scope first; do not start with a global clean:
+
+1. Clean and rebuild only the affected target, using its real xmake target name (for example `TestsForRHI_GraphicsCommands`):
+
+   ```bash
+   rtk err xmake clean TestsForRHI_GraphicsCommands
+   rtk err xmake -y TestsForRHI_GraphicsCommands
+   ```
+
+2. If the failure persists, or a compiler frontend crash survives the targeted rebuild, use the full recovery sequence:
+
+   ```bash
+   rtk err xmake clean --all
+   rtk err xmake repo -u
+   rtk err xmake f -c -m debug
+   rtk err xmake -y
+   ```
+
+`clean --all` also clears local package-repository/link state, so `repo -u` and forced reconfiguration are required before building again. The final build uses normal parallelism with no `-j` override; `-j 1` is only a temporary diagnostic, never the acceptance path. A parallel-build failure must remain visible as a build-system/toolchain bug rather than being hidden by serializing the build.
+
 - When appending an options table to a wrapper's list parameter, insert it into the list before `table.unpack`: a multi-value call in any argument position but the last truncates to its first value, silently dropping every entry but the first.

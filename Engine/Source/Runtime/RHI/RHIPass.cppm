@@ -90,12 +90,26 @@ export class IRHIGraphicsPass : public IRHIPass {
 
     auto SetScissorRect(Int32 X, Int32 Y, Uint32 W, Uint32 H) -> void;
 
-    auto Draw() -> void;
+    auto Draw(std::span<const RHIBufferView> VertexBuffers,
+              Uint32                         VertexCount,
+              Uint32                         InstanceCount = 1,
+              Uint32                         FirstVertex   = 0,
+              Uint32                         FirstInstance = 0) -> void;
 
-    auto DrawIndirect(RHIRef<RHIBuffer> IndirectBuffer,
-                      Uint64            Offset    = 0,
-                      Uint32            DrawCount = 1,
-                      Uint32            Stride    = sizeof(Uint32) * 4) -> void;
+    auto DrawIndexed(std::span<const RHIBufferView> VertexBuffers,
+                     RHIBufferView                  IndexBuffer,
+                     Uint32                         IndexCount,
+                     Uint32                         InstanceCount = 1,
+                     Uint32                         FirstIndex    = 0,
+                     Int32                          VertexOffset  = 0,
+                     Uint32                         FirstInstance = 0) -> void;
+
+    auto DrawIndirect(std::span<const RHIBufferView> VertexBuffers, RHIBufferView IndirectBuffer, Uint32 DrawCount = 1)
+        -> void;
+    auto DrawIndexedIndirect(std::span<const RHIBufferView> VertexBuffers,
+                             RHIBufferView                  IndexBuffer,
+                             RHIBufferView                  IndirectBuffer,
+                             Uint32                         DrawCount = 1) -> void;
 
     RHIGraphicsAttachments m_Attachments = {};
 
@@ -147,14 +161,13 @@ export class IRHITransferPass : public IRHIPass {
     }
 
   protected:
-    /// @brief Blits the complete source into the acquired swapchain image at the given destination rect.
+    /// @brief Blit the selected source mip into the acquired swapchain image at the destination rect.
     ///
     /// This is the only present path.
-    auto BlitToSwapchain(RHIRef<RHITexture> Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight)
-        -> void;
+    auto BlitToSwapchain(RHITextureView Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight) -> void;
 
     /// @brief Read back a texel region of a render target into a readback's backend ring.
-    auto ReadbackTexture(RHIRef<RHITexture>  Source,
+    auto ReadbackTexture(RHITextureView      Source,
                          Uint32              SrcX,
                          Uint32              SrcY,
                          RHIRef<RHIReadback> Target,
@@ -195,6 +208,18 @@ export class IRHIRayTracingPass : public IRHIPass {
 export struct RHIPassEntry {
     UPtr<IRHIPass> Pass     = nullptr;
     RHIBarrierList Prologue = {};
+
+    /// @brief Materialize views left pending by graph Compile. Frame tasks complete before the backend calls
+    /// Record(), so validation and recording share one error boundary.
+    std::function<std::expected<void, ErrorMessage>()> ResolveViews = {};
+
+    [[nodiscard]] auto Record() const -> std::expected<void, ErrorMessage> {
+        if (ResolveViews) {
+            if (auto Result = ResolveViews(); !Result)
+                return Result;
+        }
+        return Pass->Record();
+    }
 };
 
 /// @brief Complete frame packet transferred from RenderLoop to the RHI thread.

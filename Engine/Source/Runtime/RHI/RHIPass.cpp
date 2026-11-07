@@ -42,22 +42,55 @@ auto IRHIGraphicsPass::SetScissorRect(Int32 X, Int32 Y, Uint32 W, Uint32 H) -> v
     m_Commands.emplace_back(RHISetScissorCmd{X, Y, W, H});
 }
 
-auto IRHIGraphicsPass::Draw() -> void {
-    m_Commands.emplace_back(RHIDrawCmd{});
+auto IRHIGraphicsPass::Draw(std::span<const RHIBufferView> VertexBuffers,
+                            Uint32                         VertexCount,
+                            Uint32                         InstanceCount,
+                            Uint32                         FirstVertex,
+                            Uint32                         FirstInstance) -> void {
+    m_Commands.emplace_back(
+        RHIDrawCmd{.VertexBuffers = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
+                   .VertexCount   = VertexCount,
+                   .InstanceCount = InstanceCount,
+                   .FirstVertex   = FirstVertex,
+                   .FirstInstance = FirstInstance});
 }
 
-auto IRHIGraphicsPass::DrawIndirect(RHIRef<RHIBuffer> IndirectBuffer, Uint64 Offset, Uint32 DrawCount, Uint32 Stride)
-    -> void {
-    if (IndirectBuffer.GetState() == RHIRefState::Unknown || DrawCount == 0 || Stride < sizeof(Uint32) * 4)
-        return;
-    m_Commands.emplace_back(RHIDrawIndirectCmd{
+auto IRHIGraphicsPass::DrawIndexed(std::span<const RHIBufferView> VertexBuffers,
+                                   RHIBufferView                  IndexBuffer,
+                                   Uint32                         IndexCount,
+                                   Uint32                         InstanceCount,
+                                   Uint32                         FirstIndex,
+                                   Int32                          VertexOffset,
+                                   Uint32                         FirstInstance) -> void {
+    m_Commands.emplace_back(
+        RHIDrawIndexedCmd{.VertexBuffers = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
+                          .IndexBuffer   = std::move(IndexBuffer),
+                          .IndexCount    = IndexCount,
+                          .InstanceCount = InstanceCount,
+                          .FirstIndex    = FirstIndex,
+                          .VertexOffset  = VertexOffset,
+                          .FirstInstance = FirstInstance});
+}
+
+auto IRHIGraphicsPass::DrawIndirect(std::span<const RHIBufferView> VertexBuffers,
+                                    RHIBufferView                  IndirectBuffer,
+                                    Uint32                         DrawCount) -> void {
+    m_Commands.emplace_back(
+        RHIDrawIndirectCmd{.VertexBuffers  = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
+                           .IndirectBuffer = std::move(IndirectBuffer),
+                           .DrawCount      = DrawCount});
+}
+
+auto IRHIGraphicsPass::DrawIndexedIndirect(std::span<const RHIBufferView> VertexBuffers,
+                                           RHIBufferView                  IndexBuffer,
+                                           RHIBufferView                  IndirectBuffer,
+                                           Uint32                         DrawCount) -> void {
+    m_Commands.emplace_back(RHIDrawIndexedIndirectCmd{
+        .VertexBuffers  = std::vector<RHIBufferView>(VertexBuffers.begin(), VertexBuffers.end()),
+        .IndexBuffer    = std::move(IndexBuffer),
         .IndirectBuffer = std::move(IndirectBuffer),
-        .Offset         = Offset,
-        .DrawCount      = DrawCount,
-        .Stride         = Stride,
-    });
+        .DrawCount      = DrawCount});
 }
-
 auto IRHIComputePass::Dispatch(Uint32 GroupCountX, Uint32 GroupCountY, Uint32 GroupCountZ) -> void {
     if (GroupCountX == 0)
         return;
@@ -69,31 +102,20 @@ auto IRHIComputePass::Dispatch(Uint32 GroupCountX, Uint32 GroupCountY, Uint32 Gr
 }
 
 auto IRHITransferPass::BlitToSwapchain(
-    RHIRef<RHITexture> Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight) -> void {
-    if (!Source || DstWidth == 0 || DstHeight == 0)
-        return;
+    RHITextureView Source, Uint32 DstX, Uint32 DstY, Uint32 DstWidth, Uint32 DstHeight) -> void {
     m_Commands.emplace_back(RHIBlitToSwapchainCmd{
-        .Source    = std::move(Source),
-        .DstX      = DstX,
-        .DstY      = DstY,
-        .DstWidth  = DstWidth,
-        .DstHeight = DstHeight,
-    });
+        .Source = std::move(Source), .DstX = DstX, .DstY = DstY, .DstWidth = DstWidth, .DstHeight = DstHeight});
 }
 
 auto IRHITransferPass::ReadbackTexture(
-    RHIRef<RHITexture> Source, Uint32 SrcX, Uint32 SrcY, RHIRef<RHIReadback> Target, Uint32 SrcWidth, Uint32 SrcHeight)
+    RHITextureView Source, Uint32 SrcX, Uint32 SrcY, RHIRef<RHIReadback> Target, Uint32 SrcWidth, Uint32 SrcHeight)
     -> void {
-    if (!Source || !Target || SrcWidth == 0 || SrcHeight == 0)
-        return;
-    m_Commands.emplace_back(RHIReadbackTextureCmd{
-        .Source    = std::move(Source),
-        .SrcX      = SrcX,
-        .SrcY      = SrcY,
-        .SrcWidth  = SrcWidth,
-        .SrcHeight = SrcHeight,
-        .Target    = std::move(Target),
-    });
+    m_Commands.emplace_back(RHIReadbackTextureCmd{.Source    = std::move(Source),
+                                                  .SrcX      = SrcX,
+                                                  .SrcY      = SrcY,
+                                                  .SrcWidth  = SrcWidth,
+                                                  .SrcHeight = SrcHeight,
+                                                  .Target    = std::move(Target)});
 }
 
 auto IRHIRayTracingPass::TraceRays(Uint32 Width, Uint32 Height, Uint32 Depth) -> void {
