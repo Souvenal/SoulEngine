@@ -34,17 +34,20 @@ Keep these boundaries throughout:
 
 ## 3. Maintain stacked PRs under existing gates
 
-1. After the required explicit approval, create the leaf PR through the repository process and use `/pr` for its body. Use the PR target required by the approved spec, normally the capability branch, regardless of the leaf's code base. Record the PR number, target, head, and implementation/review base.
-2. A capability-targeted PR based on unmerged dependencies can temporarily include their upstream diffs; review the ticket-only diff against the recorded implementation or base-assembly head. After upstream PRs merge, sync their tips into the leaf and re-review the actual PR diff. Dependency-targeted stacked PRs are an explicitly approved alternative only; retarget them to the approved capability target after their dependencies merge.
+1. After the required explicit approval, create the leaf PR through the repository process and use `/pr` for its body. For a single-parent chain, target the first leaf at the capability branch and each dependent leaf at its immediate parent by default, so the actual PR diff is ticket-scoped. Follow an explicitly approved program-specific target when it differs. Record the PR number, target, head, and implementation/review base.
+2. A capability-targeted PR based on unmerged dependencies includes their upstream diffs until they merge; a multi-parent leaf likewise needs review against its recorded base assembly because one PR base cannot represent every dependency. In these topologies, do not describe the actual PR diff as ticket-only. After upstream PRs merge, retarget and restack the leaf under section 4, then re-review the actual PR diff.
 3. Record actual maintainer approval and merge events separately from local evidence. Only an authorized PR merge integrates a leaf into the capability.
 
 **Done when:** each open PR has the spec-approved target, current head and validation evidence, a ticket-only review against its recorded implementation base, and a state supported by an actual review or merge event.
 
-## 4. Refresh a leaf without integrating it
+## 4. Restack a leaf without integrating it
 
-When a parent advances, merge the parent tip **into the leaf** in the leaf worktree, then rerun validation and review and record the new parent tip and leaf head. This `parent -> leaf` merge provides freshness only. A `leaf -> parent/capability` merge does not deliver the leaf; integration still requires the leaf PR. Preserve published history unless explicit authorization permits a rebase or force push.
+1. When a parent advances or is squash-merged, confirm the affected worktrees are clean and record the immutable old parent tip, old leaf tip, expected new parent, expected ticket commit set, and current remote leaf tip. Restack children in dependency order.
+2. In each leaf worktree, run `git rebase --onto <new-parent> <recorded-old-parent-sha>` to replay only that leaf's commits. For multiple unmerged parents, rebuild the recorded disposable base assembly from exact parent heads first. Do not routinely merge a parent tip into a leaf for freshness; a local merge in either direction is not integration.
+3. Resolve only conflicts within the leaf's existing scope. Verify parent ancestry, the expected ticket commit set, no unexpected merge commits, and the ticket-only diff. Rerun validation and `/code-review`, then record the new parent tip and leaf head.
+4. Rewriting a published leaf requires the existing explicit maintainer authorization. After approval, use an exact lease such as `git push --force-with-lease=refs/heads/<leaf>:<old-remote-sha> origin HEAD:refs/heads/<leaf>`. After a parent PR merges, retarget its direct child PR to the parent's former base and restack descendants before continuing review. A squash result is a new integrated commit; the old parent head need not become an ancestor of the base.
 
-**Done when:** the refreshed leaf has current hashes and fresh review/validation, and no delivery state advanced because of a local merge.
+**Done when:** each restacked leaf has exact current hashes, a linear ticket-only diff, fresh review/validation, an authorized matching remote head when published, and no delivery state advanced by a local operation.
 
 ## 5. Keep validation-only assemblies disposable
 
@@ -54,7 +57,7 @@ Use a uniquely named disposable validation base/branch for combined validation o
 
 ## 6. Validate and deliver the capability
 
-1. Wait until every required leaf PR is `PR-merged`. Verify that the actual capability branch contains every required leaf PR merge commit; record each merge commit, its containment check, and the exact capability tip. Local leaf merges do not satisfy this gate.
+1. Wait until every required leaf PR is `PR-merged`. Verify that the actual capability branch contains every required leaf PR's resulting integration commit; record each integration commit, its containment check, and the exact capability tip. After squash merge, verify the new integrated commit rather than requiring ancestry from the old leaf head. Local leaf merges do not satisfy this gate.
 2. Run final `/code-review` and the combined capability acceptance against that exact capability tip. Disposable assembly results are supporting evidence only.
 3. After combined acceptance passes and the existing approval gate allows it, create the capability PR to `main`. Claim `main-delivered` only after that PR actually merges and the resulting `main` commit and required checks are verified. Issue closure and cleanup remain separate repository-gated actions.
 
@@ -71,5 +74,5 @@ Use these exact labels in ledgers and handoffs. Apply the PR states to each leaf
 | `PR-open` | An authorized PR exists at the recorded base and head with validation evidence; approval and merge remain separate. |
 | `maintainer-approved` | The required maintainer approval is explicit for the current change; the PR is not thereby merged. |
 | `PR-merged` | The named PR is actually merged into its recorded target; record the merge commit. |
-| `capability-validated` | The capability tip contains every required leaf PR merge commit, and final capability review and combined acceptance pass at that exact tip; main delivery has not necessarily occurred. |
+| `capability-validated` | The capability tip contains every required leaf PR's resulting integration commit, and final capability review and combined acceptance pass at that exact tip; main delivery has not necessarily occurred. |
 | `main-delivered` | The capability PR is merged to `main` and the resulting mainline commit and required checks are verified; closure and cleanup remain separate. |

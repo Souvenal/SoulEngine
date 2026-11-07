@@ -67,6 +67,7 @@ Before ending, read back published comments, provide their URLs, and distinguish
 
    Confirm that the temporary branch starts at the fetched `origin/main` commit before editing.
 4. **Keep the primary worktree clean for shared operations.** The primary worktree is reserved for inspection, fetching, and user-directed operations. Agent implementation, generated files, and commits belong in the dedicated worktree.
+5. **Use the stack contract for dependent leaves.** When a maintainer-approved capability is split into tickets that require unmerged parent code, follow [dependent capability stacks](branch-model.md#dependent-capability-stacks) for direct-parent PR bases, linear restacking, publication leases, and topology validation. Separate issues or disjoint files alone do not make changes independent.
 
 ## Implementation And Handoff
 
