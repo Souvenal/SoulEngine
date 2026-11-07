@@ -94,7 +94,7 @@ Before ending, read back published comments, provide their URLs, and distinguish
 
 1. After explicit approval for an independent change targeting `main`, verify that `origin/main` has not moved unexpectedly. If the baseline changed, update the feature branch in the preserved worktree, rerun validation, and obtain review approval again. For a dependent leaf, verify the recorded stack base and follow the stack restack and review contract instead.
 2. The maintainer merges an approved independent pull request to `main` with squash merge, producing one concentrated mainline commit for the reviewed development effort. Dependent leaf pull requests integrate into their approved stack targets under the same maintainer merge gate.
-3. Verify the merged commit and required checks on `main` before cleanup.
+3. Verify the resulting integration commit and required checks on the actual pull request target before cleanup. For an independent change or final capability delivery, that target is `main`.
 4. Only after maintainer authorization and successful verification, remove the temporary worktree first, then delete its local and remote feature branch:
 
    ```text

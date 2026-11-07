@@ -23,7 +23,7 @@ Use a stack when a leaf requires unmerged parent code or an earlier leaf's contr
 
 ### Stack And Review Topology
 
-1. Start each leaf from the exact recorded parent head. Record the branch, worktree, parent branch and full hash, leaf head, PR target, validation, and review state in a shared ledger.
+1. Start a single-parent leaf from the exact recorded parent head. Start a multi-parent leaf from a recorded base assembly built from every exact parent head. Record the branch, worktree, every parent branch and full hash, any base-assembly head, leaf head, PR target, validation, and review state in a shared ledger.
 2. For a single-parent chain, target the first leaf PR at the capability branch and each dependent leaf PR at its immediate parent by default. This makes the actual GitHub PR diff ticket-scoped while preserving the dependency chain. A maintainer may approve a different target for a program-specific contract, but a capability-targeted leaf with unmerged dependencies has a cumulative PR diff. A multi-parent leaf requires review against its recorded base assembly because one PR base cannot represent every dependency.
 3. Integrate each leaf only through its own merged PR. Using a parent as a code dependency or merging locally into a capability branch is neither review approval nor integration.
 4. Keep each leaf's delivered history linear, with `parent..leaf` limited to that leaf's commits. Do not routinely merge a parent tip into a leaf merely to refresh it.
