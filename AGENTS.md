@@ -68,8 +68,7 @@ For code work and review, use [`CODING_STANDARDS.md`](CODING_STANDARDS.md), the 
 
 ## Build System Notes
 
-- **Build System:** xmake `set_languages()` needs string quoting (e.g., `set_languages('c++23')`, NOT `set_languages(c++23)`). For inexplicable C++ module errors, reconfigure with `xmake f -c` and rebuild the affected targets first; see [docs/development/build-troubleshooting.md](docs/development/build-troubleshooting.md). Do NOT use `xmake clean --all` — it wipes package-cache state and breaks configuration (see the troubleshooting doc).
-- **Package Dependencies:** When using local xmake package repos, prefer inline `package()` definitions in `xmake.lua` over `add_repositories()` — xmake may silently ignore local repos for official ones.
+- **Build System:** xmake conventions and known pitfalls live in [docs/standards/xmake.md](docs/standards/xmake.md); build failure signatures and repairs in [docs/development/build-troubleshooting.md](docs/development/build-troubleshooting.md).
 
 ## Vulkan / RHI Conventions
 
