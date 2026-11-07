@@ -2,11 +2,12 @@ import Common.All;
 
 module SelectionFilter;
 
-/// @brief GPU indirect-draw command ABI matching the raster renderer.
+/// @brief GPU indexed-indirect command ABI matching C++ RasterIndirectCommand.
 public struct RasterIndirectCommand {
-    public uint vertexCount;
+    public uint indexCount;
     public uint instanceCount;
-    public uint firstVertex;
+    public uint firstIndex;
+    public int vertexOffset;
     public uint firstInstance;
 };
 

@@ -29,8 +29,8 @@ CVar<bool> CVarRenderRasterEnableStatsOverlay{"Render.Raster.EnableStatsOverlay"
                                               "Settings-panel test toggle; no rendering consumer yet.",
                                               CVarTiming::Runtime};
 
-[[nodiscard]] auto BuildRasterIndirectCommands(const SceneGpuData& DrawData) -> std::vector<RasterIndirectCommand> {
-    std::vector<RasterIndirectCommand> Result = {};
+[[nodiscard]] auto BuildRasterDrawGroups(const SceneGpuData& DrawData) -> std::vector<RasterDrawGroup> {
+    std::vector<RasterDrawGroup> Result = {};
     for (Uint32 InstanceIndex = 0; InstanceIndex < DrawData.InstanceRecords.size();) {
         const auto GeometryID = DrawData.InstanceRecords[InstanceIndex].GeometryID;
         const auto GroupBegin = InstanceIndex;
@@ -38,16 +38,32 @@ CVar<bool> CVarRenderRasterEnableStatsOverlay{"Render.Raster.EnableStatsOverlay"
                DrawData.InstanceRecords[InstanceIndex].GeometryID == GeometryID)
             ++InstanceIndex;
 
-        // VertexCount is the number of vertex-shader invocations. The vertex shader uses SV_VertexID to index
-        // this Geometry's index buffer, so the draw count is the Geometry IndexCount.
-        Result.emplace_back(RasterIndirectCommand{
-            .VertexCount   = DrawData.GeometryIndexCounts[GeometryID],
-            .InstanceCount = InstanceIndex - GroupBegin,
-            .FirstVertex   = 0,
-            .FirstInstance = GroupBegin,
+        Result.emplace_back(RasterDrawGroup{
+            .GeometryID = GeometryID,
+            .Command =
+                RasterIndirectCommand{
+                    .IndexCount    = DrawData.GeometryIndexCounts[GeometryID],
+                    .InstanceCount = InstanceIndex - GroupBegin,
+                    .FirstIndex    = 0,
+                    .VertexOffset  = 0,
+                    .FirstInstance = GroupBegin,
+                },
         });
     }
     return Result;
+}
+
+[[nodiscard]] auto BuildRasterIndirectCommands(std::span<const RasterDrawGroup> DrawGroups)
+    -> std::vector<RasterIndirectCommand> {
+    std::vector<RasterIndirectCommand> Result = {};
+    Result.reserve(DrawGroups.size());
+    for (const auto& Group : DrawGroups)
+        Result.emplace_back(Group.Command);
+    return Result;
+}
+
+[[nodiscard]] auto BuildRasterIndirectCommands(const SceneGpuData& DrawData) -> std::vector<RasterIndirectCommand> {
+    return BuildRasterIndirectCommands(BuildRasterDrawGroups(DrawData));
 }
 
 RasterRenderer::~RasterRenderer() {
@@ -98,13 +114,15 @@ auto RasterRenderer::OnDetach() -> void {
     if (!TextureIndices)
         return std::unexpected(TextureIndices.error().Append("Raster bindless texture resolution failed"));
     const auto DrawData         = SceneGpuData::Create(Instances, Scene.Lights, *TextureIndices);
-    const auto IndirectCommands = BuildRasterIndirectCommands(DrawData);
+    const auto DrawGroups       = BuildRasterDrawGroups(DrawData);
+    const auto IndirectCommands = BuildRasterIndirectCommands(DrawGroups);
 
     Uint32 ViewIndex = 0;
     for (const auto& View : Scene.Views) {
         if (auto R = RenderView(Result.CmdList,
                                 Format("View/Scene{}", ViewIndex++),
                                 DrawData,
+                                DrawGroups,
                                 IndirectCommands,
                                 View,
                                 Scene,
@@ -118,6 +136,7 @@ auto RasterRenderer::OnDetach() -> void {
         if (auto R = RenderView(Result.CmdList,
                                 Format("View/Editor{}", ViewIndex++),
                                 DrawData,
+                                DrawGroups,
                                 IndirectCommands,
                                 View,
                                 Scene,
@@ -158,6 +177,7 @@ auto RasterRenderer::OnDetach() -> void {
 [[nodiscard]] auto RasterRenderer::RenderView(RenderPassList&                        CmdList,
                                               StringView                             ViewName,
                                               const SceneGpuData&                    DrawData,
+                                              std::span<const RasterDrawGroup>       DrawGroups,
                                               std::span<const RasterIndirectCommand> IndirectCommands,
                                               const CameraViewRecord&                View,
                                               const GameSnapshot&                    Scene,
@@ -267,10 +287,28 @@ auto RasterRenderer::OnDetach() -> void {
 
     // Selection filter outputs live at view scope: the mask pass consumes them and is registered outside
     // the instance block.
-    RGBuffer SelectedInstances = {};
-    RGBuffer SelectedIndirect  = {};
+    RGBuffer                                                             SelectedInstances     = {};
+    RGBuffer                                                             SelectedIndirect      = {};
+    std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> SelectedIndirectViews = {};
 
+    std::vector<RGBufferView<RHIBufferUsage::Storage, RHIAccess::Read>> AttributeBuffers;
+    std::vector<RGBufferView<RHIBufferUsage::Index, RHIAccess::Read>>   IndexBuffers;
     if (HasInstances) {
+        AttributeBuffers.reserve(DrawGroups.size() * 4);
+        IndexBuffers.reserve(DrawGroups.size());
+        for (const auto& Group : DrawGroups) {
+            const auto& Buffers         = DrawData.GeometryBuffers[Group.GeometryID];
+            const auto  ImportAttribute = [&ViewGraph, &AttributeBuffers](const RHIRef<RHIBuffer>& Buffer) -> void {
+                if (Buffer)
+                    AttributeBuffers.emplace_back(ViewGraph.Import(Buffer));
+            };
+            ImportAttribute(Buffers.PositionBuffer);
+            ImportAttribute(Buffers.NormalBuffer);
+            ImportAttribute(Buffers.TangentBuffer);
+            ImportAttribute(Buffers.TexCoordBuffer);
+            IndexBuffers.emplace_back(ViewGraph.Import(Buffers.IndexBuffer));
+        }
+
         const auto InstanceDataSize = DrawData.InstanceRecords.size() * sizeof(InstanceRecord::GpuData);
         const auto IndirectDataSize = IndirectCommands.size() * sizeof(RasterIndirectCommand);
 
@@ -283,6 +321,12 @@ auto RasterRenderer::OnDetach() -> void {
                                    RHIBufferDesc{.SizeBytes = IndirectDataSize,
                                                  .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
                                                  .Lifetime  = RHILifetime::Transient});
+        std::vector<RGBufferView<RHIBufferUsage::Indirect, RHIAccess::Read>> IndirectViews(IndirectCommands.size());
+        for (std::size_t Slot = 0; Slot < IndirectViews.size(); ++Slot) {
+            IndirectViews[Slot].Buffer = ViewIndirect;
+            IndirectViews[Slot].Offset = Slot * sizeof(RHIIndexedIndirectCommand);
+            IndirectViews[Slot].Range  = sizeof(RHIIndexedIndirectCommand);
+        }
         const auto ViewCounter = ViewGraph.CreateBuffer("ViewCounter",
                                                         RHIBufferDesc{.SizeBytes = sizeof(Uint32),
                                                                       .Usage     = RHIBufferUsage::Storage,
@@ -309,6 +353,12 @@ auto RasterRenderer::OnDetach() -> void {
                                        RHIBufferDesc{.SizeBytes = IndirectDataSize,
                                                      .Usage     = RHIBufferUsage::Storage | RHIBufferUsage::Indirect,
                                                      .Lifetime  = RHILifetime::Transient});
+            SelectedIndirectViews.resize(IndirectCommands.size());
+            for (std::size_t Slot = 0; Slot < SelectedIndirectViews.size(); ++Slot) {
+                SelectedIndirectViews[Slot].Buffer = SelectedIndirect;
+                SelectedIndirectViews[Slot].Offset = Slot * sizeof(RHIIndexedIndirectCommand);
+                SelectedIndirectViews[Slot].Range  = sizeof(RHIIndexedIndirectCommand);
+            }
             // The filter shader accumulates per-command instance counts via InterlockedAdd, so the
             // counters must start at zero every frame.
             const std::vector<std::byte> ZeroCounters(IndirectCommands.size() * sizeof(Uint32), std::byte{0});
@@ -336,11 +386,13 @@ auto RasterRenderer::OnDetach() -> void {
             .EntityId           = EntityId,
             .Depth              = Depth,
             .InstanceBuffer     = ViewInstances,
-            .IndirectBuffer     = ViewIndirect,
+            .IndirectBuffers    = IndirectViews,
             .GeometryBuffer     = GeometryTable,
             .MaterialBuffer     = MaterialTable,
             .FrameBuffer        = FrameCB,
             .ViewBuffer         = ViewCB,
+            .AttributeBuffers   = AttributeBuffers,
+            .IndexBuffers       = IndexBuffers,
             .LinearSampler      = SamplerLinearRef,
             .AnisotropicSampler = SamplerAnisoRef,
             .DrawCount          = static_cast<Uint32>(IndirectCommands.size()),
@@ -383,15 +435,17 @@ auto RasterRenderer::OnDetach() -> void {
                                                    .Format = RHIFormat::R8_UNORM,
                                                    .Usage  = RHITextureUsage::RenderTarget | RHITextureUsage::Sampled});
         ViewGraph.AddPass<SelectionMaskPass>({
-            .Mask              = Mask,
-            .SelectedInstances = SelectedInstances,
-            .SelectedIndirect  = SelectedIndirect,
-            .GeometryTable     = GeometryTable,
-            .MaterialTable     = MaterialTable,
-            .FrameBuffer       = FrameCB,
-            .ViewBuffer        = ViewCB,
-            .LinearSampler     = SamplerLinearRef,
-            .DrawCount         = static_cast<Uint32>(IndirectCommands.size()),
+            .Mask                    = Mask,
+            .SelectedInstances       = SelectedInstances,
+            .SelectedIndirectBuffers = SelectedIndirectViews,
+            .GeometryTable           = GeometryTable,
+            .MaterialTable           = MaterialTable,
+            .FrameBuffer             = FrameCB,
+            .ViewBuffer              = ViewCB,
+            .AttributeBuffers        = AttributeBuffers,
+            .IndexBuffers            = IndexBuffers,
+            .LinearSampler           = SamplerLinearRef,
+            .DrawCount               = static_cast<Uint32>(IndirectCommands.size()),
         });
         ViewGraph.AddPass<SelectionOutlinePass>({
             .SceneColor     = SceneColor,
