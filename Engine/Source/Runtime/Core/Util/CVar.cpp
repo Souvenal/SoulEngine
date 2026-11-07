@@ -66,10 +66,10 @@ auto CVarManager::LoadConfig(const Path& FilePath) -> std::expected<void, ErrorM
 }
 
 auto CVarManager::FlushPendingDiagnostics() -> void {
-    std::vector<String> Diagnostics;
+    std::vector<CVarDiagnostic> Diagnostics;
     Diagnostics.swap(m_PendingDiagnostics);
     for (const auto& Diagnostic : Diagnostics)
-        LogError("{}", Diagnostic);
+        LogManager::Get().Log(Diagnostic.Level, Diagnostic.Message);
 }
 
 auto CVarManager::ApplyTable(const toml::table& Table, const String& Prefix) -> void {
@@ -84,7 +84,7 @@ auto CVarManager::ApplyTable(const toml::table& Table, const String& Prefix) -> 
 
 /// @brief Apply a TOML leaf when the name is registered under type T.
 /// @return true when registered under T (value applied, or a
-///         type-mismatch warning emitted); false when not.
+///         conversion/option warning emitted); false when not.
 template <CVarValue T>
 auto ApplyAs(CVarManager& Manager, const String& Name, const toml::node& Node) -> bool {
     if (!Manager.Find<T>(Name))
