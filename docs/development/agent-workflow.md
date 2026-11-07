@@ -23,7 +23,7 @@ For a fresh session, “继续 #<ticket>” invokes issue-context recovery. Reco
 
 ### Publication contract
 
-Publish a compact handoff when design decisions converge, a session ends or transfers work, implementation pauses, or a review handoff is ready. When the user requests ticket work or a session handoff, publishing the scoped context comment is part of that request; approval gates for PRs, merges, issue closure, and cleanup remain separate.
+Publish a compact handoff when design decisions converge, a session ends or transfers work, implementation pauses, or a review handoff is ready. When the user requests ticket work or a session handoff, publishing the scoped context comment is part of that request; approval gates for PR readiness, merges, issue closure, and cleanup remain separate.
 
 Place each summary on the narrowest issue whose scope it affects: program-wide design on the root spec, capability interfaces or integration context on the capability issue, and implementation progress on the leaf ticket. Link broader context instead of copying it into every child. Post upward only when a finding changes an ancestor's scope, contract, shared constraints, or integration status.
 
@@ -72,7 +72,7 @@ Before ending, read back published comments, provide their URLs, and distinguish
 ## Implementation And Handoff
 
 1. Implement only the agreed issue scope in the temporary feature branch.
-2. Run the validation appropriate to the change and record the commands and results. Documentation-only changes should use document-contract and diff-scope checks; runtime or C++ tests are not required unless the issue changes runtime behavior.
+2. Run the validation appropriate to the change and `/code-review` at the recorded head; address findings and rerun affected validation. Documentation-only changes should use document-contract and diff-scope checks; runtime or C++ tests are not required unless the issue changes runtime behavior.
 3. Finish with a review handoff containing:
    - issue and agreed scope;
    - temporary branch name;
@@ -80,14 +80,15 @@ Before ending, read back published comments, provide their URLs, and distinguish
    - implementation commit(s);
    - validation commands and results;
    - known limitations or follow-up work.
-4. **Implementation completion is not integration approval.** A completed branch is ready for maintainer review; it is not a pull request, merged change, published branch, or accepted issue resolution.
-5. Preserve the dedicated worktree and branch until the maintainer completes review and authorizes cleanup.
+4. **Publish a Draft by default after review.** Once implementation, validation, and agent review pass at the recorded head, normally push the temporary branch (`git push -u origin <branch>` on first publication) and create a Draft PR to the approved target unless the user explicitly requests local-only work. An independent change targets `main`; a dependent leaf targets its approved stack base. Record the Draft URL and exact base, head, dependencies, and evidence. Later history rewrites still require separate explicit authorization and an exact lease.
+5. **Implementation and Draft publication are not integration approval.** A Draft PR is an early-review surface, not Ready, maintainer approval, a merged change, or an accepted issue resolution.
+6. Preserve the dedicated worktree and branch until the maintainer completes review and authorizes cleanup.
 
 ## Review And Approval Gates
 
-1. The maintainer reviews the handoff and the branch diff in the preserved worktree.
-2. Do not create or ready a pull request until the maintainer explicitly approves the reviewed change. If authorized, create an independent change's pull request against `main`, or a dependent leaf's pull request against its approved stack target, and include the issue and validation results.
-3. The maintainer decides when the pull request is merged. Automated checks are validation evidence, not human review or merge authorization.
+1. The maintainer reviews the Draft PR and branch diff in the preserved worktree.
+2. The maintainer explicitly approves marking a Draft PR Ready. Draft creation follows the default publication rule above; readiness is a separate decision at the recorded head.
+3. The maintainer decides when the pull request is merged or enqueued. Automated checks and agent reviews are validation evidence, not human review or merge authorization.
 4. Issue closure, remote branch deletion, branch protection changes, force pushes, releases, and other repository administration each require separate explicit maintainer authorization.
 
 ## Integration And Cleanup
@@ -115,6 +116,7 @@ The workflow is satisfied only when an external check can confirm all of the fol
 - implementation is isolated from the primary worktree;
 - the handoff identifies branch, worktree, commit, and validation;
 - implementation completion is distinct from maintainer approval and integration;
-- pull-request creation, merge, issue closure, and cleanup require the appropriate explicit maintainer authorization;
+- after implementation, validation, and agent review at the recorded head, normal own-branch push and Draft publication are the default unless explicitly local-only;
+- Draft publication is distinct from Ready, approval, and integration; readiness, merge or queue entry, issue closure, history rewrites, and cleanup require the appropriate explicit maintainer authorization;
 - independent integration uses squash merge and produces one concentrated mainline commit, while dependent leaves integrate into their approved stack targets;
 - the change remains within the agreed issue scope.
