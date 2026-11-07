@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Implement a spec PR stack
 
-Use this PR-first procedure for a capability split into leaf tickets. Follow the [root guidance](../../../AGENTS.md), [repository workflow](../../../docs/development/agent-workflow.md), and [branch model](../../../docs/development/branch-model.md); issue and ADR contracts remain authoritative. This skill grants no additional permission for PR creation or readiness, merges, issue closure, history rewrites, publication, or cleanup.
+Use this PR-first procedure for a capability split into leaf tickets. Follow the [root guidance](../../../AGENTS.md), [repository workflow](../../../docs/development/agent-workflow.md), and [branch model](../../../docs/development/branch-model.md); issue and ADR contracts remain authoritative. This skill grants no additional permission for PR readiness, merges, issue closure, history rewrites, or cleanup.
 
 Keep these boundaries throughout:
 
@@ -34,9 +34,10 @@ Keep these boundaries throughout:
 
 ## 3. Maintain stacked PRs under existing gates
 
-1. After the required explicit approval, create the leaf PR through the repository process and use `/pr` for its body. For a single-parent chain, target the first leaf at the capability branch and each dependent leaf at its immediate parent by default, so the actual PR diff is ticket-scoped. Follow an explicitly approved program-specific target when it differs. Record the PR number, target, head, and implementation/review base.
-2. A capability-targeted PR based on unmerged dependencies includes their upstream diffs until they merge; a multi-parent leaf likewise needs review against its recorded base assembly because one PR base cannot represent every dependency. In these topologies, do not describe the actual PR diff as ticket-only. After upstream PRs merge, retarget and restack the leaf under section 4, then re-review the actual PR diff.
-3. Record actual maintainer approval and merge events separately from local evidence. Only an authorized PR merge integrates a leaf into the capability.
+1. After implementation, validation, and agent review pass at the recorded head, use `/pr` and follow the workflow's default Draft publication procedure to the approved target unless explicitly local-only. Use a normal own-branch push for first publication; history rewrites remain separately gated. Record the Draft URL, exact target/base/head, dependencies, and evidence.
+2. For a single-parent chain, target the first leaf at the capability branch and each dependent leaf at its immediate parent by default, so the actual PR diff is ticket-scoped. Follow an explicitly approved program-specific target when it differs. Record the implementation/review base.
+3. A capability-targeted PR based on unmerged dependencies includes their upstream diffs until they merge; a multi-parent leaf likewise needs review against its recorded base assembly because one PR base cannot represent every dependency. In these topologies, do not describe the actual PR diff as ticket-only. After upstream PRs merge, retarget and restack the leaf under section 4, then re-review the actual PR diff.
+4. Record actual maintainer readiness, approval, and merge events separately from local evidence. Only an authorized PR merge integrates a leaf into the capability.
 
 **Done when:** each open PR has the spec-approved target, current head and validation evidence, a ticket-only review against its recorded implementation base, and a state supported by an actual review or merge event.
 
@@ -59,9 +60,9 @@ Use a uniquely named disposable validation base/branch for combined validation o
 
 1. Wait until every required leaf PR is `PR-merged`. Verify that the actual capability branch contains every required leaf PR's resulting integration commit; record each integration commit, its containment check, and the exact capability tip. After squash merge, verify the new integrated commit rather than requiring ancestry from the old leaf head. Local leaf merges do not satisfy this gate.
 2. Run final `/code-review` and the combined capability acceptance against that exact capability tip. Disposable assembly results are supporting evidence only.
-3. After combined acceptance passes and the existing approval gate allows it, create the capability PR to `main`. Claim `main-delivered` only after that PR actually merges and the resulting `main` commit and required checks are verified. Issue closure and cleanup remain separate repository-gated actions.
+3. After combined acceptance and final agent review pass at the recorded capability head, follow the workflow's default Draft publication procedure for the capability PR to `main` unless explicitly local-only. Maintainer readiness and merge remain separate gates. Claim `main-delivered` only after that PR actually merges and the resulting `main` commit and required checks are verified. Issue closure and cleanup remain separate repository-gated actions.
 
-**Done when:** all required leaf PRs are merged, final capability review and combined acceptance pass on the merged baseline, and the authorized capability PR targets `main`. Delivery is complete only after merge verification.
+**Done when:** all required leaf PRs are merged, final capability review and combined acceptance pass on the merged baseline, and the capability either has a `draft-PR-open` PR targeting `main` or is explicitly local-only. Delivery is complete only after merge verification.
 
 ## State vocabulary
 
@@ -71,7 +72,8 @@ Use these exact labels in ledgers and handoffs. Apply the PR states to each leaf
 | --- | --- |
 | `implemented-locally` | The scoped diff is committed in its dedicated worktree with appropriate local validation; no review, PR, approval, or integration is implied. |
 | `agent-reviewed` | Agent review is complete at the recorded head and findings are addressed; subagent review is not maintainer approval. |
-| `PR-open` | An authorized PR exists at the recorded base and head with validation evidence; approval and merge remain separate. |
+| `draft-PR-open` | An agent-reviewed Draft PR exists at the recorded target/base/head with evidence; it is not Ready, approved, merged, or integrated. |
+| `PR-open` | The PR is non-draft/Ready after explicit maintainer readiness approval at the recorded head; merge remains separate. |
 | `maintainer-approved` | The required maintainer approval is explicit for the current change; the PR is not thereby merged. |
 | `PR-merged` | The named PR is actually merged into its recorded target; record the resulting integration commit. |
 | `capability-validated` | The capability tip contains every required leaf PR's resulting integration commit, and final capability review and combined acceptance pass at that exact tip; main delivery has not necessarily occurred. |

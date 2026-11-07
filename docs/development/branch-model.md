@@ -9,9 +9,9 @@ Independent development uses short-lived feature branches created from the lates
 ## Independent Pull Request Workflow
 
 1. Fetch the latest remote state and create a feature branch from the current `origin/main`.
-2. Implement and validate the change on that feature branch, then hand the branch and local worktree to the maintainer for review.
-3. After maintainer approval, open a pull request from the feature branch directly to `main`. Ordinary pull request CI reports separate macOS and Windows build checks, plus the existing `pre-commit.ci - pr` check.
-4. After review and required checks pass, add the pull request to the `main` merge queue. The queue validates the exact queued combination against the latest `main` baseline through the `merge_group` workflow.
+2. Implement, validate, and agent-review the change on that feature branch at a recorded head.
+3. Unless the user explicitly requests local-only work, normally push the branch and open a Draft pull request directly to `main`; no separate pre-Draft approval is required. Record the exact base, head, and evidence. The maintainer explicitly controls readiness. Ordinary pull request CI reports separate macOS and Windows build checks, plus the existing `pre-commit.ci - pr` check.
+4. After maintainer review and required checks pass, the maintainer adds the pull request to the `main` merge queue. The queue validates the exact queued combination against the latest `main` baseline through the `merge_group` workflow.
 5. The maintainer completes the pull request with squash merge, producing one concentrated mainline commit for the reviewed development effort.
 6. After the merge is verified on `main`, the maintainer may delete the feature branch.
 
