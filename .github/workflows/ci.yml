@@ -18,8 +18,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Select PR builds when at least one changed path is not Markdown. Other events and detection failures
-  # select full builds.
+  # Select PR builds when at least one changed path can affect the build: not Markdown, not under docs/ or
+  # .agents/ (agent guidance and skill bundles), not TODO.md. Other events and detection failures select
+  # full builds.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -37,6 +38,9 @@ jobs:
             non_markdown:
               - '**'
               - '!**/*.md'
+              - '!docs/**'
+              - '!.agents/**'
+              - '!TODO.md'
 
       # The PR file API caps results at 3,000 paths, so the boundary selects a full build.
       - name: Select full build at the API file limit
