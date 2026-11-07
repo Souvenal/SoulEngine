@@ -6,8 +6,11 @@ export module Core.Util.CVar;
 
 import Core.Util.Types;
 import Core.Util.Error;
+import Core.Util.Logging;
 import Core.Util.Singleton;
 import std;
+
+import magic_enum;
 
 /// @file
 /// @brief Console variables (CVars): runtime-mutable, globally registered
@@ -29,13 +32,17 @@ import std;
 ///     touch the entry directly with zero lookup.  Code in other modules
 ///     uses CVarManager::Find<T>(name) / SetByName<T>(name, value), which
 ///     return std::optional / bool — a name not registered under type T
-///     yields nullopt / false with no logging side effects.  The registry
+///     yields nullopt / false with no logging side effects. SetByName also
+///     returns false when a value violates declared options. The registry
 ///     key is (name, type): the same name may exist under several types.
 ///
 ///  3. **Defaults live at the registration site.**
 ///     The constructor's default value is the one-and-only default; the
 ///     TOML config file overrides it at startup via
 ///     CVarManager::LoadConfig().  Consumers never spell a fallback.
+///     Option-bearing CVars also declare an ordered allowlist. Every write
+///     path enforces it; an invalid registration default uses the first
+///     option and queues a registration diagnostic.
 ///
 ///  4. **Every CVar is runtime-mutable.**
 ///     Consumption timing declares when readers use a value: Runtime readers poll continuously; Startup
@@ -43,7 +50,7 @@ import std;
 ///     bool/Int32/Float32 values are atomic; String values sit behind a shared_mutex.
 ///
 ///  5. **Static-init diagnostics are deferred.**
-///     Registration runs before LogManager::Init, so duplicate-name
+///     Registration runs before LogManager::Init, so registration
 ///     reports are queued and flushed (LogError) by LoadConfig() /
 ///     FlushPendingDiagnostics() once logging is live.
 ///
@@ -79,13 +86,14 @@ export enum class CVarTiming : Uint8 {
 /// @brief Owned copy of one CVar record, usable on any thread after collection.
 export template <CVarValue T>
 struct CVarSnapshot {
-    String     Name;
-    String     Description;
-    T          Value;
-    CVarTiming Timing = CVarTiming::Runtime;
+    String         Name;
+    String         Description;
+    T              Value;
+    CVarTiming     Timing  = CVarTiming::Runtime;
+    std::vector<T> Options = {}; ///< Ordered legal values; empty accepts every value.
 };
 
-/// @brief One registry entry: description plus the value itself.
+/// @brief One registry entry: description, option metadata, and the value itself.
 /// @details Entries live in unordered_map nodes, whose addresses are stable
 ///          across rehashes — that stability is what lets CVar<T> handles
 ///          cache an entry pointer at registration.  Arithmetic values are
@@ -94,9 +102,10 @@ template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
 
-    String       Description;
-    ValueStorage Value;
-    CVarTiming   Timing = CVarTiming::Runtime;
+    String         Description;
+    ValueStorage   Value;
+    CVarTiming     Timing  = CVarTiming::Runtime;
+    std::vector<T> Options = {};
 };
 template <>
 struct CVarEntry<String> {
@@ -104,7 +113,8 @@ struct CVarEntry<String> {
 
     String                    Description;
     ValueStorage              Value;
-    CVarTiming                Timing = CVarTiming::Runtime;
+    CVarTiming                Timing  = CVarTiming::Runtime;
+    std::vector<String>       Options = {};
     mutable std::shared_mutex Mutex; ///< Guards this entry's String value.
 };
 
@@ -117,8 +127,8 @@ using CVarRegistry = std::unordered_map<String, CVarEntry<T>>;
 ///
 /// Registration happens implicitly at static-init time via CVar<T> constructors. Startup then applies the
 /// TOML config through LoadConfig(): the file's nested tables are flattened into dotted names (`[RHI.Vulkan]
-/// Validation` → "RHI.Vulkan.Validation") and each leaf value is written to the matching CVar. Keys with no
-/// registered CVar and values of the wrong type are logged as warnings and skipped.
+/// Validation` → "RHI.Vulkan.Validation") and each leaf value is written to the matching CVar.
+/// Unknown keys and values with the wrong type or outside declared options produce warnings and are skipped.
 ///
 /// Registration completes during single-threaded startup before concurrent access begins. Registry
 /// structure and entry metadata stay fixed while values are read and written from any thread.
@@ -148,21 +158,27 @@ export class CVarManager final : public Singleton<CVarManager> {
         const auto&                  Registry = Entries<T>();
         Records.reserve(Registry.size());
         for (const auto& [Name, Entry] : Registry)
-            Records.push_back(
-                {.Name = Name, .Description = Entry.Description, .Value = LoadEntry(Entry), .Timing = Entry.Timing});
+            Records.push_back({.Name        = Name,
+                               .Description = Entry.Description,
+                               .Value       = LoadEntry(Entry),
+                               .Timing      = Entry.Timing,
+                               .Options     = Entry.Options});
         std::ranges::sort(Records, {}, &CVarSnapshot<T>::Name);
         return Records;
     }
 
     /// @brief Write a CVar's value by name.
-    /// @return false when the name is not registered under type T.
+    /// @return false when the name is not registered under type T or the value is outside its options.
     template <CVarValue T>
     auto SetByName(StringView Name, const T& Value) -> bool {
         auto&      Registry = Entries<T>();
         const auto It       = Registry.find(String{Name});
         if (It == Registry.end())
             return false;
-        StoreEntry(It->second, Value);
+        if (!StoreEntry(It->second, Value)) {
+            LogWarning("CVar '{}' value '{}' is outside its declared options; value ignored", Name, Value);
+            return false;
+        }
         return true;
     }
 
@@ -171,8 +187,8 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @retval std::unexpected Parse error (e.g. file not found or invalid TOML).
     [[nodiscard]] auto LoadConfig(const Path& FilePath) -> std::expected<void, ErrorMessage>;
 
-    /// @brief Emit any diagnostics queued during static-init registration
-    ///        (duplicate names).  Safe to call multiple times.
+    /// @brief Emit any diagnostics queued during static-init registration.
+    ///        Safe to call multiple times.
     auto FlushPendingDiagnostics() -> void;
 
     /// @brief Register a CVar and return its registry entry.  Infallible:
@@ -183,12 +199,21 @@ export class CVarManager final : public Singleton<CVarManager> {
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
     template <CVarValue T>
-    auto
-    Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
-        -> CVarEntry<T>& {
+    auto Register(StringView     Name,
+                  StringView     Description,
+                  const T&       DefaultValue,
+                  CVarTiming     Timing  = CVarTiming::Runtime,
+                  std::vector<T> Options = {}) -> CVarEntry<T>& {
         auto&        Registry = Entries<T>();
         const String NameStr{Name};
-        const auto [It, Inserted] = Registry.try_emplace(NameStr, String{Description}, DefaultValue, Timing);
+        T            NormalizedDefault = DefaultValue;
+        if (!Options.empty() && std::ranges::find(Options, DefaultValue) == Options.end()) {
+            NormalizedDefault = Options.front();
+            m_PendingDiagnostics.push_back(
+                Format("CVar '{}' default is outside its declared options; using '{}'", NameStr, NormalizedDefault));
+        }
+        const auto [It, Inserted] =
+            Registry.try_emplace(NameStr, String{Description}, NormalizedDefault, Timing, std::move(Options));
         if (!Inserted)
             m_PendingDiagnostics.push_back(
                 Format("Duplicate CVar registration '{}' ignored (first registration wins)", NameStr));
@@ -206,15 +231,19 @@ export class CVarManager final : public Singleton<CVarManager> {
         }
     }
 
-    /// @brief The single write path for all CVar values.
+    /// @brief Validate and write a CVar value.
+    /// @return true when the value satisfies the declared options and is stored.
     template <CVarValue T>
-    auto StoreEntry(CVarEntry<T>& Entry, const T& Value) -> void {
+    [[nodiscard]] auto StoreEntry(CVarEntry<T>& Entry, const T& Value) -> bool {
+        if (!Entry.Options.empty() && std::ranges::find(Entry.Options, Value) == Entry.Options.end())
+            return false;
         if constexpr (std::same_as<T, String>) {
             std::unique_lock Lock{Entry.Mutex};
             Entry.Value = Value;
         } else {
             Entry.Value.store(Value, std::memory_order_relaxed);
         }
+        return true;
     }
 
   private:
@@ -255,7 +284,16 @@ class CVar {
     /// @param Description  Human-readable explanation for future UI and logs.
     /// @param Timing       When readers consume the stored value.
     CVar(StringView Name, const T& DefaultValue, StringView Description, CVarTiming Timing = CVarTiming::Runtime)
-        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Timing)), m_Name(Name) {}
+        : CVar(Name, DefaultValue, Description, std::vector<T>{}, Timing) {}
+
+    /// @brief Construct and self-register with an ordered set of legal values.
+    CVar(StringView     Name,
+         const T&       DefaultValue,
+         StringView     Description,
+         std::vector<T> Options,
+         CVarTiming     Timing = CVarTiming::Runtime)
+        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Timing, std::move(Options))),
+          m_Name(Name) {}
 
     /// @brief Read the current value.  Safe to call from any thread.
     [[nodiscard]] auto Get() const -> T {
@@ -265,7 +303,8 @@ class CVar {
     /// @brief Write a new value.  Safe to call from any thread; readers
     ///        observe it on their next Get().
     auto Set(const T& Value) -> void {
-        CVarManager::Get().StoreEntry(m_Entry, Value);
+        if (!CVarManager::Get().StoreEntry(m_Entry, Value))
+            LogWarning("CVar '{}' value '{}' is outside its declared options; value ignored", m_Name, Value);
     }
 
     /// @brief The canonical dotted name this CVar registered under.
@@ -276,6 +315,63 @@ class CVar {
   private:
     CVarEntry<T>& m_Entry; ///< Registry-owned entry; registration is infallible.
     StringView    m_Name;
+};
+
+/// @brief Typed enum CVar backed by reflected names and an ordered allowlist.
+export template <typename E>
+    requires std::is_enum_v<E>
+class EnumCVar {
+  public:
+    /// @brief Register reflected enum names and retain the typed default as a read fallback.
+    EnumCVar(StringView               Name,
+             E                        DefaultValue,
+             StringView               Description,
+             std::initializer_list<E> Options,
+             CVarTiming               Timing = CVarTiming::Runtime)
+        : m_Default(DefaultValue),
+          m_Value(Name,
+                  String{magic_enum::enum_name(DefaultValue)},
+                  Description,
+                  OptionNames(DefaultValue, Options),
+                  Timing) {}
+
+    /// @brief Read the current typed value from any thread.
+    [[nodiscard]] auto Get() const -> E {
+        return magic_enum::enum_cast<E>(m_Value.Get()).value_or(m_Default);
+    }
+
+    /// @brief Write a named enum value; option validation is shared with String CVars.
+    auto Set(E Value) -> void {
+        const auto Name = magic_enum::enum_name(Value);
+        if (Name.empty()) {
+            LogWarning("CVar '{}' received an unnamed enum value; value ignored", m_Value.Name());
+            return;
+        }
+        m_Value.Set(String{Name});
+    }
+
+    /// @brief The canonical dotted name shared with the String registry entry.
+    [[nodiscard]] auto Name() const -> StringView {
+        return m_Value.Name();
+    }
+
+  private:
+    [[nodiscard]] static auto OptionNames(E DefaultValue, std::initializer_list<E> Options) -> std::vector<String> {
+        std::vector<String> Result = {};
+        Result.reserve(Options.size());
+        for (const E Option : Options) {
+            if (const auto Name = magic_enum::enum_name(Option); !Name.empty())
+                Result.emplace_back(Name);
+        }
+        if (Result.empty()) {
+            if (const auto Name = magic_enum::enum_name(DefaultValue); !Name.empty())
+                Result.emplace_back(Name);
+        }
+        return Result;
+    }
+
+    E            m_Default;
+    CVar<String> m_Value;
 };
 
 } // namespace SoulEngine
