@@ -208,8 +208,12 @@ export class CVarManager final : public Singleton<CVarManager> {
         if (It == Registry.end())
             return false;
         const auto Stored = ToStorageValue(Value);
-        if (!Stored || !StoreEntry(It->second, *Stored)) {
-            LogWarning("CVar '{}' value is outside its declared options; value ignored", Name);
+        if (!Stored) {
+            LogWarning("CVar '{}' received an unnamed enum value; value ignored", Name);
+            return false;
+        }
+        if (!StoreEntry(It->second, *Stored)) {
+            LogWarning("CVar '{}' value '{}' is outside its declared options; value ignored", Name, *Stored);
             return false;
         }
         return true;
