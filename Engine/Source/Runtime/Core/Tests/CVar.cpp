@@ -14,13 +14,13 @@ CVar<bool>    CVarTestCheckbox{"Test.Checkbox", false, "test bool"};
 CVar<Int32>   CVarTestInt{"Test.Int", 42, "test int"};
 CVar<Float32> CVarTestFloat{"Test.Float", 1.5F, "test float"};
 CVar<String>  CVarTestString{"Test.String", "hello", "test string"};
-CVar<String>  CVarTestOptions{"Test.Options.Mode", "Safe", "test ordered options", std::vector<String>{"Safe", "Fast"}};
-CVar<Int32>   CVarTestIntOptions{"Test.Options.Level", 1, "test int options", std::vector<Int32>{1, 2, 3}};
+CVar<String>  CVarTestOptions{"Test.Options.Mode", "Safe", "test ordered options", {"Safe", "Fast"}};
+CVar<Int32>   CVarTestIntOptions{"Test.Options.Level", 1, "test int options", {1, 2, 3}};
 
 enum class TestCVarMode : Uint8 { Safe, Fast };
-CVar         CVarTestEnum{"Test.Enum.Mode", "test enum options", cvar_options<TestCVarMode::Safe, TestCVarMode::Fast>};
+CVar         CVarTestEnum{"Test.Enum.Mode", TestCVarMode::Safe, "test enum options"};
 CVar<String> CVarTestInvalidOptionDefault{
-    "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", std::vector<String>{"Safe", "Fast"}};
+    "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", {"Safe", "Fast"}};
 
 // Dedicated to the LoadConfig sweep test so other tests never observe swept values.
 CVar<Int32> CVarTestSweepInt{"Test.Sweep.Int", 1, "sweep target"};
@@ -58,18 +58,15 @@ TEST(CVarTest, ForEachVisitsEveryRegisteredEntryOfAStorageType) {
     EXPECT_EQ(CVarManager::Get().LoadEntry(*Entry), 42);
     EXPECT_EQ(Entry->Timing, CVarTiming::Runtime);
     EXPECT_TRUE(Entry->Options.empty());
-    EXPECT_FALSE(Entry->IsOptionBearing);
 }
 
 TEST(CVarTest, EntriesCarryDeclaredOptionsInRegistrationOrder) {
     const auto* StringEntry = FindEntry<String>(CVarTestOptions.Name());
     ASSERT_NE(StringEntry, nullptr);
-    EXPECT_TRUE(StringEntry->IsOptionBearing);
     EXPECT_EQ(StringEntry->Options, std::vector<String>({"Safe", "Fast"}));
 
     const auto* IntEntry = FindEntry<Int32>(CVarTestIntOptions.Name());
     ASSERT_NE(IntEntry, nullptr);
-    EXPECT_TRUE(IntEntry->IsOptionBearing);
     EXPECT_EQ(IntEntry->Options, std::vector<Int32>({1, 2, 3}));
 }
 

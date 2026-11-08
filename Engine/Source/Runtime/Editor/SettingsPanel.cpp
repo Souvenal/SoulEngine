@@ -25,7 +25,8 @@ struct SettingView {
     return String{Name.substr(LeafOffset == StringView::npos ? 0 : LeafOffset + 1)};
 }
 
-/// @brief Gather bool CVars and option-bearing String CVars, sorted by dotted name.  Registration is
+/// @brief Gather bool CVars and String CVars that declare options (including enum CVars, whose entries
+///        carry the reflected enumerator names), sorted by dotted name.  Registration is
 ///        static-init only, so the entry references stay valid across frames.
 [[nodiscard]] auto CollectSettings() -> std::vector<SettingView> {
     std::vector<SettingView> Result = {};
@@ -33,7 +34,7 @@ struct SettingView {
         Result.push_back({.Name = Name, .Bool = &Entry, .Str = nullptr});
     });
     CVarManager::Get().ForEach<String>([&](const StringView Name, const CVarEntry<String>& Entry) -> void {
-        if (Entry.IsOptionBearing)
+        if (!Entry.Options.empty())
             Result.push_back({.Name = Name, .Bool = nullptr, .Str = &Entry});
     });
     std::ranges::sort(Result, {}, &SettingView::Name);
