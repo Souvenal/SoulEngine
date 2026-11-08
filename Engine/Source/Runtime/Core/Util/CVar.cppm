@@ -6,6 +6,7 @@ export module Core.Util.CVar;
 
 import Core.Util.Types;
 import Core.Util.Error;
+import Core.Util.Flags;
 import Core.Util.Logging;
 import Core.Util.Singleton;
 import std;
@@ -235,34 +236,26 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///        entry) and is reported via the deferred diagnostic queue.
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
-    template <CVarValue T>
+    template <CVarStorage T>
     [[nodiscard]] auto
     Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
-        -> CVarEntry<CVarStorageOf<T>>& {
+        -> CVarEntry<T>& {
         return Register(Name, Description, DefaultValue, std::vector<T>{}, Timing);
     }
 
     /// @brief Register a CVar with an ordered set of legal values and return its registry entry.  The
     ///        default is rejected when it lies outside Options; the first option becomes the initial value
-    ///        and a warning is queued.  An empty Options list (or an unnamed enum option) queues an error
-    ///        and rejects every write.
+    ///        and a warning is queued.  Enum CVar registration goes through the CVar<E, ...> handle instead.
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
-    template <CVarValue T>
+    template <CVarStorage T>
     [[nodiscard]] auto Register(StringView     Name,
                                 StringView     Description,
                                 const T&       DefaultValue,
                                 std::vector<T> Options,
-                                CVarTiming     Timing = CVarTiming::Runtime) -> CVarEntry<CVarStorageOf<T>>& {
-        using Storage         = CVarStorageOf<T>;
-        const bool IsEnum     = std::is_enum_v<T>;
+                                CVarTiming     Timing = CVarTiming::Runtime) -> CVarEntry<T>& {
         const bool HasOptions = !Options.empty();
-        return RegisterImpl<Storage>(Name,
-                                     Description,
-                                     ToStorageValue(DefaultValue).value_or(Storage{}),
-                                     Timing,
-                                     ConvertOptions(std::move(Options)),
-                                     IsEnum || HasOptions);
+        return RegisterImpl<T>(Name, Description, DefaultValue, Timing, std::move(Options), HasOptions);
     }
 
     /// @brief The single read path for all CVar values.
@@ -273,6 +266,21 @@ export class CVarManager final : public Singleton<CVarManager> {
             return Entry.Value;
         } else {
             return Entry.Value.load(std::memory_order_relaxed);
+        }
+    }
+
+    /// @brief Convert a CVar value to its registry storage representation.
+    ///        Enums convert to their reflected name; unnamed values yield
+    ///        std::nullopt.
+    template <CVarValue T>
+    [[nodiscard]] static auto ToStorageValue(const T& Value) -> std::optional<CVarStorageOf<T>> {
+        if constexpr (std::is_enum_v<T>) {
+            const auto Name = magic_enum::enum_name(Value);
+            if (Name.empty())
+                return std::nullopt;
+            return String{Name};
+        } else {
+            return Value;
         }
     }
 
@@ -311,44 +319,6 @@ export class CVarManager final : public Singleton<CVarManager> {
     template <CVarStorage T>
     [[nodiscard]] static auto IsAllowedByOptions(const std::vector<T>& Options, const T& Value) -> bool {
         return std::ranges::find(Options, Value) != Options.end();
-    }
-
-    /// @brief Convert a CVar value to its registry storage representation.
-    ///        Enums convert to their reflected name; unnamed values yield
-    ///        std::nullopt.
-    template <CVarValue T>
-    [[nodiscard]] static auto ToStorageValue(const T& Value) -> std::optional<CVarStorageOf<T>> {
-        if constexpr (std::is_enum_v<T>) {
-            const auto Name = magic_enum::enum_name(Value);
-            if (Name.empty())
-                return std::nullopt;
-            return String{Name};
-        } else {
-            return Value;
-        }
-    }
-
-    /// @brief Convert declared options to their registry storage form.
-    ///        Enum options convert to reflected names; any unnamed option
-    ///        (or an empty list) yields an empty result, which makes the
-    ///        registration malformed and rejects every write.
-    template <CVarValue T>
-    [[nodiscard]] static auto ConvertOptions(std::vector<T> Options) -> std::vector<CVarStorageOf<T>> {
-        if constexpr (std::is_enum_v<T>) {
-            if (Options.empty())
-                return {};
-            std::vector<String> Result;
-            Result.reserve(Options.size());
-            for (const T Option : Options) {
-                const auto Name = magic_enum::enum_name(Option);
-                if (Name.empty())
-                    return {};
-                Result.emplace_back(Name);
-            }
-            return Result;
-        } else {
-            return Options;
-        }
     }
 
     template <CVarStorage T>
@@ -402,18 +372,30 @@ export class CVarManager final : public Singleton<CVarManager> {
 /// @brief A console variable: namespace-scope registration object and
 ///        zero-lookup access handle.
 ///
-/// Register by constructing at namespace scope in any translation unit: ~~~{.cpp}
+/// The primary template is selected through specializations: storage types (bool, Int32, Float32, String) use
+/// CVar<T>, enumerations use CVar<E, Default, Options...> deduced through a CVarOptions tag.  Register by
+/// constructing at namespace scope in any translation unit: ~~~{.cpp}
 ///     CVar<bool> CVarRenderUseCSM{ "Render.UseCSM", true,
 ///         "Use cascaded shadow maps instead of a single shadow map" };
+///
+///     CVar CVarGeometryPath{ "Render.Raster.GeometrySubmissionPath", "geometry submission path",
+///         cvar_options<TestCVarMode::Safe, TestCVarMode::Fast> };
 ///
 ///     if (CVarRenderUseCSM.Get()) { /* add CSM pass */ }
 /// ~~~
 ///
-/// Enumerations are first-class CVar value types: they store their reflected enumerator names in the String
-/// registry, so Find<String>/SetByName<String> interoperate with the same entry.  Every CVar may declare
-/// ordered options; enum CVars are always option-bearing.  Get and Set are safe to call from any thread.
-export template <CVarValue T>
-class CVar {
+/// Enumerations store their reflected enumerator names in the String registry, so Find<String> and
+/// SetByName<String> interoperate with the same entry.  Enum CVars always declare their options as template
+/// parameters and validate the declaration statically: the enum must not be a flags enum, must not contain an
+/// "Unknown" guard value, and default and options must all be named enumerators, with the first option as the
+/// default.  Get and Set are safe to call from any thread.
+export template <typename T, auto... Options>
+class CVar;
+
+/// @brief Storage-type CVar: self-registers with CVarManager and keeps a
+///        zero-lookup handle to its registry entry.
+export template <CVarStorage T>
+class CVar<T> {
   public:
     /// @brief Construct and self-register with CVarManager.
     /// @param Name         Canonical dotted name, "Module.Feature" style,
@@ -432,18 +414,11 @@ class CVar {
          std::vector<T> Options,
          CVarTiming     Timing = CVarTiming::Runtime)
         : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, std::move(Options), Timing)),
-          m_Default(DefaultValue),
           m_Name(Name) {}
 
-    /// @brief Read the current value.  Safe to call from any thread.  Enum
-    ///        values fall back to the registration default when the stored
-    ///        name does not parse.
+    /// @brief Read the current value.  Safe to call from any thread.
     [[nodiscard]] auto Get() const -> T {
-        const auto Value = CVarManager::Get().FromStorageValue<T>(CVarManager::Get().LoadEntry(m_Entry));
-        if constexpr (std::is_enum_v<T>)
-            return Value.value_or(m_Default);
-        else
-            return *Value;
+        return *CVarManager::Get().FromStorageValue<T>(CVarManager::Get().LoadEntry(m_Entry));
     }
 
     /// @brief Write a new value.  Safe to call from any thread; readers
@@ -459,9 +434,88 @@ class CVar {
     }
 
   private:
-    CVarEntry<CVarStorageOf<T>>& m_Entry; ///< Registry-owned entry; registration is infallible.
-    T                            m_Default;
-    StringView                   m_Name;
+    CVarEntry<T>& m_Entry; ///< Registry-owned entry; registration is infallible.
+    StringView    m_Name;
 };
+
+/// @brief Compile-time option list for an enum CVar.  The first element is the registration default.  The
+///        declaration is validated here: the enum must not be a flags enum, must not declare an "Unknown"
+///        guard value, and every element must be a named enumerator.  Use the cvar_options factory to build
+///        one without repeating the enum type.
+export template <auto... Options>
+struct CVarOptions {
+    using EnumType = std::common_type_t<decltype(Options)...>;
+    static_assert(std::is_enum_v<EnumType>, "CVar options must be enumerators of one enum type");
+    static_assert(!FlagEnum<EnumType>, "CVar enums must not be flag enums");
+    static_assert(std::ranges::none_of(magic_enum::enum_names<EnumType>(),
+                                       [](const std::string_view Name) -> bool { return Name == "Unknown"; }),
+                  "CVar enums must not declare an \"Unknown\" guard value");
+    static_assert(sizeof...(Options) > 0, "an enum CVar requires at least one option");
+    static_assert(((magic_enum::enum_name<Options>().size() > 0) && ...),
+                  "CVar enum options must be named enumerators");
+
+    static constexpr std::array Values = {Options...};
+    static constexpr std::array Names  = {magic_enum::enum_name<Options>()...};
+};
+
+/// @brief Factory for a CVarOptions tag: deduces the enum type from the enumerators themselves.
+export template <auto... Options>
+inline constexpr CVarOptions<Options...> cvar_options{};
+
+/// @brief Enum-typed CVar: the option list is a compile-time parameter and the declaration is checked
+///        statically.  See the CVar primary template comment for the full enum contract.
+export template <typename E, E Default, E... Rest>
+    requires std::is_enum_v<E>
+class CVar<E, Default, Rest...> {
+    static_assert(!FlagEnum<E>, "CVar enums must not be flag enums");
+    static_assert(std::ranges::none_of(magic_enum::enum_names<E>(),
+                                       [](const std::string_view Name) -> bool { return Name == "Unknown"; }),
+                  "CVar enums must not declare an \"Unknown\" guard value");
+    static_assert(magic_enum::enum_name<Default>().size() > 0, "CVar enum default must be a named enumerator");
+    static_assert(((magic_enum::enum_name<Rest>().size() > 0) && ...), "CVar enum options must be named");
+
+  public:
+    /// @brief Construct and self-register with CVarManager.  The option list arrives as a CVarOptions tag
+    ///        whose first element is the registration default; registration stores the reflected names.
+    CVar(StringView Name,
+         StringView Description,
+         CVarOptions<Default, Rest...>,
+         CVarTiming Timing = CVarTiming::Runtime)
+        : m_Entry(CVarManager::Get().Register<String>(
+              Name, Description, String{magic_enum::enum_name<Default>()}, OptionNameList(), Timing)),
+          m_Name(Name) {}
+
+    /// @brief Read the current typed value.  Safe to call from any thread;
+    ///        falls back to the declaration default when the stored name does
+    ///        not parse.
+    [[nodiscard]] auto Get() const -> E {
+        return magic_enum::enum_cast<E>(CVarManager::Get().LoadEntry(m_Entry)).value_or(Default);
+    }
+
+    /// @brief Write a named enum value.  Safe to call from any thread; values outside the declared options
+    ///        are rejected with a warning.
+    auto Set(E Value) -> void {
+        CVarManager::Get().SetByName<String>(m_Name, String{magic_enum::enum_name(Value)});
+    }
+
+    /// @brief The canonical dotted name this CVar registered under.
+    [[nodiscard]] auto Name() const -> StringView {
+        return m_Name;
+    }
+
+  private:
+    /// @brief Reflected names of all declared options, in declaration order.
+    [[nodiscard]] static auto OptionNameList() -> std::vector<String> {
+        return {String{magic_enum::enum_name<Default>()}, String{magic_enum::enum_name<Rest>()}...};
+    }
+
+    CVarEntry<String>& m_Entry; ///< Registry-owned entry; registration is infallible.
+    StringView         m_Name;
+};
+
+/// @brief Deduce the enum CVar specialization (type, default, options) from a CVarOptions tag.
+template <auto Default, auto... Rest>
+CVar(StringView, StringView, CVarOptions<Default, Rest...>, CVarTiming = CVarTiming::Runtime)
+    -> CVar<decltype(Default), Default, Rest...>;
 
 } // namespace SoulEngine

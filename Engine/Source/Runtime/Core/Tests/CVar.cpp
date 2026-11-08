@@ -17,17 +17,8 @@ CVar<String>  CVarTestString{"Test.String", "hello", "test string"};
 CVar<String>  CVarTestOptions{"Test.Options.Mode", "Safe", "test ordered options", std::vector<String>{"Safe", "Fast"}};
 CVar<Int32>   CVarTestIntOptions{"Test.Options.Level", 1, "test int options", std::vector<Int32>{1, 2, 3}};
 
-enum class TestCVarMode : Uint8 { Unknown = 0, Safe, Fast };
-CVar<TestCVarMode> CVarTestEnum{
-    "Test.Enum.Mode", TestCVarMode::Safe, "test enum options", {TestCVarMode::Safe, TestCVarMode::Fast}};
-CVar<TestCVarMode> CVarTestEmptyEnumOptions{
-    "Test.Enum.EmptyOptions", TestCVarMode::Unknown, "test empty enum options", std::vector<TestCVarMode>{}};
-CVar<TestCVarMode> CVarTestUnnamedEnumOptions{"Test.Enum.UnnamedOptions",
-                                              TestCVarMode::Safe,
-                                              "test unnamed options",
-                                              std::vector<TestCVarMode>{static_cast<TestCVarMode>(99)}};
-CVar<TestCVarMode> CVarTestUnnamedEnumDefault{
-    "Test.Enum.UnnamedDefault", static_cast<TestCVarMode>(99), "test unnamed default", {TestCVarMode::Safe}};
+enum class TestCVarMode : Uint8 { Safe, Fast };
+CVar         CVarTestEnum{"Test.Enum.Mode", "test enum options", cvar_options<TestCVarMode::Safe, TestCVarMode::Fast>};
 CVar<String> CVarTestInvalidOptionDefault{
     "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", std::vector<String>{"Safe", "Fast"}};
 
@@ -89,35 +80,6 @@ TEST(CVarTest, OptionRegistrationUsesFirstOptionForInvalidDefault) {
     ASSERT_NE(Record, nullptr);
     EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
     EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
-}
-
-TEST(CVarTest, OptionRegistrationNormalizesAnUnnamedEnumDefaultToTheFirstOption) {
-    // The default (unnamed enumerator 99) is outside the declared options, so the first option becomes the
-    // initial value; the unnamed original is never stored.
-    EXPECT_EQ(CVarTestUnnamedEnumDefault.Get(), TestCVarMode::Safe);
-
-    const auto* Record = FindEntry<String>(CVarTestUnnamedEnumDefault.Name());
-    ASSERT_NE(Record, nullptr);
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
-    EXPECT_EQ(Record->Options, std::vector<String>({"Safe"}));
-}
-
-TEST(CVarTest, EnumRegistrationsWithoutLegalOptionsRejectEveryWrite) {
-    const std::array Names = {CVarTestEmptyEnumOptions.Name(), CVarTestUnnamedEnumOptions.Name()};
-    for (const auto Name : Names) {
-        EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Unknown"));
-        EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Fast"));
-        EXPECT_FALSE(CVarManager::Get().SetByName<String>(Name, "Arbitrary"));
-    }
-    const auto* EmptyRecord = FindEntry<String>(CVarTestEmptyEnumOptions.Name());
-    ASSERT_NE(EmptyRecord, nullptr);
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*EmptyRecord), "Unknown");
-    EXPECT_TRUE(EmptyRecord->Options.empty());
-
-    const auto* UnnamedRecord = FindEntry<String>(CVarTestUnnamedEnumOptions.Name());
-    ASSERT_NE(UnnamedRecord, nullptr);
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*UnnamedRecord), "Safe");
-    EXPECT_TRUE(UnnamedRecord->Options.empty());
 }
 
 TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {
@@ -294,9 +256,6 @@ TEST(CVarTest, EnumValuedCVarReflectsOrderedNamesAndRoundTripsTypedValues) {
     EXPECT_EQ(CVarManager::Get().Find<TestCVarMode>(CVarTestEnum.Name()), std::optional{TestCVarMode::Fast});
 
     ASSERT_TRUE(CVarManager::Get().SetByName<String>(CVarTestEnum.Name(), "Safe"));
-    EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
-
-    CVarTestEnum.Set(TestCVarMode::Unknown);
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
 
     CVarTestEnum.Set(static_cast<TestCVarMode>(99));
