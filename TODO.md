@@ -7,7 +7,6 @@
   - Reproduce the standalone `XmakeMinizipRepro` project from a clean configuration:
 
     ```powershell
-    rtk err xmake clean --all -y
     rtk err xmake f -c -m debug -y
     rtk err xmake -y
     ```
@@ -15,8 +14,7 @@
   - Then verify SoulEngine:
 
     ```powershell
-    rtk err xmake clean --all -y
-    rtk err xmake f -m debug -y
+    rtk err xmake f -c -m debug -y
     rtk err xmake -y
     rtk err xmake test
     ```
