@@ -22,6 +22,11 @@ CVar         CVarTestEnum{"Test.Enum.Mode", TestCVarMode::Safe, "test enum optio
 CVar<String> CVarTestInvalidOptionDefault{
     "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", {"Safe", "Fast"}};
 
+// Rejected registrations: an empty option list and an unnamed enum default leave the name unregistered and
+// the handles inert.
+CVar<Int32> CVarTestRejectedOptions{"Test.Rejected.Options", 3, "rejected: empty options", std::span<const Int32>{}};
+CVar        CVarTestRejectedEnum{"Test.Rejected.Enum", static_cast<TestCVarMode>(99), "rejected: unnamed default"};
+
 // Dedicated to the LoadConfig sweep test so other tests never observe swept values.
 CVar<Int32> CVarTestSweepInt{"Test.Sweep.Int", 1, "sweep target"};
 CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
@@ -68,6 +73,19 @@ TEST(CVarTest, EntriesCarryDeclaredOptionsInRegistrationOrder) {
     const auto* IntEntry = FindEntry<Int32>(CVarTestIntOptions.Name());
     ASSERT_NE(IntEntry, nullptr);
     EXPECT_EQ(IntEntry->Options, std::vector<Int32>({1, 2, 3}));
+}
+
+TEST(CVarTest, RejectedRegistrationsLeaveNamesUnregisteredAndHandlesInert) {
+    EXPECT_FALSE(CVarManager::Get().Find<Int32>("Test.Rejected.Options").has_value());
+    EXPECT_FALSE(CVarManager::Get().SetByName<Int32>("Test.Rejected.Options", 5));
+
+    CVarTestRejectedOptions.Set(5);
+    EXPECT_FALSE(CVarManager::Get().Find<Int32>("Test.Rejected.Options").has_value());
+    EXPECT_EQ(CVarTestRejectedOptions.Get(), 0);
+
+    EXPECT_FALSE(CVarManager::Get().Find<TestCVarMode>("Test.Rejected.Enum").has_value());
+    CVarTestRejectedEnum.Set(TestCVarMode::Safe);
+    EXPECT_EQ(CVarTestRejectedEnum.Get(), static_cast<TestCVarMode>(99));
 }
 
 TEST(CVarTest, OptionRegistrationUsesFirstOptionForInvalidDefault) {

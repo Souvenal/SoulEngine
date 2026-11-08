@@ -1,6 +1,5 @@
 module;
 
-#include <cassert>
 #include <toml++/toml.h>
 
 export module Core.Util.CVar;
@@ -227,27 +226,34 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///        entry) and is reported via the deferred diagnostic queue.
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
-    template <CVarStorage T>
-    [[nodiscard]] auto
-    Register(StringView Name, StringView Description, const T& DefaultValue, CVarTiming Timing = CVarTiming::Runtime)
-        -> CVarEntry<T>& {
-        return RegisterImpl<T>(Name, Description, DefaultValue, Timing, {});
-    }
-
-    /// @brief Register a CVar with an ordered set of legal values and return its registry entry.  The
-    ///        option list must be non-empty; the default is rejected when it lies outside Options and the
-    ///        first option becomes the initial value with a queued warning.  Enum CVar registration goes
-    ///        through the CVar<E> handle instead.
+    /// @brief Register a CVar and return its registry entry.  An empty Options span registers a free-form
+    ///        CVar that accepts every value; a non-empty span registers an ordered set of legal values whose
+    ///        default is rejected when it lies outside Options — the first option becomes the initial value
+    ///        and a warning is queued.  Infallible: the registry key is (name, type) — the same name under
+    ///        another type is simply a different CVar.  A same-type duplicate is first-wins (the new handle
+    ///        shares the existing entry) and is reported via the deferred diagnostic queue.  Enum CVar
+    ///        registration goes through the CVar<E> handle instead.
     /// @return Reference to the registry entry (stable for the process
     ///         lifetime — unordered_map nodes never relocate).
     template <CVarStorage T>
     [[nodiscard]] auto Register(StringView         Name,
                                 StringView         Description,
                                 const T&           DefaultValue,
-                                std::span<const T> Options,
-                                CVarTiming         Timing = CVarTiming::Runtime) -> CVarEntry<T>& {
-        assert(!Options.empty() && "an option-bearing CVar requires at least one value");
+                                std::span<const T> Options = {},
+                                CVarTiming         Timing  = CVarTiming::Runtime) -> CVarEntry<T>& {
         return RegisterImpl<T>(Name, Description, DefaultValue, Timing, {Options.begin(), Options.end()});
+    }
+
+    /// @brief Report a rejected registration and return an inert stand-in entry.  The entry is not
+    ///        inserted into any registry, so SetByName on the rejected name fails and a handle bound to it
+    ///        never writes; Get falls back to the handle's declared default.  The dummy is shared by all
+    ///        rejected registrations of the type — safe, since rejected handles carry no readable state.
+    template <CVarStorage T>
+    [[nodiscard]] auto RejectedEntry(StringView Name, StringView Reason) -> CVarEntry<T>& {
+        static CVarEntry<T> Dummy{String{}, T{}, CVarTiming::Runtime, {}};
+        m_PendingDiagnostics.push_back(
+            {.Message = Format("CVar '{}' registration rejected: {}", Name, Reason), .Level = LogLevel::Error});
+        return Dummy;
     }
 
     /// @brief The single read path for all CVar values.
@@ -387,15 +393,20 @@ class CVar<T> {
     /// @param Description  Human-readable explanation for future UI and logs.
     /// @param Timing       When readers consume the stored value.
     CVar(StringView Name, const T& DefaultValue, StringView Description, CVarTiming Timing = CVarTiming::Runtime)
-        : CVar(Name, DefaultValue, Description, std::span<const T>{}, Timing) {}
+        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, {}, Timing)), m_Name(Name) {}
 
-    /// @brief Construct and self-register with an ordered set of legal values.
+    /// @brief Construct and self-register with an ordered set of legal values.  An empty option list is a
+    ///        contract violation: the registration is rejected with a queued error and the handle is inert
+    ///        (Get yields the default, every write fails), rather than silently acting free-form.
     CVar(StringView         Name,
          const T&           DefaultValue,
          StringView         Description,
          std::span<const T> Options,
          CVarTiming         Timing = CVarTiming::Runtime)
-        : m_Entry(CVarManager::Get().Register<T>(Name, Description, DefaultValue, Options, Timing)), m_Name(Name) {}
+        : m_Entry(Options.empty()
+                      ? CVarManager::Get().RejectedEntry<T>(Name, "an option-bearing CVar requires at least one value")
+                      : CVarManager::Get().Register<T>(Name, Description, DefaultValue, Options, Timing)),
+          m_Name(Name) {}
 
     /// @brief Construct and self-register with a braced option list.  std::span cannot accept a braced
     ///        list directly, so brace call sites bind to this overload; container call sites bind to the
@@ -444,12 +455,10 @@ class CVar<E> {
   public:
     /// @brief Construct and self-register with CVarManager.  The default must be a named enumerator and is
     ///        registered as the initial String value; the reflected names of all enumerators become the
-    ///        entry's options.
+    ///        entry's options.  An unnamed default is a contract violation: the registration is rejected
+    ///        with a queued error and the handle is inert (Get yields the default, every write fails).
     CVar(StringView Name, E Default, StringView Description, CVarTiming Timing = CVarTiming::Runtime)
-        : m_Default{Default},
-          m_Entry(CVarManager::Get().Register<String>(
-              Name, Description, EnumeratorName(Default), EnumeratorNameList<E>(), Timing)),
-          m_Name(Name) {}
+        : m_Default{Default}, m_Entry(MakeEntry(Name, Default, Description, Timing)), m_Name(Name) {}
 
     /// @brief Read the current typed value.  Safe to call from any thread;
     ///        falls back to the registration default when the stored name does
@@ -475,13 +484,16 @@ class CVar<E> {
     }
 
   private:
-    /// @brief Reflected name of one enumerator; the default's name is needed
-    ///        before registration, and an unnamed default is a contract
-    ///        violation caught here.
-    [[nodiscard]] static auto EnumeratorName(E Value) -> String {
-        const auto Name = magic_enum::enum_name(Value);
-        assert(!Name.empty() && "CVar enum default must be a named enumerator");
-        return String{Name};
+    /// @brief Register the String entry for one enum CVar.  An unnamed default is a contract violation
+    ///        (magic_enum reflects no name for it), so the registration is rejected instead of storing an
+    ///        empty string as the initial value.
+    [[nodiscard]] static auto MakeEntry(StringView Name, E Default, StringView Description, CVarTiming Timing)
+        -> CVarEntry<String>& {
+        const auto DefaultName = magic_enum::enum_name(Default);
+        if (DefaultName.empty())
+            return CVarManager::Get().RejectedEntry<String>(Name, "the enum default must be a named enumerator");
+        return CVarManager::Get().Register<String>(
+            Name, Description, String{DefaultName}, EnumeratorNameList<E>(), Timing);
     }
 
     /// @brief Reflected names of every enumerator of E, in declaration order.
