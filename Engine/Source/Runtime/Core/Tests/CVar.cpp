@@ -18,28 +18,30 @@ CVar<String>  CVarTestOptions{"Test.Options.Mode", "Safe", "test ordered options
 CVar<Int32>   CVarTestIntOptions{"Test.Options.Level", 1, "test int options", {1, 2, 3}};
 
 enum class TestCVarMode : Uint8 { Safe, Fast };
-CVar         CVarTestEnum{"Test.Enum.Mode", TestCVarMode::Safe, "test enum options"};
+CVar CVarTestEnum{"Test.Enum.Mode", TestCVarMode::Safe, "test enum options"};
+
+// Rejected registrations: a default outside the declared options, an empty option list, and an unnamed
+// enum default are fatal errors recorded at registration; the names stay unregistered and the handles
+// serve their declared defaults.
 CVar<String> CVarTestInvalidOptionDefault{
     "Test.Options.InvalidDefault", "Unsafe", "test invalid option default", {"Safe", "Fast"}};
-
-// Rejected registrations: an empty option list and an unnamed enum default leave the name unregistered and
-// the handles inert.
 CVar<Int32> CVarTestRejectedOptions{"Test.Rejected.Options", 3, "rejected: empty options", std::span<const Int32>{}};
 CVar        CVarTestRejectedEnum{"Test.Rejected.Enum", static_cast<TestCVarMode>(99), "rejected: unnamed default"};
+
+// Same name registered twice: the first registration owns the name, the duplicate is a fatal recorded
+// error, and the duplicate's handle serves its declared default.
+CVar<bool>  CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
+CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"};
 
 // Dedicated to the LoadConfig sweep test so other tests never observe swept values.
 CVar<Int32> CVarTestSweepInt{"Test.Sweep.Int", 1, "sweep target"};
 CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
 
-// Same name registered under two different types — legal: the registry key is (name, type).
-CVar<bool>  CVarTestSharedNameBool{"Test.SharedName", false, "bool of the shared name"};
-CVar<Int32> CVarTestSharedNameInt{"Test.SharedName", 7, "int of the shared name"};
-
 CVar<String> CVarTestConcurrentStringA{"Test.Concurrent.StringA", "initial", "concurrent string A"};
 CVar<String> CVarTestConcurrentStringB{"Test.Concurrent.StringB", "initial", "concurrent string B"};
 
 /// @brief Find one entry of type T by dotted name through the ForEach traversal.
-template <CVarStorage T>
+template <CVarValue T>
 [[nodiscard]] auto FindEntry(StringView Name) -> const CVarEntry<T>* {
     const CVarEntry<T>* Found = nullptr;
     CVarManager::Get().ForEach<T>([&](const StringView EntryName, const CVarEntry<T>& Entry) -> void {
@@ -47,6 +49,12 @@ template <CVarStorage T>
             Found = &Entry;
     });
     return Found;
+}
+
+/// @brief Read one recorded registration error by substring.
+[[nodiscard]] auto HasRegistrationError(StringView Fragment) -> bool {
+    return std::ranges::any_of(CVarManager::Get().RegistrationErrors(),
+                               [Fragment](const String& Error) -> bool { return Error.contains(Fragment); });
 }
 
 TEST(CVarTest, ForEachVisitsEveryRegisteredEntryOfAStorageType) {
@@ -76,25 +84,33 @@ TEST(CVarTest, EntriesCarryDeclaredOptionsInRegistrationOrder) {
 }
 
 TEST(CVarTest, RejectedRegistrationsLeaveNamesUnregisteredAndHandlesInert) {
+    ASSERT_FALSE(CVarManager::Get().RegistrationErrors().empty());
+    EXPECT_TRUE(HasRegistrationError("Test.Rejected.Options"));
+    EXPECT_TRUE(HasRegistrationError("Test.Rejected.Enum"));
+    EXPECT_TRUE(HasRegistrationError("Test.Options.InvalidDefault"));
+    EXPECT_TRUE(HasRegistrationError("Test.SharedName"));
+
     EXPECT_FALSE(CVarManager::Get().Find<Int32>("Test.Rejected.Options").has_value());
     EXPECT_FALSE(CVarManager::Get().SetByName<Int32>("Test.Rejected.Options", 5));
-
     CVarTestRejectedOptions.Set(5);
     EXPECT_FALSE(CVarManager::Get().Find<Int32>("Test.Rejected.Options").has_value());
-    EXPECT_EQ(CVarTestRejectedOptions.Get(), 0);
+    EXPECT_EQ(CVarTestRejectedOptions.Get(), 3);
 
     EXPECT_FALSE(CVarManager::Get().Find<TestCVarMode>("Test.Rejected.Enum").has_value());
     CVarTestRejectedEnum.Set(TestCVarMode::Safe);
     EXPECT_EQ(CVarTestRejectedEnum.Get(), static_cast<TestCVarMode>(99));
+
+    EXPECT_FALSE(CVarManager::Get().Find<String>("Test.Options.InvalidDefault").has_value());
+    EXPECT_EQ(CVarTestInvalidOptionDefault.Get(), "Unsafe");
 }
 
-TEST(CVarTest, OptionRegistrationUsesFirstOptionForInvalidDefault) {
-    EXPECT_EQ(CVarTestInvalidOptionDefault.Get(), "Safe");
+TEST(CVarTest, DuplicateNamesKeepFirstRegistrationAndRejectTheRest) {
+    EXPECT_EQ(CVarManager::Get().Find<bool>("Test.SharedName"), std::optional{false});
+    EXPECT_FALSE(CVarManager::Get().Find<Int32>("Test.SharedName").has_value());
 
-    const auto* Record = FindEntry<String>(CVarTestInvalidOptionDefault.Name());
-    ASSERT_NE(Record, nullptr);
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
-    EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
+    CVarTestSharedNameInt.Set(9);
+    EXPECT_EQ(CVarTestSharedNameInt.Get(), 7);
+    EXPECT_EQ(CVarTestSharedNameBool.Get(), false);
 }
 
 TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {
@@ -192,17 +208,8 @@ TEST(CVarTest, HandleSetIsVisibleThroughFind) {
     CVarTestString.Set("hello");
 }
 
-TEST(CVarTest, SameNameDifferentTypesCoexistIndependently) {
-    EXPECT_EQ(CVarManager::Get().Find<bool>("Test.SharedName"), std::optional{false});
-    EXPECT_EQ(CVarManager::Get().Find<Int32>("Test.SharedName"), std::optional{7});
-
-    CVarTestSharedNameInt.Set(9);
-    EXPECT_FALSE(CVarTestSharedNameBool.Get());
-    EXPECT_EQ(CVarTestSharedNameInt.Get(), 9);
-    CVarTestSharedNameInt.Set(7);
-}
-
 TEST(CVarTest, OptionsRejectInvalidValuesOnEveryWritePath) {
+    CVarManager::Get().ClearRegistrationErrors();
     ASSERT_TRUE(CVarManager::Get().SetByName<String>(CVarTestOptions.Name(), "Fast"));
     EXPECT_EQ(CVarTestOptions.Get(), "Fast");
 
@@ -233,6 +240,7 @@ TEST(CVarTest, OptionsRejectInvalidValuesOnEveryWritePath) {
 }
 
 TEST(CVarTest, NumericOptionsRejectInvalidValuesOnEveryWritePath) {
+    CVarManager::Get().ClearRegistrationErrors();
     ASSERT_TRUE(CVarManager::Get().SetByName<Int32>(CVarTestIntOptions.Name(), 2));
     EXPECT_EQ(CVarTestIntOptions.Get(), 2);
 
@@ -257,20 +265,19 @@ TEST(CVarTest, NumericOptionsRejectInvalidValuesOnEveryWritePath) {
     ASSERT_TRUE(CVarManager::Get().SetByName<Int32>(CVarTestIntOptions.Name(), 1));
 }
 
-TEST(CVarTest, EnumValuedCVarReflectsOrderedNamesAndRoundTripsTypedValues) {
+TEST(CVarTest, EnumValuedCVarRoundTripsTypedValues) {
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
 
-    const auto* Record = FindEntry<String>(CVarTestEnum.Name());
+    const auto* Record = FindEntry<TestCVarMode>(CVarTestEnum.Name());
     ASSERT_NE(Record, nullptr);
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), "Safe");
-    EXPECT_EQ(Record->Options, std::vector<String>({"Safe", "Fast"}));
+    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), TestCVarMode::Safe);
+    EXPECT_EQ(Record->Options, std::vector<TestCVarMode>({TestCVarMode::Safe, TestCVarMode::Fast}));
 
     CVarTestEnum.Set(TestCVarMode::Fast);
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Fast);
-    EXPECT_EQ(CVarManager::Get().Find<String>(CVarTestEnum.Name()), std::optional{String{"Fast"}});
     EXPECT_EQ(CVarManager::Get().Find<TestCVarMode>(CVarTestEnum.Name()), std::optional{TestCVarMode::Fast});
 
-    ASSERT_TRUE(CVarManager::Get().SetByName<String>(CVarTestEnum.Name(), "Safe"));
+    ASSERT_TRUE(CVarManager::Get().SetByName<TestCVarMode>(CVarTestEnum.Name(), TestCVarMode::Safe));
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
 
     CVarTestEnum.Set(static_cast<TestCVarMode>(99));
@@ -278,6 +285,7 @@ TEST(CVarTest, EnumValuedCVarReflectsOrderedNamesAndRoundTripsTypedValues) {
 }
 
 TEST(CVarTest, LoadConfigAppliesMatchingLeavesAndToleratesUnknownKeys) {
+    CVarManager::Get().ClearRegistrationErrors();
     const auto TempDir = std::filesystem::temp_directory_path() / "SoulEngineCVarTest";
     std::filesystem::create_directories(TempDir);
     const auto ConfigPath = TempDir / "cvar_test.toml";

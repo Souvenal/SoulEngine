@@ -11,13 +11,14 @@ import std;
 namespace SoulEngine {
 
 /// @brief One editable setting: the dotted name plus the registry entry
-///        backing it.  Exactly one of the two pointers is set; values are
+///        backing it.  Bool points at a typed entry; General points at the
+///        type-erased entry of an option-bearing non-bool CVar.  Values are
 ///        read through the entry every frame, so the panel never shows a
 ///        stale snapshot.
 struct SettingView {
-    StringView               Name;
-    const CVarEntry<bool>*   Bool = nullptr;
-    const CVarEntry<String>* Str  = nullptr;
+    StringView       Name;
+    CVarEntry<bool>* Bool    = nullptr;
+    EntryBase*       General = nullptr;
 };
 
 [[nodiscard]] auto GetSettingLeaf(StringView Name) -> String {
@@ -25,34 +26,43 @@ struct SettingView {
     return String{Name.substr(LeafOffset == StringView::npos ? 0 : LeafOffset + 1)};
 }
 
-/// @brief Gather bool CVars and String CVars that declare options (including enum CVars, whose entries
-///        carry the reflected enumerator names), sorted by dotted name.  Registration is
-///        static-init only, so the entry references stay valid across frames.
+/// @brief Gather bool CVars and option-bearing CVars (including enums, whose entries carry every
+///        reflected enumerator), sorted by dotted name.  Registration is static-init only, so the entry
+///        references stay valid across frames.
 [[nodiscard]] auto CollectSettings() -> std::vector<SettingView> {
     std::vector<SettingView> Result = {};
-    CVarManager::Get().ForEach<bool>([&](const StringView Name, const CVarEntry<bool>& Entry) -> void {
-        Result.push_back({.Name = Name, .Bool = &Entry, .Str = nullptr});
+    CVarManager::Get().ForEach<bool>([&](const StringView Name, CVarEntry<bool>& Entry) -> void {
+        Result.push_back({.Name = Name, .Bool = &Entry, .General = nullptr});
     });
-    CVarManager::Get().ForEach<String>([&](const StringView Name, const CVarEntry<String>& Entry) -> void {
-        if (!Entry.Options.empty())
-            Result.push_back({.Name = Name, .Bool = nullptr, .Str = &Entry});
+    CVarManager::Get().ForEachEntry([&](const StringView Name, EntryBase& Entry) -> void {
+        if (!Entry.OptionNames().empty())
+            Result.push_back({.Name = Name, .Bool = nullptr, .General = &Entry});
     });
     std::ranges::sort(Result, {}, &SettingView::Name);
     return Result;
 }
 
-template <CVarStorage T>
-auto DrawSettingMetadata(StringView Name, const CVarEntry<T>& Entry) -> void {
+/// @brief Shared metadata tooltip for any setting; bool settings draw from
+///        the typed entry, option-bearing ones from the type-erased entry.
+auto DrawSettingTooltip(StringView Name, StringView Description, CVarTiming Timing) -> void {
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(String{Name}.c_str());
-        ImGui::TextUnformatted(Entry.Description.c_str());
+        ImGui::TextUnformatted(String{Description}.c_str());
         ImGui::EndTooltip();
     }
-    if (Entry.Timing == CVarTiming::Startup) {
+    if (Timing == CVarTiming::Startup) {
         ImGui::SameLine();
         ImGui::TextUnformatted("(requires restart)");
     }
+}
+
+auto DrawSettingMetadata(StringView Name, const CVarEntry<bool>& Entry) -> void {
+    DrawSettingTooltip(Name, Entry.Description, Entry.Timing);
+}
+
+auto DrawSettingMetadata(StringView Name, const EntryBase& Entry) -> void {
+    DrawSettingTooltip(Name, Entry.Description(), Entry.Timing());
 }
 
 auto DrawBooleanSetting(const SettingView& Setting) -> void {
@@ -61,33 +71,34 @@ auto DrawBooleanSetting(const SettingView& Setting) -> void {
     ImGui::PushID(static_cast<const void*>(Setting.Bool));
     if (ImGui::Checkbox(Leaf.c_str(), &Value))
         CVarManager::Get().SetByName<bool>(Setting.Name, Value);
-    DrawSettingMetadata(Setting.Name, *Setting.Bool);
     ImGui::PopID();
 }
 
 auto DrawOptionSetting(const SettingView& Setting) -> void {
     const auto Leaf    = GetSettingLeaf(Setting.Name);
-    const auto Current = CVarManager::Get().LoadEntry(*Setting.Str);
-    ImGui::PushID(static_cast<const void*>(Setting.Str));
+    const auto Current = Setting.General->LoadAsString();
+    ImGui::PushID(static_cast<const void*>(Setting.General));
     if (ImGui::BeginCombo(Leaf.c_str(), Current.c_str())) {
-        for (const auto& Option : Setting.Str->Options) {
+        for (const auto& Option : Setting.General->OptionNames()) {
             const bool IsSelected = Option == Current;
             if (ImGui::Selectable(Option.c_str(), IsSelected))
-                CVarManager::Get().SetByName<String>(Setting.Name, Option);
+                static_cast<void>(Setting.General->ApplyFromString(Option));
             if (IsSelected)
                 ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
-    DrawSettingMetadata(Setting.Name, *Setting.Str);
     ImGui::PopID();
 }
 
 auto DrawSetting(const SettingView& Setting) -> void {
-    if (Setting.Bool != nullptr)
+    if (Setting.Bool != nullptr) {
         DrawBooleanSetting(Setting);
-    else
+        DrawSettingMetadata(Setting.Name, *Setting.Bool);
+    } else {
         DrawOptionSetting(Setting);
+        DrawSettingMetadata(Setting.Name, *Setting.General);
+    }
 }
 
 auto RegisterSettingsPanel() -> void {
