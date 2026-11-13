@@ -103,8 +103,9 @@ export enum class CVarTiming : Uint8 {
     return ++Counter;
 }
 
-/// @brief Unique runtime id of one CVar value type.
-template <CVarValue T>
+/// @brief Unique runtime id of one CVar value type.  Exported so UI code can
+///        dispatch on entry types without per-type virtuals.
+export template <CVarValue T>
 [[nodiscard]] auto CVarTypeId() -> Uint64 {
     static const Uint64 Id = NextCVarTypeId();
     return Id;
@@ -121,7 +122,7 @@ template <CVarValue T>
 ///          time needs no additional synchronization.  Arithmetic and enum
 ///          values are atomic; each String entry owns a shared_mutex
 ///          guarding its value.
-export template <CVarValue T>
+template <CVarValue T>
 struct CVarEntry {
     using ValueStorage = std::atomic<T>;
 
@@ -137,7 +138,7 @@ struct CVarEntry {
           Options{std::move(EntryOptions)} {}
 };
 
-export template <>
+template <>
 struct CVarEntry<String> {
     using ValueStorage = String;
 
@@ -264,21 +265,8 @@ export class CVarManager final : public Singleton<CVarManager> {
         return LoadEntry(*Entry);
     }
 
-    /// @brief Visit every CVar registered under value type T.
-    /// @param Visitor Invoked as Visitor(Name, Entry) for each entry; the
-    ///                entry reference stays valid for the process lifetime.
-    ///                Read values through LoadEntry; options and timing are
-    ///                immutable after registration.  Call only after
-    ///                registration has completed.
-    template <CVarValue T>
-    auto ForEach(auto&& Visitor) -> void {
-        for (const auto& [Name, Entry] : m_Entries)
-            if (auto* Typed = TypedAs<T>(*Entry))
-                Visitor(StringView{Name}, *Typed);
-    }
-
     /// @brief Visit every registered CVar, type-erased.  Used by the
-    ///        settings panel; typed callers prefer ForEach<T>.
+    ///        settings panel to discover bool and option-bearing entries.
     auto ForEachEntry(auto&& Visitor) -> void {
         for (const auto& [Name, Entry] : m_Entries)
             Visitor(StringView{Name}, *Entry);
@@ -371,6 +359,10 @@ export class CVarManager final : public Singleton<CVarManager> {
     ///         file not found or invalid TOML).
     [[nodiscard]] auto LoadConfig(const Path& FilePath) -> std::expected<void, ErrorMessage>;
 
+    template <typename T>
+    friend class CVar;
+
+  private:
     /// @brief The single read path for all CVar values.
     template <CVarValue T>
     [[nodiscard]] auto LoadEntry(const CVarEntry<T>& Entry) -> T {
@@ -397,7 +389,6 @@ export class CVarManager final : public Singleton<CVarManager> {
         return true;
     }
 
-  private:
     auto ApplyTable(const toml::table& Table, const String& Prefix) -> void;
 
     auto ApplyValue(const String& Name, const toml::node& Node) -> void;
@@ -431,9 +422,10 @@ auto TypedEntry<T>::OptionNames() const -> std::vector<String> {
 template <CVarValue T>
 auto TypedEntry<T>::LoadAsString() const -> String {
     if constexpr (std::same_as<T, String>) {
-        return CVarManager::Get().LoadEntry(Entry);
+        return CVarManager::Get().Find<String>(Name).value_or(String{});
     } else if constexpr (std::is_enum_v<T>) {
-        return String{magic_enum::enum_name(CVarManager::Get().LoadEntry(Entry))};
+        const auto Value = CVarManager::Get().Find<T>(Name);
+        return Value ? String{magic_enum::enum_name(*Value)} : String{};
     } else {
         return {};
     }

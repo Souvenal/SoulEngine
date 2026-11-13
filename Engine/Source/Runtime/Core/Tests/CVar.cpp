@@ -40,47 +40,39 @@ CVar<bool>  CVarTestSweepBool{"Test.Sweep.Bool", false, "sweep target"};
 CVar<String> CVarTestConcurrentStringA{"Test.Concurrent.StringA", "initial", "concurrent string A"};
 CVar<String> CVarTestConcurrentStringB{"Test.Concurrent.StringB", "initial", "concurrent string B"};
 
-/// @brief Find one entry of type T by dotted name through the ForEach traversal.
-template <CVarValue T>
-[[nodiscard]] auto FindEntry(StringView Name) -> const CVarEntry<T>* {
-    const CVarEntry<T>* Found = nullptr;
-    CVarManager::Get().ForEach<T>([&](const StringView EntryName, const CVarEntry<T>& Entry) -> void {
-        if (EntryName == Name)
-            Found = &Entry;
-    });
-    return Found;
-}
-
 /// @brief Read one recorded registration error by substring.
 [[nodiscard]] auto HasRegistrationError(StringView Fragment) -> bool {
     return std::ranges::any_of(CVarManager::Get().RegistrationErrors(),
                                [Fragment](const String& Error) -> bool { return Error.contains(Fragment); });
 }
 
-TEST(CVarTest, ForEachVisitsEveryRegisteredEntryOfAStorageType) {
+TEST(CVarTest, ForEachEntryVisitsEveryRegisteredEntry) {
     std::set<String> Names = {};
-    CVarManager::Get().ForEach<Int32>(
-        [&](const StringView Name, const CVarEntry<Int32>&) -> void { Names.emplace(String{Name}); });
+    CVarManager::Get().ForEachEntry([&](const StringView Name, const EntryBase& Entry) -> void {
+        Names.emplace(String{Name});
+        static_cast<void>(Entry);
+    });
     EXPECT_TRUE(Names.contains("Test.Int"));
     EXPECT_TRUE(Names.contains("Test.Options.Level"));
-    EXPECT_FALSE(Names.contains("Test.Checkbox"));
-
-    const auto* Entry = FindEntry<Int32>("Test.Int");
-    ASSERT_NE(Entry, nullptr);
-    EXPECT_EQ(Entry->Description, "test int");
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*Entry), 42);
-    EXPECT_EQ(Entry->Timing, CVarTiming::Runtime);
-    EXPECT_TRUE(Entry->Options.empty());
+    EXPECT_TRUE(Names.contains("Test.Checkbox"));
+    EXPECT_TRUE(Names.contains("Test.Enum.Mode"));
+    EXPECT_FALSE(Names.contains("Test.DoesNotExist"));
 }
 
-TEST(CVarTest, EntriesCarryDeclaredOptionsInRegistrationOrder) {
-    const auto* StringEntry = FindEntry<String>(CVarTestOptions.Name());
+TEST(CVarTest, OptionBearersExposeTheirOptionsThroughTheErasedInterface) {
+    const EntryBase* StringEntry = nullptr;
+    const EntryBase* EnumEntry   = nullptr;
+    CVarManager::Get().ForEachEntry([&](const StringView Name, EntryBase& Entry) -> void {
+        if (Name == CVarTestOptions.Name())
+            StringEntry = &Entry;
+        if (Name == CVarTestEnum.Name())
+            EnumEntry = &Entry;
+    });
     ASSERT_NE(StringEntry, nullptr);
-    EXPECT_EQ(StringEntry->Options, std::vector<String>({"Safe", "Fast"}));
+    EXPECT_EQ(StringEntry->OptionNames(), std::vector<String>({"Safe", "Fast"}));
 
-    const auto* IntEntry = FindEntry<Int32>(CVarTestIntOptions.Name());
-    ASSERT_NE(IntEntry, nullptr);
-    EXPECT_EQ(IntEntry->Options, std::vector<Int32>({1, 2, 3}));
+    ASSERT_NE(EnumEntry, nullptr);
+    EXPECT_EQ(EnumEntry->OptionNames(), std::vector<String>({"Safe", "Fast"}));
 }
 
 TEST(CVarTest, RejectedRegistrationsLeaveNamesUnregisteredAndHandlesInert) {
@@ -151,12 +143,6 @@ TEST(CVarTest, ConcurrentStringReadsAndWritesPreserveWholeValues) {
             if ((HandleValue != First && HandleValue != Second) || !FoundValue ||
                 (*FoundValue != First && *FoundValue != Second))
                 IsValid.store(false);
-            CVarManager::Get().ForEach<String>([&](const StringView Name, const CVarEntry<String>& Entry) -> void {
-                if (Name != CVarTestConcurrentStringA.Name() && Name != CVarTestConcurrentStringB.Name())
-                    return;
-                if (const auto Value = CVarManager::Get().LoadEntry(Entry); Value != First && Value != Second)
-                    IsValid.store(false);
-            });
         }
         IsFinished.store(true);
     }
@@ -267,11 +253,6 @@ TEST(CVarTest, NumericOptionsRejectInvalidValuesOnEveryWritePath) {
 
 TEST(CVarTest, EnumValuedCVarRoundTripsTypedValues) {
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Safe);
-
-    const auto* Record = FindEntry<TestCVarMode>(CVarTestEnum.Name());
-    ASSERT_NE(Record, nullptr);
-    EXPECT_EQ(CVarManager::Get().LoadEntry(*Record), TestCVarMode::Safe);
-    EXPECT_EQ(Record->Options, std::vector<TestCVarMode>({TestCVarMode::Safe, TestCVarMode::Fast}));
 
     CVarTestEnum.Set(TestCVarMode::Fast);
     EXPECT_EQ(CVarTestEnum.Get(), TestCVarMode::Fast);

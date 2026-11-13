@@ -10,15 +10,12 @@ import std;
 
 namespace SoulEngine {
 
-/// @brief One editable setting: the dotted name plus the registry entry
-///        backing it.  Bool points at a typed entry; General points at the
-///        type-erased entry of an option-bearing non-bool CVar.  Values are
-///        read through the entry every frame, so the panel never shows a
-///        stale snapshot.
+/// @brief One editable setting: the dotted name plus its type-erased
+///        registry entry.  Values are read through the entry every frame,
+///        so the panel never shows a stale snapshot.
 struct SettingView {
-    StringView       Name;
-    CVarEntry<bool>* Bool    = nullptr;
-    EntryBase*       General = nullptr;
+    StringView Name;
+    EntryBase* Entry = nullptr;
 };
 
 [[nodiscard]] auto GetSettingLeaf(StringView Name) -> String {
@@ -31,74 +28,57 @@ struct SettingView {
 ///        references stay valid across frames.
 [[nodiscard]] auto CollectSettings() -> std::vector<SettingView> {
     std::vector<SettingView> Result = {};
-    CVarManager::Get().ForEach<bool>([&](const StringView Name, CVarEntry<bool>& Entry) -> void {
-        Result.push_back({.Name = Name, .Bool = &Entry, .General = nullptr});
-    });
     CVarManager::Get().ForEachEntry([&](const StringView Name, EntryBase& Entry) -> void {
-        if (!Entry.OptionNames().empty())
-            Result.push_back({.Name = Name, .Bool = nullptr, .General = &Entry});
+        if (Entry.TypeId() == CVarTypeId<bool>() || !Entry.OptionNames().empty())
+            Result.push_back({.Name = Name, .Entry = &Entry});
     });
     std::ranges::sort(Result, {}, &SettingView::Name);
     return Result;
 }
 
-/// @brief Shared metadata tooltip for any setting; bool settings draw from
-///        the typed entry, option-bearing ones from the type-erased entry.
-auto DrawSettingTooltip(StringView Name, StringView Description, CVarTiming Timing) -> void {
+/// @brief Shared metadata tooltip for any setting.
+auto DrawSettingMetadata(StringView Name, const EntryBase& Entry) -> void {
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(String{Name}.c_str());
-        ImGui::TextUnformatted(String{Description}.c_str());
+        ImGui::TextUnformatted(String{Entry.Description()}.c_str());
         ImGui::EndTooltip();
     }
-    if (Timing == CVarTiming::Startup) {
+    if (Entry.Timing() == CVarTiming::Startup) {
         ImGui::SameLine();
         ImGui::TextUnformatted("(requires restart)");
     }
 }
 
-auto DrawSettingMetadata(StringView Name, const CVarEntry<bool>& Entry) -> void {
-    DrawSettingTooltip(Name, Entry.Description, Entry.Timing);
-}
-
-auto DrawSettingMetadata(StringView Name, const EntryBase& Entry) -> void {
-    DrawSettingTooltip(Name, Entry.Description(), Entry.Timing());
-}
-
-auto DrawBooleanSetting(const SettingView& Setting) -> void {
-    const auto Leaf  = GetSettingLeaf(Setting.Name);
-    auto       Value = CVarManager::Get().LoadEntry(*Setting.Bool);
-    ImGui::PushID(static_cast<const void*>(Setting.Bool));
+auto DrawBooleanSetting(StringView Name, const EntryBase& Entry) -> void {
+    const auto Leaf  = GetSettingLeaf(Name);
+    auto       Value = CVarManager::Get().Find<bool>(Name).value_or(false);
     if (ImGui::Checkbox(Leaf.c_str(), &Value))
-        CVarManager::Get().SetByName<bool>(Setting.Name, Value);
-    ImGui::PopID();
+        CVarManager::Get().SetByName<bool>(Name, Value);
 }
 
-auto DrawOptionSetting(const SettingView& Setting) -> void {
-    const auto Leaf    = GetSettingLeaf(Setting.Name);
-    const auto Current = Setting.General->LoadAsString();
-    ImGui::PushID(static_cast<const void*>(Setting.General));
+auto DrawOptionSetting(StringView Name, EntryBase& Entry) -> void {
+    const auto Leaf    = GetSettingLeaf(Name);
+    const auto Current = Entry.LoadAsString();
     if (ImGui::BeginCombo(Leaf.c_str(), Current.c_str())) {
-        for (const auto& Option : Setting.General->OptionNames()) {
+        for (const auto& Option : Entry.OptionNames()) {
             const bool IsSelected = Option == Current;
             if (ImGui::Selectable(Option.c_str(), IsSelected))
-                static_cast<void>(Setting.General->ApplyFromString(Option));
+                static_cast<void>(Entry.ApplyFromString(Option));
             if (IsSelected)
                 ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
-    ImGui::PopID();
 }
 
-auto DrawSetting(const SettingView& Setting) -> void {
-    if (Setting.Bool != nullptr) {
-        DrawBooleanSetting(Setting);
-        DrawSettingMetadata(Setting.Name, *Setting.Bool);
-    } else {
-        DrawOptionSetting(Setting);
-        DrawSettingMetadata(Setting.Name, *Setting.General);
-    }
+auto DrawSetting(SettingView& Setting) -> void {
+    auto& Entry = *Setting.Entry;
+    if (Entry.TypeId() == CVarTypeId<bool>())
+        DrawBooleanSetting(Setting.Name, Entry);
+    else
+        DrawOptionSetting(Setting.Name, Entry);
+    DrawSettingMetadata(Setting.Name, Entry);
 }
 
 auto RegisterSettingsPanel() -> void {
@@ -106,9 +86,9 @@ auto RegisterSettingsPanel() -> void {
         bool IsShowing = UIManager::Get().IsUIShowing("Settings");
         ImGui::SetNextWindowSize(ImVec2(680.0F, 460.0F), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Settings", &IsShowing)) {
-            const auto       Settings   = CollectSettings();
+            auto             Settings   = CollectSettings();
             std::set<String> Categories = {};
-            for (const auto& Setting : Settings) {
+            for (auto& Setting : Settings) {
                 Categories.emplace(String{Setting.Name.substr(0, Setting.Name.find('.'))});
             }
             if (!Categories.contains(SelectedCategory) && !Categories.empty())
@@ -127,8 +107,8 @@ auto RegisterSettingsPanel() -> void {
                 ImGui::EndChild();
                 ImGui::SameLine();
                 if (ImGui::BeginChild("Options", ImVec2(0.0F, 0.0F))) {
-                    std::map<String, std::vector<const SettingView*>> Groups = {};
-                    for (const auto& Setting : Settings) {
+                    std::map<String, std::vector<SettingView*>> Groups = {};
+                    for (auto& Setting : Settings) {
                         const auto FirstDot = Setting.Name.find('.');
                         if (Setting.Name.substr(0, FirstDot) != SelectedCategory)
                             continue;
@@ -143,7 +123,7 @@ auto RegisterSettingsPanel() -> void {
                     }
                     for (const auto& [Group, Entries] : Groups) {
                         if (ImGui::CollapsingHeader(Group.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-                            for (const auto* Setting : Entries)
+                            for (auto* Setting : Entries)
                                 DrawSetting(*Setting);
                         }
                     }

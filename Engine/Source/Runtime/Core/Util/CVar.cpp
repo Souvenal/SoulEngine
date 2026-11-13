@@ -6,8 +6,6 @@ module Core.Util.CVar;
 import Core.Util.Logging;
 import std;
 
-import magic_enum;
-
 namespace SoulEngine {
 
 auto CVarManager::LoadConfig(const Path& FilePath) -> std::expected<void, ErrorMessage> {
