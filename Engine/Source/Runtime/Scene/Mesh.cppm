@@ -74,17 +74,17 @@ export struct GeometryRecord {
     /// @brief Whether the requested resources are usable on the GPU: every
     /// required buffer ref Ready (= allocated, device address bakable; the bytes land in the carrying frame's
     /// frame-start upload batch); with NeedBLAS, the BLAS allocation ref Ready as well. Absent tangent or
-    /// texcoord streams do not block readiness. Does NOT track the deferred BLAS build (storage materializes
-    /// at the frame-start AS phase).
-    [[nodiscard]] auto IsReadyOnGpu(bool NeedBLAS) const -> bool {
+    /// texcoord streams do not block readiness unless VertexInput is requested. Does NOT track the deferred
+    /// BLAS build (storage materializes at the frame-start AS phase).
+    [[nodiscard]] auto IsReadyOnGpu(bool NeedBLAS, bool NeedVertexInput = false) const -> bool {
         if (!BufferUploadRequested)
             return false;
         const auto IsReady = [](const auto& Ref) { return Ref.TryGet() != nullptr; };
         if (!IsReady(PositionBuffer) || !IsReady(NormalBuffer) || !IsReady(IndexBuffer))
             return false;
-        if (HasTangents && !IsReady(TangentBuffer))
+        if ((HasTangents || NeedVertexInput) && !IsReady(TangentBuffer))
             return false;
-        if (HasUV0 && !IsReady(TexCoordBuffer))
+        if ((HasUV0 || NeedVertexInput) && !IsReady(TexCoordBuffer))
             return false;
         if (NeedBLAS && (!BlasRequested || !IsReady(Blas)))
             return false;
@@ -114,8 +114,8 @@ export struct GeometryRecord {
             .BoundingSphere  = LocalBoundingSphere,
             .PositionAddress = PositionBuffer ? PositionBuffer->GetDeviceAddress() : 0,
             .NormalAddress   = NormalBuffer ? NormalBuffer->GetDeviceAddress() : 0,
-            .TangentAddress  = TangentBuffer ? TangentBuffer->GetDeviceAddress() : 0,
-            .TexCoordAddress = TexCoordBuffer ? TexCoordBuffer->GetDeviceAddress() : 0,
+            .TangentAddress  = HasTangents && TangentBuffer ? TangentBuffer->GetDeviceAddress() : 0,
+            .TexCoordAddress = HasUV0 && TexCoordBuffer ? TexCoordBuffer->GetDeviceAddress() : 0,
             .IndexAddress    = IndexBuffer ? IndexBuffer->GetDeviceAddress() : 0,
         };
     }

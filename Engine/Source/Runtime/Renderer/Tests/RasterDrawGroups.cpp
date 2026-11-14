@@ -68,6 +68,26 @@ class MockRasterBuffer final : public RHIBuffer {
     return Result;
 }
 
+TEST(RasterGeometrySubmission, ReadsRuntimeCVarAndRejectsInvalidValues) {
+    constexpr StringView CVarName{"Render.Raster.GeometrySubmissionPath"};
+    const auto           Original = CVarManager::Get().Find<RasterGeometrySubmissionPath>(CVarName);
+    ASSERT_TRUE(Original.has_value());
+    struct RestoreCVar {
+        RasterGeometrySubmissionPath Value;
+        ~RestoreCVar() {
+            CVarManager::Get().SetByName<RasterGeometrySubmissionPath>("Render.Raster.GeometrySubmissionPath", Value);
+        }
+    } Restore{*Original};
+
+    EXPECT_EQ(GetRasterGeometrySubmissionPath(), RasterGeometrySubmissionPath::VertexPulling);
+    ASSERT_TRUE(CVarManager::Get().SetByName<RasterGeometrySubmissionPath>(CVarName,
+                                                                           RasterGeometrySubmissionPath::VertexInput));
+    EXPECT_EQ(GetRasterGeometrySubmissionPath(), RasterGeometrySubmissionPath::VertexInput);
+    EXPECT_FALSE(CVarManager::Get().SetByName<RasterGeometrySubmissionPath>(
+        CVarName, static_cast<RasterGeometrySubmissionPath>(99)));
+    EXPECT_EQ(GetRasterGeometrySubmissionPath(), RasterGeometrySubmissionPath::VertexInput);
+}
+
 TEST(RasterDrawGroups, SceneGpuDataKeepsGeometryRefsAlignedWithCanonicalInstanceOrder) {
     RHIDeferredDeletionQueue DeletionQueue;
     GDeferredDeletionQueue = &DeletionQueue;
