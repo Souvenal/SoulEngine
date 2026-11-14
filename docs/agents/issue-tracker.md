@@ -16,7 +16,7 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Recover Complete Issue Context
 
-The [development workflow](../development/agent-workflow.md#issue-context-recovery) owns reading order, conflict handling, and handoff placement. Use these GitHub operations to retrieve its inputs; run them from the repository clone.
+The [agent workflow](agent-workflow.md#issue-context-recovery) owns reading order, conflict handling, and handoff placement. Use these GitHub operations to retrieve its inputs; run them from the repository clone.
 
 - **Body and parent:** use `gh api repos/{owner}/{repo}/issues/<number>`. Preserve `body`, `state`, `updated_at`, `parent_issue_url`, and `issue_dependencies_summary`. Follow each `parent_issue_url` until the root, retaining intermediate capability issues. If the server lacks parent support, follow the explicit Parent / Part of reference; report ambiguous or inaccessible ancestry.
 - **Every comment:** use `gh api --paginate 'repos/{owner}/{repo}/issues/<number>/comments?per_page=100' --jq '.[] | {html_url,user:.user.login,created_at,updated_at,body}'` for each issue in the chain. Preserve author, timestamps, and URL so decisions and supersession links can be traced. Do not infer completeness from a partial tool output; save large output and read all chunks before claiming recovery.

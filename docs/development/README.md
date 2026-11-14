@@ -7,4 +7,5 @@ This section is distinct from [`docs/adr/`](../adr/), which is reserved for code
 ## Documents
 
 - [Branch and Pull Request Model](branch-model.md) — independent changes, dependent capability stacks, direct-parent review, restacking, merge-queue validation, and squash integration
-- [Agent Development Workflow](agent-workflow.md) — issue-first scope, isolated worktrees, review handoff, approval gates, and cleanup for agent-initiated changes
+- [Development Workflow](dev-workflow.md) — issue-first scope, isolated worktrees, review handoff, approval gates, and cleanup for every repository change, human or agent
+- [Agent Workflow](../agents/agent-workflow.md) — agent-only behavior: issue-context recovery, session handoff, subagent role registry, and dispatch contract

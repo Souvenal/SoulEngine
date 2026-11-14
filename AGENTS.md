@@ -4,9 +4,9 @@ Guidance for AI agents on this repo.
 
 ## Development Workflow
 
-Never edit files in the primary worktree. Every agent-initiated change — code, documentation, comments, glossary, ADR, CI, configuration — starts with a GitHub issue and a dedicated worktree; this includes writes produced during design-discussion sessions. Independent changes start from fetched `origin/main`; maintainer-approved dependent capability leaves start from their exact recorded parent or base assembly under [`docs/development/branch-model.md`](docs/development/branch-model.md#dependent-capability-stacks). Follow [`docs/development/agent-workflow.md`](docs/development/agent-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
+Never edit files in the primary worktree. Every agent-initiated change — code, documentation, comments, glossary, ADR, CI, configuration — starts with a GitHub issue and a dedicated worktree; this includes writes produced during design-discussion sessions. Independent changes start from fetched `origin/main`; maintainer-approved dependent capability leaves start from their exact recorded parent or base assembly under [`docs/development/branch-model.md`](docs/development/branch-model.md#dependent-capability-stacks). Follow [`docs/development/dev-workflow.md`](docs/development/dev-workflow.md) for issue-first scope discussion, dedicated worktrees, review handoff, maintainer approval, integration, and cleanup.
 
-**Ticket work:** before planning, implementing, or resuming an issue, follow [issue-context recovery](docs/development/agent-workflow.md#issue-context-recovery). **Session close:** `/handoff` or a request to wrap up invokes [session handoff](docs/development/agent-workflow.md#session-handoff).
+**Ticket work:** before planning, implementing, or resuming an issue, follow [issue-context recovery](docs/agents/agent-workflow.md#issue-context-recovery). **Session close:** `/handoff` or a request to wrap up invokes [session handoff](docs/agents/agent-workflow.md#session-handoff). **Delegation:** before dispatching subagents, follow the [subagent role registry](docs/agents/agent-workflow.md#subagent-role-registry).
 
 ## Build & Run
 
