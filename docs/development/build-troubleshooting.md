@@ -26,8 +26,8 @@ Do NOT keep digging through linker logs while configuration is broken — fix co
 
 **Repair (escalating, stop at the first one that works).**
 
-1. Rebuild the affected targets narrowly: `rtk err xmake -y <TargetA> <TargetB>`.
-2. Regenerate the scan of the owning module: `rtk err xmake -y -r <Module>`.
+1. Rebuild the affected targets narrowly: `xmake -y <TargetA> <TargetB>`.
+2. Regenerate the scan of the owning module: `xmake -y -r <Module>`.
 3. Reconfigure: `xmake f -c -y`, then rebuild.
 
 ## `xmake clean --all` is not a troubleshooting tool
