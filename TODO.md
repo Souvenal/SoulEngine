@@ -7,16 +7,16 @@
   - Reproduce the standalone `XmakeMinizipRepro` project from a clean configuration:
 
     ```powershell
-    rtk err xmake f -c -m debug -y
-    rtk err xmake -y
+    xmake f -c -m debug -y
+    xmake -y
     ```
 
   - Then verify SoulEngine:
 
     ```powershell
-    rtk err xmake f -c -m debug -y
-    rtk err xmake -y
-    rtk err xmake test
+    xmake f -c -m debug -y
+    xmake -y
+    xmake test
     ```
 
   - Record whether `minizip` installs successfully and whether the generated CMake/Ninja link command preserves LLVM paths containing spaces.
