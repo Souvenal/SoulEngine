@@ -339,9 +339,12 @@ export class RenderGraphBuilder {
         else if constexpr (std::is_base_of_v<IRHITransferPass, TPass>)
             Node.StageClass = RHIPassType::Transfer;
 
-        if constexpr (requires { TPass::BuildPipelineRequest(); }) {
-            Node.HasPipeline = true;
-            Node.PipelineKey = PipelineKeyOf<TPass>();
+        if constexpr (PipelineRequestProvider<TPass>) {
+            Node.HasPipeline  = true;
+            Node.PipelineName = String(TPass::Name);
+            // Lazy registration under the type-level name: every instance of one pass type shares one
+            // pipeline, and a pass type a frame never uses holds no registry entry.
+            PipelineRegistry::Get().Register(TPass::Name, TPass::BuildPipelineRequest());
         }
 
         // The pass is born here and owns the Parameter from this point on; the view pointers collected below
@@ -491,12 +494,12 @@ export class RenderGraphBuilder {
             if (!Required[I] || Pruned[I] || !m_Passes[I].HasPipeline)
                 continue;
             auto& Registry = PipelineRegistry::Get();
-            Registry.EnsureRequestStarted(m_Passes[I].PipelineKey);
-            switch (Registry.GetState(m_Passes[I].PipelineKey)) {
+            Registry.EnsureRequestStarted(m_Passes[I].PipelineName);
+            switch (Registry.GetState(m_Passes[I].PipelineName)) {
             case RGPipelineState::Ready:
                 break;
             case RGPipelineState::Failed: {
-                auto Detail = Registry.GetError(m_Passes[I].PipelineKey);
+                auto Detail = Registry.GetError(m_Passes[I].PipelineName);
                 return std::unexpected(
                     (Detail ? std::move(*Detail) : ErrorMessage("pipeline compile failed"))
                         .Append(Format("RenderGraph: pipeline for pass '{}' failed to compile", m_Passes[I].Name)));
@@ -684,15 +687,15 @@ export class RenderGraphBuilder {
                 switch (Node.StageClass) {
                 case RHIPassType::Graphics:
                     Bound = Bind(static_cast<IRHIGraphicsPass*>(Node.Pass.get()),
-                                 Registry.GetReadyGraphics(Node.PipelineKey));
+                                 Registry.GetReadyGraphics(Node.PipelineName));
                     break;
                 case RHIPassType::Compute:
                     Bound = Bind(static_cast<IRHIComputePass*>(Node.Pass.get()),
-                                 Registry.GetReadyCompute(Node.PipelineKey));
+                                 Registry.GetReadyCompute(Node.PipelineName));
                     break;
                 case RHIPassType::RayTracing:
                     Bound = Bind(static_cast<IRHIRayTracingPass*>(Node.Pass.get()),
-                                 Registry.GetReadyRayTracing(Node.PipelineKey));
+                                 Registry.GetReadyRayTracing(Node.PipelineName));
                     break;
                 default:
                     break;

@@ -30,7 +30,7 @@ export class SelectionOutlinePass final : public IRHIGraphicsPass {
         return Name;
     }
 
-    /// Static pipeline descriptor for PipelineRegistry::Register<SelectionOutlinePass>().
+    /// @brief Static pipeline request; AddPass registers it under the pass type's Name.
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionOutline.slang";
         return GraphicsPipelineRequest{

@@ -24,7 +24,7 @@ export class DeferredLightingPass final : public IRHIGraphicsPass {
         return Name;
     }
 
-    /// Static pipeline descriptor for PipelineRegistry::Register<DeferredLightingPass>().
+    /// @brief Static pipeline request; AddPass registers it under the pass type's Name.
     [[nodiscard]] static auto BuildPipelineRequest() -> GraphicsPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Raster" / "DeferredLighting.slang";
         return GraphicsPipelineRequest{

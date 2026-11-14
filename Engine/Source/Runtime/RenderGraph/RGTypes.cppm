@@ -138,10 +138,10 @@ export struct RGPassNode {
     /// @brief Pass indices that must execute before this one (last-writer chain).
     std::vector<Uint32> Dependencies = {};
 
-    /// @brief PipelineRegistry key when HasPipeline (type-hash of TPass).
+    /// @brief PipelineRegistry name when HasPipeline (the pass type's Name).
     ///
-    /// The graph is type-erased after AddPass, so readiness queries go through this key.
-    String PipelineKey = {};
+    /// The graph is type-erased after AddPass, so readiness queries go through this name.
+    String PipelineName = {};
 };
 
 /// @brief Buffer-kind payload of a resource entry.

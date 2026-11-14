@@ -36,9 +36,6 @@ RayTracingRenderer::~RayTracingRenderer() {
 }
 
 [[nodiscard]] auto RayTracingRenderer::OnAttach() -> std::expected<void, ErrorMessage> {
-    auto& Registry = PipelineRegistry::Get();
-    Registry.Register<PathTracingPass>();
-
     auto SamplerLinear = RHIRenderDevice::Get().CreateSampler("Renderer/RayTracing/Sampler/Linear",
                                                               {.Profile = RHISamplerProfile::LinearRepeat});
     if (!SamplerLinear)
