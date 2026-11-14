@@ -1,6 +1,6 @@
 # Development Workflow
 
-This workflow applies to every repository change, by human or agent, regardless of size or file type: code, documentation, comments, CI, configuration, and maintenance edits. Agent-only behavior — issue-context recovery, session handoff, and subagent delegation — is owned by [agent-workflow.md](../agents/agent-workflow.md).
+This workflow applies to every repository change, by human or agent, regardless of size or file type: code, documentation, comments, CI, configuration, and maintenance edits.
 
 ## Before Implementation
 
