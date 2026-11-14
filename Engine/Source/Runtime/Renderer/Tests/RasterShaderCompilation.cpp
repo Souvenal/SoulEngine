@@ -88,6 +88,38 @@ TEST_F(RasterShaderCompilationTest, VertexInputEntryReflectsFourAttributes) {
     }
 }
 
+TEST_F(RasterShaderCompilationTest, SelectionVertexInputEntryReflectsPositionUvAndSharedDrawResources) {
+    const auto& ShaderDir = EnginePaths::Get().EngineShadersDirPath();
+    auto Result = CompileGraphics(ShaderDir / "Editor" / "SelectionMask.slang", "vertVertexInputMain", "fragMain");
+    ASSERT_TRUE(Result.has_value()) << Result.error().ToString();
+    ASSERT_EQ(Result->Reflection.VertexInputs.size(), 2u);
+
+    const std::array<StringView, 2> ExpectedSemantics{"POSITION", "TEXCOORD"};
+    const std::array<Uint32, 2>     ExpectedColumns{3, 2};
+    for (std::size_t Index = 0; Index < ExpectedSemantics.size(); ++Index) {
+        const auto& Input = Result->Reflection.VertexInputs[Index];
+        EXPECT_EQ(Input.SemanticName, ExpectedSemantics[Index]);
+        EXPECT_EQ(Input.SemanticIndex, 0u);
+        ASSERT_TRUE(Input.Location.has_value());
+        EXPECT_EQ(*Input.Location, Index);
+        EXPECT_EQ(Input.ValueType.ScalarType, ShaderScalarType::Float32);
+        EXPECT_EQ(Input.ValueType.RowCount, 1u);
+        EXPECT_EQ(Input.ValueType.ColumnCount, ExpectedColumns[Index]);
+    }
+
+    bool HasInstances     = false;
+    bool HasMaterials     = false;
+    bool HasLinearSampler = false;
+    for (const auto& Binding : Result->Reflection.Bindings) {
+        HasInstances     |= Binding.ParameterPath == "g_selectionMaskDraw.instances";
+        HasMaterials     |= Binding.ParameterPath == "g_selectionMaskDraw.materials";
+        HasLinearSampler |= Binding.ParameterPath == "g_selectionMaskFrameView.linearSampler";
+    }
+    EXPECT_TRUE(HasInstances);
+    EXPECT_TRUE(HasMaterials);
+    EXPECT_TRUE(HasLinearSampler);
+}
+
 TEST_F(RasterShaderCompilationTest, VertexPullingUsesFixedFunctionIndexAndPullsOnlyAttributes) {
     auto Consumer =
         CompileGraphics(m_TestSourceDir / "Slang" / "VertexPullingLocalIndexConsumer.slang", "vertMain", "fragMain");
