@@ -55,18 +55,9 @@ RasterRenderer::~RasterRenderer() {
 }
 
 [[nodiscard]] auto RasterRenderer::OnAttach() -> std::expected<void, ErrorMessage> {
-    // Typed registration: descriptors live on each graph pass type via BuildPipelineRequest(); registry
-    // keys are entt::type_hash<TPass>. The deferred lighting pass has two runtime forms (direct-present
-    // and outline color-write); only the form present in a frame's graph is Ensured by that frame's
-    // Compile().
-    auto& Registry = PipelineRegistry::Get();
-    Registry.Register<CullingPass>();
-    Registry.Register<SelectionFilterPass>();
-    Registry.Register<GeometryPass>();
-    Registry.Register<DeferredLightingPass>();
-    Registry.Register<SelectionMaskPass>();
-    Registry.Register<SelectionOutlinePass>();
-
+    // Pipelines register lazily: each pass type's first AddPass registers its BuildPipelineRequest() under
+    // the type name. The deferred lighting pass has two runtime forms (direct-present and outline
+    // color-write); only the form present in a frame's graph is Ensured by that frame's Compile().
     auto SamplerLinear = RHIRenderDevice::Get().CreateSampler("Renderer/Raster/Sampler/Linear",
                                                               {.Profile = RHISamplerProfile::LinearRepeat});
     if (!SamplerLinear)

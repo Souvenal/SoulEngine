@@ -22,7 +22,7 @@ export class SelectionFilterPass final : public IRHIComputePass {
         return Name;
     }
 
-    /// Static pipeline descriptor for PipelineRegistry::Register<SelectionFilterPass>().
+    /// @brief Static pipeline request; AddPass registers it under the pass type's Name.
     [[nodiscard]] static auto BuildPipelineRequest() -> ComputePipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "Editor" / "SelectionFilter.slang";
         return ComputePipelineRequest{

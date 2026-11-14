@@ -30,7 +30,7 @@ export class PathTracingPass final : public IRHIRayTracingPass {
         return Name;
     }
 
-    /// Static pipeline descriptor for PipelineRegistry::Register<PathTracingPass>().
+    /// @brief Static pipeline request; AddPass registers it under the pass type's Name.
     [[nodiscard]] static auto BuildPipelineRequest() -> RayTracingPipelineRequest {
         const auto ShaderPath = EnginePaths::Get().EngineShadersDirPath() / "RayTracing" / "RayTracing.slang";
         return RayTracingPipelineRequest{

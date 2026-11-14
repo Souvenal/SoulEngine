@@ -1,12 +1,11 @@
 /// @file   PipelineRegistry.cpp
-/// @brief  gtest coverage for the PipelineRegistry (type-hash keys +
-///         Register<TPass>) and the graph's pipeline prune: Pending pipelines
-///         drop their pass chain, Failed pipelines are hard frame errors.
-///         All tests are device-free: they never publish a native RHI
+/// @brief  gtest coverage for the PipelineRegistry (pass-name keys +
+///         AddPass auto-registration) and the graph's pipeline prune: Pending
+///         pipelines drop their pass chain, Failed pipelines are hard frame
+///         errors. All tests are device-free: they never publish a native RHI
 ///         payload, so no RHIRenderDevice is required (empty RHIRef payloads
 ///         release through the null-object early return).
 
-#include <entt/entt.hpp>
 #include <gtest/gtest.h>
 
 import RenderGraph;
@@ -111,24 +110,24 @@ struct ConsumerPass final : IRHIGraphicsPass {
 };
 
 TEST_F(PipelineRegistryTest, RegisterIsIdempotentAndUnknownKeysReportUnknown) {
-    PipelineRegistry::Get().RegisterGraphics("GeometryPass", GraphicsPipelineRequest{});
-    PipelineRegistry::Get().RegisterGraphics("GeometryPass", GraphicsPipelineRequest{}); // same key + desc: no-op
+    PipelineRegistry::Get().Register("GeometryPass", GraphicsPipelineRequest{});
+    PipelineRegistry::Get().Register("GeometryPass", GraphicsPipelineRequest{}); // same name + desc: no-op
 
     EXPECT_TRUE(PipelineRegistry::Get().IsRegistered("GeometryPass"));
     EXPECT_FALSE(PipelineRegistry::Get().IsRegistered("NeverRegisteredPass"));
     EXPECT_EQ(PipelineRegistry::Get().GetState("NeverRegisteredPass"), RGPipelineState::Unknown);
 }
 
-TEST_F(PipelineRegistryTest, TypedRegisterKeysByPassType) {
-    PipelineRegistry::Get().Register<AsyncGraphicsPass>();
-    PipelineRegistry::Get().Register<AsyncComputePass>();
+TEST_F(PipelineRegistryTest, RegisterKeysByPassName) {
+    PipelineRegistry::Get().Register(AsyncGraphicsPass::Name, AsyncGraphicsPass::BuildPipelineRequest());
+    PipelineRegistry::Get().Register(AsyncComputePass::Name, AsyncComputePass::BuildPipelineRequest());
 
-    EXPECT_TRUE(PipelineRegistry::Get().IsRegistered(PipelineKeyOf<AsyncGraphicsPass>()));
-    EXPECT_TRUE(PipelineRegistry::Get().IsRegistered(PipelineKeyOf<AsyncComputePass>()));
+    EXPECT_TRUE(PipelineRegistry::Get().IsRegistered(AsyncGraphicsPass::Name));
+    EXPECT_TRUE(PipelineRegistry::Get().IsRegistered(AsyncComputePass::Name));
 }
 
 TEST_F(PipelineRegistryTest, RegisteredButNotStartedMapsToPending) {
-    PipelineRegistry::Get().RegisterCompute("CullingPass", ComputePipelineRequest{});
+    PipelineRegistry::Get().Register("CullingPass", ComputePipelineRequest{});
     EXPECT_EQ(PipelineRegistry::Get().GetState("CullingPass"), RGPipelineState::Pending);
     EXPECT_TRUE(PipelineRegistry::Get().IsRegistered("CullingPass"));
 }
@@ -136,7 +135,7 @@ TEST_F(PipelineRegistryTest, RegisteredButNotStartedMapsToPending) {
 TEST_F(PipelineRegistryTest, EnqueueFailureWithStoppedTaskGraphMapsToFailed) {
     // The fixture stopped the TaskGraph: EnsureRequestStarted cannot enqueue the async compile, so the entry
     // fails immediately and carries an error.
-    PipelineRegistry::Get().RegisterGraphics("BrokenPass", GraphicsPipelineRequest{});
+    PipelineRegistry::Get().Register("BrokenPass", GraphicsPipelineRequest{});
     EXPECT_EQ(PipelineRegistry::Get().GetState("BrokenPass"), RGPipelineState::Pending);
 
     PipelineRegistry::Get().EnsureRequestStarted("BrokenPass");
@@ -149,7 +148,7 @@ TEST_F(PipelineRegistryTest, LazyStartIsIdempotentWhilePendingWithZeroWorkers) {
     // Pending. A second Ensure is a no-op.
     TaskGraph::Get().Init(0);
 
-    PipelineRegistry::Get().RegisterCompute("LazyPass", ComputePipelineRequest{});
+    PipelineRegistry::Get().Register("LazyPass", ComputePipelineRequest{});
     PipelineRegistry::Get().EnsureRequestStarted("LazyPass");
     EXPECT_EQ(PipelineRegistry::Get().GetState("LazyPass"), RGPipelineState::Pending);
 
@@ -163,11 +162,10 @@ TEST_F(PipelineRegistryTest, PendingPipelineDropsTheSideEffectChainAsAnEmptyFram
     // effect), so dropping it means the frame cannot produce its required output — the whole frame compiles
     // to an empty list.
     TaskGraph::Get().Init(0);
-    PipelineRegistry::Get().Register<AsyncGraphicsPass>();
 
     RenderGraphBuilder Graph;
     const auto         Target = Graph.Import(RHIRef<RHITexture>{});
-    Graph.AddPass<AsyncGraphicsPass>({.Output = Target});
+    Graph.AddPass<AsyncGraphicsPass>({.Output = Target}); // AddPass registers the pipeline lazily
 
     auto List = Graph.Compile();
     ASSERT_TRUE(List);
@@ -178,7 +176,6 @@ TEST_F(PipelineRegistryTest, PendingPipelineCascadesToDependents) {
     // The compute producer is Pending; the graphics consumer depends on its output and is dropped with it.
     // The consumer carries the side effect, so the frame is empty — not an error, the soft-degrade contract.
     TaskGraph::Get().Init(0);
-    PipelineRegistry::Get().Register<AsyncComputePass>();
 
     RenderGraphBuilder Graph;
     const auto         Scratch = Graph.CreateBuffer(
@@ -197,9 +194,9 @@ TEST_F(PipelineRegistryTest, DeadPipelinePassIsPrunedBeforeAnyPipelineLookup) {
     // The pass writes a transient nobody reads: dead code, dropped by the side-effect prune before the
     // pipeline state is ever queried — so even its Failed pipeline cannot fail a frame that never needed the
     // pass.
-    PipelineRegistry::Get().Register<AsyncGraphicsPass>();
-    PipelineRegistry::Get().EnsureRequestStarted(PipelineKeyOf<AsyncGraphicsPass>()); // → Failed (TaskGraph stopped)
-    ASSERT_EQ(PipelineRegistry::Get().GetState(PipelineKeyOf<AsyncGraphicsPass>()), RGPipelineState::Failed);
+    PipelineRegistry::Get().Register(AsyncGraphicsPass::Name, AsyncGraphicsPass::BuildPipelineRequest());
+    PipelineRegistry::Get().EnsureRequestStarted(AsyncGraphicsPass::Name); // → Failed (TaskGraph stopped)
+    ASSERT_EQ(PipelineRegistry::Get().GetState(AsyncGraphicsPass::Name), RGPipelineState::Failed);
 
     RenderGraphBuilder Graph;
     const auto         Scratch = Graph.CreateTexture(
@@ -216,8 +213,6 @@ TEST_F(PipelineRegistryTest, DeadPipelinePassIsPrunedBeforeAnyPipelineLookup) {
 TEST_F(PipelineRegistryTest, FailedPipelineOnARequiredPassIsAFrameError) {
     // The fixture's stopped TaskGraph makes Ensure fail immediately. The pass writes an imported target, so
     // it cannot be pruned: the frame is a hard error and names the pass.
-    PipelineRegistry::Get().Register<AsyncGraphicsPass>();
-
     RenderGraphBuilder Graph;
     const auto         Target = Graph.Import(RHIRef<RHITexture>{});
     Graph.AddPass<AsyncGraphicsPass>({.Output = Target});
