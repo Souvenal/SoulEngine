@@ -37,6 +37,7 @@ auto Editor::Initialize() -> void {
 
     InitializeImGui();
     InitializeUI();
+    m_Lifecycle = EditorLifecycle::Initialized;
 }
 
 auto Editor::BindCommands(CommandDispatcher& Commands) -> std::expected<void, ErrorMessage> {
@@ -45,15 +46,46 @@ auto Editor::BindCommands(CommandDispatcher& Commands) -> std::expected<void, Er
     auto Registered = UIManager::Get().RegisterSettingsCommand(Commands);
     if (!Registered)
         return std::unexpected(Registered.error().Append("Failed to bind Editor commands"));
+    auto State = Commands.Register(
+        CommandDescriptor{.Name             = "editor.state.get",
+                          .IsAgentExposed   = true,
+                          .Phase            = CommandPhase::PostUpdate,
+                          .MaxArgumentBytes = 256,
+                          .MaxResultBytes   = 65536,
+                          .Description      = "Return one bounded baseline Editor state observation",
+                          .Version          = 1,
+                          .Category         = CommandCategory::Observe},
+        [this](CommandContext& Context) -> void {
+            if (!m_IsStateObservationReady || m_StateObservationFrame != Context.GetFrame()) {
+                Context.Fail("observation_frame_mismatch",
+                             "Editor state was not collected for this frame",
+                             CommandJson{{"observationFrame",
+                                          m_IsStateObservationReady ? CommandJson(m_StateObservationFrame)
+                                                                    : CommandJson(nullptr)},
+                                         {"completionFrame", Context.GetFrame()}});
+                return;
+            }
+            Context.SetOutput(m_StateObservation);
+        });
+    if (!State) {
+        Commands.Retire(*Registered);
+        return std::unexpected(State.error().Append("Failed to bind Editor state command"));
+    }
     m_Commands        = &Commands;
     m_SettingsCommand = *Registered;
+    m_StateCommand    = *State;
     return {};
 }
 auto Editor::UnbindCommands() -> void {
-    if (m_Commands)
+    if (m_Commands) {
         m_Commands->Retire(m_SettingsCommand);
-    m_Commands        = nullptr;
-    m_SettingsCommand = 0;
+        m_Commands->Retire(m_StateCommand);
+    }
+    m_Commands                = nullptr;
+    m_SettingsCommand         = 0;
+    m_StateCommand            = 0;
+    m_StateObservation        = nullptr;
+    m_IsStateObservationReady = false;
 }
 auto Editor::BindScene(const Scene& SceneValue) -> void {
     m_Scene = &SceneValue;
@@ -93,6 +125,7 @@ auto Editor::BindPresentation(IWindowSystem* WindowSys, RHIRenderDevice* RenderD
     m_BoundWindowSystem = WindowSys;
     m_BoundRenderDevice = RenderDevice;
     m_EditorWorld.Initialize(*WindowSys);
+    m_Lifecycle = EditorLifecycle::Running;
     return {};
 }
 
@@ -107,6 +140,7 @@ auto Editor::ReleaseRHIResources() -> void {
 }
 
 auto Editor::Shutdown() -> void {
+    m_Lifecycle = EditorLifecycle::Shutdown;
     UnbindCommands();
     if (m_BoundRenderDevice)
         ReleaseRHIResources();
@@ -129,6 +163,45 @@ auto Editor::Tick(Float32 DeltaTime, ImDrawDataSnapshot& Snapshot) -> void {
 
 auto Editor::BuildSnapshot() -> EditorSnapshot {
     return m_EditorWorld.BuildSnapshot();
+}
+
+auto Editor::UpdateStateObservation(Uint64 Frame) -> void {
+    UpdateStateObservation(Frame, m_EditorWorld.BuildSnapshot());
+}
+
+auto Editor::UpdateStateObservation(Uint64 Frame, EditorSnapshot Snapshot) -> void {
+    const ImGuiIO* IO = nullptr;
+    if (m_ImGuiContext) {
+        ImGui::SetCurrentContext(m_ImGuiContext);
+        IO = &ImGui::GetIO();
+    }
+
+    std::vector<String> DesiredPanels;
+    if (IO) {
+        for (const auto& [Name, Entry] : UIManager::Get().GetAll()) {
+            if (Entry.Show)
+                DesiredPanels.push_back(Name);
+        }
+        for (const auto& Panel : m_Panels)
+            DesiredPanels.push_back(Panel.Name);
+    }
+
+    m_StateObservation        = m_StateCollector.Collect(EditorStateSource{
+        .Frame            = Frame,
+        .Lifecycle        = m_Lifecycle,
+        .ApplicationValue = GetCurrentApplication(),
+        .RendererName     = GetCurrentRendererName(),
+        .SceneValue       = m_Scene,
+        .Window           = m_BoundWindowSystem,
+        .IO               = IO,
+        .RenderBackend =
+            m_BoundRenderDevice ? std::optional<RHIBackendType>(m_BoundRenderDevice->GetBackendType()) : std::nullopt,
+        .EditorData    = std::move(Snapshot),
+        .DesiredPanels = std::move(DesiredPanels),
+        .DrawnPanels   = m_DrawnPanels,
+    });
+    m_StateObservationFrame   = Frame;
+    m_IsStateObservationReady = true;
 }
 
 auto Editor::InitializeImGui() -> void {
@@ -205,6 +278,7 @@ auto Editor::BeginFrame(ImDrawDataSnapshot& Snapshot) -> void {
     if (!m_ImGuiContext)
         return;
     ImGui::SetCurrentContext(m_ImGuiContext);
+    m_DrawnPanels.clear();
     {
         std::scoped_lock Lock(m_TextureQueueMutex);
         m_TextureQueue.PreNewFrame();
@@ -234,10 +308,13 @@ auto Editor::BeginFrame(ImDrawDataSnapshot& Snapshot) -> void {
     for (auto& [name, entry] : UIManager::Get().GetAll()) {
         if (entry.Show) {
             entry.Callback();
+            m_DrawnPanels.push_back(name);
         }
     }
-    for (auto& Panel : m_Panels)
+    for (auto& Panel : m_Panels) {
         Panel.Callback();
+        m_DrawnPanels.push_back(Panel.Name);
+    }
     ImGui::Render();
     ImDrawData* DrawData = ImGui::GetDrawData();
     if (!DrawData || !DrawData->Valid)

@@ -52,6 +52,10 @@ export struct CommandOptions {
 export using CommandCompletion = std::function<void(CommandResult)>;
 export class CommandContext {
   public:
+    /// @brief Return the Editor frame executing this command.
+    [[nodiscard]] auto GetFrame() const -> Uint64 {
+        return m_Frame;
+    }
     auto SetOutput(CommandJson Output) -> void {
         m_Output = std::move(Output);
     }
@@ -62,6 +66,7 @@ export class CommandContext {
 
   private:
     friend class CommandDispatcher;
+    Uint64                        m_Frame = 0;
     CommandJson                   m_Output;
     std::optional<CommandFailure> m_Failure;
 };

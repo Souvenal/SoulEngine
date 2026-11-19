@@ -73,6 +73,41 @@ auto EditorCameraSystem::CollectViews() const -> std::vector<EditorViewRecord> {
     return Views;
 }
 
+auto EditorCameraSystem::BuildSnapshot() -> EditorSnapshot {
+    EditorSnapshot Snapshot{.Views = CollectViews()};
+    for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
+        auto& Camera                 = m_Registry.get<EditorCameraComponent>(CameraEntity);
+        Snapshot.PrimaryViewport     = Camera.Viewport;
+        Snapshot.SelectedEntity      = Camera.SelectedEntity;
+        Snapshot.ReadbackEntity      = Camera.ReadbackEntity;
+        Snapshot.ReadbackTarget      = Camera.Readback;
+        Snapshot.ReadbackState       = Camera.ReadbackState;
+        Snapshot.ReadbackReason      = Camera.ReadbackReason;
+        Snapshot.IsReadbackMalformed = Camera.IsReadbackMalformed;
+        Snapshot.IsReadbackPending   = Camera.Readback && Camera.IsReadbackScheduled;
+
+        const auto& Vp = Camera.Viewport;
+        if (ImGui::GetCurrentContext() && Vp.Width > 0 && Vp.Height > 0) {
+            const auto&   IO     = ImGui::GetIO();
+            // Map the mouse position through the camera's Viewport rect. MousePos is in logical ImGui coords
+            // while the viewport is in physical pixels — scale by DisplayFramebufferScale first.
+            const Float32 MouseX = IO.MousePos.x * IO.DisplayFramebufferScale.x;
+            const Float32 MouseY = IO.MousePos.y * IO.DisplayFramebufferScale.y;
+            if (MouseX >= static_cast<Float32>(Vp.X) && MouseY >= static_cast<Float32>(Vp.Y) &&
+                MouseX < static_cast<Float32>(Vp.X + Vp.Width) && MouseY < static_cast<Float32>(Vp.Y + Vp.Height)) {
+                Snapshot.HoverPixel = PixelCoordinate{
+                    .X = (std::min)(static_cast<Uint32>(MouseX - static_cast<Float32>(Vp.X)), Vp.Width - 1),
+                    .Y = (std::min)(static_cast<Uint32>(MouseY - static_cast<Float32>(Vp.Y)), Vp.Height - 1),
+                };
+                Snapshot.IsHovering = true;
+            }
+        }
+        Camera.IsReadbackScheduled = Snapshot.IsHovering && static_cast<bool>(Camera.Readback);
+        break;
+    }
+    return Snapshot;
+}
+
 auto EditorCameraSystem::UpdatePerspective(Float32 DeltaTime) -> void {
     if (!ImGui::GetCurrentContext())
         return;
@@ -118,14 +153,40 @@ auto EditorCameraSystem::UpdateSelection() -> void {
     const auto& IO = ImGui::GetIO();
     for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
         auto& Camera = m_Registry.get<EditorCameraComponent>(CameraEntity);
-        if (Camera.Readback) {
-            const auto Bytes = Camera.Readback->TryRead();
-            if (Bytes.size() == sizeof(Uint32)) {
+        if (!Camera.Readback) {
+            Camera.ReadbackEntity      = std::nullopt;
+            Camera.ReadbackState       = EditorReadbackState::Unavailable;
+            Camera.ReadbackReason      = "readback_unavailable";
+            Camera.IsReadbackScheduled = false;
+            Camera.IsReadbackMalformed = false;
+        } else {
+            Camera.IsReadbackMalformed = false;
+            const auto Bytes           = Camera.Readback->TryRead();
+            if (Bytes.empty()) {
+                if (Camera.ReadbackState != EditorReadbackState::LatestKnown) {
+                    Camera.ReadbackState = EditorReadbackState::Unavailable;
+                    Camera.ReadbackReason =
+                        Camera.IsReadbackScheduled ? "scheduled_readback_incomplete" : "no_completed_readback";
+                } else if (Camera.IsReadbackScheduled) {
+                    Camera.ReadbackReason = "scheduled_readback_incomplete";
+                } else {
+                    Camera.ReadbackReason.clear();
+                }
+            } else if (Bytes.size() != sizeof(Uint32)) {
+                Camera.IsReadbackMalformed = true;
+                Camera.ReadbackState       = Camera.ReadbackState == EditorReadbackState::LatestKnown
+                                                 ? EditorReadbackState::LatestKnown
+                                                 : EditorReadbackState::Malformed;
+                Camera.ReadbackReason      = "malformed_payload";
+            } else {
                 Uint32 EntityId;
                 std::memcpy(&EntityId, Bytes.data(), sizeof(EntityId));
-                Camera.ReadbackEntity = EntityId == GBuffer::BackgroundEntityId
-                                            ? std::nullopt
-                                            : std::optional<entt::entity>{static_cast<entt::entity>(EntityId)};
+                Camera.ReadbackEntity      = EntityId == GBuffer::BackgroundEntityId
+                                                 ? std::nullopt
+                                                 : std::optional<entt::entity>{static_cast<entt::entity>(EntityId)};
+                Camera.IsReadbackMalformed = false;
+                Camera.ReadbackState       = EditorReadbackState::LatestKnown;
+                Camera.ReadbackReason      = Camera.IsReadbackScheduled ? "scheduled_readback_incomplete" : "";
             }
         }
         // The click guard mirrors the hover mapping: mouse in logical coords, viewport in physical pixels
