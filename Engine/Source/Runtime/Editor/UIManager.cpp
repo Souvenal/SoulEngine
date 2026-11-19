@@ -6,21 +6,43 @@ import std;
 
 namespace SoulEngine {
 
-auto UIManager::SubmitSettingsToggle(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage> {
-    return Commands.SubmitByUser("editor.panel.toggle", String("Settings"));
+auto UIManager::SubmitPanelToggle(CommandDispatcher& Commands, StringView Panel)
+    -> std::expected<Uint64, ErrorMessage> {
+    return Commands.SubmitByUser("editor.panel.toggle", String(Panel));
 }
-auto UIManager::RegisterSettingsCommand(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage> {
-    return Commands.Register(CommandDescriptor{.Name           = "editor.panel.toggle",
-                                               .Parameters     = {{.Name = "panel"}},
-                                               .IsAgentExposed = true,
-                                               .Category       = CommandCategory::Input},
-                             [this](CommandContext& Context, String Panel) -> void {
-                                 if (Panel != "Settings" || !m_Entries.contains(Panel)) {
-                                     Context.Fail("stale_target", "Settings panel is unavailable");
-                                     return;
-                                 }
-                                 ToggleUI(Panel);
-                             });
+auto UIManager::SubmitPanelClose(CommandDispatcher& Commands, StringView Panel) -> std::expected<Uint64, ErrorMessage> {
+    return Commands.SubmitByUser("editor.panel.close", String(Panel));
+}
+auto UIManager::RegisterPanelCommands(CommandDispatcher& Commands)
+    -> std::expected<UIPanelCommandRegistrations, ErrorMessage> {
+    const auto ValidatePanel = [this](CommandContext& Context, const String& Panel) -> bool {
+        if ((Panel == "Settings" || Panel == "Debug.ShowMaterials") && m_Entries.contains(Panel))
+            return true;
+        Context.Fail("stale_target", Format("Panel '{}' is unavailable", Panel), CommandJson{{"panel", Panel}});
+        return false;
+    };
+    auto Toggle = Commands.Register(CommandDescriptor{.Name           = "editor.panel.toggle",
+                                                      .Parameters     = {{.Name = "panel"}},
+                                                      .IsAgentExposed = true,
+                                                      .Category       = CommandCategory::Input},
+                                    [this, ValidatePanel](CommandContext& Context, String Panel) -> void {
+                                        if (ValidatePanel(Context, Panel))
+                                            ToggleUI(Panel);
+                                    });
+    if (!Toggle)
+        return std::unexpected(Toggle.error().Append("Failed to register panel toggle command"));
+    auto Close = Commands.Register(CommandDescriptor{.Name       = "editor.panel.close",
+                                                     .Parameters = {{.Name = "panel"}},
+                                                     .Category   = CommandCategory::Input},
+                                   [this, ValidatePanel](CommandContext& Context, String Panel) -> void {
+                                       if (ValidatePanel(Context, Panel))
+                                           CloseUI(Panel);
+                                   });
+    if (!Close) {
+        Commands.Retire(*Toggle);
+        return std::unexpected(Close.error().Append("Failed to register panel close command"));
+    }
+    return UIPanelCommandRegistrations{.Toggle = *Toggle, .Close = *Close};
 }
 auto UIManager::Register(std::string name, std::function<void()> callback, bool defaultShow) -> void {
     m_Entries[std::move(name)] = {std::move(callback), defaultShow};

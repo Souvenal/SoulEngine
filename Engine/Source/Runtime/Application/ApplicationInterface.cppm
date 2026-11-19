@@ -70,6 +70,9 @@ export using ApplicationFactory = Factory<Application>;
 
 export [[nodiscard]] auto OpenApplication(StringView Name) -> std::expected<void, ErrorMessage>;
 
+/// @brief Replace the current application with a fully created application and its loaded Scene.
+export auto OpenApplication(UPtr<Application> ApplicationValue) -> void;
+
 export [[nodiscard]] auto GetCurrentApplication() -> Application*;
 
 export auto CloseApplication() -> void;

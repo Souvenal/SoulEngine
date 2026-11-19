@@ -43,8 +43,12 @@ UPtr<Application> g_CurrentApplication = nullptr;
     if (!NewApplication)
         return std::unexpected(NewApplication.error().Append("Application creation failed"));
 
-    g_CurrentApplication = std::move(*NewApplication);
+    OpenApplication(std::move(*NewApplication));
     return {};
+}
+
+auto OpenApplication(UPtr<Application> ApplicationValue) -> void {
+    g_CurrentApplication = std::move(ApplicationValue);
 }
 
 /// @brief Return the currently active application, or null before startup and

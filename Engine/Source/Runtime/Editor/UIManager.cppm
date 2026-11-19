@@ -14,15 +14,25 @@ export struct UIEntry {
     bool                  Show;
 };
 
+/// @brief Registration identities for the shared panel visibility commands.
+export struct UIPanelCommandRegistrations {
+    Uint64 Toggle = 0;
+    Uint64 Close  = 0;
+};
+
 /// @brief UI 管理器（单例）
 export class UIManager final : public Singleton<UIManager> {
     friend class Singleton<UIManager>;
 
   public:
-    [[nodiscard]] auto SubmitSettingsToggle(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage>;
-    [[nodiscard]] auto RegisterSettingsCommand(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage>;
+    [[nodiscard]] auto SubmitPanelToggle(CommandDispatcher& Commands, StringView Panel)
+        -> std::expected<Uint64, ErrorMessage>;
+    [[nodiscard]] auto SubmitPanelClose(CommandDispatcher& Commands, StringView Panel)
+        -> std::expected<Uint64, ErrorMessage>;
+    [[nodiscard]] auto RegisterPanelCommands(CommandDispatcher& Commands)
+        -> std::expected<UIPanelCommandRegistrations, ErrorMessage>;
     /// @brief 注册一个 UI 项
-    auto               Register(std::string name, std::function<void()> callback, bool defaultShow = false) -> void;
+    auto Register(std::string name, std::function<void()> callback, bool defaultShow = false) -> void;
 
     /// @brief 打开指定 UI
     auto OpenUI(const std::string& name) -> void;

@@ -3,6 +3,7 @@ module;
 export module Editor.UIPanels;
 
 import std;
+import EditorCommands;
 import Scene;
 
 namespace SoulEngine {
@@ -10,6 +11,6 @@ namespace SoulEngine {
 /// Why a scene provider? Because scene may change at runtime, and UI doen't depend on a specific scene.
 ///
 /// @brief Point the debug panels at the active scene's material store.
-export auto RegisterAllUI(std::function<const Scene*()> SceneProvider) -> void;
+export auto RegisterAllUI(std::function<const Scene*()> SceneProvider, CommandDispatcher& Commands) -> void;
 
 } // namespace SoulEngine

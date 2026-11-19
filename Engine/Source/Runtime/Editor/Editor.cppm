@@ -83,7 +83,7 @@ export class Editor {
 
   private:
     auto InitializeImGui() -> void;
-    auto InitializeUI() -> void;
+    auto InitializeUI(CommandDispatcher& Commands) -> void;
 
     /// @brief Draw the global main menu before all Scene-dependent panels.
     auto DrawMainMenu() -> void;
@@ -98,17 +98,17 @@ export class Editor {
     auto AttachPresentationOverlay(RenderPassList& CmdList, ImDrawDataSnapshot& Snapshot) -> void;
 
   private:
-    CommandDispatcher*   m_Commands        = nullptr;
-    Uint64               m_SettingsCommand = 0;
-    ImGuiContext*        m_ImGuiContext    = nullptr;
+    CommandDispatcher*   m_Commands             = nullptr;
+    std::vector<Uint64>  m_CommandRegistrations = {};
+    ImGuiContext*        m_ImGuiContext         = nullptr;
     std::vector<UIPanel> m_Panels;
 
     ImTextureQueue m_TextureQueue;
     std::mutex     m_TextureQueueMutex;
 
     EditorWorld      m_EditorWorld       = {};
-    // Non-owning; Launch and DrawMainMenu keep this binding in sync with the active Application and clear it
-    // before the Scene is destroyed.
+    // Non-owning; Launch and the Application command keep this binding in sync with the active Application.
+    // The command clears the binding before the Scene is destroyed.
     const Scene*     m_Scene             = nullptr;
     // Non-owning; EngineLoop keeps the window system alive until Editor::Shutdown().
     IWindowSystem*   m_BoundWindowSystem = nullptr;
