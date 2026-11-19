@@ -339,6 +339,7 @@ auto CommandDispatcher::ExecutePhase(CommandPhase Phase, Uint64 Frame, std::size
             continue;
         }
         CommandContext Context;
+        Context.m_Frame = Frame;
         Call.Entry->Handler(Context, Call.Arguments);
         CommandResult Result{.Command    = Call.Entry->Desc.Name,
                              .Invocation = Call.Id,

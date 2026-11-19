@@ -38,12 +38,24 @@ export struct EditorViewRecord {
     }
 };
 
+/// @brief Describes the camera's picking readback observation.
+///
+/// Camera update polls and stores the readback state; BuildSnapshot copies it for post-update collection.
+/// The state is read and written on the Game thread while the camera and RHI device remain alive.
+export enum class EditorReadbackState { Unknown = 0, Unavailable, LatestKnown, Malformed };
+
 export struct EditorSnapshot {
-    std::vector<EditorViewRecord> Views          = {};
-    std::optional<entt::entity>   SelectedEntity = std::nullopt;
-    PixelCoordinate               HoverPixel     = {};
-    bool                          IsHovering     = false;
-    RHIRef<RHIReadback>           ReadbackTarget = nullptr;
+    std::vector<EditorViewRecord> Views               = {};
+    std::optional<CameraViewport> PrimaryViewport     = std::nullopt;
+    std::optional<entt::entity>   SelectedEntity      = std::nullopt;
+    std::optional<entt::entity>   ReadbackEntity      = std::nullopt;
+    PixelCoordinate               HoverPixel          = {};
+    bool                          IsHovering          = false;
+    bool                          IsReadbackPending   = false;
+    bool                          IsReadbackMalformed = false;
+    EditorReadbackState           ReadbackState       = EditorReadbackState::Unknown;
+    String                        ReadbackReason      = "readback_not_observed";
+    RHIRef<RHIReadback>           ReadbackTarget      = nullptr;
 };
 
 } // namespace SoulEngine

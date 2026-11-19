@@ -268,6 +268,7 @@ auto EngineLoop::GameLoop() -> void {
         auto& AppScene = CurrentApplication->GetScene();
         AppScene.UpdateTime();
         AppScene.Tick(Delta);
+        m_Editor.UpdateStateObservation(m_CommandFrame);
         m_Commands.ExecutePhase(CommandPhase::PostUpdate, m_CommandFrame, 64, CommandTime);
         for (const auto& Diagnostic : m_Commands.TakeDiagnostics())
             LogError("Command {} failed: {}", Diagnostic.Command, Diagnostic.Failure->Message);

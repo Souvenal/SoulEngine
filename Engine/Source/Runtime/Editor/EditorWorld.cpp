@@ -95,30 +95,7 @@ auto EditorWorld::BuildSnapshot() -> EditorSnapshot {
     const auto CameraSys = m_SystemScheduler.Get<EditorCameraSystem>();
     if (!CameraSys)
         return {};
-
-    EditorSnapshot Snapshot{.Views = CameraSys->get().CollectViews()};
-    for (const auto CameraEntity : m_Registry.view<EditorCameraComponent>()) {
-        const auto& Camera      = m_Registry.get<EditorCameraComponent>(CameraEntity);
-        Snapshot.SelectedEntity = Camera.SelectedEntity;
-        Snapshot.ReadbackTarget = Camera.Readback;
-        const auto&   IO        = ImGui::GetIO();
-        const auto&   Vp        = Camera.Viewport;
-        // Map the mouse position through the camera's Viewport rect. MousePos is in logical ImGui coords
-        // while the viewport is in physical pixels — scale by DisplayFramebufferScale first.
-        const Float32 MouseX    = IO.MousePos.x * IO.DisplayFramebufferScale.x;
-        const Float32 MouseY    = IO.MousePos.y * IO.DisplayFramebufferScale.y;
-        if (Vp.Width > 0 && Vp.Height > 0 && MouseX >= static_cast<Float32>(Vp.X) &&
-            MouseY >= static_cast<Float32>(Vp.Y) && MouseX < static_cast<Float32>(Vp.X + Vp.Width) &&
-            MouseY < static_cast<Float32>(Vp.Y + Vp.Height)) {
-            Snapshot.HoverPixel = PixelCoordinate{
-                .X = (std::min)(static_cast<Uint32>(MouseX - static_cast<Float32>(Vp.X)), Vp.Width - 1),
-                .Y = (std::min)(static_cast<Uint32>(MouseY - static_cast<Float32>(Vp.Y)), Vp.Height - 1),
-            };
-            Snapshot.IsHovering = true;
-        }
-        break;
-    }
-    return Snapshot;
+    return CameraSys->get().BuildSnapshot();
 }
 
 auto EditorWorld::Shutdown() -> void {

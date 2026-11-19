@@ -5,6 +5,7 @@ module;
 
 export module Editor;
 
+export import Editor.State;
 import Editor.EditorWorld;
 
 import Core;
@@ -81,6 +82,12 @@ export class Editor {
 
     [[nodiscard]] auto BuildSnapshot() -> EditorSnapshot;
 
+    /// @brief Refresh the owned post-update command observation for one Editor frame.
+    auto UpdateStateObservation(Uint64 Frame) -> void;
+
+    /// @brief Refresh the command observation from an existing camera-update snapshot.
+    auto UpdateStateObservation(Uint64 Frame, EditorSnapshot Snapshot) -> void;
+
   private:
     auto InitializeImGui() -> void;
     auto InitializeUI() -> void;
@@ -98,10 +105,17 @@ export class Editor {
     auto AttachPresentationOverlay(RenderPassList& CmdList, ImDrawDataSnapshot& Snapshot) -> void;
 
   private:
-    CommandDispatcher*   m_Commands        = nullptr;
-    Uint64               m_SettingsCommand = 0;
-    ImGuiContext*        m_ImGuiContext    = nullptr;
+    CommandDispatcher*   m_Commands                = nullptr;
+    Uint64               m_SettingsCommand         = 0;
+    Uint64               m_StateCommand            = 0;
+    EditorStateCollector m_StateCollector          = {};
+    CommandJson          m_StateObservation        = nullptr;
+    Uint64               m_StateObservationFrame   = 0;
+    bool                 m_IsStateObservationReady = false;
+    EditorLifecycle      m_Lifecycle               = EditorLifecycle::Unknown;
+    ImGuiContext*        m_ImGuiContext            = nullptr;
     std::vector<UIPanel> m_Panels;
+    std::vector<String>  m_DrawnPanels;
 
     ImTextureQueue m_TextureQueue;
     std::mutex     m_TextureQueueMutex;

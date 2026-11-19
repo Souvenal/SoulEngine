@@ -38,6 +38,22 @@ UI callbacks submit semantic actions instead of applying the same side effect di
 
 editor.state.get is an ordinary registered post-update query. Its baseline covers lifecycle/frame, active Application/renderer, window/framebuffer and Viewport coordinate spaces, focus/input capture, visible panels, hover, and latest available selection. Values not yet produced or unsupported are explicit unavailable/pending data; selection does not imply synchronous GPU picking.
 
+### Baseline State Result Version 1
+
+`editor.state.get` accepts an empty JSON object. Its Agent-exposed descriptor uses the `Observe` category, `PostUpdate` phase, schema/descriptor version 1, a 256-byte argument budget, and a 65,536-byte terminal-result budget. Launch collects the owned result immediately before post-update dispatch. `frame` equals the completion frame and `phase` is `post_update`; a missing or mismatched collection fails with `observation_frame_mismatch` rather than returning an older observation as current.
+
+The top-level result contains `schemaVersion`, `frame`, `phase`, `lifecycle`, `application`, `renderer`, `window`, `viewport`, `input`, `panels`, and `selection`:
+
+- `application` and `renderer` report `available` names or `unavailable` with a reason. `renderer.backend` is the RHI backend tag when known, otherwise null.
+- `window.logical` and `window.physical` use logical and physical pixels respectively. `window.framebufferScale` maps logical to physical coordinates. Each value has its own availability and reason; zero is a valid physical extent.
+- `viewport.physical` and `viewport.logical` identify the primary camera rectangle with a top-left origin. `isDrawable` is false for a zero-sized axis. Hover reports physical pixel coordinates local to that rectangle only when a current hover observation exists.
+- `input.focus` identifies ImGui as its source. `input.capture` reports ImGui mouse, keyboard, and text-input capture. `input.ownership` remains explicitly unavailable until an ownership provider exists.
+- `panels.desired` is the visibility state after Action dispatch; `panels.drawn` records panel callbacks that ran in the preceding UI build. Each list contains unique sorted `{name, isTruncated}` items plus `total`, `omitted`, `collisions`, and aggregate `isTruncated`. `total` counts unique source names, `omitted` counts unique emitted names beyond the cap, and `collisions` counts source names coalesced by truncation. At most 64 names are returned, each limited to 256 UTF-8 bytes without splitting a code point.
+- `selection.identityScope` is `scene_local_unstable`; `entity` is either a Scene-local numeric entity or null. A missing Scene or a stale selected entity is an explicit unavailable state, not a stable Scene identity contract.
+- `selection.readback.status` is `latest_known`, `pending`, or `unavailable`. `latestKnown` owns the last completed payload observation, including a null entity for background, a null `sourceFrame` when GPU provenance is unknown, and Scene-validity information when available. `isPending` is asserted only from a previously scheduled hover readback. A latest-known value can coexist with pending newer work. Missing readback support, no completed payload, and malformed payloads have distinct reasons. A malformed poll retains the last completed `latestKnown` entity or background observation, and `isPending` continues to report scheduled newer hover work independently.
+
+Collection copies values on the Game thread and serializes no ImGui, RHI, native-window, or Scene pointer. Camera update performs the only `RHIReadback::TryRead()` poll; the state command reuses that observation and never waits for GPU completion or performs synchronous picking.
+
 ## Bounds, Reentrancy, And Input
 
 Each phase takes one frozen batch of eligible invocations with explicit finite queue capacity, argument/result size limits, and per-batch work limits. The implementation defines concrete budgets and validates them at the queue/dispatch seam. Preserve admission sequence among eligible invocations, subject to phase ordering and physical-user input precedence. Overflow rejects admission with a structured failure; budget exhaustion retains eligible work for a later batch without silently dropping it. Handlers are bounded; expensive asynchronous work leaves an explicit pending observation.

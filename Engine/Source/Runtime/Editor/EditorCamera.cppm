@@ -28,14 +28,18 @@ export struct EditorCameraResizeEvent {
 /// Holds no view render targets: the editor view's targets are renderer-created pooled RenderGraph transients
 /// derived from the Viewport.
 export struct EditorCameraComponent {
-    Float32                     FOV            = 60.0f;
-    Float32                     NearPlane      = 0.1f;
-    Float32                     FarPlane       = 100.0f;
-    Float32                     ExposureEV100  = 15.0f;
-    CameraViewport              Viewport       = {};
-    std::optional<entt::entity> ReadbackEntity = std::nullopt;
-    std::optional<entt::entity> SelectedEntity = std::nullopt;
-    RHIRef<RHIReadback>         Readback       = nullptr;
+    Float32                     FOV                 = 60.0f;
+    Float32                     NearPlane           = 0.1f;
+    Float32                     FarPlane            = 100.0f;
+    Float32                     ExposureEV100       = 15.0f;
+    CameraViewport              Viewport            = {};
+    std::optional<entt::entity> ReadbackEntity      = std::nullopt;
+    std::optional<entt::entity> SelectedEntity      = std::nullopt;
+    EditorReadbackState         ReadbackState       = EditorReadbackState::Unavailable;
+    String                      ReadbackReason      = "readback_unavailable";
+    bool                        IsReadbackScheduled = false;
+    bool                        IsReadbackMalformed = false;
+    RHIRef<RHIReadback>         Readback            = nullptr;
 };
 
 /// @brief Editor-owned camera system and editor viewport state owner.
@@ -55,6 +59,9 @@ export class EditorCameraSystem final : public ISystem {
 
     /// @brief Collect valid editor camera view snapshots.
     [[nodiscard]] auto CollectViews() const -> std::vector<EditorViewRecord>;
+
+    /// @brief Copy the camera's current render and latest completed picking observations.
+    [[nodiscard]] auto BuildSnapshot() -> EditorSnapshot;
 
   private:
     auto               UpdatePerspective(Float32 DeltaTime) -> void;
