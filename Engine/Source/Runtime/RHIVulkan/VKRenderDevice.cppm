@@ -5,7 +5,6 @@ module;
 // `DynamicLoader` from vulkan headers, we define: dynamically fetching pointers using `vkGetInstanceProcAddr`
 // and `vkGetDeviceProcAddr`
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
-#include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui_threaded_rendering.h>
 #include <vk_mem_alloc.h>

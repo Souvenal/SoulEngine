@@ -47,6 +47,7 @@ export struct CommandResult {
 };
 export struct CommandOptions {
     std::optional<Uint64> Deadline;
+    bool                  IsRecovery = false; ///< User recovery can occupy the single reserved queue slot.
 };
 /// @brief Owning terminal sink; delivery runs outside dispatcher locks and must complete without blocking.
 export using CommandCompletion = std::function<void(CommandResult)>;
@@ -106,6 +107,8 @@ export class CommandDispatcher {
     [[nodiscard]] auto SubmitByUser(StringView Name, A&&... Arguments) -> std::expected<Uint64, ErrorMessage> {
         return Submit(Name, CommandJson::array({CommandJson(std::forward<A>(Arguments))...}), false);
     }
+    [[nodiscard]] auto SubmitByUser(StringView Name, CommandJson&& Argument, CommandOptions Options)
+        -> std::expected<Uint64, ErrorMessage>;
     [[nodiscard]] auto SubmitByAgent(StringView         Name,
                                      const CommandJson& Arguments,
                                      CommandCompletion  Completion = {},

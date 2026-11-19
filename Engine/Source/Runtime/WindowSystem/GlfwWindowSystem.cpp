@@ -2,7 +2,8 @@ module;
 
 #include <GLFW/glfw3.h>
 #include <entt/entt.hpp>
-#include <imgui_impl_glfw.h>
+#include <imgui.h>
+#include <cstring>
 
 module WindowSystem.Glfw;
 
@@ -10,12 +11,47 @@ import magic_enum;
 import Core;
 import WindowSystem.Types;
 import WindowSystem.Interface;
+import WindowSystem.ImGuiGlfwBackend;
 import std;
 
 namespace SoulEngine {
 
 auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
     LogError("GLFW Error [0x{:08X}]: {}", ErrorCode, Description);
+}
+
+[[nodiscard]] auto TranslateGLFWKey(int Key, int Scancode) -> int {
+    if (Key >= GLFW_KEY_KP_0 && Key <= GLFW_KEY_KP_EQUAL)
+        return Key;
+    const auto  PreviousErrorCallback = glfwSetErrorCallback(nullptr);
+    const char* KeyName               = glfwGetKeyName(Key, Scancode);
+    glfwSetErrorCallback(PreviousErrorCallback);
+    (void)glfwGetError(nullptr);
+    if (!KeyName || KeyName[0] == 0 || KeyName[1] != 0)
+        return Key;
+
+    constexpr char         Names[] = "`-=[]\\,;'./";
+    constexpr int          Keys[]  = {GLFW_KEY_GRAVE_ACCENT,
+                                      GLFW_KEY_MINUS,
+                                      GLFW_KEY_EQUAL,
+                                      GLFW_KEY_LEFT_BRACKET,
+                                      GLFW_KEY_RIGHT_BRACKET,
+                                      GLFW_KEY_BACKSLASH,
+                                      GLFW_KEY_COMMA,
+                                      GLFW_KEY_SEMICOLON,
+                                      GLFW_KEY_APOSTROPHE,
+                                      GLFW_KEY_PERIOD,
+                                      GLFW_KEY_SLASH};
+    const std::string_view Name(KeyName);
+    if (Name[0] >= '0' && Name[0] <= '9')
+        return GLFW_KEY_0 + (Name[0] - '0');
+    if (Name[0] >= 'A' && Name[0] <= 'Z')
+        return GLFW_KEY_A + (Name[0] - 'A');
+    if (Name[0] >= 'a' && Name[0] <= 'z')
+        return GLFW_KEY_A + (Name[0] - 'a');
+    if (const auto* Found = std::strchr(Names, Name[0]))
+        return Keys[Found - Names];
+    return Key;
 }
 
 [[nodiscard]] auto FromGLFWKey(int Key) -> WindowKey {
@@ -78,9 +114,20 @@ auto GLFWErrorCallback(int ErrorCode, const char* Description) -> void {
         return WindowMouseButton::Middle;
     case GLFW_MOUSE_BUTTON_RIGHT:
         return WindowMouseButton::Right;
+    case GLFW_MOUSE_BUTTON_4:
+        return WindowMouseButton::X1;
+    case GLFW_MOUSE_BUTTON_5:
+        return WindowMouseButton::X2;
     default:
         return WindowMouseButton::Unknown;
     }
+}
+
+[[nodiscard]] auto FromGLFWModifiers(int Mods) -> InputModifiers {
+    return InputModifiers{.IsShift   = (Mods & GLFW_MOD_SHIFT) != 0,
+                          .IsControl = (Mods & GLFW_MOD_CONTROL) != 0,
+                          .IsAlt     = (Mods & GLFW_MOD_ALT) != 0,
+                          .IsSuper   = (Mods & GLFW_MOD_SUPER) != 0};
 }
 
 GlfwWindowSystem::~GlfwWindowSystem() {
@@ -120,8 +167,10 @@ GlfwWindowSystem::~GlfwWindowSystem() {
     glfwSetFramebufferSizeCallback(Result->m_Window, &GlfwWindowSystem::OnFramebufferResize);
     glfwSetWindowFocusCallback(Result->m_Window, &GlfwWindowSystem::OnWindowFocus);
     glfwSetKeyCallback(Result->m_Window, &GlfwWindowSystem::OnKey);
+    glfwSetCharCallback(Result->m_Window, &GlfwWindowSystem::OnChar);
     glfwSetScrollCallback(Result->m_Window, &GlfwWindowSystem::OnScroll);
     glfwSetCursorPosCallback(Result->m_Window, &GlfwWindowSystem::OnCursorPosition);
+    glfwSetCursorEnterCallback(Result->m_Window, &GlfwWindowSystem::OnCursorEnter);
     glfwSetMouseButtonCallback(Result->m_Window, &GlfwWindowSystem::OnMouseButton);
 
     // Use framebuffer size rather than window size because Vulkan renders to drawable pixels.
@@ -141,11 +190,13 @@ GlfwWindowSystem::~GlfwWindowSystem() {
 }
 
 auto GlfwWindowSystem::Shutdown() -> void {
+    ResetInput();
+    UnbindCommands();
     if (!m_bInitialized)
         return;
 
     if (ImGui::GetCurrentContext() && ImGui::GetIO().BackendPlatformUserData)
-        ImGui_ImplGlfw_Shutdown();
+        ImGuiGlfwAdapter::Shutdown();
 
     if (m_Window) {
         glfwDestroyWindow(m_Window);
@@ -154,13 +205,10 @@ auto GlfwWindowSystem::Shutdown() -> void {
 
     glfwTerminate();
 
-    m_Title                = {};
-    m_Extent               = {};
-    m_KeySequences         = {};
-    m_MouseButtonSequences = {};
-    m_MouseFrameEvent      = {};
-    m_CursorMode           = CursorMode::Normal;
-    m_bInitialized         = false;
+    m_Title        = {};
+    m_Extent       = {};
+    m_CursorMode   = CursorMode::Normal;
+    m_bInitialized = false;
 }
 
 [[nodiscard]] auto GlfwWindowSystem::GetType() const -> WindowSystemType {
@@ -183,62 +231,9 @@ auto GlfwWindowSystem::Shutdown() -> void {
     return m_Extent;
 }
 
-[[nodiscard]] auto GlfwWindowSystem::Tick() -> bool {
+[[nodiscard]] auto GlfwWindowSystem::PollEvents() -> bool {
+    m_InputCommands.RetryRecovery();
     glfwPollEvents();
-
-    // GLFW can invoke both press and release callbacks before one engine tick. Consuming at most one
-    // transition per tick preserves both frame-visible states instead of allowing the later release to
-    // overwrite the press. When a sequence is empty, transient states settle into their stable states:
-    // Pressed becomes Held and Released becomes Up.
-    const auto UpdateInputState = [](InputState& State, std::queue<InputTransition>& Sequence) -> void {
-        // A queued transition represents an input callback that occurred during the previous
-        // platform-event pump. It has priority over the normal state progression, and exactly one
-        // transition is consumed per tick so Press and Release remain observable on separate frames.
-        if (Sequence.empty()) {
-            // No callback occurred for this input. Pressed and Released are one-frame edge states, so
-            // they settle only after a tick in which there is no newer transition to consume.
-            if (State == InputState::Pressed)
-                State = InputState::Held;
-            else if (State == InputState::Released)
-                State = InputState::Up;
-            else if (State == InputState::Unknown)
-                State = InputState::Up;
-            return;
-        }
-
-        const auto Transition = Sequence.front();
-        Sequence.pop();
-        if (Transition == InputTransition::Press) {
-            // A press always starts a new Pressed frame, even if the previous state was Held, Released,
-            // or Up.
-            State = InputState::Pressed;
-            return;
-        }
-
-        // Release is meaningful only while the input is currently down. This prevents a focus-loss
-        // release appended to an already-up input from producing a second, artificial Released frame.
-        if (State == InputState::Pressed || State == InputState::Held) {
-            State = InputState::Released;
-            return;
-        }
-
-        // The release was stale, but it was still consumed. Do not run the no-transition decay above in
-        // this tick.
-    };
-
-    for (std::size_t Index = 1; Index < magic_enum::enum_count<WindowKey>(); ++Index)
-        UpdateInputState(m_KeyboardFrameEvent.States[Index], m_KeySequences[Index]);
-
-    for (std::size_t Index = 1; Index < magic_enum::enum_count<WindowMouseButton>(); ++Index)
-        UpdateInputState(m_MouseFrameEvent.ButtonStates[Index], m_MouseButtonSequences[Index]);
-
-    m_EventDispatcher.trigger(m_KeyboardFrameEvent);
-    m_EventDispatcher.trigger(m_MouseFrameEvent);
-
-    m_MouseFrameEvent.PreviousCursorPosition = m_MouseFrameEvent.CurrentCursorPosition;
-    m_MouseFrameEvent.ScrollX                = 0.0f;
-    m_MouseFrameEvent.ScrollY                = 0.0f;
-
     return m_Window && glfwWindowShouldClose(m_Window);
 }
 
@@ -283,30 +278,32 @@ auto GlfwWindowSystem::OnFramebufferResize(GLFWwindow* Win, int NewW, int NewH) 
 
 auto GlfwWindowSystem::OnWindowFocus(GLFWwindow* Win, int Focused) -> void {
     auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
-    if (!Self || Focused)
+    if (!Self)
         return;
-
-    // Focus loss invalidates every platform-held input. Append releases after existing transitions so the
-    // original callback order remains observable before the forced release is consumed.
-    for (std::size_t Index = 1; Index < Self->m_KeySequences.size(); ++Index)
-        Self->m_KeySequences[Index].emplace(InputTransition::Release);
-    for (std::size_t Index = 1; Index < Self->m_MouseButtonSequences.size(); ++Index)
-        Self->m_MouseButtonSequences[Index].emplace(InputTransition::Release);
+    (void)Self->m_InputCommands.Submit(FocusInputEvent{.IsFocused = Focused != 0});
 }
 
-auto GlfwWindowSystem::OnKey(GLFWwindow* Win, int Key, int /*Scancode*/, int Action, int /*Mods*/) -> void {
+auto GlfwWindowSystem::OnKey(GLFWwindow* Win, int Key, int Scancode, int Action, int Mods) -> void {
+    auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
+    if (!Self || Key < 0 || (Action != GLFW_PRESS && Action != GLFW_RELEASE && Action != GLFW_REPEAT))
+        return;
+
+    const auto TranslatedKey    = TranslateGLFWKey(Key, Scancode);
+    const auto InputActionValue = Action == GLFW_PRESS     ? InputAction::Press
+                                  : Action == GLFW_RELEASE ? InputAction::Release
+                                                           : InputAction::Repeat;
+    (void)Self->m_InputCommands.Submit(KeyInputEvent{.Key       = FromGLFWKey(TranslatedKey),
+                                                     .NativeKey = TranslatedKey,
+                                                     .Scancode  = Scancode,
+                                                     .Action    = InputActionValue,
+                                                     .Modifiers = FromGLFWModifiers(Mods)});
+}
+
+auto GlfwWindowSystem::OnChar(GLFWwindow* Win, unsigned int Codepoint) -> void {
     auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
     if (!Self)
         return;
-
-    const auto EngineKey = FromGLFWKey(Key);
-    if (EngineKey == WindowKey::Unknown)
-        return;
-
-    if (Action == GLFW_PRESS)
-        Self->m_KeySequences[std::to_underlying(EngineKey)].emplace(InputTransition::Press);
-    else if (Action == GLFW_RELEASE)
-        Self->m_KeySequences[std::to_underlying(EngineKey)].emplace(InputTransition::Release);
+    (void)Self->m_InputCommands.Submit(TextInputEvent{.Codepoint = Codepoint});
 }
 
 auto GlfwWindowSystem::OnScroll(GLFWwindow* Win, double XOffset, double YOffset) -> void {
@@ -314,8 +311,8 @@ auto GlfwWindowSystem::OnScroll(GLFWwindow* Win, double XOffset, double YOffset)
     if (!Self)
         return;
 
-    Self->m_MouseFrameEvent.ScrollX += static_cast<Float32>(XOffset);
-    Self->m_MouseFrameEvent.ScrollY += static_cast<Float32>(YOffset);
+    (void)Self->m_InputCommands.Submit(
+        WheelInputEvent{.X = static_cast<Float32>(XOffset), .Y = static_cast<Float32>(YOffset)});
 }
 
 auto GlfwWindowSystem::OnCursorPosition(GLFWwindow* Win, double XPosition, double YPosition) -> void {
@@ -323,26 +320,30 @@ auto GlfwWindowSystem::OnCursorPosition(GLFWwindow* Win, double XPosition, doubl
     if (!Self)
         return;
 
-    const CursorPosition Current{
-        .X = static_cast<Float32>(XPosition),
-        .Y = static_cast<Float32>(YPosition),
-    };
-    Self->m_MouseFrameEvent.CurrentCursorPosition = Current;
+    (void)Self->m_InputCommands.Submit(
+        PointerInputEvent{.Position = {.X = static_cast<Float32>(XPosition), .Y = static_cast<Float32>(YPosition)}});
 }
 
-auto GlfwWindowSystem::OnMouseButton(GLFWwindow* Win, int Button, int Action, int /*Mods*/) -> void {
+auto GlfwWindowSystem::OnCursorEnter(GLFWwindow* Win, int Entered) -> void {
+    auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
+    if (!Self)
+        return;
+    (void)Self->m_InputCommands.Submit(CursorEnterInputEvent{.IsInside = Entered != 0});
+}
+
+auto GlfwWindowSystem::OnMouseButton(GLFWwindow* Win, int Button, int Action, int Mods) -> void {
     auto* Self = static_cast<GlfwWindowSystem*>(glfwGetWindowUserPointer(Win));
     if (!Self)
         return;
 
     const auto EngineButton = FromGLFWMouseButton(Button);
-    if (EngineButton == WindowMouseButton::Unknown)
+    if (EngineButton == WindowMouseButton::Unknown || (Action != GLFW_PRESS && Action != GLFW_RELEASE))
         return;
 
-    if (Action == GLFW_PRESS)
-        Self->m_MouseButtonSequences[std::to_underlying(EngineButton)].emplace(InputTransition::Press);
-    else if (Action == GLFW_RELEASE)
-        Self->m_MouseButtonSequences[std::to_underlying(EngineButton)].emplace(InputTransition::Release);
+    (void)Self->m_InputCommands.Submit(
+        MouseButtonInputEvent{.Button    = EngineButton,
+                              .Action    = Action == GLFW_PRESS ? InputAction::Press : InputAction::Release,
+                              .Modifiers = FromGLFWModifiers(Mods)});
 }
 
 } // namespace SoulEngine

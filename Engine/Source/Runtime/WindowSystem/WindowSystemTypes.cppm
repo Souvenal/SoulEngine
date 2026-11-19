@@ -137,11 +137,22 @@ export enum class WindowMouseButton {
     Left,
     Middle,
     Right,
+    X1,
+    X2,
+};
+
+/// @brief Modifier state captured with a platform key or button event.
+export struct InputModifiers {
+    bool IsShift   = false;
+    bool IsControl = false;
+    bool IsAlt     = false;
+    bool IsSuper   = false;
 };
 
 /// @brief Per-frame keyboard input snapshot.
 export struct KeyboardFrameEvent {
-    std::array<InputState, magic_enum::enum_count<WindowKey>()> States = {};
+    std::array<InputState, magic_enum::enum_count<WindowKey>()> States    = {};
+    InputModifiers                                              Modifiers = {};
 
     /// @brief Return whether a key is currently pressed or held.
     [[nodiscard]] auto IsKeyDown(WindowKey Key) const -> bool {
@@ -177,6 +188,70 @@ export struct MouseFrameEvent {
             return false;
         return ButtonStates[Index] == InputState::Pressed || ButtonStates[Index] == InputState::Held;
     }
+};
+
+/// @brief Platform action carried by a key or mouse-button event.
+export enum class InputAction {
+    Unknown = 0,
+    Press,
+    Release,
+    Repeat,
+};
+
+export struct PointerInputEvent {
+    CursorPosition Position = {};
+};
+
+export struct MouseButtonInputEvent {
+    WindowMouseButton Button    = WindowMouseButton::Unknown;
+    InputAction       Action    = InputAction::Unknown;
+    InputModifiers    Modifiers = {};
+};
+
+export struct WheelInputEvent {
+    Float32 X = 0.0f;
+    Float32 Y = 0.0f;
+};
+
+/// @brief Key transition with the translated native key and physical scancode captured by the platform.
+export struct KeyInputEvent {
+    WindowKey      Key       = WindowKey::Unknown;
+    Int32          NativeKey = 0;
+    Int32          Scancode  = 0;
+    InputAction    Action    = InputAction::Unknown;
+    InputModifiers Modifiers = {};
+};
+
+export struct TextInputEvent {
+    Uint32 Codepoint = 0;
+};
+
+export struct FocusInputEvent {
+    bool IsFocused = false;
+};
+
+export struct CursorEnterInputEvent {
+    bool IsInside = false;
+};
+
+export struct ResetInputEvent {};
+
+export using InputEvent = std::variant<PointerInputEvent,
+                                       MouseButtonInputEvent,
+                                       WheelInputEvent,
+                                       KeyInputEvent,
+                                       TextInputEvent,
+                                       FocusInputEvent,
+                                       CursorEnterInputEvent,
+                                       ResetInputEvent>;
+
+/// @brief One frame-visible input snapshot and the ordered events that produced it.
+export struct InputFrame {
+    KeyboardFrameEvent      Keyboard       = {};
+    MouseFrameEvent         Mouse          = {};
+    std::vector<InputEvent> Events         = {};
+    bool                    IsFocused      = true;
+    bool                    IsCursorInside = false;
 };
 
 } // namespace SoulEngine

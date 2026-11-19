@@ -1,7 +1,6 @@
 module;
 
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui_threaded_rendering.h>
 
@@ -54,6 +53,12 @@ auto Editor::UnbindCommands() -> void {
         m_Commands->Retire(m_SettingsCommand);
     m_Commands        = nullptr;
     m_SettingsCommand = 0;
+}
+auto Editor::ResetInput() -> void {
+    if (!m_ImGuiContext)
+        return;
+    ImGui::SetCurrentContext(m_ImGuiContext);
+    ImGuiGlfwAdapter::ResetInput();
 }
 auto Editor::BindScene(const Scene& SceneValue) -> void {
     m_Scene = &SceneValue;
@@ -113,6 +118,7 @@ auto Editor::Shutdown() -> void {
     if (!m_ImGuiContext)
         return;
     ImGui::SetCurrentContext(m_ImGuiContext);
+    ImGuiGlfwAdapter::ResetInput();
     m_BoundWindowSystem = nullptr;
     ImGui::DestroyContext(m_ImGuiContext);
     m_ImGuiContext = nullptr;
@@ -210,9 +216,10 @@ auto Editor::BeginFrame(ImDrawDataSnapshot& Snapshot) -> void {
         m_TextureQueue.PreNewFrame();
     }
     if (m_BoundWindowSystem) {
+        ImGuiGlfwAdapter::ApplyInput(m_BoundWindowSystem->GetInputFrame());
         switch (m_BoundWindowSystem->GetType()) {
         case WindowSystemType::Glfw:
-            ImGui_ImplGlfw_NewFrame();
+            ImGuiGlfwAdapter::NewFrame();
             break;
         default:
             break;

@@ -2,7 +2,6 @@ module;
 
 #include <GLFW/glfw3.h>
 #include <entt/entt.hpp>
-#include <imgui_impl_glfw.h>
 
 export module WindowSystem.Glfw;
 
@@ -39,35 +38,32 @@ export class GlfwWindowSystem final : public IWindowSystem {
 
     [[nodiscard]] auto GetFramebufferExtent() const -> FramebufferExtent override;
 
-    [[nodiscard]] auto Tick() -> bool override;
+    [[nodiscard]] auto PollEvents() -> bool override;
 
     auto SetCursorMode(CursorMode Mode) -> void override;
 
   private:
-    enum class InputTransition {
-        Press,
-        Release,
-    };
-
     static auto OnFramebufferResize(GLFWwindow* Win, int NewW, int NewH) -> void;
 
     static auto OnWindowFocus(GLFWwindow* Win, int Focused) -> void;
 
-    static auto OnKey(GLFWwindow* Win, int Key, int /*Scancode*/, int Action, int /*Mods*/) -> void;
+    static auto OnKey(GLFWwindow* Win, int Key, int Scancode, int Action, int Mods) -> void;
+
+    static auto OnChar(GLFWwindow* Win, unsigned int Codepoint) -> void;
 
     static auto OnScroll(GLFWwindow* Win, double XOffset, double YOffset) -> void;
 
     static auto OnCursorPosition(GLFWwindow* Win, double XPosition, double YPosition) -> void;
 
-    static auto OnMouseButton(GLFWwindow* Win, int Button, int Action, int /*Mods*/) -> void;
+    static auto OnCursorEnter(GLFWwindow* Win, int Entered) -> void;
+
+    static auto OnMouseButton(GLFWwindow* Win, int Button, int Action, int Mods) -> void;
 
     GLFWwindow*       m_Window       = nullptr;
     bool              m_bInitialized = false;
     String            m_Title;
     FramebufferExtent m_Extent; ///< Current framebuffer extent (kept in sync on resize)
-    std::array<std::queue<InputTransition>, magic_enum::enum_count<WindowKey>()>         m_KeySequences         = {};
-    std::array<std::queue<InputTransition>, magic_enum::enum_count<WindowMouseButton>()> m_MouseButtonSequences = {};
-    CursorMode m_CursorMode = CursorMode::Normal;
+    CursorMode        m_CursorMode = CursorMode::Normal;
 };
 
 } // namespace SoulEngine

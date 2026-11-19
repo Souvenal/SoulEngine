@@ -218,12 +218,17 @@ auto CommandDispatcher::RegisterErased(CommandDescriptor                        
     m_Registry.emplace(Entry->Desc.Name, Entry);
     return Entry->Id;
 }
+auto CommandDispatcher::SubmitByUser(StringView Name, CommandJson&& Argument, CommandOptions Options)
+    -> std::expected<Uint64, ErrorMessage> {
+    return Submit(Name, CommandJson::array({std::move(Argument)}), false, {}, Options);
+}
 auto CommandDispatcher::SubmitByAgent(StringView         Name,
                                       const CommandJson& Arguments,
                                       CommandCompletion  Completion,
                                       CommandOptions     Options) -> std::expected<Uint64, ErrorMessage> {
     CommandFailure Failure;
-    auto           Submitted = Submit(Name, Arguments, true, Completion, Options, &Failure);
+    Options.IsRecovery = false;
+    auto Submitted     = Submit(Name, Arguments, true, Completion, Options, &Failure);
     if (!Submitted && Completion) {
         Uint64 Id;
         {
@@ -287,7 +292,8 @@ auto CommandDispatcher::Submit(StringView         Name,
             return Reject("invalid_arguments", "Argument type or range mismatch");
     if (Values.dump(-1, ' ', false, CommandJson::error_handler_t::replace).size() > Entry->Desc.MaxArgumentBytes)
         return Reject("invalid_arguments", "Argument budget exceeded");
-    if (m_Outstanding >= m_Capacity)
+    const auto Capacity = m_Capacity + (!IsAgent && Options.IsRecovery ? 1U : 0U);
+    if (m_Outstanding >= Capacity)
         return Reject("queue_capacity", "Queue capacity reached");
     const auto Id = m_NextId++;
     ++m_Outstanding;

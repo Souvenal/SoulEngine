@@ -5,7 +5,10 @@ module;
 export module WindowSystem.Interface;
 
 import WindowSystem.Types;
+import WindowSystem.Input;
+import EditorCommands;
 import Core;
+import std;
 
 namespace SoulEngine {
 
@@ -15,15 +18,15 @@ export CVar<Int32> CVarWindowResolutionY{"Window.ResolutionY", 720, "Window heig
 /// @brief Window-system (WIS) abstraction: window lifecycle, event polling,
 /// and per-frame input event publication.
 ///
-/// All methods must be called from the engine main thread. Input state is updated by platform callbacks and
-/// published through the window event dispatcher once per frame.
+/// All methods must be called on Game. Platform callbacks submit input commands, and
+/// AdvanceFrame publishes executed input through the window event dispatcher once per frame.
 ///
 /// Implementations are concrete window backends (GLFW today; Cocoa, WinUI, etc. later). Backend adapters that
 /// need native objects and the ImGui GLFW backend dispatch on GetType() and static_cast to the concrete
 /// class.
 export class IWindowSystem {
   public:
-    IWindowSystem()          = default;
+    IWindowSystem() : m_InputCommands(m_InputFrameState) {}
     virtual ~IWindowSystem() = default;
 
     IWindowSystem(const IWindowSystem&)                    = delete;
@@ -38,11 +41,38 @@ export class IWindowSystem {
 
     virtual auto Shutdown() -> void = 0;
 
-    /// @brief Advance one window-system frame and publish input events.
-    ///
-    /// Implementations pump their platform events, update backend-specific input state, publish the frame
-    /// snapshots through the dispatcher, and return true when a close was requested.
-    [[nodiscard]] virtual auto Tick() -> bool = 0;
+    [[nodiscard]] auto BindCommands(CommandDispatcher& Commands) -> std::expected<void, ErrorMessage> {
+        return m_InputCommands.Bind(Commands);
+    }
+
+    auto UnbindCommands() -> void {
+        m_InputCommands.Unbind();
+    }
+
+    /// @brief Clear held input and restore cursor presentation during owner teardown.
+    auto ResetInput() -> void {
+        m_InputFrameState.Shutdown();
+        SetCursorMode(CursorMode::Normal);
+    }
+
+    /// @brief Pump platform events and return true when a close was requested.
+    [[nodiscard]] virtual auto PollEvents() -> bool = 0;
+
+    /// @brief Publish one frame of input executed by the Input command phase.
+    auto AdvanceFrame() -> void {
+        const auto& Frame = m_InputFrameState.AdvanceFrame();
+        m_EventDispatcher.trigger(Frame.Keyboard);
+        m_EventDispatcher.trigger(Frame.Mouse);
+        const bool IsReset = std::ranges::any_of(Frame.Events, [](const InputEvent& Event) -> bool {
+            return std::holds_alternative<ResetInputEvent>(Event);
+        });
+        if (!Frame.IsFocused || IsReset)
+            SetCursorMode(CursorMode::Normal);
+    }
+
+    [[nodiscard]] auto GetInputFrame() const -> const InputFrame& {
+        return m_InputFrameState.GetFrame();
+    }
 
     /// @brief Return the dispatcher for window-system events.
     [[nodiscard]] virtual auto GetEventDispatcher() -> entt::dispatcher& = 0;
@@ -54,9 +84,9 @@ export class IWindowSystem {
     virtual auto SetCursorMode(CursorMode Mode) -> void = 0;
 
   protected:
-    KeyboardFrameEvent m_KeyboardFrameEvent = {};
-    MouseFrameEvent    m_MouseFrameEvent    = {};
-    entt::dispatcher   m_EventDispatcher    = {};
+    InputFrameState      m_InputFrameState{};
+    InputCommandProvider m_InputCommands;
+    entt::dispatcher     m_EventDispatcher = {};
 };
 
 } // namespace SoulEngine

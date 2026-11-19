@@ -75,7 +75,7 @@ class MockWindowSystem final : public IWindowSystem {
         return true;
     }
     auto               Shutdown() -> void override {}
-    [[nodiscard]] auto Tick() -> bool override {
+    [[nodiscard]] auto PollEvents() -> bool override {
         return true;
     }
     [[nodiscard]] auto GetEventDispatcher() -> entt::dispatcher& override {
