@@ -19,7 +19,7 @@ import std;
 namespace SoulEngine {
 
 /// @brief Callback that draws one UI panel with ImGui immediate-mode calls.
-/// Invoked on the engine main thread between NewFrame() and Render().
+/// Invoked on Game between NewFrame() and Render().
 export using UIPanelCallback = std::function<void()>;
 
 /// @brief One registered UI panel in display order.
@@ -31,8 +31,8 @@ export struct UIPanel {
 /// @brief Editor UI subsystem: owns the ImGui context, the UI panel registry,
 /// and all GPU resources needed to render ImGui draw data through the RHI command list.
 ///
-/// Threading: the ImGui context lives on the engine main thread, where the GLFW platform backend feeds it
-/// input during event polling. Each game tick BuildFrame() produces a self-owning UIDrawFrame snapshot
+/// Threading: the ImGui context lives on Game, where executed input commands feed it before
+/// NewFrame(). Each game tick BuildFrame() produces a self-owning UIDrawFrame snapshot
 /// published through a latest-wins mailbox; the render thread consumes snapshots in OnRender() and emits UI
 /// passes. Backend-native GPU objects (font atlas texture, dynamic buffers) are created by a one-shot
 /// RHI-thread task enqueued at BindWindowSystem(); the render thread observes readiness through atomics.
@@ -50,6 +50,9 @@ export class Editor {
     auto               Initialize() -> void;
     [[nodiscard]] auto BindCommands(CommandDispatcher& Commands) -> std::expected<void, ErrorMessage>;
     auto               UnbindCommands() -> void;
+
+    /// @brief Clear ImGui held input while the owned context is alive.
+    auto ResetInput() -> void;
 
     /// @brief Bind the active runtime Scene for read-only Editor inspection.
     /// The Editor observes this Scene and never owns it.

@@ -5,7 +5,6 @@ module;
 // `DynamicLoader` from vulkan headers, we define: dynamically fetching pointers using `vkGetInstanceProcAddr`
 // and `vkGetDeviceProcAddr`
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
-#include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui_threaded_rendering.h>
 #include <vk_mem_alloc.h>
@@ -343,8 +342,8 @@ auto VulkanRenderDevice::InitializeImGui(IWindowSystem* WindowSys) -> std::expec
     switch (WindowSys->GetType()) {
     case WindowSystemType::Glfw: {
         auto* Window = static_cast<GlfwWindowSystem*>(WindowSys)->GetNativeHandle();
-        if (!ImGui_ImplGlfw_InitForVulkan(Window, true))
-            return std::unexpected(ErrorMessage("ImGui GLFW platform backend initialization failed"));
+        if (auto Initialized = ImGuiGlfwAdapter::InitializeForVulkan(Window); !Initialized)
+            return std::unexpected(Initialized.error().Append("ImGui GLFW platform backend initialization failed"));
         break;
     }
     case WindowSystemType::Unknown:

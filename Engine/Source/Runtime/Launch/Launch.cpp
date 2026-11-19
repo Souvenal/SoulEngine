@@ -93,6 +93,10 @@ auto EngineLoop::Init() -> std::expected<void, ErrorMessage> {
     if (!WinResult)
         return std::unexpected(WinResult.error().Append("Failed to create window system"));
     m_WindowSystem = std::move(*WinResult);
+    if (auto Bound = m_WindowSystem->BindCommands(m_Commands); !Bound) {
+        Shutdown();
+        return std::unexpected(Bound.error().Append("Window input command binding failed"));
+    }
     // RHI context — process-wide singleton
 
     const auto Backend = CVarRenderRHI.Get();
@@ -150,7 +154,12 @@ auto EngineLoop::Run() -> void {
 
 auto EngineLoop::Shutdown() -> void {
     LogInfo("Shutting down...");
+    if (m_WindowSystem)
+        m_WindowSystem->ResetInput();
+    m_Editor.ResetInput();
     m_Commands.Shutdown();
+    if (m_WindowSystem)
+        m_WindowSystem->UnbindCommands();
     m_Editor.UnbindCommands();
 
     // Request stop BEFORE notifying CVs — otherwise threads wake, check stop_requested() == false, go
@@ -213,7 +222,7 @@ auto EngineLoop::GameLoop() -> void {
     tracy::SetThreadName(kGameThreadName);
     SetLogThreadRole(LogThreadRole::Game);
     while (!m_FatalError.load(std::memory_order_acquire)) {
-        if (m_WindowSystem->Tick())
+        if (m_WindowSystem->PollEvents())
             break;
 
         auto  Now      = std::chrono::steady_clock::now();
@@ -239,6 +248,7 @@ auto EngineLoop::GameLoop() -> void {
         const auto CommandTime =
             static_cast<Uint64>(std::chrono::duration_cast<std::chrono::milliseconds>(Now.time_since_epoch()).count());
         m_Commands.ExecutePhase(CommandPhase::Input, m_CommandFrame, 64, CommandTime);
+        m_WindowSystem->AdvanceFrame();
 
         // Each engine loop owns an independent ordinal. Render/RHI tasks carry the producer's ordinal and
         // execute when the consumer reaches the same pipeline position.

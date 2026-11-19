@@ -5,6 +5,8 @@ export module WindowSystem;
 import Core;
 
 export import WindowSystem.Types;
+export import WindowSystem.Input;
+export import WindowSystem.ImGuiGlfwBackend;
 export import WindowSystem.Interface;
 export import WindowSystem.Glfw;
 import std;

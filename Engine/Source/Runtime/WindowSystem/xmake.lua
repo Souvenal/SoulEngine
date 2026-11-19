@@ -1,8 +1,9 @@
 soul_module("WindowSystem", {
-    deps     = {"Core"},
-    packages = {"entt", "glfw", "imgui", "magic_enum"},
+    deps     = {"Core", "EditorCommands"},
+    packages = {"entt", "glfw", "imgui", "magic_enum", "nlohmann_json"},
     impl = {
-        deps     = {"Core"},
-        packages = {"entt", "glfw", "imgui", "magic_enum"},
+        deps     = {"Core", "EditorCommands"},
+        packages = {"entt", "glfw", "imgui", "magic_enum", "nlohmann_json"},
     },
+    tests = {},
 })
