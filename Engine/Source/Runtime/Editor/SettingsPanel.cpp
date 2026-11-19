@@ -5,18 +5,21 @@ module;
 module Editor.SettingsPanel;
 
 import Core;
+import EditorCommands;
 import Editor.UIManager;
 import std;
 
 namespace SoulEngine {
 
-auto DrawBooleanSetting(const CVarSnapshot<bool>& Setting) -> void {
+auto DrawBooleanSetting(const CVarSnapshot<bool>& Setting, CommandDispatcher& Commands) -> void {
     const auto LeafOffset = Setting.Name.find_last_of('.');
     const auto Leaf       = Setting.Name.substr(LeafOffset == String::npos ? 0 : LeafOffset + 1);
     auto       Value      = Setting.Value;
     ImGui::PushID(Setting.Name.c_str());
-    if (ImGui::Checkbox(Leaf.c_str(), &Value))
-        CVarManager::Get().SetByName<bool>(Setting.Name, Value);
+    if (ImGui::Checkbox(Leaf.c_str(), &Value)) {
+        if (auto Submitted = Commands.SubmitByUser("editor.settings.set_boolean", Setting.Name, Value); !Submitted)
+            LogError("Boolean setting command failed: {}", Submitted.error().ToString());
+    }
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(Setting.Name.c_str());
@@ -30,8 +33,31 @@ auto DrawBooleanSetting(const CVarSnapshot<bool>& Setting) -> void {
     ImGui::PopID();
 }
 
-auto RegisterSettingsPanel() -> void {
-    UIManager::Get().Register("Settings", [SelectedCategory = String{}]() mutable -> void {
+auto RegisterSettingsCommand(CommandDispatcher& Commands) -> std::expected<Uint64, ErrorMessage> {
+    return Commands.Register(CommandDescriptor{.Name           = "editor.settings.set_boolean",
+                                               .Parameters     = {{.Name = "name"}, {.Name = "value"}},
+                                               .IsAgentExposed = true,
+                                               .Category       = CommandCategory::Input},
+                             [](CommandContext& Context, String Name, bool Value) -> void {
+                                 auto&      Manager = CVarManager::Get();
+                                 const auto Current = Manager.Find<bool>(Name);
+                                 if (!Current) {
+                                     Context.Fail("stale_target",
+                                                  Format("Boolean setting '{}' is unavailable", Name),
+                                                  CommandJson{{"name", Name}});
+                                     return;
+                                 }
+                                 if (*Current == Value)
+                                     return;
+                                 if (!Manager.SetByName<bool>(Name, Value))
+                                     Context.Fail("stale_target",
+                                                  Format("Boolean setting '{}' is unavailable", Name),
+                                                  CommandJson{{"name", Name}});
+                             });
+}
+
+auto RegisterSettingsPanel(CommandDispatcher& Commands) -> void {
+    UIManager::Get().Register("Settings", [SelectedCategory = String{}, Commands = &Commands]() mutable -> void {
         bool IsShowing = UIManager::Get().IsUIShowing("Settings");
         ImGui::SetNextWindowSize(ImVec2(680.0F, 460.0F), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Settings", &IsShowing)) {
@@ -63,7 +89,7 @@ auto RegisterSettingsPanel() -> void {
                         const auto SecondDot =
                             FirstDot == String::npos ? String::npos : Setting.Name.find('.', FirstDot + 1);
                         if (SecondDot == String::npos) {
-                            DrawBooleanSetting(Setting);
+                            DrawBooleanSetting(Setting, *Commands);
                         } else {
                             Groups[Setting.Name.substr(FirstDot + 1, SecondDot - FirstDot - 1)].push_back(&Setting);
                         }
@@ -71,7 +97,7 @@ auto RegisterSettingsPanel() -> void {
                     for (const auto& [Group, Entries] : Groups) {
                         if (ImGui::CollapsingHeader(Group.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
                             for (const auto* Setting : Entries)
-                                DrawBooleanSetting(*Setting);
+                                DrawBooleanSetting(*Setting, *Commands);
                         }
                     }
                 }
@@ -79,8 +105,10 @@ auto RegisterSettingsPanel() -> void {
             }
         }
         ImGui::End();
-        if (!IsShowing)
-            UIManager::Get().CloseUI("Settings");
+        if (!IsShowing) {
+            if (auto Submitted = UIManager::Get().SubmitPanelClose(*Commands, "Settings"); !Submitted)
+                LogError("Settings close command failed: {}", Submitted.error().ToString());
+        }
     });
 }
 

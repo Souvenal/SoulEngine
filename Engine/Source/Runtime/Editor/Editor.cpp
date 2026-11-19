@@ -36,24 +36,87 @@ auto Editor::Initialize() -> void {
     }
 
     InitializeImGui();
-    InitializeUI();
 }
 
 auto Editor::BindCommands(CommandDispatcher& Commands) -> std::expected<void, ErrorMessage> {
     if (m_Commands)
         return std::unexpected(ErrorMessage("Editor commands already bound"));
-    auto Registered = UIManager::Get().RegisterSettingsCommand(Commands);
-    if (!Registered)
-        return std::unexpected(Registered.error().Append("Failed to bind Editor commands"));
-    m_Commands        = &Commands;
-    m_SettingsCommand = *Registered;
+
+    std::vector<Uint64> Registrations;
+    const auto Rollback = [&Commands, &Registrations](ErrorMessage Error) -> std::expected<void, ErrorMessage> {
+        for (const auto Registration : Registrations)
+            Commands.Retire(Registration);
+        return std::unexpected(Error.Append("Failed to bind Editor commands"));
+    };
+
+    auto Panels = UIManager::Get().RegisterPanelCommands(Commands);
+    if (!Panels)
+        return Rollback(Panels.error());
+    Registrations.insert(Registrations.end(), {Panels->Toggle, Panels->Close});
+
+    auto Settings = RegisterSettingsCommand(Commands);
+    if (!Settings)
+        return Rollback(Settings.error());
+    Registrations.push_back(*Settings);
+
+    auto ApplicationCommand =
+        Commands.Register(CommandDescriptor{.Name       = "editor.application.open",
+                                            .Parameters = {{.Name = "application"}},
+                                            .Category   = CommandCategory::Edit},
+                          [this](CommandContext& Context, String Name) -> void {
+                              if (const auto* Current = GetCurrentApplication(); Current && Current->GetName() == Name)
+                                  return;
+                              if (!ApplicationFactory::Get().Contains(Name)) {
+                                  Context.Fail("stale_target",
+                                               Format("Application '{}' is unavailable", Name),
+                                               CommandJson{{"application", Name}});
+                                  return;
+                              }
+                              auto Candidate = Application::Create(Name);
+                              if (!Candidate) {
+                                  Context.Fail("application_open_failed",
+                                               Candidate.error().ToString(),
+                                               CommandJson{{"application", Name}});
+                                  return;
+                              }
+                              UnbindScene();
+                              OpenApplication(std::move(*Candidate));
+                              BindScene(GetCurrentApplication()->GetScene());
+                          });
+    if (!ApplicationCommand)
+        return Rollback(ApplicationCommand.error());
+    Registrations.push_back(*ApplicationCommand);
+
+    auto RendererCommand = Commands.Register(
+        CommandDescriptor{
+            .Name = "editor.renderer.select", .Parameters = {{.Name = "renderer"}}, .Category = CommandCategory::Edit},
+        [](CommandContext& Context, String Name) -> void {
+            if (!RendererFactory::Get().Contains(Name)) {
+                Context.Fail(
+                    "stale_target", Format("Renderer '{}' is unavailable", Name), CommandJson{{"renderer", Name}});
+                return;
+            }
+            if (GetCurrentRenderer() && GetCurrentRendererName() == Name)
+                return;
+            if (auto Selected = SelectRenderer(Name); !Selected)
+                Context.Fail("renderer_selection_failed", Selected.error().ToString(), CommandJson{{"renderer", Name}});
+        });
+    if (!RendererCommand)
+        return Rollback(RendererCommand.error());
+    Registrations.push_back(*RendererCommand);
+
+    m_Commands             = &Commands;
+    m_CommandRegistrations = std::move(Registrations);
+    InitializeUI(Commands);
     return {};
 }
 auto Editor::UnbindCommands() -> void {
-    if (m_Commands)
-        m_Commands->Retire(m_SettingsCommand);
-    m_Commands        = nullptr;
-    m_SettingsCommand = 0;
+    if (m_Commands) {
+        for (const auto Registration : m_CommandRegistrations)
+            m_Commands->Retire(Registration);
+    }
+    m_Commands = nullptr;
+    m_CommandRegistrations.clear();
 }
 auto Editor::BindScene(const Scene& SceneValue) -> void {
     m_Scene = &SceneValue;
@@ -138,9 +201,9 @@ auto Editor::InitializeImGui() -> void {
     ImGui::StyleColorsDark();
 }
 
-auto Editor::InitializeUI() -> void {
-    RegisterAllUI([this]() -> const Scene* { return m_Scene; });
-    RegisterSettingsPanel();
+auto Editor::InitializeUI(CommandDispatcher& Commands) -> void {
+    RegisterAllUI([this]() -> const Scene* { return m_Scene; }, Commands);
+    RegisterSettingsPanel(Commands);
 }
 
 auto Editor::DrawMainMenu() -> void {
@@ -148,8 +211,11 @@ auto Editor::DrawMainMenu() -> void {
         return;
 
     if (ImGui::BeginMenu("Settings")) {
-        if (ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings")) && m_Commands) {
-            if (auto Submitted = UIManager::Get().SubmitSettingsToggle(*m_Commands); !Submitted)
+        ImGui::BeginDisabled(!m_Commands);
+        const bool Activated = ImGui::MenuItem("Settings", nullptr, UIManager::Get().IsUIShowing("Settings"));
+        ImGui::EndDisabled();
+        if (Activated) {
+            if (auto Submitted = UIManager::Get().SubmitPanelToggle(*m_Commands, "Settings"); !Submitted)
                 LogError("Settings command failed: {}", Submitted.error().ToString());
         }
         ImGui::EndMenu();
@@ -161,15 +227,12 @@ auto Editor::DrawMainMenu() -> void {
             for (const auto& Name : ApplicationFactory::Get().Keys()) {
                 String     Label(Name);
                 const bool IsCurrent = CurrentApplication && CurrentApplication->GetName() == Name;
-                if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
-                    if (auto R = OpenApplication(Name); !R) {
-                        LogError("Application opening failed:\n{}", R.error().ToString());
-                    } else {
-                        if (const auto* NewApplication = GetCurrentApplication())
-                            BindScene(NewApplication->GetScene());
-                        else
-                            UnbindScene();
-                    }
+                ImGui::BeginDisabled(IsCurrent || !m_Commands);
+                const bool Activated = ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent);
+                ImGui::EndDisabled();
+                if (Activated) {
+                    if (auto Submitted = m_Commands->SubmitByUser("editor.application.open", String(Name)); !Submitted)
+                        LogError("Application command failed: {}", Submitted.error().ToString());
                     break;
                 }
             }
@@ -183,9 +246,12 @@ auto Editor::DrawMainMenu() -> void {
         for (const auto& Name : RendererFactory::Get().Keys()) {
             String     Label(Name);
             const bool IsCurrent = CurrentRendererName == Name;
-            if (ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent) && !IsCurrent) {
-                if (auto R = SelectRenderer(Name); !R)
-                    LogError("Renderer selection failed:\n{}", R.error().ToString());
+            ImGui::BeginDisabled(IsCurrent || !m_Commands);
+            const bool Activated = ImGui::MenuItem(Label.c_str(), nullptr, IsCurrent);
+            ImGui::EndDisabled();
+            if (Activated) {
+                if (auto Submitted = m_Commands->SubmitByUser("editor.renderer.select", String(Name)); !Submitted)
+                    LogError("Renderer command failed: {}", Submitted.error().ToString());
                 break;
             }
         }
@@ -193,8 +259,14 @@ auto Editor::DrawMainMenu() -> void {
     }
 
     if (ImGui::BeginMenu("Debug")) {
-        if (ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials")))
-            UIManager::Get().ToggleUI("Debug.ShowMaterials");
+        ImGui::BeginDisabled(!m_Commands);
+        const bool Activated =
+            ImGui::MenuItem("Materials", nullptr, UIManager::Get().IsUIShowing("Debug.ShowMaterials"));
+        ImGui::EndDisabled();
+        if (Activated) {
+            if (auto Submitted = UIManager::Get().SubmitPanelToggle(*m_Commands, "Debug.ShowMaterials"); !Submitted)
+                LogError("Materials command failed: {}", Submitted.error().ToString());
+        }
         ImGui::EndMenu();
     }
 

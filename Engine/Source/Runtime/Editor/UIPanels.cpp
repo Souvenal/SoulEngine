@@ -8,22 +8,24 @@ module Editor.UIPanels;
 import std;
 import magic_enum;
 import Core;
+import EditorCommands;
 import Material;
 import Scene;
 import Editor.UIManager;
 
 namespace SoulEngine {
 
-auto RegisterAllUI(std::function<const Scene*()> SceneProvider) -> void {
+auto RegisterAllUI(std::function<const Scene*()> SceneProvider, CommandDispatcher& Commands) -> void {
     // Materials Window
     UIManager::Get().Register(
         "Debug.ShowMaterials",
         [SceneProvider      = std::move(SceneProvider),
+         Commands           = &Commands,
          MaterialListWidth  = 220.0F,
          SelectedScene      = static_cast<const Scene*>(nullptr),
          SelectedMaterialId = Uint64{0}]() mutable {
-            auto& entry = UIManager::Get().GetAll().at("Debug.ShowMaterials");
-            if (ImGui::Begin("Materials", &entry.Show)) {
+            bool IsShowing = UIManager::Get().IsUIShowing("Debug.ShowMaterials");
+            if (ImGui::Begin("Materials", &IsShowing)) {
                 const auto* SceneValue = SceneProvider();
                 if (SceneValue != SelectedScene) {
                     SelectedScene      = SceneValue;
@@ -228,6 +230,10 @@ auto RegisterAllUI(std::function<const Scene*()> SceneProvider) -> void {
                 }
             }
             ImGui::End();
+            if (!IsShowing) {
+                if (auto Submitted = UIManager::Get().SubmitPanelClose(*Commands, "Debug.ShowMaterials"); !Submitted)
+                    LogError("Materials close command failed: {}", Submitted.error().ToString());
+            }
         },
         false);
 
